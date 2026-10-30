@@ -23,6 +23,7 @@ internal static class StreamingSeatRestartTests
     public static async Task RunAsync()
     {
         await ALobbySeatRestartsAsTheStreamingSeatAsync();
+        await TheRestartLaunchesAtTheRequestedAspectAsync();
         await MidRunTheRestartIsStagedUntilTheRunEndsAsync();
         await AStagedWishRidesTheSlotsNextLaunchAsync();
         await TurningItOffWithdrawsAStagedRestartAsync();
@@ -54,6 +55,40 @@ internal static class StreamingSeatRestartTests
         Assert(h.Changes > 0, "the server was told the state changed (it re-sends the sessions)");
         Assert(await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is not null && h.Launches.Count == 2,
             "the reconnecting browser re-attaches to the restarted seat without another launch");
+    }
+
+    // PRES-A: `set-renderer`'s aspect is the restarted seat's width, staged or not; no aspect is 1920.
+    private static async Task TheRestartLaunchesAtTheRequestedAspectAsync()
+    {
+        var h = new Harness();
+        var ann = Guid.NewGuid();
+        await h.Manager.EnsureHeadlessAsync(ann, "Ann", default);
+        Assert(h.Manager.StreamingSeatPresentationWidth(2) == 1920, "a seat nobody asked a width for is 1920");
+        await h.Manager.RequestStreamingSeatAsync(ann, 21.0 / 9.0, default);
+        await h.Settle();
+        Assert(h.Launches is [(2, false), (2, true)] && h.Manager.StreamingSeatPresentationWidth(2) == 2520,
+            $"the restarted streaming seat launches at the requested aspect: {Show(h.Launches)}");
+        Assert(await h.Manager.RequestStreamingSeatAsync(ann, 2340.0 / 1080.0, default) is null && h.Launches.Count == 2,
+            "a seat that already streams is not restarted for a new aspect (PRES-R)");
+
+        var staged = new Harness();
+        var bob = Guid.NewGuid();
+        await staged.Manager.EnsureHeadlessAsync(bob, "Bob", default);
+        staged.InRun = true;
+        await staged.Manager.RequestStreamingSeatAsync(bob, 2340.0 / 1080.0, default);
+        staged.InRun = false;
+        staged.Manager.ApplyStagedStreamingSeats();
+        await staged.Settle();
+        Assert(staged.Launches is [(2, false), (2, true)] && staged.Manager.StreamingSeatPresentationWidth(2) == 2340,
+            "a staged restart keeps the aspect it was asked with");
+
+        var plain = new Harness();
+        var cat = Guid.NewGuid();
+        await plain.Manager.EnsureHeadlessAsync(cat, "Cat", default);
+        await plain.Manager.RequestStreamingSeatAsync(cat, null, default);
+        await plain.Settle();
+        Assert(plain.Manager.StreamingSlot == 2 && plain.Manager.StreamingSeatPresentationWidth(2) == 1920,
+            "no aspect (Widescreen stretch off) restarts at 1920");
     }
 
     private static async Task MidRunTheRestartIsStagedUntilTheRunEndsAsync()
@@ -213,7 +248,7 @@ internal static class StreamingSeatRestartTests
         var ann = Guid.NewGuid();
         await h.Manager.EnsureHeadlessAsync(ann, "Ann", default);
         h.InRun = true;
-        await h.Manager.RequestStreamingSeatAsync(ann, default);
+        await h.Manager.RequestStreamingSeatAsync(ann, 21.0 / 9.0, default);
         h.InRun = false;
         h.Spawned[0].ForceExit();
         // Ann is gone and the only seat is reclaimed by a new player.
@@ -221,6 +256,7 @@ internal static class StreamingSeatRestartTests
         await h.Manager.EnsureHeadlessAsync(zed, "Zed", default);
         Assert(h.Launches is [(2, false), (2, false)], $"the new player's seat is a normal one: {Show(h.Launches)}");
         Assert(h.Manager.SeatRendererStateFor(zed) is null, "and carries no earlier request");
+        Assert(h.Manager.StreamingSeatPresentationWidth(2) == 1920, "nor the earlier viewer's aspect");
     }
 
     private static void TheRosterHookAppliesStagedRestartsOnALobbyWithoutARun()

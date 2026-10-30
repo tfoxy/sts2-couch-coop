@@ -23,6 +23,7 @@ import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
 import {
   currentJoinRendererRequest,
+  streamSeatAspect,
   parseSeatRestart,
   renderStreamAvailability,
   renderStreamContext,
@@ -1011,7 +1012,8 @@ watch(
     if (!joined.value || directView.value || hostClient === activeClient) return;
     if (renderer === "stream") {
       if (renderStreamContext.sessionEndpoint !== null || currentJoinRendererRequest() !== "stream") return;
-      hostClient.sendRendererRequest("stream");
+      // At this page's aspect when Widescreen stretch is on (PRES-A); read now, never re-sent on a resize (PRES-R).
+      hostClient.sendRendererRequest("stream", streamSeatAspect(mirrorSettings));
     } else {
       hostClient.sendRendererRequest("mirror");
     }
@@ -1332,8 +1334,10 @@ function submitJoin(name: string, playerId?: string): void {
     return;
   }
   // "Use new renderer (Beta)": ask for this seat to be launched as the host's streaming seat when the viewer chose
-  // the new renderer and this page can draw it (renderStreamAvailability's joinRendererRequest).
-  activeClient.sendJoin(trimmed, playerId, currentJoinRendererRequest(mirrorSettings));
+  // the new renderer and this page can draw it (renderStreamAvailability's joinRendererRequest), at this page's
+  // aspect when Widescreen stretch is on (PRES-A; read now, never re-sent on a resize — PRES-R).
+  const joinRenderer = currentJoinRendererRequest(mirrorSettings);
+  activeClient.sendJoin(trimmed, playerId, joinRenderer, joinRenderer ? streamSeatAspect(mirrorSettings) : undefined);
 }
 
 // Retiring an initial attempt also undoes its URL selection. A previously granted

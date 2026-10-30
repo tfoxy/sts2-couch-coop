@@ -249,7 +249,9 @@ function forcedBind<K extends StreamForcedKey>(key: K, persist = true): Writable
   });
 }
 
-const stretchEnabled = forcedBind("stretchEnabled");
+// Widescreen stretch stays the viewer's under the new renderer too: there it sets the width the streaming seat is
+// launched at (PRES-A), from the seat's next start.
+const stretchEnabled = bind("stretchEnabled");
 const safeAreaPaddingEnabled = bind("safeAreaPaddingEnabled");
 const raiseHeldCard = forcedBind("raiseHeldCard");
 const unfocusOnRelease = forcedBind("unfocusOnRelease");
@@ -528,7 +530,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="stretchEnabled" :disabled="streamActive" data-testid="mirror-stretch" />
+            <input type="checkbox" v-model="stretchEnabled" data-testid="mirror-stretch" />
             <span>{{ t('settings.stretch') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('stretch', t('settings.stretch'))" />

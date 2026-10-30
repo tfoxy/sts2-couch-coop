@@ -46,6 +46,10 @@ public sealed partial class HeadlessClientManager
     // Per SLOT, not per browser session: the browser re-opens its host socket (a new session) whenever its seat socket
     // drops, which is exactly what a restart does, and the new session must still see the restart it asked for.
     private readonly Dictionary<int, SeatRendererState> _seatRenderer = [];
+    // The aspect (width / height of the viewer's stream box) the slot's viewer last asked for the streaming seat with,
+    // in the join or in `set-renderer` (PRES-A). Read when a streaming launch of the slot builds its environment;
+    // absent means the 16:9 base. Per slot for the same reason as _seatRenderer. Under _lock.
+    private readonly Dictionary<int, double> _streamingAspect = [];
     private Task? _streamingRestart;
 
     /// <summary>
@@ -66,6 +70,48 @@ public sealed partial class HeadlessClientManager
         lock (_lock)
         {
             return _sessionToSlot.TryGetValue(sessionId, out var slot) ? _seatRenderer.GetValueOrDefault(slot) : null;
+        }
+    }
+
+    /// <summary>
+    /// <see cref="RequestStreamingSeatAsync(Guid, CancellationToken)"/> with the aspect of the viewer's stream box
+    /// (null: none was sent, i.e. their Widescreen stretch is off), recorded for the slot first so the restart — or
+    /// the staged one, or the slot's next streaming launch — launches the seat at that width
+    /// (<see cref="StreamingSeatLaunch.PresentationWidth"/>). A seat that already streams is NOT restarted for a new
+    /// aspect: its stream letterboxes until the seat's next start (re-launching on a changed aspect is PRES-R).
+    /// </summary>
+    public Task<SeatRendererState?> RequestStreamingSeatAsync(Guid sessionId, double? aspect, CancellationToken ct)
+    {
+        lock (_lock)
+        {
+            if (!_disposed && _sessionToSlot.TryGetValue(sessionId, out var slot)) RecordStreamingAspectLocked(slot, aspect);
+        }
+
+        return RequestStreamingSeatAsync(sessionId, ct);
+    }
+
+    /// <summary>The presentation width a streaming launch of <paramref name="slot"/> gets now.</summary>
+    internal int StreamingSeatPresentationWidth(int slot)
+    {
+        lock (_lock) return StreamingSeatPresentationWidthLocked(slot);
+    }
+
+    private int StreamingSeatPresentationWidthLocked(int slot)
+        => StreamingSeatLaunch.PresentationWidth(
+            _streamingAspect.TryGetValue(slot, out var aspect) ? aspect : null,
+            _streamingConfig?.MaxPresentationWidth ?? StreamingSeatLaunch.DefaultMaxPresentationWidth);
+
+    // Only a usable aspect is kept; anything else (none, not finite, out of range) is the base width, so it is dropped.
+    private void RecordStreamingAspectLocked(int slot, double? aspect)
+    {
+        if (aspect is double value && double.IsFinite(value)
+            && value >= StreamingSeatLaunch.MinAspect && value <= StreamingSeatLaunch.MaxAspect)
+        {
+            _streamingAspect[slot] = value;
+        }
+        else
+        {
+            _streamingAspect.Remove(slot);
         }
     }
 
@@ -337,10 +383,13 @@ public sealed partial class HeadlessClientManager
         if (_seatRenderer.GetValueOrDefault(slot) is { State: SeatRendererStates.Pending }) ClearSeatRendererLocked(slot);
     }
 
-    // A different player taking the slot drops its holder's request, unless a restart is under way on it.
+    // A different player taking the slot drops its holder's request (and the aspect it came with), unless a restart is
+    // under way on it.
     private void ForgetSeatRendererForClaimLocked(int slot)
     {
-        if (_seatRenderer.GetValueOrDefault(slot) is { State: not SeatRendererStates.Restarting }) ClearSeatRendererLocked(slot);
+        if (_seatRenderer.GetValueOrDefault(slot) is { State: SeatRendererStates.Restarting }) return;
+        ClearSeatRendererLocked(slot);
+        _streamingAspect.Remove(slot);
     }
 
     private SeatRendererState SetSeatRendererLocked(int slot, SeatRendererState state)

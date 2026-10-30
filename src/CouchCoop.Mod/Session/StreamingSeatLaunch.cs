@@ -30,6 +30,13 @@ namespace CouchCoop.Mod.Session;
 /// to 4096 bytes and NO hook log (on a real seat it grows by ~38 GB in 22 minutes). Every inherited
 /// <c>GRC_*</c> is dropped first, from every seat, so a value on the host can never leak into a seat.
 /// </para>
+/// <para>
+/// THE SEAT RUNS AT ITS VIEWER'S ASPECT (PRES-A). STS2 stretches its 1920x1080 base with aspect <c>expand</c>, so a
+/// seat launched at <c>GRC_ROOT_SIZE=presentation:&lt;W&gt;x1080</c> lays the game itself out W wide.
+/// <see cref="PresentationWidth"/> turns the aspect the page sent (only with its Widescreen stretch on) into W, up to
+/// the operator's <see cref="MaxPresentationWidthEnvironmentVariable"/>. W is fixed at the seat's launch: a later
+/// rotation or resize letterboxes until the seat's next start (re-launching on it is PRES-R).
+/// </para>
 /// </remarks>
 internal static class StreamingSeatLaunch
 {
@@ -41,6 +48,30 @@ internal static class StreamingSeatLaunch
     /// hands its descriptor to, e.g. the Vite dev server <c>http://127.0.0.1:5190</c>.
     /// </summary>
     internal const string ExtraOriginsEnvironmentVariable = "COUCHCOOP_RENDER_STREAM_EXTRA_ORIGINS";
+
+    /// <summary>
+    /// Optional: the widest presentation the streaming seat is launched at (an integer, at least
+    /// <see cref="PresentationBaseWidth"/>; default <see cref="DefaultMaxPresentationWidth"/>). A seat's width costs
+    /// host GPU and stream bytes in proportion, so the operator bounds it.
+    /// </summary>
+    internal const string MaxPresentationWidthEnvironmentVariable = "COUCHCOOP_RENDER_STREAM_MAX_WIDTH";
+
+    /// <summary>The game's design size, and the presentation every seat had before PRES-A.</summary>
+    internal const int PresentationBaseWidth = 1920;
+    internal const int PresentationHeight = 1080;
+
+    /// <summary>21:9 at 1080, the old renderer's widescreen cap (frontend <c>MIRROR_MAX_DESIGN_WIDTH</c>).</summary>
+    internal const int DefaultMaxPresentationWidth = 2520;
+
+    /// <summary>The bound on an operator's cap: the widest aspect a page may ask for (5:1) at 1080.</summary>
+    internal const int UpperMaxPresentationWidth = 5400;
+
+    /// <summary>
+    /// The aspects a page may ask for; anything outside (or not finite) is treated as no aspect at all. Narrower than
+    /// 16:9 is accepted and simply gets the base width: the game does not lay out taller than its base.
+    /// </summary>
+    internal const double MinAspect = 0.25;
+    internal const double MaxAspect = 5.0;
 
     /// <summary>The calibration record's file name next to the extension when no calibration variable is set.</summary>
     internal const string DefaultCalibrationFileName = "calibration.json";
@@ -80,11 +111,72 @@ internal static class StreamingSeatLaunch
 
     internal static int HubPortForSlot(int slot) => HeadlessClientManager.SlotToPort(slot) + HubPortOffset;
 
-    /// <summary>What the operator configured: the capture to load and its calibration record.</summary>
-    internal sealed record Config(string Extension, string Calibration);
+    /// <summary>
+    /// What the operator configured: the capture to load, its calibration record, and the widest presentation a seat
+    /// is launched at (<see cref="MaxPresentationWidthEnvironmentVariable"/>).
+    /// </summary>
+    internal sealed record Config(string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth);
 
-    /// <summary>The configuration, or why there is none. Both null means the host is simply not configured.</summary>
-    internal readonly record struct ConfigResult(Config? Config, string? Refusal);
+    /// <summary>
+    /// The operator's <see cref="MaxPresentationWidthEnvironmentVariable"/>: unset or not an integer is the default
+    /// (with a warning for the latter), anything else is held to
+    /// [<see cref="PresentationBaseWidth"/>, <see cref="UpperMaxPresentationWidth"/>] and made even.
+    /// </summary>
+    internal static int ParseMaxPresentationWidth(string? value, out string? warning)
+    {
+        warning = null;
+        if (string.IsNullOrWhiteSpace(value)) return DefaultMaxPresentationWidth;
+        if (!int.TryParse(value.Trim(), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var width))
+        {
+            warning = $"{MaxPresentationWidthEnvironmentVariable} must be an integer, got '{value.Trim()}'; using "
+                + DefaultMaxPresentationWidth.ToString(CultureInfo.InvariantCulture);
+            return DefaultMaxPresentationWidth;
+        }
+
+        width = Math.Clamp(width, PresentationBaseWidth, UpperMaxPresentationWidth);
+        return width - (width % 2);
+    }
+
+    /// <summary>
+    /// The width the streaming seat is launched at for a page that sent <paramref name="aspect"/> (width / height of
+    /// the box it shows the stream in): <c>clamp(round(1080 * aspect), 1920, cap)</c>, made even, then stepped down
+    /// past any width Godot's float32 viewport arithmetic would not reproduce exactly
+    /// (<see cref="SurvivesExpandStretch"/>). No aspect, or one that is not finite or outside
+    /// [<see cref="MinAspect"/>, <see cref="MaxAspect"/>], is the base width.
+    /// </summary>
+    internal static int PresentationWidth(double? aspect, int maxWidth)
+    {
+        if (aspect is not double value || !double.IsFinite(value) || value < MinAspect || value > MaxAspect)
+        {
+            return PresentationBaseWidth;
+        }
+
+        var cap = Math.Clamp(maxWidth, PresentationBaseWidth, UpperMaxPresentationWidth);
+        var width = (int)Math.Clamp(Math.Round(PresentationHeight * value, MidpointRounding.AwayFromZero), PresentationBaseWidth, cap);
+        width -= width % 2;
+        while (width > PresentationBaseWidth && !SurvivesExpandStretch(width)) width -= 2;
+        return width;
+    }
+
+    /// <summary>
+    /// Whether a seat at <paramref name="width"/>x1080 keeps exactly that visible width under the game's
+    /// <c>canvas_items</c> / <c>expand</c> stretch. Godot 4.5.1 (<c>Window::_update_viewport_size</c>) computes it in
+    /// float32 as <c>floor(1080 * (width / 1080))</c>, which for a few widths lands one short (W-1: a one-pixel
+    /// horizontal stretch that blurs the whole stream). Evaluated with the same float32 operations, not a list.
+    /// </summary>
+    internal static bool SurvivesExpandStretch(int width)
+    {
+        float height = PresentationHeight;
+        float aspect = (float)width / height;
+        float visible = height * aspect;
+        return MathF.Floor(visible) == width;
+    }
+
+    /// <summary>
+    /// The configuration, or why there is none. Both null means the host is simply not configured. A
+    /// <paramref name="Warning"/> is a setting that was ignored (the caller logs it; this file logs nothing).
+    /// </summary>
+    internal readonly record struct ConfigResult(Config? Config, string? Refusal, string? Warning = null);
 
     internal static ConfigResult ResolveConfig(string? extension, string? calibration, Func<string, bool> fileExists)
     {
@@ -122,11 +214,16 @@ internal static class StreamingSeatLaunch
     internal static ConfigResult ResolveConfigFromEnvironment()
     {
         var assemblyDirectory = Path.GetDirectoryName(typeof(StreamingSeatLaunch).Assembly.Location);
-        return ResolveConfig(
+        var result = ResolveConfig(
             System.Environment.GetEnvironmentVariable(RenderCaptureExtensionLoader.EnvironmentVariable),
             System.Environment.GetEnvironmentVariable(CalibrationEnvironmentVariable),
             File.Exists,
             string.IsNullOrWhiteSpace(assemblyDirectory) ? null : assemblyDirectory);
+        if (result.Config is not { } config) return result;
+
+        var maxWidth = ParseMaxPresentationWidth(
+            System.Environment.GetEnvironmentVariable(MaxPresentationWidthEnvironmentVariable), out var warning);
+        return result with { Config = config with { MaxPresentationWidth = maxWidth }, Warning = warning };
     }
 
     /// <summary>
@@ -178,11 +275,17 @@ internal static class StreamingSeatLaunch
     /// The streaming seat's launch environment: the role, the capture, and the capture's <c>GRC_*</c> table.
     /// Pure; <see cref="Apply"/> puts it on a launch.
     /// </summary>
+    /// <param name="presentationWidth">
+    /// The seat's presentation width (<see cref="PresentationWidth"/>); the height is always
+    /// <see cref="PresentationHeight"/>.
+    /// </param>
     internal static IReadOnlyDictionary<string, string> Environment(
-        Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins)
+        Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins,
+        int presentationWidth = PresentationBaseWidth)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(allowedOrigins);
+        ArgumentOutOfRangeException.ThrowIfLessThan(presentationWidth, PresentationBaseWidth);
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [StreamingSeatRole.EnvironmentVariable] = "1",
@@ -203,7 +306,8 @@ internal static class StreamingSeatLaunch
             ["GRC_UNKNOWN_ITEM"] = "skip",
             ["GRC_TEXTURE_DECODE"] = "engine",
             ["GRC_TEXTURE_WORKERS"] = "2",
-            ["GRC_ROOT_SIZE"] = "presentation:1920x1080",
+            // The game re-lays itself out at this width (aspect `expand`); the client sizes its canvas from it.
+            ["GRC_ROOT_SIZE"] = RootSize(presentationWidth),
             // The game has ~2,400 live items; C3's raised caps.
             ["GRC_MIRROR_MAX_ITEMS"] = "32768",
             ["GRC_MIRROR_MAX_COMMANDS"] = "16384",
@@ -217,6 +321,10 @@ internal static class StreamingSeatLaunch
             ["GRC_MESH_DYNAMIC"] = "auto",
         };
     }
+
+    /// <summary>The capture's <c>GRC_ROOT_SIZE</c> value for a seat <paramref name="presentationWidth"/> wide.</summary>
+    internal static string RootSize(int presentationWidth)
+        => $"presentation:{presentationWidth.ToString(CultureInfo.InvariantCulture)}x{PresentationHeight.ToString(CultureInfo.InvariantCulture)}";
 
     /// <summary>
     /// Drop everything streaming-related a seat could inherit from its host: the role, the capture variables this
@@ -232,7 +340,7 @@ internal static class StreamingSeatLaunch
         {
             if (key.StartsWith("GRC_", StringComparison.Ordinal)
                 || key is RenderCaptureExtensionLoader.EnvironmentVariable or CalibrationEnvironmentVariable
-                    or ExtraOriginsEnvironmentVariable)
+                    or ExtraOriginsEnvironmentVariable or MaxPresentationWidthEnvironmentVariable)
             {
                 psi.Environment.Remove(key);
             }

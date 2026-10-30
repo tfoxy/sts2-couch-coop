@@ -680,7 +680,9 @@ public sealed class CouchCoopWebSocketConnection
                         targetNetId: targetNetId,
                         hostFacts: joinRead.Seats,
                         // The new renderer: this viewer's seat, if launched now, may become the streaming seat.
-                        wantsStreamingSeat: string.Equals(join.Renderer, "stream", StringComparison.Ordinal)).ConfigureAwait(false);
+                        wantsStreamingSeat: string.Equals(join.Renderer, "stream", StringComparison.Ordinal),
+                        // ...at the aspect of the page's stream box, when its Widescreen stretch is on (PRES-A).
+                        streamingAspect: BrowserAspect.Read(join.Aspect)).ConfigureAwait(false);
                     if (headlessPort is int readyPort)
                     {
                         headlessPath = _headlessManager.SharedMirrorPathForPort(readyPort);
@@ -990,12 +992,16 @@ public sealed class CouchCoopWebSocketConnection
 
                 if (string.Equals(type, "set-renderer", StringComparison.Ordinal))
                 {
-                    // `{type:"set-renderer", renderer:"stream"|"mirror"}`: the viewer switched "Use new renderer
+                    // `{type:"set-renderer", renderer:"stream"|"mirror", aspect?}`: the viewer switched "Use new renderer
                     // (Beta)" after their seat started (MIR-4). On the host, for this session's own seat only: ON
                     // restarts it as the streaming seat (or stages that mid-run), OFF withdraws a staged request. The
                     // answer is this connection's next `session` (`rendererSeat`), sent now and on every change.
+                    // `aspect` (only with "stream", only while the page's Widescreen stretch is on) sets the seat's
+                    // presentation width (PRES-A).
                     var renderer = document.RootElement.TryGetProperty("renderer", out var rendererElement)
                         && rendererElement.ValueKind == JsonValueKind.String ? rendererElement.GetString() : null;
+                    var aspect = BrowserAspect.Read(document.RootElement.TryGetProperty("aspect", out var aspectElement)
+                        ? aspectElement : null);
                     if (_headlessManager is { } seats && renderer is "stream" or "mirror")
                     {
                         if (renderer == "stream")
@@ -1004,7 +1010,7 @@ public sealed class CouchCoopWebSocketConnection
                             {
                                 try
                                 {
-                                    await seats.RequestStreamingSeatAsync(session.Id, CancellationToken.None).ConfigureAwait(false);
+                                    await seats.RequestStreamingSeatAsync(session.Id, aspect, CancellationToken.None).ConfigureAwait(false);
                                 }
                                 catch (Exception exception)
                                 {

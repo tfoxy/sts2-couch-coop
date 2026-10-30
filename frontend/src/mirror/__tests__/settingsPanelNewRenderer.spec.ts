@@ -43,7 +43,6 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
   ["mirror-shader-mode", "shaderMode", "select"],
   ["mirror-particle-mode", "particleMode", "select"],
   ["mirror-static-bg", "staticBgEnabled", "checkbox"],
-  ["mirror-stretch", "stretchEnabled", "checkbox"],
   ["mirror-raise-card", "raiseHeldCard", "checkbox"],
   ["mirror-unfocus", "unfocusOnRelease", "checkbox"],
   ["mirror-tap-focus", "tapToFocus", "checkbox"],
@@ -57,7 +56,9 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
   ["mirror-freeze-spines", "freezeSpines", "checkbox"],
   ["mirror-freeze-decor", "freezeDecor", "checkbox"]
 ];
-const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-refresh-rate", "mirror-latency-overlay"];
+// Widescreen stretch is supported since PRES-A: under the new renderer it sets the width the seat is launched at.
+const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-stretch", "mirror-refresh-rate",
+  "mirror-latency-overlay"];
 
 function available(): void {
   renderStreamContext.coreProblem = null;
@@ -132,6 +133,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     }
     expect(el("mirror-audio").checked).toBe(true);
     expect(el("mirror-safe-area-padding").checked).toBe(true);
+    expect(el("mirror-stretch").checked).toBe(true);
     expect(el("mirror-refresh-rate").value).toBe("40");
     expect(el("mirror-latency-overlay").checked).toBe(true);
     // Input-to-frame does not exist while view-only.
@@ -144,10 +146,24 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     mountPanel();
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
     // A disabled control cannot be operated by a user; drive the binding the way a stray script would.
-    await wrapper!.get('[data-testid="mirror-stretch"]').setValue(false);
+    await wrapper!.get('[data-testid="mirror-static-bg"]').setValue(false);
     await wrapper!.get('[data-testid="mirror-quality"]').setValue("minimum");
-    expect(mirrorSettings.stretchEnabled).toBe(true);
+    expect(mirrorSettings.staticBgEnabled).toBe(true);
     expect(mirrorSettings.quality).toBe("low");
+  });
+
+  // PRES-A: under the new renderer Widescreen stretch means "launch my seat at my aspect" (the request for a streaming
+  // seat carries the page's aspect only while it is on), so it stays the viewer's: settable, and saved.
+  it("keeps Widescreen stretch settable and saved while the stream draws", async () => {
+    available();
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(el("mirror-stretch").disabled).toBe(false);
+    await wrapper!.get('[data-testid="mirror-stretch"]').setValue(false);
+    expect(mirrorSettings.stretchEnabled).toBe(false);
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}"))
+      .toEqual({ renderer: "stream", stretchEnabled: false });
   });
 
   it("forces Particles off on a /11 stream, which carries no emitters", async () => {

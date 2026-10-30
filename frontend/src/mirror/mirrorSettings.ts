@@ -723,10 +723,13 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // failing back to the old renderer) shows every row as the viewer left it. When a feature lands, its row leaves
 // this table (and its spec), and the panel binds it normally again.
 //
-// Rows NOT here are supported as saved: Audio, Safe-area padding, Refresh rate, Show overlay (and the network RTT).
+// Rows NOT here are supported as saved: Audio, Safe-area padding, Refresh rate, Show overlay (and the network RTT),
+// and Widescreen stretch, which under the new renderer means "launch my seat at my aspect": the page sends its stream
+// box's aspect with the request for a streaming seat and the host launches the seat that wide
+// (GRC_ROOT_SIZE=presentation:<W>x1080, PRES-A). It takes effect at the seat's next start (re-launch on change: PRES-R).
 // Stage is disabled but keeps its saved value — see STREAM_DISABLED_ROWS.
 export type StreamForcedKey =
-  | "quality" | "shaderMode" | "particleMode" | "staticBgEnabled" | "stretchEnabled"
+  | "quality" | "shaderMode" | "particleMode" | "staticBgEnabled"
   | "raiseHeldCard" | "unfocusOnRelease" | "tapToFocus" | "confirmTap" | "raiseHandCards" | "uiScaling"
   | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeSpines" | "freezeDecor";
 
@@ -739,8 +742,6 @@ export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protoc
   particleMode: (protocol) => (protocol >= 12 ? "dynamic" : "off"),
   // The live background is in the stream.
   staticBgEnabled: () => false,
-  // One presentation size per session (GRC_ROOT_SIZE=presentation:1920x1080): letterboxed 16:9.
-  stretchEnabled: () => false,
   // View-only: no input reaches the game, so every input and held-card feature is off.
   raiseHeldCard: () => false,
   unfocusOnRelease: () => false,

@@ -13,7 +13,10 @@ using CouchCoop.Mod.Session;
 //   * at most one live streaming seat per host: the first viewer who asks gets it, a second does not, and it frees
 //     when that seat's process exits — and a host with no capture configured never launches one;
 //   * the descriptor goes only to the streaming seat's connection, only for an Origin the hub allows, only with a
-//     well-formed token; and nothing on this path writes the token to a log.
+//     well-formed token; and nothing on this path writes the token to a log;
+//   * PRES-A: the seat is launched at its viewer's aspect: W = clamp(round(1080 * aspect), 1920, cap), even, and
+//     stepped past every width Godot's float32 `expand` arithmetic floors to W-1; no usable aspect is 1920; the cap is
+//     the operator's COUCHCOOP_RENDER_STREAM_MAX_WIDTH (default 2520).
 //
 // Pure decisions, a real ProcessStartInfo and the manager over a fake launcher; no engine, no game.
 internal static class RenderStreamPairingTests
@@ -30,10 +33,16 @@ internal static class RenderStreamPairingTests
         APackagedCaptureIsTheFallback();
         AllowedOriginsAreTheHostPageAndValidExtras();
         LaunchEnvironmentIsTheAcceptanceTable();
+        PresentationWidthFollowsTheAspect();
+        TheFloat32GuardMatchesGodot();
+        TheCapIsTheOperatorsSetting();
+        AWideLaunchCarriesItsRootSize();
+        TheAspectIsReadFromTheWire();
         NoSeatInheritsTheCapture();
         await OneStreamingSeatPerHostAsync();
         await AnUnconfiguredHostNeverStreamsAsync();
         await AReusedSeatKeepsItsRoleAsync();
+        await AJoinsAspectSetsItsSeatsWidthAsync();
         DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin();
         DescriptorNeedsAWellFormedToken();
         TheTokenIsNeverLogged();
@@ -138,6 +147,108 @@ internal static class RenderStreamPairingTests
             "the hub port is the last of the slot's own band, stable per slot");
     }
 
+    private static void PresentationWidthFollowsTheAspect()
+    {
+        const int cap = StreamingSeatLaunch.DefaultMaxPresentationWidth;
+        Assert(cap == 2520, "the default cap is 21:9 at 1080, the old renderer's");
+        foreach (var absent in new double?[] { null, double.NaN, double.PositiveInfinity, double.NegativeInfinity, 0, -1.5, 0.2, 5.01, 100 })
+        {
+            Assert(StreamingSeatLaunch.PresentationWidth(absent, cap) == 1920, $"no usable aspect ({absent}) is the 16:9 base");
+        }
+        Assert(StreamingSeatLaunch.PresentationWidth(16.0 / 9.0, cap) == 1920, "16:9 is the base");
+        Assert(StreamingSeatLaunch.PresentationWidth(4.0 / 3.0, cap) == 1920, "narrower than 16:9 clamps up to the base");
+        Assert(StreamingSeatLaunch.PresentationWidth(0.25, cap) == 1920, "a portrait phone (in range) clamps to the base");
+        Assert(StreamingSeatLaunch.PresentationWidth(2340.0 / 1080.0, cap) == 2340, "19.5:9 is 2340 (and survives the guard)");
+        Assert(StreamingSeatLaunch.PresentationWidth(21.0 / 9.0, cap) == 2520, "21:9 is 2520 (and survives the guard)");
+        Assert(StreamingSeatLaunch.PresentationWidth(3.0, cap) == 2520, "wider than the cap is the cap");
+        Assert(StreamingSeatLaunch.PresentationWidth(5.0, cap) == 2520, "the widest accepted aspect is the cap too");
+        Assert(StreamingSeatLaunch.PresentationWidth(2341.0 / 1080.0, cap) == 2340, "an odd width is made even (down)");
+        Assert(StreamingSeatLaunch.PresentationWidth(2000.4 / 1080.0, cap) == 2000, "1080 * aspect is rounded first");
+        // The guard steps a width Godot would floor to W-1 down to the next even width it reproduces.
+        Assert(StreamingSeatLaunch.PresentationWidth(1940.0 / 1080.0, cap) == 1938, "1940 -> 1938");
+        Assert(StreamingSeatLaunch.PresentationWidth(2234.0 / 1080.0, cap) == 2232, "2234 -> 2232");
+        Assert(StreamingSeatLaunch.PresentationWidth(2260.0 / 1080.0, cap) == 2258, "2260 -> 2258");
+        Assert(StreamingSeatLaunch.PresentationWidth(2382.0 / 1080.0, cap) == 2380, "2382 -> 2380");
+        Assert(StreamingSeatLaunch.PresentationWidth(2504.0 / 1080.0, cap) == 2502, "2504 -> 2502");
+        Assert(StreamingSeatLaunch.PresentationWidth(2530.0 / 1080.0, 2600) == 2528, "2530 -> 2528 under a wider cap");
+        Assert(StreamingSeatLaunch.PresentationWidth(2600.0 / 1080.0, 2600) == 2600, "a wider cap is honoured");
+        Assert(StreamingSeatLaunch.PresentationWidth(3.0, 1000) == 1920, "a cap below the base is the base");
+        for (var aspect = 0.25; aspect <= 5.0; aspect += 0.0137)
+        {
+            var w = StreamingSeatLaunch.PresentationWidth(aspect, 5400);
+            Assert(w >= 1920 && w <= 5400 && w % 2 == 0 && StreamingSeatLaunch.SurvivesExpandStretch(w),
+                $"every width is even, in range and reproduced by Godot (aspect {aspect}: {w})");
+        }
+    }
+
+    private static void TheFloat32GuardMatchesGodot()
+    {
+        // Measured against Godot 4.5.1 Window::_update_viewport_size: the even widths in [1920, 2600] whose visible width
+        // floors to W-1 under canvas_items/expand at a 1080 base. 2340 and 2520 are fine.
+        int[] measured = [1940, 2234, 2260, 2382, 2504, 2530];
+        var failing = Enumerable.Range(0, (2600 - 1920) / 2 + 1).Select(i => 1920 + i * 2)
+            .Where(w => !StreamingSeatLaunch.SurvivesExpandStretch(w)).ToArray();
+        Assert(failing.SequenceEqual(measured), $"the float32 guard rejects exactly the measured widths: {string.Join(',', failing)}");
+        Assert(StreamingSeatLaunch.SurvivesExpandStretch(1920), "the base itself survives");
+    }
+
+    private static void TheCapIsTheOperatorsSetting()
+    {
+        Assert(StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable == "COUCHCOOP_RENDER_STREAM_MAX_WIDTH",
+            "the cap's variable");
+        Assert(new StreamingSeatLaunch.Config(Extension, Calibration).MaxPresentationWidth == 2520, "a config defaults to 2520");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth(null, out var w0) == 2520 && w0 is null, "unset is 2520, silently");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth("  ", out var w1) == 2520 && w1 is null, "blank is 2520, silently");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth("wide", out var w2) == 2520 && w2 is not null,
+            "not an integer is 2520, with a warning");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth(" 3000 ", out _) == 3000, "an integer is the cap");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth("2601", out _) == 2600, "made even");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth("1000", out _) == 1920, "at least the base");
+        Assert(StreamingSeatLaunch.ParseMaxPresentationWidth("99999", out _) == 5400, "at most 5:1 at 1080");
+    }
+
+    private static void AWideLaunchCarriesItsRootSize()
+    {
+        var env = StreamingSeatLaunch.Environment(new StreamingSeatLaunch.Config(Extension, Calibration),
+            StreamingSeatLaunch.HubPortForSlot(2), "/home/p/ev", StreamingSeatLaunch.AllowedOrigins(13337, null),
+            StreamingSeatLaunch.PresentationWidth(2340.0 / 1080.0, 2520));
+        Assert(env["GRC_ROOT_SIZE"] == "presentation:2340x1080", $"the seat is launched at its viewer's width: {env["GRC_ROOT_SIZE"]}");
+
+        // ...and the seat's own descriptor hands that size to the page, which sizes its canvas from it.
+        var seat = new Dictionary<string, string>(SeatEnvironment(auth: "token")) { ["GRC_ROOT_SIZE"] = env["GRC_ROOT_SIZE"] };
+        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", seat.GetValueOrDefault, _ => Token)
+                is { Presentation: [2340, 1080] },
+            "the descriptor carries the wide presentation");
+
+        // The host's launch line names the width, for a live leg to read.
+        var launcher = File.ReadAllText(Path.Combine(RepoRoot(), "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));
+        var apply = launcher.IndexOf("private void ApplyStreamingSeatLocked(", StringComparison.Ordinal);
+        var applyBody = launcher[apply..launcher.IndexOf("\n    }\n", apply, StringComparison.Ordinal)];
+        Assert(applyBody.Contains("streaming seat launching slot=", StringComparison.Ordinal)
+               && applyBody.Contains("presentation={width.ToString(", StringComparison.Ordinal),
+            "the seat-launch log line carries the chosen presentation");
+    }
+
+    private static void TheAspectIsReadFromTheWire()
+    {
+        static BrowserJoinRequestEnvelope Join(string json)
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Deserialize<BrowserJoinRequestEnvelope>(document, BrowserJson.Options)!;
+        }
+
+        Assert(BrowserAspect.Read(Join("""{"type":"join","requestId":"j","name":"Ann","renderer":"stream","aspect":2.1666}""").Aspect) == 2.1666,
+            "a join's numeric aspect is read");
+        Assert(BrowserAspect.Read(Join("""{"type":"join","requestId":"j","name":"Ann","renderer":"stream"}""").Aspect) is null,
+            "no aspect is null (the base width)");
+        foreach (var bad in new[] { "\"wide\"", "null", "true", "[2]", "{}" })
+        {
+            var join = Join($$"""{"type":"join","requestId":"j","name":"Ann","renderer":"stream","aspect":{{bad}}}""");
+            Assert(join.Renderer == "stream" && BrowserAspect.Read(join.Aspect) is null,
+                $"a malformed aspect ({bad}) is ignored and never fails the join");
+        }
+    }
+
     private static void NoSeatInheritsTheCapture()
     {
         // A real ProcessStartInfo: a copy of this process's environment, with an indexer that throws on a missing key.
@@ -148,11 +259,13 @@ internal static class RenderStreamPairingTests
         normal.Environment[RenderCaptureExtensionLoader.EnvironmentVariable] = Extension;
         normal.Environment[StreamingSeatLaunch.CalibrationEnvironmentVariable] = Calibration;
         normal.Environment[StreamingSeatLaunch.ExtraOriginsEnvironmentVariable] = "http://127.0.0.1:5190";
+        normal.Environment[StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable] = "3000";
         normal.Environment["GRCX_UNRELATED"] = "kept";
         StreamingSeatLaunch.ClearInherited(normal);
         Assert(!normal.Environment.Keys.Any(k => k.StartsWith("GRC_", StringComparison.Ordinal)), "no GRC_* reaches a seat");
         foreach (var key in new[] { StreamingSeatRole.EnvironmentVariable, RenderCaptureExtensionLoader.EnvironmentVariable,
-                     StreamingSeatLaunch.CalibrationEnvironmentVariable, StreamingSeatLaunch.ExtraOriginsEnvironmentVariable })
+                     StreamingSeatLaunch.CalibrationEnvironmentVariable, StreamingSeatLaunch.ExtraOriginsEnvironmentVariable,
+                     StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable })
         {
             Assert(!normal.Environment.ContainsKey(key), $"{key} does not reach a seat");
         }
@@ -218,6 +331,29 @@ internal static class RenderStreamPairingTests
         h.Spawned[0].ForceExit();
         await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true);
         Assert(h.Launches is [(2, false), (2, true)] && h.Manager.StreamingSlot == 2, "the respawned seat streams");
+    }
+
+    private static async Task AJoinsAspectSetsItsSeatsWidthAsync()
+    {
+        var h = new Harness(configured: true);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true,
+            streamingAspect: 2340.0 / 1080.0);
+        Assert(h.Launches is [(2, true)] && h.Manager.StreamingSeatPresentationWidth(2) == 2340,
+            "a streaming join's aspect is its seat's width");
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default, wantsStreamingSeat: true);
+        Assert(h.Manager.StreamingSeatPresentationWidth(3) == 1920, "a join without an aspect (stretch off) is 1920");
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cat", default, wantsStreamingSeat: true, streamingAspect: double.NaN);
+        Assert(h.Manager.StreamingSeatPresentationWidth(4) == 1920, "an unusable aspect is 1920");
+
+        var capped = new Harness(configured: true, maxWidth: 2200);
+        await capped.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true, streamingAspect: 21.0 / 9.0);
+        Assert(capped.Manager.StreamingSeatPresentationWidth(2) == 2200, "the operator's cap bounds it");
+
+        // Ann's seat is reused by a join asking with another aspect: the running seat keeps its width until its next
+        // start (re-launching on a changed aspect is PRES-R).
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true, streamingAspect: 2.0);
+        Assert(h.Launches.Count == 3 && h.Manager.StreamingSeatPresentationWidth(2) == 2340,
+            "no relaunch, and no new width, for a reused seat");
     }
 
     private static void DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin()
@@ -332,7 +468,7 @@ internal static class RenderStreamPairingTests
         public readonly List<FakeProcess> Spawned = [];
         public readonly HeadlessClientManager Manager;
 
-        public Harness(bool configured)
+        public Harness(bool configured, int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth)
         {
             HeadlessClientManager? manager = null;
             Manager = manager = new HeadlessClientManager(
@@ -344,7 +480,7 @@ internal static class RenderStreamPairingTests
                     return process;
                 },
                 readinessProbe: (_, _) => Task.FromResult(true),
-                streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration) : null);
+                streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration, maxWidth) : null);
         }
     }
 

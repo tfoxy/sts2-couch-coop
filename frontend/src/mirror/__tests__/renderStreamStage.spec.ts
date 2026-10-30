@@ -79,6 +79,17 @@ describe("RenderStreamStage", () => {
     expect(clients[0].connects).toBe(1);
   });
 
+  // PRES-A: a seat launched at the viewer's aspect describes a wider presentation; the canvas takes that backing size
+  // and is letterboxed at that aspect, not at 16:9.
+  it("sizes and letterboxes the canvas at a wide seat's presentation", () => {
+    mountStage({ endpoint: { ...endpoint, presentation: [2340, 1080] } });
+    const canvas = wrapper!.get('[data-testid="render-stream-canvas"]').element as HTMLCanvasElement;
+    expect(canvas.width).toBe(2340);
+    expect(canvas.height).toBe(1080);
+    const box = wrapper!.get(".render-stream-box").element as HTMLElement;
+    expect(Number(box.style.getPropertyValue("--render-stream-aspect"))).toBeCloseTo(2340 / 1080, 10);
+  });
+
   it("shows the loading line until the first drawn frame, and Reconnecting… while backing off", async () => {
     mountStage();
     expect(status().text()).toBe("Connecting…");

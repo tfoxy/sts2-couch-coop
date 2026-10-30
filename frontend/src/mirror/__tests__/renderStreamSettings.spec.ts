@@ -24,6 +24,7 @@ import {
   resolveRuntimeRenderer,
   sessionRenderStreamEndpoint,
   stopRenderStream,
+  streamSeatAspect,
   syncRuntimeRenderer,
   type RenderStreamAvailabilityInputs,
   type RenderStreamSeatRestart
@@ -113,6 +114,37 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(settings.tweenReplay).toBe(true);
     settings.runtimeRenderer = "mirror";
     expect(serverSettingsPayload(settings)).toEqual(old);
+  });
+
+  it("leaves Widescreen stretch the viewer's: it sets the streaming seat's width (PRES-A)", () => {
+    expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("stretchEnabled");
+    expect(Object.keys(STREAM_RENDER_OVERRIDES).sort()).toEqual([
+      "backstopOcclusion", "confirmTap", "freezeDecor", "freezeParticles", "freezeSpines", "particleMode", "quality",
+      "raiseHandCards", "raiseHeldCard", "reproRecorder", "shaderMode", "staticBgEnabled", "tapToFocus", "tweenReplay",
+      "uiScaling", "unfocusOnRelease"
+    ]);
+  });
+
+  it("asks for the seat at the stream box's aspect only with Widescreen stretch on (PRES-A)", () => {
+    const box = (width: number, height: number) => () => ({ width, height });
+    expect(streamSeatAspect({ stretchEnabled: true }, box(2340, 1080))).toBeCloseTo(2340 / 1080, 10);
+    expect(streamSeatAspect({ stretchEnabled: true }, box(1080, 2340))).toBeCloseTo(1080 / 2340, 10);
+    expect(streamSeatAspect({ stretchEnabled: false }, box(2340, 1080))).toBeUndefined();
+    expect(streamSeatAspect({ stretchEnabled: true }, box(0, 0))).toBeUndefined();
+    expect(streamSeatAspect({ stretchEnabled: true }, box(2340, 0))).toBeUndefined();
+  });
+
+  it("measures the mounted stream stage, else the window", () => {
+    const stage = document.createElement("div");
+    stage.dataset.testid = "render-stream-stage";
+    stage.getBoundingClientRect = () => ({ width: 2520, height: 1080 }) as DOMRect;
+    document.body.append(stage);
+    try {
+      expect(streamSeatAspect({ stretchEnabled: true })).toBeCloseTo(2520 / 1080, 10);
+    } finally {
+      stage.remove();
+    }
+    expect(streamSeatAspect({ stretchEnabled: true })).toBeCloseTo(window.innerWidth / window.innerHeight, 10);
   });
 
   it("forces Particles by protocol: dynamic at /12, off at /11", () => {

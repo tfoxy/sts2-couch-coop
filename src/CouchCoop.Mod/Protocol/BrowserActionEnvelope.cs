@@ -35,7 +35,23 @@ public sealed record BrowserJoinRequestEnvelope(
     // "Use new renderer (Beta)": `"stream"` asks for this viewer's seat to be launched as the host's streaming seat
     // (HeadlessClientManager / StreamingSeatLaunch). Only the exact value counts; omitted otherwise, so every other
     // join is byte-identical to before.
-    string? Renderer = null);
+    string? Renderer = null,
+    // With `renderer: "stream"`: width / height of the box the page shows the stream in, sent only while the viewer's
+    // Widescreen stretch is on (PRES-A). The streaming seat is launched that wide (StreamingSeatLaunch.PresentationWidth).
+    // Raw JSON so that a malformed value can never fail the join: BrowserAspect.Read keeps only a finite number.
+    JsonElement? Aspect = null);
+
+/// <summary>
+/// The <c>aspect</c> a page sends with its streaming-seat request (<c>join</c> and <c>set-renderer</c>): a finite JSON
+/// number, or null. The range is the host's to judge (<c>StreamingSeatLaunch.PresentationWidth</c>).
+/// </summary>
+internal static class BrowserAspect
+{
+    internal static double? Read(JsonElement? element)
+        => element is { ValueKind: JsonValueKind.Number } number && number.TryGetDouble(out var value) && double.IsFinite(value)
+            ? value
+            : null;
+}
 
 // Upstream raw-input replay from a controlling mirror client (single-controller foundation). `Kind` selects
 // the injection; element-addressed pointer input carries `ElementId` (+ optional normalized 0..1 offset),

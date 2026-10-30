@@ -139,14 +139,17 @@ beforeEach(() => {
   fake.clients.length = 0;
   realWebSocket = globalThis.WebSocket;
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
+  // Widescreen stretch off unless a test turns it on: a streaming-seat request then carries no `aspect` (PRES-A).
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
-    renderStreamProtocol: 12, refreshRate: DEFAULT_REFRESH_RATE, ...HEADLESS_FREEZES, staticBgEnabled: true });
+    renderStreamProtocol: 12, refreshRate: DEFAULT_REFRESH_RATE, ...HEADLESS_FREEZES, staticBgEnabled: true,
+    stretchEnabled: false });
 });
 
 afterEach(() => {
   app?.unmount();
   app = null;
-  Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null });
+  Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
+    stretchEnabled: true });
   Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
     coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false, seatRestart: null });
   globalThis.localStorage?.clear();
@@ -295,6 +298,84 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
     await settle();
     expect(host.ofType("join")[0]).toMatchObject({ name: "Alice", playerId: "p:1003", renderer: "stream" });
+  });
+
+  // PRES-A: the request for a streaming seat carries the page's aspect while Widescreen stretch is on, so the host
+  // launches the seat that wide; off, it carries none (1920x1080).
+  describe("the seat's aspect", () => {
+    const sizes = { innerWidth: Object.getOwnPropertyDescriptor(window, "innerWidth"),
+      innerHeight: Object.getOwnPropertyDescriptor(window, "innerHeight") };
+    beforeEach(() => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 2340 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 1080 });
+    });
+    afterEach(() => {
+      for (const [key, descriptor] of Object.entries(sizes)) {
+        if (descriptor) Object.defineProperty(window, key, descriptor);
+        else delete (window as unknown as Record<string, unknown>)[key];
+      }
+    });
+
+    async function pickAlice(): Promise<MockWebSocket> {
+      canStream();
+      mirrorSettings.renderer = "stream";
+      app = mount(MirrorApp);
+      await settle();
+      const host = latest();
+      host.emit(sessionMessage());
+      await settle();
+      await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+      await settle();
+      return host;
+    }
+
+    it("rides the join with Widescreen stretch on", async () => {
+      mirrorSettings.stretchEnabled = true;
+      const host = await pickAlice();
+      const join = host.ofType("join")[0];
+      expect(join).toMatchObject({ renderer: "stream" });
+      expect(join.aspect).toBeCloseTo(2340 / 1080, 10);
+    });
+
+    it("is absent from the join with Widescreen stretch off", async () => {
+      const host = await pickAlice();
+      expect(host.ofType("join")[0]).toMatchObject({ renderer: "stream" });
+      expect(host.ofType("join")[0]).not.toHaveProperty("aspect");
+    });
+
+    it("rides set-renderer with Widescreen stretch on, and never the withdrawal", async () => {
+      mirrorSettings.stretchEnabled = true;
+      const { host } = await joinNormalSeat();
+      // The old renderer's join asked for no streaming seat, so it carried no aspect either.
+      expect(host.ofType("join")[0]).not.toHaveProperty("aspect");
+      mirrorSettings.renderer = "stream";
+      await settle();
+      const request = host.ofType("set-renderer")[0];
+      expect(request).toMatchObject({ type: "set-renderer", renderer: "stream" });
+      expect(request.aspect).toBeCloseTo(2340 / 1080, 10);
+      mirrorSettings.renderer = "mirror";
+      await settle();
+      expect(host.ofType("set-renderer").at(-1)).toEqual({ type: "set-renderer", renderer: "mirror" });
+    });
+
+    it("is absent from set-renderer with Widescreen stretch off", async () => {
+      const { host } = await joinNormalSeat();
+      mirrorSettings.renderer = "stream";
+      await settle();
+      expect(host.ofType("set-renderer")).toEqual([{ type: "set-renderer", renderer: "stream" }]);
+    });
+
+    it("is not re-sent when the window changes after the request (PRES-R)", async () => {
+      mirrorSettings.stretchEnabled = true;
+      const { host } = await joinNormalSeat();
+      mirrorSettings.renderer = "stream";
+      await settle();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1080 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 2340 });
+      window.dispatchEvent(new Event("resize"));
+      await settle();
+      expect(host.ofType("set-renderer")).toHaveLength(1);
+    });
   });
 
   it("joins exactly as before with the old renderer", async () => {

@@ -540,9 +540,11 @@ public sealed partial class HeadlessClientManager : IDisposable
         _ownedSeatCountChanged = ownedSeatCountChanged;
         var streaming = StreamingSeatLaunch.ResolveConfigFromEnvironment();
         _streamingConfig = streaming.Config;
+        if (streaming.Warning is { } warning) CouchCoopLog.Warn($"streaming seat: {warning}");
         if (streaming.Config is { } config)
         {
-            CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.Calibration}");
+            CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.Calibration} "
+                + $"maxWidth={config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)}");
         }
         else if (streaming.Refusal is { } refusal)
         {
@@ -654,7 +656,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         SeatBrowserRouteMode routeMode = SeatBrowserRouteMode.Direct,
         ulong? targetNetId = null,
         bool wantsStreamingSeat = false,
-        bool relaunch = false)
+        bool relaunch = false,
+        double? streamingAspect = null)
     {
         var name = NormalizeName(displayName);
         int slot;
@@ -930,6 +933,9 @@ public sealed partial class HeadlessClientManager : IDisposable
             _streamingLaunchSlot = (wantsStreamingSeat || SlotWantsStreamingLocked(slot))
                 && _streamingConfig is not null && !StreamingSeatTakenLocked(slot)
                 ? slot : null;
+            // A join that asks for the streaming seat brings its page's aspect (PRES-A); a relaunch keeps the one the
+            // restart request recorded (RequestStreamingSeatAsync).
+            if (wantsStreamingSeat && !relaunch) RecordStreamingAspectLocked(slot, streamingAspect);
             try
             {
                 PrepareConnectionLocked(slot, sessionId, routeMode);
@@ -2302,8 +2308,12 @@ public sealed partial class HeadlessClientManager : IDisposable
         var hostPort = _controlPort?.Invoke() ?? 0;
         var origins = StreamingSeatLaunch.AllowedOrigins(
             hostPort, Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable));
-        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins));
+        var aspect = _streamingAspect.TryGetValue(slot, out var requested) ? requested : (double?)null;
+        var width = StreamingSeatPresentationWidthLocked(slot);
+        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, width));
         CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)} "
+            + $"presentation={width.ToString(CultureInfo.InvariantCulture)}x{StreamingSeatLaunch.PresentationHeight.ToString(CultureInfo.InvariantCulture)} aspect={(aspect is double a ? a.ToString("0.####", CultureInfo.InvariantCulture) : "none")} "
+            + $"cap={_streamingConfig!.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
             + $"origins={string.Join(',', origins)} evidence={evidence}");
     }
 

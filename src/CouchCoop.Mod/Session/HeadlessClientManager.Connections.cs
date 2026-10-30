@@ -124,9 +124,15 @@ public sealed partial class HeadlessClientManager
     /// host's streaming seat when the host is configured for one and no other live seat streams
     /// (<see cref="StreamingSeatLaunch"/>); a seat that is reused keeps the role it started with.
     /// </param>
+    /// <param name="streamingAspect">
+    /// With <paramref name="wantsStreamingSeat"/>: the aspect of the viewer's stream box (sent only with their
+    /// Widescreen stretch on), which sets the streaming seat's presentation width
+    /// (<see cref="StreamingSeatLaunch.PresentationWidth"/>). Null is the 16:9 base.
+    /// </param>
     public async Task<int?> EnsureHeadlessAsync(Guid sessionId, string? displayName, CancellationToken ct,
         bool allowNewSlot = true, Action<ulong, string?>? onSlotBound = null, ulong? targetNetId = null,
-        JoinSeatFacts? hostFacts = null, bool wantsStreamingSeat = false, bool relaunch = false)
+        JoinSeatFacts? hostFacts = null, bool wantsStreamingSeat = false, bool relaunch = false,
+        double? streamingAspect = null)
     {
         Task[] cleanup;
         lock (_lock) cleanup = _connectionCleanup.Values.ToArray();
@@ -178,7 +184,8 @@ public sealed partial class HeadlessClientManager
                 routeMode,
                 targetNetId,
                 wantsStreamingSeat,
-                relaunch);
+                relaunch,
+                streamingAspect);
         }
         catch
         {

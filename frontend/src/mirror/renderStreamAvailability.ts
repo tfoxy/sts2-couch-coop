@@ -219,6 +219,39 @@ export function currentJoinRendererRequest(settings: MirrorSettings = mirrorSett
   });
 }
 
+/** The box whose aspect `streamSeatAspect` reports: width and height in CSS pixels. */
+export interface StreamBoxSize { width: number; height: number }
+
+/** The box the stream stage is shown in: the mounted stage's frame, else the window (the stage mounts only once the
+ * seat streams, so a request to start streaming usually measures the window). */
+export function measureStreamBox(): StreamBoxSize {
+  const stage = typeof document === "undefined" ? null : document.querySelector('[data-testid="render-stream-stage"]');
+  if (stage) {
+    const rect = stage.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height };
+  }
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
+/**
+ * The `aspect` (width / height of the stream box) that rides this page's request for a streaming seat — the join's
+ * `renderer: "stream"` and `set-renderer` — so the host launches the seat at that width (PRES-A: the game lays itself
+ * out at `presentation:<W>x1080`, W = clamp(round(1080 * aspect), 1920, the host's cap)). Only with Widescreen stretch
+ * on; off (or an unmeasurable box) sends none, which is 1920x1080.
+ *
+ * READ ONCE, when the seat is asked for. A later rotation or resize does NOT restart the seat: the stage letterboxes
+ * the stream into the new box until the seat's next start (re-launching on a changed aspect is PRES-R).
+ */
+export function streamSeatAspect(
+  settings: Pick<MirrorSettings, "stretchEnabled"> = mirrorSettings,
+  measure: () => StreamBoxSize = measureStreamBox
+): number | undefined {
+  if (!settings.stretchEnabled) return undefined;
+  const { width, height } = measure();
+  const aspect = width / height;
+  return Number.isFinite(aspect) && aspect > 0 ? aspect : undefined;
+}
+
 /** The rule for the live renderer (see the header). */
 export function resolveRuntimeRenderer(
   renderer: MirrorSettings["renderer"], availability: RenderStreamAvailability, stopped: string | null

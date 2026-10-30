@@ -230,14 +230,17 @@ export interface MirrorClient {
   // host resolve the exact seat instead of matching the label, which is what makes a rejoin land on the right netId.
   // `renderer: "stream"` asks the host to launch this viewer's seat as its streaming seat ("Use new renderer
   // (Beta)", renderStreamAvailability's `joinRendererRequest`); omitted otherwise, so the bytes are as before.
-  sendJoin(name: string, playerId?: string, renderer?: "stream"): void;
+  // `aspect` (only with `renderer`, and only a finite number) is the stream box's width / height, which sets the
+  // seat's presentation width (PRES-A, renderStreamAvailability's `streamSeatAspect`).
+  sendJoin(name: string, playerId?: string, renderer?: "stream", aspect?: number): void;
   // Ask the connected instance to send its `session` envelope again (`{type:"session-refresh"}`). The new renderer
   // asks once when its hub refused the token, to learn the seat's current descriptor. No-op when not open.
   requestSession(): void;
   // "Use new renderer (Beta)" switched after this viewer's seat started (MIR-4): `{type:"set-renderer", renderer}` on
   // the HOST socket. "stream" asks the host to restart this viewer's own seat as the streaming seat; "mirror"
   // withdraws a staged request. The answer comes back as the host session's `rendererSeat`. No-op when not open.
-  sendRendererRequest(renderer: "stream" | "mirror"): void;
+  // `aspect` rides "stream" only, as in `sendJoin`.
+  sendRendererRequest(renderer: "stream" | "mirror", aspect?: number): void;
   // Retire a local join attempt after timeout/rollback. Late replies cannot reopen its view.
   // This does not cancel a server-side spawn or alter the connection's watch request.
   cancelPendingJoin(): void;
@@ -709,7 +712,7 @@ export function connectMirrorClient(options: {
     }
   }
 
-  function sendJoin(name: string, playerId?: string, renderer?: "stream"): void {
+  function sendJoin(name: string, playerId?: string, renderer?: "stream", aspect?: number): void {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
@@ -726,7 +729,8 @@ export function connectMirrorClient(options: {
         // Omitted (not null) when there is no picked seat, so a free-text join's bytes are exactly as before.
         ...(playerId ? { playerId } : {}),
         ...(visit ? { visit } : {}),
-        ...(renderer ? { renderer } : {})
+        ...(renderer ? { renderer } : {}),
+        ...(renderer && finiteAspect(aspect) ? { aspect } : {})
       }));
       joinPending = true;
       joinRequestId = requestId;
@@ -746,12 +750,16 @@ export function connectMirrorClient(options: {
     }
   }
 
-  function sendRendererRequest(renderer: "stream" | "mirror"): void {
+  function sendRendererRequest(renderer: "stream" | "mirror", aspect?: number): void {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
     try {
-      socket.send(JSON.stringify({ type: "set-renderer", renderer }));
+      socket.send(JSON.stringify({
+        type: "set-renderer",
+        renderer,
+        ...(renderer === "stream" && finiteAspect(aspect) ? { aspect } : {})
+      }));
     } catch {
       // Racing close — drop it; the checkbox still shows the saved choice, and the next seat start honours it.
     }
@@ -1100,6 +1108,11 @@ export function readScrollAck(raw: unknown): MirrorScrollAck | null {
     requestedY: finiteWireNumber(bag["requestedY"]),
     surface: typeof surface === "string" ? surface : null
   };
+}
+
+// A streaming-seat request's `aspect` is sent only as a finite positive number (JSON has no NaN; it would be `null`).
+function finiteAspect(aspect: number | undefined): aspect is number {
+  return typeof aspect === "number" && Number.isFinite(aspect) && aspect > 0;
 }
 
 // One value out of the result's string bag, or null. Deliberately NOT bare `Number(...)`: `Number("")` and

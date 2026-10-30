@@ -4,8 +4,11 @@
 // all belong to `@godot-scene-web/render-stream-client`.
 //
 // What this component owns (handoff-mirror-new-renderer.md §3 Q5):
-//   * the <canvas>: a 1920×1080 backing store (the seat's `GRC_ROOT_SIZE=presentation:1920x1080`), CSS-fitted
-//     16:9 inside the frame, which honours the safe-area padding preference exactly as MirrorView's frame does;
+//   * the <canvas>: a W×1080 backing store, W being the seat's presentation width (`GRC_ROOT_SIZE=presentation:<W>x1080`,
+//     the descriptor's `presentation`: 1920, or wider when the seat was launched at this viewer's aspect — PRES-A),
+//     CSS-fitted at that aspect inside the frame (letterboxed: a box whose aspect changed since the seat started, a
+//     rotated phone, keeps the seat's width until its next start — PRES-R), honouring the safe-area padding
+//     preference exactly as MirrorView's frame does;
 //   * the client's lifetime: created and connected on mount, disposed on unmount (heap, socket, GL context);
 //   * the loading line until the first drawn transaction, and "Reconnecting…" while the package backs off;
 //   * the hidden tab: rAF stops by itself (so no credit returns and the hub stops publishing to us); after
@@ -72,6 +75,11 @@ let refreshAsked = false;
 let refreshPending: { refused: RenderStreamEndpoint; timer: ReturnType<typeof setTimeout> } | null = null;
 
 const UNAUTHORIZED = "live-connect-failed: unauthorized";
+
+// The seat's presentation (the descriptor's, 1920×1080 when it names none): the canvas's backing store before the
+// client sizes it from the same value, and the aspect the canvas is letterboxed at.
+const presentation = computed<[number, number]>(() => props.endpoint.presentation ?? [1920, 1080]);
+const boxStyle = computed(() => ({ "--render-stream-aspect": String(presentation.value[0] / presentation.value[1]) }));
 
 function sameDescriptor(a: RenderStreamEndpoint, b: RenderStreamEndpoint): boolean {
   return a.url === b.url && a.resourceBase === b.resourceBase && a.token === b.token && a.protocol === b.protocol;
@@ -257,13 +265,13 @@ defineExpose({
     data-testid="render-stream-stage"
     :data-stream-phase="phase"
   >
-    <div class="render-stream-box">
+    <div class="render-stream-box" :style="boxStyle">
       <canvas
         :key="canvasGeneration"
         ref="canvasEl"
         class="render-stream-canvas"
-        width="1920"
-        height="1080"
+        :width="presentation[0]"
+        :height="presentation[1]"
         data-testid="render-stream-canvas"
       />
     </div>
@@ -287,7 +295,8 @@ defineExpose({
     var(--surface-inset-bottom, 0px) var(--surface-inset-left, 0px);
 }
 
-/* Letterboxed 16:9: the largest 16:9 box inside the frame, centred. */
+/* Letterboxed at the seat's presentation aspect (16:9, or wider for a seat launched at this viewer's aspect): the
+   largest such box inside the frame, centred. */
 .render-stream-box {
   position: absolute;
   inset: 0;
@@ -299,8 +308,8 @@ defineExpose({
 
 .render-stream-canvas {
   display: block;
-  width: min(100cqw, calc(100cqh * 16 / 9));
-  height: min(100cqh, calc(100cqw * 9 / 16));
+  width: min(100cqw, calc(100cqh * var(--render-stream-aspect, 1.7777778)));
+  height: min(100cqh, calc(100cqw / var(--render-stream-aspect, 1.7777778)));
 }
 
 .render-stream-status {
