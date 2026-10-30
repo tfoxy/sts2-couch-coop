@@ -188,7 +188,7 @@ export function parseSpineMode(raw: string | null): SpineMode {
 /** Which renderer draws the game: the node-geometry mirror, or the render-stream (the "new renderer", Beta). */
 export type MirrorRenderer = "mirror" | "stream";
 /** The render-stream protocol versions the client speaks (`@godot-scene-web/render-stream-client`'s 11 | 12). */
-export type RenderStreamWireVersion = 11 | 12;
+export type RenderStreamWireVersion = 11 | 12 | 13;
 export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 12;
 
 export interface MirrorSettings {
@@ -501,9 +501,9 @@ export function parseRenderStreamUrl(raw: string | null): string | null {
   }
 }
 
-/** `?rsProtocol=11|12`; anything else is the default. */
+/** `?rsProtocol=11|12|13`; anything else is the default. */
 export function parseRenderStreamProtocol(raw: string | null): RenderStreamWireVersion {
-  return raw === "11" ? 11 : raw === "12" ? 12 : DEFAULT_RENDER_STREAM_PROTOCOL;
+  return raw === "11" ? 11 : raw === "12" ? 12 : raw === "13" ? 13 : DEFAULT_RENDER_STREAM_PROTOCOL;
 }
 
 function boolValue(raw: unknown): boolean | undefined {

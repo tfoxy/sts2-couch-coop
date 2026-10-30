@@ -66,6 +66,13 @@ is_allowed_payload_file() {
     frontend/manifest.webmanifest|frontend/manifest.*.webmanifest) return 0 ;;
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
     licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
+    # The streaming seat's capture (scripts/build-render-capture.sh). Linux-only, and the calibration record
+    # has no extension on purpose: STS2 scans every *.json under a mod folder as a mod manifest.
+    render-capture/librender_stream_capture.so|render-capture/render_stream_capture.gdextension|render-capture/calibration) return 0 ;;
+    licenses/render-capture/Godot-gdextension-LICENSE.txt|licenses/render-capture/zlib-LICENSE|licenses/render-capture/zstd-LICENSE|licenses/render-capture/basis_universal-LICENSE) return 0 ;;
+    # The new renderer's client core, emitted by the frontend build (renderStreamClientAssets). build.json is
+    # served and shipped as the extensionless `core-build` for the same manifest reason.
+    frontend/app/render-stream/rs_gsw_wasm_client.js|frontend/app/render-stream/rs_gsw_wasm_bg.wasm|frontend/app/render-stream/core-build) return 0 ;;
     licenses/npm/*.LICENSE)
       leaf="${path#licenses/npm/}"
       [[ "$leaf" != */* && -n "$leaf" ]]
@@ -122,6 +129,16 @@ required_files=(
   YamlDotNet.dll
   frontend/index.html
   frontend/app-boot
+  frontend/app/render-stream/rs_gsw_wasm_client.js
+  frontend/app/render-stream/rs_gsw_wasm_bg.wasm
+  frontend/app/render-stream/core-build
+  render-capture/librender_stream_capture.so
+  render-capture/render_stream_capture.gdextension
+  render-capture/calibration
+  licenses/render-capture/Godot-gdextension-LICENSE.txt
+  licenses/render-capture/zlib-LICENSE
+  licenses/render-capture/zstd-LICENSE
+  licenses/render-capture/basis_universal-LICENSE
   licenses/FontAwesome-Free-6.7.2-LICENSE.txt
   licenses/FontAwesome-CC-BY-4.0.txt
   licenses/QRCoder-1.6.0-MIT.txt

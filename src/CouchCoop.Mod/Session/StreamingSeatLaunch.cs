@@ -16,11 +16,12 @@ namespace CouchCoop.Mod.Session;
 /// seat installs cannot be undone. So the choice applies at the seat's next start.
 /// </para>
 /// <para>
-/// THE OPERATOR CONFIGURES IT. For the beta the capture is not shipped with the mod: the host process is given
-/// <see cref="RenderCaptureExtensionLoader.EnvironmentVariable"/> (an absolute <c>.gdextension</c> path) and,
-/// optionally, <see cref="CalibrationEnvironmentVariable"/>. Without a calibration variable the calibration record
-/// is the file <see cref="DefaultCalibrationFileName"/> next to the extension, which is how a packaged capture
-/// would ship it. A host with neither launches every seat exactly as before.
+/// THE CAPTURE COMES FROM THE OPERATOR, OR FROM THE PAYLOAD. An operator's
+/// <see cref="RenderCaptureExtensionLoader.EnvironmentVariable"/> (an absolute <c>.gdextension</c> path) and, optionally,
+/// <see cref="CalibrationEnvironmentVariable"/> always win. Without them a released payload's own
+/// <c>render-capture/</c> is used (scripts/package-release.sh builds it); there the calibration record is the extensionless
+/// <see cref="PackagedCalibrationFileName"/>. Without a calibration variable a hand-staged capture uses the file
+/// <see cref="DefaultCalibrationFileName"/> next to the extension. A host with neither launches every seat exactly as before.
 /// </para>
 /// <para>
 /// THE ENVIRONMENT IS THE HOST'S. <see cref="Environment"/> is the whole <c>GRC_*</c> table, taken from the live
@@ -43,6 +44,22 @@ internal static class StreamingSeatLaunch
 
     /// <summary>The calibration record's file name next to the extension when no calibration variable is set.</summary>
     internal const string DefaultCalibrationFileName = "calibration.json";
+
+    /// <summary>
+    /// The calibration record's file name next to a PACKAGED capture. It has no extension because STS2 scans every
+    /// <c>*.json</c> under a mod's folder as a mod manifest (scripts/build-render-capture.sh writes it).
+    /// </summary>
+    internal const string PackagedCalibrationFileName = "calibration";
+
+    /// <summary>Where a released payload carries the capture, under the payload root (scripts/package-release.sh).</summary>
+    internal static readonly string[] PackagedExtensionRelativePath = ["render-capture", "render_stream_capture.gdextension"];
+
+    /// <summary>
+    /// The longest the capture's <c>perf-timeline.jsonl</c> may grow (godot-scene-web
+    /// <c>GRC_PERF_TIMELINE_MAX_BYTES</c>): the seat runs for hours and nothing here reads the timeline, so it keeps
+    /// only the last 4..8 MiB (two rotating files) for diagnosis.
+    /// </summary>
+    internal const string PerfTimelineMaxBytes = "8388608";
 
     /// <summary>The wire version the seat speaks (GPU particles simulated on the client).</summary>
     internal const int StreamVersion = 12;
@@ -74,7 +91,13 @@ internal static class StreamingSeatLaunch
         string calibrationPath;
         if (string.IsNullOrWhiteSpace(calibration))
         {
-            calibrationPath = Path.Combine(Path.GetDirectoryName(request.Path)!, DefaultCalibrationFileName);
+            // `calibration.json` beside a hand-staged capture; the extensionless name a packaged one ships under.
+            var directory = Path.GetDirectoryName(request.Path)!;
+            calibrationPath = Path.Combine(directory, DefaultCalibrationFileName);
+            if (!fileExists(calibrationPath) && fileExists(Path.Combine(directory, PackagedCalibrationFileName)))
+            {
+                calibrationPath = Path.Combine(directory, PackagedCalibrationFileName);
+            }
         }
         else
         {
@@ -93,10 +116,33 @@ internal static class StreamingSeatLaunch
 
     /// <summary>Read the host's own configuration once (the variables cannot change while it runs).</summary>
     internal static ConfigResult ResolveConfigFromEnvironment()
-        => ResolveConfig(
+    {
+        var assemblyDirectory = Path.GetDirectoryName(typeof(StreamingSeatLaunch).Assembly.Location);
+        return ResolveConfig(
             System.Environment.GetEnvironmentVariable(RenderCaptureExtensionLoader.EnvironmentVariable),
             System.Environment.GetEnvironmentVariable(CalibrationEnvironmentVariable),
-            File.Exists);
+            File.Exists,
+            string.IsNullOrWhiteSpace(assemblyDirectory) ? null : assemblyDirectory);
+    }
+
+    /// <summary>
+    /// <see cref="ResolveConfig(string?, string?, Func{string, bool})"/> with the packaged capture as the fallback:
+    /// when the operator named no capture, a released payload's own <c>render-capture/</c> (beside the shared tree,
+    /// so one level above a lane directory) is the one. An operator's variable always wins, even when it is wrong.
+    /// </summary>
+    internal static ConfigResult ResolveConfig(
+        string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(fileExists);
+        if (string.IsNullOrWhiteSpace(extension) && assemblyDirectory is not null)
+        {
+            var packaged = Path.Combine(
+                [CouchCoop.Mod.HostUi.CouchCoopHostUiServices.ResolvePayloadRoot(assemblyDirectory), .. PackagedExtensionRelativePath]);
+            if (fileExists(packaged)) extension = packaged;
+        }
+
+        return ResolveConfig(extension, calibration, fileExists);
+    }
 
     /// <summary>
     /// The page origins the hub accepts: this host's own loopback page (both spellings a player can type), plus
@@ -163,6 +209,7 @@ internal static class StreamingSeatLaunch
             ["GRC_RESOURCE_FORMATS"] = "L8,LA8,R8,RG8,RGB8,RGBA8,RGBAH,RF,RGF,RGBF,RGBAF",
             // Every mesh surface rides the socket instead of a GET (skeletal animation).
             ["GRC_RESOURCE_INLINE_MAX_BYTES"] = "4096",
+            ["GRC_PERF_TIMELINE_MAX_BYTES"] = PerfTimelineMaxBytes,
             ["GRC_MESH_DYNAMIC"] = "auto",
         };
     }

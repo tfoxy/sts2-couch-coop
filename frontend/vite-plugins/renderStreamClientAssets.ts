@@ -22,8 +22,8 @@
 // problem as "unavailable: core-build" and keeps running; the client independently refuses a `build.json`
 // whose tree differs from `expectedTree`. Dev re-evaluates on every page load, so a rebuild needs no restart.
 //
-// A build with no usable core still succeeds (the beta is then unavailable, with its reason): the release
-// pipeline does not build this core yet, and shipping it is a release-packaging item, not this feature's.
+// A build with no usable core still succeeds (the beta is then unavailable, with its reason): scripts/package-release.sh
+// builds this core before the frontend, and scripts/verify-release-archive.sh requires its three files.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";

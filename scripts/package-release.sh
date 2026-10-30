@@ -160,8 +160,17 @@ if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
       [[ -z "$(git -C "$sibling_repo" status --porcelain)" ]] \
         || { echo "$name has uncommitted changes; commit before a snapshot build" >&2; exit 1; }
       commit="$(git -C "$sibling_repo" rev-parse HEAD)"
-      mkdir -p "$source_parent/$name"
-      git -C "$sibling_repo" archive --format=tar HEAD | tar -x -C "$source_parent/$name"
+      if [[ "$name" == godot-scene-web ]]; then
+        # The render-stream client's build (packages/render-stream-client/scripts/{build-web,core-tree}.sh) names
+        # its core by git tree ids, so this sibling needs a .git. A one-commit local clone gives it one without
+        # copying the sibling's history (gigabytes) or touching the network.
+        git clone --quiet --depth 1 "file://$sibling_repo" "$source_parent/$name"
+        [[ "$(git -C "$source_parent/$name" rev-parse HEAD)" == "$commit" ]] \
+          || { echo "snapshot clone of $name did not resolve to $commit" >&2; exit 1; }
+      else
+        mkdir -p "$source_parent/$name"
+        git -C "$sibling_repo" archive --format=tar HEAD | tar -x -C "$source_parent/$name"
+      fi
     else
       url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$deps")"
       commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$deps")"
@@ -272,6 +281,13 @@ npm --prefix "$repo_root/frontend" audit --omit=dev --audit-level=high
 
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-msdf-generator.sh"
 
+# The "Use new renderer (Beta)" parts: the client's wasm core (the frontend build below emits it into
+# frontend/app/render-stream/, or warns and ships none) and the streaming seat's capture extension. Both are built
+# from the same godot-scene-web checkout, and the capture comes with the committed engine calibration record.
+COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-stream-client.sh"
+COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-capture.sh"
+[[ -s "$repo_root/.sts2/render-stream-client-web/build.json" ]] || { echo "render-stream client core was not built" >&2; exit 1; }
+
 COUCHCOOP_RELEASE_BUILD=1 COUCHCOOP_FRONTEND_OUT_DIR="$payload_dir/frontend" \
   npm --prefix "$repo_root/frontend" run build
 
@@ -375,6 +391,12 @@ done
 # The shared tree, emitted once, from the lane every other lane was just held identical to.
 cp -a "$publish_root/$first_lane/." "$payload_dir/"
 
+# The streaming seat's capture, beside the shared tree (StreamingSeatLaunch.PackagedConfig looks for it there).
+mkdir -p "$payload_dir/render-capture"
+for name in librender_stream_capture.so render_stream_capture.gdextension calibration; do
+  cp "$repo_root/.sts2/render-capture/$name" "$payload_dir/render-capture/$name"
+done
+
 # The merged payload declares ONE floor for every lane it carries, and it has to be the lowest of
 # them: the manifest gate runs before any lane is selected, so a v0.111.0 floor would make this one
 # payload refuse to load on the stable branch whose lane it also ships. The value is
@@ -406,6 +428,14 @@ msdf_license_source="$source_parent/godot-scene-web/packages/canvas/msdf-generat
 mkdir -p "$license_dir/msdf-generator"
 cp "$msdf_license_source/THIRD_PARTY_NOTICES.md" "$license_dir/msdf-generator/THIRD_PARTY_NOTICES.md"
 cp "$msdf_license_source/licenses/"* "$license_dir/msdf-generator/"
+# The capture library statically links these (godot-scene-web experiments/render-stream/capture): zstd, zlib,
+# Godot's own gdextension header and basis_universal.
+capture_license_source="$source_parent/godot-scene-web/experiments/render-stream"
+mkdir -p "$license_dir/render-capture"
+cp "$capture_license_source/capture/vendor/LICENSE.txt" "$license_dir/render-capture/Godot-gdextension-LICENSE.txt"
+cp "$capture_license_source/capture/vendor/zlib/LICENSE" "$license_dir/render-capture/zlib-LICENSE"
+cp "$capture_license_source/capture/vendor/zstd/LICENSE" "$license_dir/render-capture/zstd-LICENSE"
+cp "$capture_license_source/third_party/basis_universal/LICENSE" "$license_dir/render-capture/basis_universal-LICENSE"
 
 npm_license_manifest="$license_dir/npm-dependencies.tsv"
 printf 'package\tversion\tdeclared-license\tlicense-file\n' > "$npm_license_manifest"

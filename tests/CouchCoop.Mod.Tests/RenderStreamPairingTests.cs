@@ -27,6 +27,7 @@ internal static class RenderStreamPairingTests
     public static async Task RunAsync()
     {
         ConfigResolvesTheCalibrationBesideTheCapture();
+        APackagedCaptureIsTheFallback();
         AllowedOriginsAreTheHostPageAndValidExtras();
         LaunchEnvironmentIsTheAcceptanceTable();
         NoSeatInheritsTheCapture();
@@ -58,6 +59,27 @@ internal static class RenderStreamPairingTests
             "a capture without its calibration record is refused");
         Assert(StreamingSeatLaunch.ResolveConfig("capture.gdextension", null, _ => true).Refusal is not null,
             "a relative capture path is refused");
+    }
+
+    private static void APackagedCaptureIsTheFallback()
+    {
+        // A released payload: the lane assembly sits one directory below the shared tree that carries render-capture/.
+        var root = Path.Combine(Path.GetTempPath(), "cc-payload");
+        var packaged = Path.Combine(root, "render-capture", "render_stream_capture.gdextension");
+        var packagedCalibration = Path.Combine(root, "render-capture", "calibration");
+        var files = new HashSet<string> { packaged, packagedCalibration, Extension, Calibration };
+        var lane = Path.Combine(root, "lanes", "0.103.0");
+
+        var fromLane = StreamingSeatLaunch.ResolveConfig(null, null, files.Contains, lane);
+        Assert(fromLane.Config == new StreamingSeatLaunch.Config(packaged, packagedCalibration),
+            $"no variable: the payload's own capture and its extensionless calibration: {fromLane.Refusal}");
+        var flat = StreamingSeatLaunch.ResolveConfig(null, null, files.Contains, root);
+        Assert(flat.Config?.Extension == packaged, "a flat dev deploy resolves the same directory");
+        var operatorWins = StreamingSeatLaunch.ResolveConfig(Extension, null, files.Contains, lane);
+        Assert(operatorWins.Config == new StreamingSeatLaunch.Config(Extension, Calibration),
+            "an operator's capture wins over the packaged one");
+        var none = StreamingSeatLaunch.ResolveConfig(null, null, path => path == Extension, lane);
+        Assert(none.Config is null && none.Refusal is null, "a payload without a capture is simply off");
     }
 
     private static void AllowedOriginsAreTheHostPageAndValidExtras()
@@ -103,6 +125,7 @@ internal static class RenderStreamPairingTests
             ["GRC_RESOURCE_BUDGET_BYTES"] = "8589934592",
             ["GRC_RESOURCE_FORMATS"] = "L8,LA8,R8,RG8,RGB8,RGBA8,RGBAH,RF,RGF,RGBF,RGBAF",
             ["GRC_RESOURCE_INLINE_MAX_BYTES"] = "4096",
+            ["GRC_PERF_TIMELINE_MAX_BYTES"] = "8388608",
             ["GRC_MESH_DYNAMIC"] = "auto",
         };
         Assert(env.Count == expected.Count && expected.All(kv => env.TryGetValue(kv.Key, out var v) && v == kv.Value),

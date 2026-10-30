@@ -114,6 +114,17 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
     card-ripple-fixture.png glow-rare-fixture.png glow-uncommon-fixture.png; do
     printf 'fixture\n' > "$root/frontend/app/$file"
   done
+  # The new renderer: the client core the frontend build emits and the streaming seat's capture.
+  mkdir -p "$root/frontend/app/render-stream" "$root/render-capture" "$root/licenses/render-capture"
+  for file in rs_gsw_wasm_client.js rs_gsw_wasm_bg.wasm core-build; do
+    printf 'fixture\n' > "$root/frontend/app/render-stream/$file"
+  done
+  for file in librender_stream_capture.so render_stream_capture.gdextension calibration; do
+    printf 'fixture\n' > "$root/render-capture/$file"
+  done
+  for file in Godot-gdextension-LICENSE.txt zlib-LICENSE zstd-LICENSE basis_universal-LICENSE; do
+    printf 'fixture\n' > "$root/licenses/render-capture/$file"
+  done
   for file in \
     FontAwesome-Free-6.7.2-LICENSE.txt FontAwesome-CC-BY-4.0.txt \
     QRCoder-1.6.0-MIT.txt DeviceDetector.NET-6.5.2-Apache-2.0.txt LiteDB-5.0.21-MIT.txt \
@@ -323,8 +334,11 @@ done
 # fourth image must fail here rather than inherit the first three's permission. An arbitrary
 # extension does not belong either, and neither does a subdirectory -- the arm is one level deep on
 # purpose, so a nested tree cannot ride in behind an allowed extension.
+# The capture's directory is the same shape: three named files, so a stray (a `.json` calibration would also be
+# read as a manifest) is refused.
 for stray in frontend/app/notes.txt frontend/app/nested/card-ripple-fixture.png \
-  frontend/app/kitten-fixture.png frontend/app/card-ripple.png; do
+  frontend/app/kitten-fixture.png frontend/app/card-ripple.png \
+  frontend/app/render-stream/extra.js render-capture/notes.txt; do
   label="app-dir-$(printf '%s' "$stray" | tr './' '--')"
   case_dir="$(clone_payload "$label")"
   mkdir -p "$(dirname "$case_dir/$stray")"
