@@ -2,126 +2,89 @@
 
 > Ceci est une traduction de la discussion du Workshop Steam [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Pour poser une question ou signaler un problème, laissez un commentaire dans cette discussion — inutile d'écrire en anglais, vous pouvez écrire en français.
 
-La plupart des problèmes de connexion se résument à une poignée de causes. Cette liste va à peu près de la plus fréquente à la plus rare, donc mieux vaut la suivre dans l'ordre.
+Essayez ces étapes si votre téléphone ou votre tablette ne se connecte pas. Pour un plantage ou un problème pendant une partie, consultez [Un problème ? Signalez-le dans la discussion Steam](reporting-a-problem.md).
 
-*Si votre téléphone atteint sans problème la page pour rejoindre la partie et que le souci est ailleurs - un plantage, un joueur qui ne finit jamais de rejoindre, quelque chose qui ne va pas dans le jeu lui-même -, consultez plutôt [Un problème ? Signalez-le dans la discussion Steam](reporting-a-problem.md).*
+### 1. Choisissez les paramètres de connexion
 
----
+Sur l’ordinateur qui fait tourner le jeu, ouvrez **Code QR de Couch Co-Op**.
 
-## Solutions à essayer
+- **Interface réseau** (à gauche) : choisissez **Filaire (Ethernet)** si l’ordinateur est relié au routeur par câble, ou **Wi-Fi** s’il est connecté sans fil. Choisissez la connexion au routeur qu’utilise votre téléphone. Ignorez **Nom du PC (.local)**.
+- **Méthode de connexion** (à droite) : choisissez **Adresse directe**, sans « (HTTPS) ». L’adresse doit commencer par `http://`, par exemple `http://192.168.1.5:13337`.
 
-### 1. Choisissez une autre adresse sur l'écran du code QR
+Scannez de nouveau le code QR après avoir modifié ces paramètres.
 
-L’écran du code QR propose deux sélecteurs sur la même ligne : l’interface réseau à gauche et la méthode de connexion à droite. **Nom du PC (.local)** se trouve dans la liste de gauche. Pour diagnostiquer un problème de connexion, choisissez votre interface Wi-Fi ou Ethernet avec une adresse numérique et **Adresse directe**, puis scannez à nouveau. L’adresse obtenue peut ressembler à **192.168.1.5:13337** ; cette méthode dépend du moins d’éléments et ne nécessite pas Internet.
+Utilisez **Adresse directe** pendant le dépannage. Les méthodes HTTPS sont des options pour les performances et la sécurité, avec une configuration ou des conditions de connexion supplémentaires.
 
-**Site web** charge le client depuis Internet, puis se connecte au PC ; il faut Internet sur le téléphone et l’autorisation du navigateur d’accéder au réseau local. **Nom de domaine** se connecte directement au PC via son domaine généré et nécessite aussi Internet ; certains routeurs ou fournisseurs d’accès bloquent cette adresse. Les deux utilisent HTTPS, qui débloque des fonctions du navigateur améliorant les performances et l’autonomie. Le nom en **.local** dépend de la résolution des noms sur votre réseau et peut échouer là où une adresse numérique fonctionne.
+### 2. Vérifiez le réseau du téléphone
 
-Changer d’interface conserve la méthode choisie. Si la nouvelle interface ne la prend pas en charge, une explication remplace le code QR. Les méthodes non prises en charge sont grisées et ne peuvent pas être sélectionnées ; survolez-les ou placez le focus dessus au clavier ou à la manette pour lire l’infobulle supplémentaire **Indisponible**. Choisissez une autre interface ou une méthode compatible pour retrouver le code QR. **Nom du PC (.local)** prend uniquement en charge **Adresse directe**. Si **Nom de domaine** nécessite une configuration initiale ou une nouvelle tentative, cette méthode reste sélectionnable sur une interface compatible.
+- Connectez le téléphone au Wi-Fi de la maison, pas au réseau **Invité**. L’ordinateur peut utiliser le Wi-Fi ou un câble vers le même routeur.
+- Vérifiez que le téléphone utilise le Wi-Fi plutôt que les données mobiles.
+- Déconnectez temporairement tout VPN sur le téléphone ou l’ordinateur. Cela comprend les bloqueurs de publicité du téléphone qui utilisent une connexion VPN.
 
-**Sur un iPhone ou un iPad, ignorez complètement la ligne *Site web*.** Safari - et tous les autres navigateurs sur iOS, puisqu'ils reposent tous sur Safari - refuse qu'une page chargée depuis Internet accède à quoi que ce soit sur votre réseau domestique. C'est une règle du navigateur, pas un réglage : il n'y a donc rien à autoriser et rien à modifier. La page se chargera, puis vous dira que le jeu n'a pas répondu, sur n'importe quel réseau et quelle que soit la configuration de votre pare-feu. Sur un iPhone ou un iPad, utilisez **Adresse directe** ou **Nom de domaine**. (La page le dit désormais elle-même, si vous allez jusque-là.)
+**Si la page s’ouvre mais que la connexion à la partie reste bloquée, passez à l’étape 6.**
 
-### 2. Vérifiez que le téléphone est vraiment sur le même réseau
+### 3. Windows : autorisez le jeu à travers le pare-feu
 
-- Le même Wi-Fi que l'ordinateur hôte, et pas le réseau **Invité**. Les réseaux invités empêchent généralement les appareils de communiquer entre eux, ce qui est justement ce dont on a besoin ici.
-- Pas en données mobiles. Si le Wi-Fi n'a pas d'accès à Internet, les téléphones basculent parfois d'eux-mêmes sur les données mobiles sans vous prévenir.
-- **Désactivez tout VPN sur le téléphone.** C'est un piège dans lequel tombent beaucoup de gens. Les bloqueurs de publicité et les applications de « DNS privé » qui fonctionnent comme un VPN comptent aussi.
+Sur votre réseau domestique :
 
-### 3. Lisez ce que la page affiche pendant qu'elle rejoint la partie
+1. **Paramètres > Réseau et Internet > Wi-Fi** (ou Ethernet) > cliquez sur votre réseau > réglez **Type de profil réseau** sur **Réseau privé**.
+2. **Paramètres > Confidentialité et sécurité > Sécurité Windows > Pare-feu et protection réseau > Autoriser une application via le pare-feu**
+3. Trouvez **Slay the Spire 2** dans la liste et vérifiez que **Privé** est coché. S'il n'est pas dans la liste, utilisez **Autoriser une autre application...** et parcourez jusqu'au fichier `.exe` du jeu.
 
-Lancer la partie d'un joueur peut prendre jusqu'à une minute, et c'est normal, pas une panne. Pendant ce temps, la page indique désormais où elle en est, sur une ligne sous *Connexion à la partie…* :
+Si vous avez précédemment annulé la demande du pare-feu pour le jeu, supprimez son entrée bloquée et ajoutez le jeu de nouveau.
 
-*Connexion à l'hôte — étape 1 sur 6, 14 s écoulées. Cela peut prendre jusqu'à une minute, gardez cette page ouverte.*
+Si votre antivirus possède son propre pare-feu, autorisez le jeu dans celui-ci aussi.
 
-Si cette ligne compte les secondes et change d'étape, tout fonctionne - gardez la page ouverte. Les six étapes sont « Connexion à l'hôte », « En attente de l'hôte », « Démarrage du jeu de ce joueur », « Connexion de ce joueur à la partie », « Chargement de la vue de jeu » et « Presque prêt ».
+Ouvrir l’adresse sur l’ordinateur qui fait tourner le jeu ne permet pas de vérifier si le pare-feu autorise votre téléphone à se connecter.
 
-### 4. Si ça bloque, copiez ce que la page affiche
+### 4. Vérifiez si le navigateur impose HTTPS
 
-La page de connexion et la vue de jeu de chaque joueur utilisent le même port du navigateur sur l’ordinateur hôte (**13337** par défaut). Ouvrir d’autres ports pour le navigateur ne corrigera pas un échec de connexion.
-
-Si une erreur apparaît pendant *Connexion…* ou *Chargement…*, indiquez son texte exact et la ligne technique grise, s’il y en a une. La personne qui héberge peut aussi ouvrir le panneau **Connexions** sur l’écran du code QR pour voir à quelle étape ça a échoué. Si la page ne s’ouvre pas du tout, consultez les conseils sur le réseau et le pare-feu aux sections 2, 5 et 6.
-
-Si la page reste sur *Connexion…* ou *Chargement…* sans erreur, dites à quel écran elle s’est arrêtée et ce qu’indiquait la dernière ligne de progression. Gardez la page ouverte tant que l’étape de progression change.
-
-### 5. Windows : autorisez le jeu à travers le pare-feu
-
-Vérifiez d'abord le type de réseau, car cela seul bloque beaucoup de connexions :
-
-- **Paramètres > Réseau et Internet > Wi-Fi** (ou Ethernet) > cliquez sur votre réseau > réglez **Type de profil réseau** sur **Réseau privé**.
-
-Ensuite, autorisez le jeu :
-
-- **Paramètres > Confidentialité et sécurité > Sécurité Windows > Pare-feu et protection réseau > Autoriser une application via le pare-feu**
-- Trouvez **Slay the Spire 2** dans la liste et vérifiez que **Privé** est coché. S'il n'est pas dans la liste, utilisez **Autoriser une autre application...** et parcourez jusqu'au fichier `.exe` du jeu.
-
-Si vous avez un jour répondu « Annuler » à une invite du pare-feu Windows, Windows l'a mémorisé comme une règle de blocage et ne vous posera plus jamais la question. Dans ce cas, vous devez supprimer l'entrée ci-dessus et l'ajouter à nouveau.
-
-**Ouvrir l'adresse dans un navigateur sur le PC hôte lui-même ne prouve rien.** C'est le premier réflexe, et des mesures montrent qu'il est trompeur : Windows ne filtre pas le trafic d'un ordinateur vers lui-même - pas même vers sa propre adresse réseau -, donc même avec un pare-feu qui bloque activement tous les téléphones, le navigateur de l'hôte charge parfaitement la page. Si cela a fonctionné chez vous, cela vous apprend que le jeu tourne et sert la page. Cela ne dit absolument rien du pare-feu.
-
-Ne cochez **Public** que si votre réseau est configuré en Public et que vous ne pouvez pas le changer. Le cocher rend le jeu accessible sur n'importe quel réseau auquel vous vous connectez, y compris dans les cafés et les hôtels.
-
-### 6. Le routeur
-
-Certains routeurs empêchent les appareils connectés au même Wi-Fi de communiquer entre eux. Cherchez un réglage appelé **AP isolation**, **Client isolation** ou **Wireless isolation** (souvent « isolation AP » ou « AP isolé » en français) et désactivez-le.
-
-À savoir aussi : un répéteur Wi-Fi ou un adaptateur CPL configuré en mode **routeur** plutôt qu'en mode **pont** (bridge) / **point d'accès** (access point) place votre téléphone sur un réseau distinct de celui de l'hôte, même si le nom du Wi-Fi semble identique.
-
-### 7. Réglages du navigateur qui bloquent les adresses simples
-
-Certains navigateurs essaient d'imposer HTTPS pour toutes les adresses, ce que l'adresse numérique simple n'utilise pas. (La ligne **Nom de domaine** de l'écran du code QR, elle, l'utilise - donc si le HTTPS forcé est en cause, cette ligne vaut aussi la peine d'être essayée.) Si la barre d'adresse affiche un avertissement de sécurité au lieu du jeu, désactivez ces options et réessayez :
+La méthode **Adresse directe** utilise `http://`. Si votre navigateur tente de remplacer ce début par `https://`, vérifiez son réglage de connexion sécurisée :
 
 - Chrome : **Paramètres > Confidentialité et sécurité > Sécurité > Toujours utiliser une connexion sécurisée**
 - Firefox : **Paramètres > Vie privée et sécurité > Sécurité logicielle et des connexions > Paramètres avancés > Mode HTTPS uniquement**
 
-Sur iPhone, vérifiez aussi **Réglages > *votre nom* > iCloud > Relais privé**, ainsi que « Masquer l'adresse IP » dans **Réglages > Apps > Safari**.
+Autorisez l’adresse HTTP, puis scannez de nouveau le code QR. Gardez **Adresse directe** sélectionné sur l’ordinateur.
 
-### 8. Antivirus avec son propre pare-feu
+### 5. Vérifiez le routeur
 
-Les suites de sécurité comme ESET, Bitdefender, Norton, Kaspersky et Avast ont leur propre pare-feu, distinct de celui de Windows. Autoriser le jeu dans Windows ne change rien pour celles-ci. Vérifiez les réglages réseau ou pare-feu de la suite elle-même, ou mettez brièvement son pare-feu en pause pour voir si c'est lui qui bloque.
+Le Wi-Fi invité empêche souvent les appareils de communiquer entre eux. Utilisez le réseau principal de la maison.
 
-### 9. Si ça fonctionnait avant et que ça ne marche plus
+Si les deux appareils sont déjà sur ce réseau, vérifiez si **AP isolation**, **Client isolation** ou **Wireless isolation** est activé sur le routeur. Ces réglages empêchent les appareils de communiquer entre eux.
 
-L'adresse de l'ordinateur hôte peut changer quand il se reconnecte au Wi-Fi ou après un redémarrage du routeur. Rouvrez l'écran du code QR et scannez à nouveau - la nouvelle adresse y sera.
+Si vous utilisez un répéteur Wi-Fi, vérifiez qu’il est en mode **point d’accès** (access point) ou **pont** (bridge), plutôt que de créer un réseau séparé.
 
-Si vous avez ajouté le client à votre écran d'accueil, la suite dépend de la ligne depuis laquelle vous l'avez installé :
+### 6. Si la page s’ouvre mais que rejoindre la partie prend du temps
 
-- Installé depuis la ligne **Site web** : il continue de fonctionner et trouve la nouvelle adresse tout seul. Ouvrez-le simplement - pas besoin de scanner à nouveau.
-- Installé depuis l'**adresse numérique** ou la ligne **Nom de domaine** : l'icône pointe vers l'ancienne adresse et ne peut pas s'en remettre. Supprimez-la et ajoutez-la à nouveau après avoir scanné de nouveau. (Sur Android, installer plutôt depuis la ligne **Site web** évite définitivement ce problème. Sur un iPhone ou un iPad, cette ligne ne peut pas fonctionner - voir la section 1 -, donc rajouter l'icône est la seule solution.)
+Lancer la partie d’un joueur peut prendre jusqu’à une minute. Gardez la page ouverte tant que la ligne de progression sous **Connexion…** change d’étape.
+
+Si une erreur apparaît, faites une capture d’écran ou copiez son texte exact, y compris la petite ligne grise éventuelle.
+
+Si la page reste sur **Connexion…** ou **Chargement…** sans erreur, indiquez le dernier message de progression dans votre commentaire.
+
+### 7. Si cela fonctionnait avant
+
+L’adresse de l’ordinateur a peut-être changé après une reconnexion au réseau ou un redémarrage du routeur. Ouvrez l’écran du code QR et scannez de nouveau.
+
+Si un ancien favori ou raccourci sur l’écran d’accueil ne fonctionne plus, remplacez-le avec l’adresse que vous venez de scanner.
 
 ---
 
 ## Toujours bloqué ? Commentez dans la discussion Steam
 
-Laissez un commentaire dans [la discussion Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) - pas besoin de répondre à tout. Même une ou deux de ces informations rendent un signalement bien plus facile à traiter, et la première question vaut plus que toutes les autres réunies.
+Dans [la discussion Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/), commencez par indiquer :
 
-### Jusqu'où ça va ?
+- Jusqu’où cela va : aucune page, aucune liste de joueurs, connexion ou chargement bloqué, ou déconnexion pendant la partie.
+- Une capture d’écran ou le message d’erreur exact.
+- Le système d’exploitation de l’ordinateur, le modèle du téléphone et le navigateur.
+- Si tous les téléphones échouent ou un seul.
 
-C'est l'information la plus utile que vous puissiez me donner, car chaque réponse pointe vers une cause différente :
+### Copiez le rapport de connexion
 
-- le navigateur ne charge jamais rien du tout
-- la page se charge, mais la liste des joueurs n'apparaît jamais
-- vous pouvez choisir un nom, mais ça reste sur « Connexion à la partie… » - dites-moi ce qu'indiquait la ligne de progression en dessous, et quel message vous avez eu si vous avez attendu
-- ça passe cette étape et reste sur « **Chargement…** » — dites-moi si une erreur apparaît et recopiez son texte exact ainsi que la ligne technique grise
-- la connexion a bien fonctionné, puis a été coupée pendant la partie
+Sur l’ordinateur, ouvrez **Code QR de Couch Co-Op**, puis regardez sous **Connexions**. Sélectionnez la connexion en échec sous **Problèmes de connexion**, choisissez **Copier le rapport** et collez le rapport dans votre commentaire.
 
-### Tout ce que vous pouvez ajouter d'autre
+Si aucune connexion n’y apparaît, dites-le et donnez les informations ci-dessus.
 
-- Le message exact affiché par le téléphone, y compris la ligne grise en dessous. Une photo de l'écran, c'est parfait.
-- L’interface réseau et la méthode de connexion choisies dans les deux sélecteurs, ainsi que le texte exact affiché à la place du code QR, le cas échéant.
-- Le système d'exploitation de l'hôte, ainsi que le modèle et le navigateur du téléphone ou de la tablette.
-- Est-ce que ça échoue sur **tous** les appareils, ou sur un seul ? Si un téléphone fonctionne et pas un autre, cela élimine beaucoup de pistes.
-- Est-ce que ça a déjà fonctionné, et est-ce que quelque chose a changé depuis ?
-- L'hôte est-il en Wi-Fi ou en Ethernet ? Un VPN tourne-t-il sur l'hôte ou sur le téléphone ? Un antivirus avec pare-feu ?
+Le rapport contient les chemins des fichiers journaux utiles. Si des journaux sont nécessaires, [Un problème ? Signalez-le dans la discussion Steam](reporting-a-problem.md) explique comment les trouver. Avant de publier des journaux, retirez votre identifiant de compte Steam et votre nom d’utilisateur sur l’ordinateur si vous préférez les garder privés.
 
-### Trois choses que l'ordinateur hôte peut vous fournir
-
-- **Le panneau des connexions.** Sur l'hôte, ouvrez l'écran **Code QR de Couch Co-Op** - le panneau **Connexions** s'y trouve, sous le code. Les appareils qui sont allés assez loin pour y apparaître sont listés, et tout ce qui a mal tourné est conservé sous **Problèmes de connexion** (suivi d'un nombre). Sélectionnez la ligne et utilisez **Copier le rapport** - cela copie un rapport qui contient déjà l'étape en échec, les durées et le diagnostic de l'hôte lui-même. Collez-le directement dans votre commentaire. Il indique aussi le chemin exact des deux fichiers journaux ci-dessous, ce qui vous évite de les chercher.
-- **Le fichier journal principal.** Sous Windows, `%APPDATA%\SlayTheSpire2\logs\godot.log`. Sous Linux, `~/.local/share/SlayTheSpire2/logs/godot.log`. Sous macOS, `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Le journal de chaque joueur.** Chaque joueur qui rejoint obtient sa propre copie du jeu, qui tourne en arrière-plan sur l'hôte, et chacune tient son propre journal. **Si la page a atteint *Connexion à la partie…* puis a expiré, c'est ce fichier qui explique pourquoi** - le journal principal ci-dessus, en général, non. Les joueurs sont numérotés à partir de 2, donc la première personne qui rejoint est `slot-2` : sous Linux, c'est `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (oui, `SlayTheSpire2` deux fois - ce n'est pas une faute de frappe), et les chemins Windows et macOS suivent la même structure sous leurs dossiers ci-dessus. Sur certaines configurations, c'est plutôt un seul fichier, `couch-coop/seat-logs/slot-2.log`.
-
-**Quelles lignes comptent.** Dans l'un ou l'autre journal, les lignes utiles contiennent `[couchcoop]` - elles ressemblent à `[INFO] [couchcoop] ...` -, ainsi que toutes les lignes `[ERROR]`, même celles qui ne mentionnent pas couchcoop. Elles suffisent généralement à elles seules.
-
-**Avant de coller un journal entier :** la discussion Steam est publique, et un journal contient votre propre **SteamID64** (un long nombre commençant par 7656, qui mène à votre profil Steam) et le **nom d'utilisateur** de votre ordinateur, dans les chemins de fichiers. Il ne contient *pas* de mots de passe, ni les comptes des autres joueurs - seulement le vôtre. Si vous préférez ne pas publier cela, un rechercher-remplacer sur ces deux éléments avant de coller suffit, ou publiez simplement les lignes `[couchcoop]` et `[ERROR]`, et je vous demanderai si j'ai besoin de plus.
-
----
-
-Une dernière remarque : toute personne qui peut atteindre l'adresse pour rejoindre la partie peut ouvrir le client et jouer, alors utilisez-le sur un réseau de confiance.
+Utilisez le mod sur un réseau de confiance : toute personne pouvant accéder à l’adresse de connexion peut ouvrir le client et jouer.

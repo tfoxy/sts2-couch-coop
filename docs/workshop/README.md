@@ -35,7 +35,8 @@ localized store description links its own language's two files; each English pos
 - **On-screen strings are quoted from that language's catalogs**, never re-translated:
   `src/CouchCoop.Mod/Localization/Catalogs/couchcoop.<id>.json` for what the host game shows, and
   `frontend/src/i18n/` for what the phone shows. `scripts/test-workshop-discussions.sh` pins the three mod
-  labels every post names, so a catalog change that strands a translation fails loudly.
+  labels every post names, plus the interface and method labels used by the connection guide, so a catalog
+  change that strands a translation fails loudly.
 - **Windows, browser and iOS menu paths use the names those products show in the language.**
 - **Change an English post, update all 13 translations in the same commit.** A translation that lags the
   English is the stale-claim problem again, in a language the maintainer may not read.

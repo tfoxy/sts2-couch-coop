@@ -2,126 +2,89 @@
 
 > Dies ist eine Übersetzung der Steam-Workshop-Diskussion [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Wenn du eine Frage stellen oder ein Problem melden möchtest, hinterlasse einen Kommentar in dieser Diskussion – du musst nicht auf Englisch schreiben, Deutsch ist völlig in Ordnung.
 
-Die meisten Verbindungsprobleme lassen sich auf eine Handvoll Ursachen zurückführen. Diese Liste ist grob von der häufigsten zur seltensten sortiert, es lohnt sich also, sie der Reihe nach durchzugehen.
+Probiere diese Schritte, wenn sich dein Handy oder Tablet nicht verbinden kann. Bei Abstürzen oder Problemen während eines Laufs lies [Du hast ein Problem? Melde es in der Steam-Diskussion](reporting-a-problem.md).
 
-*Wenn dein Handy die Beitrittsseite problemlos erreicht und das Problem woanders liegt - ein Absturz, ein Spieler, der nie fertig beitritt, etwas, das im Spiel selbst nicht stimmt -, lies stattdessen [Hast du ein Problem? Poste es in der Steam-Diskussion](reporting-a-problem.md).*
+### 1. Wähle die Verbindungseinstellungen
 
----
+Öffne auf dem Computer, auf dem das Spiel läuft, **Couch Co-Op-QR-Code**.
 
-## Was du ausprobieren kannst
+- **Netzwerkschnittstelle** (links): Wähle **Kabelgebunden (Ethernet)**, wenn der Computer per Kabel am Router hängt, oder **WLAN**, wenn er drahtlos verbunden ist. Wähle die Verbindung zu dem Router, den dein Handy nutzt. Überspringe **PC-Name (.local)**.
+- **Verbindungsmethode** (rechts): Wähle **Direkte Adresse**, ohne „(HTTPS)“. Die Adresse sollte mit `http://` beginnen, zum Beispiel `http://192.168.1.5:13337`.
 
-### 1. Wähle auf dem QR-Bildschirm eine andere Adresse
+Scanne den QR-Code nach dem Ändern dieser Einstellungen erneut.
 
-Der QR-Bildschirm hat zwei Auswahllisten in derselben Zeile: links die Netzwerkschnittstelle, rechts die Verbindungsmethode. **PC-Name (.local)** steht links. Wähle zur Fehlersuche deine WLAN- oder Ethernet-Schnittstelle mit einer numerischen Adresse und **Direkte Adresse**, und scanne erneut. Die Adresse sieht beispielsweise wie **192.168.1.5:13337** aus; diese Methode hat die wenigsten Abhängigkeiten und braucht kein Internet.
+Verwende bei der Fehlersuche **Direkte Adresse**. Die HTTPS-Methoden sind zusätzliche Optionen für Leistung und Sicherheit und erfordern weitere Einrichtung oder Verbindungsvoraussetzungen.
 
-**Website** lädt den Client aus dem Internet und verbindet ihn dann mit dem PC; das Handy braucht Internet und die Browser-Berechtigung für den Zugriff auf dein lokales Netzwerk. **Domainname** verbindet sich über den erzeugten Domainnamen direkt mit dem PC und braucht ebenfalls Internet; manche Router oder Internetanbieter blockieren diese Adresse. Beide ermöglichen HTTPS und damit Browserfunktionen für bessere Leistung und längere Akkulaufzeit. Der **.local**-Name hängt von der Namensauflösung im Netzwerk ab und kann scheitern, obwohl eine numerische Adresse funktioniert.
+### 2. Prüfe das Netzwerk des Handys
 
-Beim Wechsel der Schnittstelle bleibt die gewählte Methode erhalten. Unterstützt die neue Schnittstelle sie nicht, erscheint statt des QR-Codes eine Erklärung. Nicht unterstützte Methoden sind ausgegraut und lassen sich nicht auswählen; fahre mit der Maus darüber oder fokussiere sie per Tastatur/Controller, um den zusätzlichen Hinweis **Nicht verfügbar** zu lesen. Wähle eine andere Schnittstelle oder unterstützte Methode, damit der QR-Code wieder erscheint. **PC-Name (.local)** unterstützt nur **Direkte Adresse**. Benötigt **Domainname** die erste Einrichtung oder einen erneuten Versuch, bleibt die Methode bei einer unterstützten Schnittstelle auswählbar.
+- Verbinde das Handy mit deinem Heim-WLAN, nicht mit dem **Gastnetz**. Der Computer kann WLAN oder ein Kabel zum selben Router verwenden.
+- Stelle sicher, dass das Handy WLAN statt mobiler Daten nutzt.
+- Trenne vorübergehend alle VPN-Verbindungen auf dem Handy oder Computer. Dazu zählen auch Werbeblocker auf dem Handy, die eine VPN-Verbindung nutzen.
 
-**Überspringe auf einem iPhone oder iPad die Zeile *Website* komplett.** Safari - und jeder andere Browser unter iOS, weil sie alle im Kern Safari sind - lässt eine aus dem Internet geladene Seite nichts in deinem Heimnetzwerk erreichen. Das ist eine Regel des Browsers, keine Einstellung, es gibt also nichts zu erlauben und nichts zu ändern: Die Seite lädt und meldet dann, dass das Spiel nicht geantwortet hat - in jedem Netzwerk, egal wie deine Firewall eingestellt ist. Nutze auf einem iPhone oder iPad **Direkte Adresse** oder **Domainname**. (Die Seite sagt das inzwischen selbst, falls du so weit kommst.)
+**Wenn sich die Seite öffnet, aber der Beitritt hängen bleibt, gehe zu Schritt 6.**
 
-### 2. Stelle sicher, dass das Handy wirklich im selben Netzwerk ist
+### 3. Windows: Lass das Spiel durch die Firewall
 
-- Im selben WLAN wie der Host-Computer, und nicht im **Gast**-Netzwerk. Gastnetzwerke verhindern meist, dass Geräte miteinander kommunizieren - und genau das wird hier gebraucht.
-- Nicht über mobile Daten. Wenn das WLAN keinen Internetzugang hat, wechseln Handys manchmal von selbst zu den mobilen Daten, ohne dir Bescheid zu sagen.
-- **Schalte jedes VPN auf dem Handy aus.** Darüber stolpern viele. Werbeblocker und „Privates DNS“-Apps, die als VPN laufen, zählen auch dazu.
+In deinem Heimnetzwerk:
 
-### 3. Lies, was die Seite beim Beitreten anzeigt
+1. **Einstellungen > Netzwerk und Internet > WLAN** (oder Ethernet) > klicke auf dein Netzwerk > setze **Netzwerkprofiltyp** auf **Privates Netzwerk**.
+2. **Einstellungen > Datenschutz und Sicherheit > Windows-Sicherheit > Firewall & Netzwerkschutz > Zugriff von App durch Firewall zulassen**
+3. Suche **Slay the Spire 2** in der Liste und stelle sicher, dass **Privat** angehakt ist. Wenn es nicht in der Liste steht, verwende **Andere App zulassen...** und wähle die `.exe`-Datei des Spiels aus.
 
-Das Spiel eines Spielers zu starten kann bis zu einer Minute dauern, und das ist normal und kein Fehler. Währenddessen zeigt dir die Seite jetzt in einer Zeile unter *Beitreten…* an, wie weit sie ist:
+Wenn du die Firewall-Abfrage für das Spiel früher abgebrochen hast, entferne den blockierten Eintrag und füge das Spiel erneut hinzu.
 
-*Verbindung zum Host wird hergestellt – Schritt 1 von 6, bisher 14 s. Das kann bis zu einer Minute dauern, lass diese Seite also geöffnet.*
+Falls dein Antivirenprogramm eine eigene Firewall hat, erlaube das Spiel auch dort.
 
-Wenn diese Zeile hochzählt und die Phase wechselt, läuft alles - lass die Seite offen. Die sechs Phasen sind „Verbindung zum Host wird hergestellt“, „Warten auf den Host“, „Das Spiel dieses Spielers wird gestartet“, „Dieser Spieler tritt dem Spiel bei“, „Die Spielansicht wird geladen“ und „Fast fertig“.
+Die Adresse auf dem Computer zu öffnen, auf dem das Spiel läuft, prüft nicht, ob die Firewall die Verbindung deines Handys zulässt.
 
-### 4. Wenn es hängen bleibt, kopiere die Meldung der Seite
+### 4. Prüfe, ob der Browser HTTPS erzwingt
 
-Die Beitrittsseite und die Spielansicht jedes Spielers nutzen denselben Browser-Port auf dem Host-Computer (standardmäßig **13337**). Zusätzliche Browser-Ports zu öffnen behebt keinen fehlgeschlagenen Beitritt.
-
-Wenn bei *Beitreten…* oder *Laden…* ein Fehler erscheint, gib den genauen Wortlaut und, falls vorhanden, die graue technische Zeile in deinem Bericht an. Der Host kann auf dem QR-Bildschirm auch das Panel **Verbindungen** öffnen und nachsehen, bei welchem Schritt es scheiterte. Wenn die Seite gar nicht lädt, prüfe die Netzwerk- und Firewall-Hinweise in den Abschnitten 2, 5 und 6.
-
-Wenn die Seite ohne Fehlermeldung bei *Beitreten…* oder *Laden…* stehen bleibt, sag, welcher Bildschirm erreicht wurde und was die letzte Fortschrittszeile sagte. Lass die Seite offen, solange die Fortschrittsphase wechselt.
-
-### 5. Windows: Lass das Spiel durch die Firewall
-
-Prüfe zuerst den Netzwerktyp, denn allein der blockiert viele Verbindungen:
-
-- **Einstellungen > Netzwerk und Internet > WLAN** (oder Ethernet) > klicke auf dein Netzwerk > setze **Netzwerkprofiltyp** auf **Privates Netzwerk**.
-
-Dann erlaube das Spiel:
-
-- **Einstellungen > Datenschutz und Sicherheit > Windows-Sicherheit > Firewall & Netzwerkschutz > Zugriff von App durch Firewall zulassen**
-- Suche **Slay the Spire 2** in der Liste und stelle sicher, dass **Privat** angehakt ist. Wenn es nicht in der Liste steht, verwende **Andere App zulassen...** und wähle die `.exe`-Datei des Spiels aus.
-
-Wenn du irgendwann bei einer Abfrage der Windows-Firewall auf „Abbrechen“ geklickt hast, merkt sich Windows das als Blockierregel und fragt nie wieder nach. In diesem Fall musst du den oben genannten Eintrag entfernen und neu hinzufügen.
-
-**Die Adresse in einem Browser auf dem Host-PC selbst zu öffnen, beweist gar nichts.** Das liegt nahe, ist aber nachweislich irreführend: Windows filtert keinen Datenverkehr eines Computers an sich selbst - nicht einmal an seine eigene Netzwerkadresse -, deshalb lädt der Browser des Hosts die Seite einwandfrei, selbst wenn die Firewall jedes Handy aktiv blockiert. Wenn das bei dir funktioniert hat, weißt du, dass das Spiel läuft und die Seite ausliefert. Über die Firewall sagt es überhaupt nichts aus.
-
-Hake **Öffentlich** nur an, wenn dein Netzwerk auf Öffentlich eingestellt ist und du das nicht ändern kannst. Damit wird das Spiel in jedem Netzwerk erreichbar, mit dem du dich verbindest, auch in Cafés und Hotels.
-
-### 6. Der Router
-
-Manche Router verhindern, dass sich Geräte im selben WLAN gegenseitig erreichen. Such nach einer Einstellung namens **AP isolation**, **Client isolation** oder **Wireless isolation** (auf Deutsch oft „AP-Isolierung“) und schalte sie aus.
-
-Auch gut zu wissen: Ein WLAN-Repeater oder Powerline-Adapter, der im **Router**-Modus statt im **Bridge**- / **Access-Point**-Modus eingerichtet ist, bringt dein Handy in ein anderes Netzwerk als den Host, auch wenn der WLAN-Name gleich aussieht.
-
-### 7. Browser-Einstellungen, die direkte Adressen blockieren
-
-Manche Browser versuchen, jede Adresse auf HTTPS zu zwingen - und die einfache numerische Adresse nutzt kein HTTPS. (Die Zeile **Domainname** auf dem QR-Bildschirm tut das - wenn also erzwungenes HTTPS das Problem ist, lohnt sich auch ein Versuch mit dieser Zeile.) Wenn die Adressleiste statt des Spiels eine Sicherheitswarnung zeigt, schalte diese Optionen aus und versuche es erneut:
+Die Methode **Direkte Adresse** verwendet `http://`. Wenn dein Browser daraus `https://` machen will, prüfe seine Einstellung für sichere Verbindungen:
 
 - Chrome: **Einstellungen > Datenschutz und Sicherheit > Sicherheit > Immer verschlüsselte Verbindungen verwenden**
 - Firefox: **Einstellungen > Datenschutz & Sicherheit > Verbindungs- und Softwaresicherheit > Erweiterte Einstellungen > Nur-HTTPS-Modus**
 
-Prüfe auf dem iPhone außerdem **Einstellungen > *dein Name* > iCloud > Privat-Relay** und unter **Einstellungen > Apps > Safari** „IP-Adresse verbergen“.
+Erlaube die HTTP-Adresse und scanne den QR-Code erneut. Lass auf dem Computer **Direkte Adresse** ausgewählt.
 
-### 8. Antivirenprogramme mit eigener Firewall
+### 5. Prüfe den Router
 
-Sicherheitspakete wie ESET, Bitdefender, Norton, Kaspersky und Avast haben eine eigene Firewall, getrennt von der von Windows. Das Spiel in Windows zu erlauben, bringt für diese nichts. Prüfe die Netzwerk- oder Firewall-Einstellungen des Sicherheitspakets selbst oder pausiere dessen Firewall kurz, um zu sehen, ob sie die Ursache ist.
+Gast-WLAN verhindert häufig, dass Geräte miteinander kommunizieren. Verwende das normale Heimnetzwerk.
 
-### 9. Wenn es früher funktioniert hat und dann nicht mehr
+Wenn beide Geräte bereits in diesem Netzwerk sind, prüfe, ob am Router **AP isolation**, **Client isolation** oder **Wireless isolation** aktiviert ist. Diese Einstellungen verhindern, dass Geräte einander erreichen.
 
-Die Adresse des Host-Computers kann sich ändern, wenn er sich neu mit dem WLAN verbindet oder nachdem der Router neu gestartet wurde. Öffne den QR-Bildschirm erneut und scanne noch einmal - dort steht dann die neue Adresse.
+Wenn du einen WLAN-Repeater verwendest, prüfe, ob er im **Access-Point-** oder **Bridge-Modus** arbeitet, statt ein eigenes Netzwerk anzulegen.
 
-Wenn du den Client zu deinem Home-Bildschirm hinzugefügt hast, hängt das Weitere davon ab, aus welcher Zeile du ihn installiert hast:
+### 6. Wenn sich die Seite öffnet, der Beitritt aber dauert
 
-- Aus der Zeile **Website** installiert: Er funktioniert weiter und findet die neue Adresse von selbst. Einfach öffnen - kein erneutes Scannen nötig.
-- Aus der **numerischen Adresse** oder der Zeile **Domainname** installiert: Das Symbol zeigt auf die alte Adresse und kann sich davon nicht erholen. Lösche es und füge es nach dem erneuten Scannen wieder hinzu. (Unter Android vermeidest du das dauerhaft, wenn du stattdessen aus der Zeile **Website** installierst. Auf einem iPhone oder iPad kann diese Zeile nicht funktionieren - siehe Abschnitt 1 -, dort bleibt also nur, das Symbol neu hinzuzufügen.)
+Das Starten des Spiels für einen Spieler kann bis zu einer Minute dauern. Lass die Seite offen, solange die Fortschrittszeile unter **Beitreten…** die Phase wechselt.
 
----
+Wenn ein Fehler erscheint, mache einen Screenshot oder kopiere den genauen Wortlaut einschließlich einer kleineren grauen Zeile.
 
-## Kommst du immer noch nicht weiter? Kommentiere in der Steam-Diskussion
+Wenn die Seite ohne Fehler bei **Beitreten…** oder **Laden…** bleibt, nenne in deinem Kommentar die letzte Fortschrittsmeldung.
 
-Hinterlasse einen Kommentar in der [Steam-Diskussion](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) - du musst nicht alles beantworten. Schon ein oder zwei dieser Angaben machen eine Meldung viel leichter zu bearbeiten, und die erste Frage ist mehr wert als alle anderen zusammen.
+### 7. Wenn es vorher funktioniert hat
 
-### Wie weit kommt es?
+Die Adresse des Computers kann sich nach einer erneuten Netzwerkverbindung oder einem Router-Neustart geändert haben. Öffne den QR-Bildschirm und scanne erneut.
 
-Das ist das Nützlichste, was du mir sagen kannst, weil jede Antwort auf eine andere Ursache hinweist:
-
-- der Browser lädt überhaupt nichts
-- die Seite lädt, aber die Spielerliste erscheint nie
-- du kannst einen Namen wählen, aber es bleibt bei „Beitreten…“ stehen - sag mir, was die Fortschrittszeile darunter anzeigte und welche Meldung du bekommen hast, falls du gewartet hast
-- es kommt darüber hinaus und bleibt bei „**Laden…**“ stehen - sag mir, ob ein Fehler erscheint, und kopiere den genauen Wortlaut und die graue technische Zeile
-- die Verbindung klappte, brach dann aber während des Runs ab
-
-### Was du sonst noch angeben kannst
-
-- Die genaue Meldung, die das Handy anzeigt, einschließlich der grauen Zeile darunter. Ein Foto des Bildschirms ist perfekt.
-- Welche Netzwerkschnittstelle und Verbindungsmethode du in den beiden Listen gewählt hast und welche genaue Erklärung gegebenenfalls statt des QR-Codes erscheint.
-- Betriebssystem des Hosts sowie Modell und Browser des Handys bzw. Tablets.
-- Schlägt es auf **jedem** Gerät fehl oder nur auf einem? Wenn ein Handy funktioniert und ein anderes nicht, schließt das schon viel aus.
-- Hat es früher schon einmal funktioniert, und hat sich seitdem etwas geändert?
-- Host per WLAN oder Ethernet? Läuft ein VPN auf dem Host oder dem Handy? Ein Antivirenprogramm mit Firewall?
-
-### Drei Dinge, die dir der Host-Computer liefern kann
-
-- **Das Verbindungs-Panel.** Öffne auf dem Host den Bildschirm **Couch Co-Op-QR-Code** - dort findest du unter dem Code das Panel **Verbindungen**. Geräte, die weit genug gekommen sind, um dort aufzutauchen, werden aufgelistet, und alles, was schiefgegangen ist, wird unter **Verbindungsprobleme** (mit einer Anzahl dahinter) aufbewahrt. Wähle die Zeile aus und nutze **Bericht kopieren** - das kopiert einen Bericht, der den fehlgeschlagenen Schritt, die Zeiten und die Diagnose des Hosts selbst bereits enthält. Füge ihn direkt in deinen Kommentar ein. Er nennt auch den genauen Pfad der beiden Logdateien unten, sodass du nicht danach suchen musst.
-- **Die Haupt-Logdatei.** Unter Windows `%APPDATA%\SlayTheSpire2\logs\godot.log`. Unter Linux `~/.local/share/SlayTheSpire2/logs/godot.log`. Unter macOS `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Das Log pro Spieler.** Jeder Spieler, der beitritt, bekommt seine eigene Kopie des Spiels, die im Hintergrund auf dem Host läuft, und jede führt ihr eigenes Log. **Wenn die Seite bis *Beitreten…* gekommen ist und es dann zu einer Zeitüberschreitung kam, erklärt diese Datei, warum** - das Haupt-Log oben meist nicht. Die Spieler werden ab 2 nummeriert, der erste Mitspieler, der beitritt, ist also `slot-2`: Unter Linux ist das `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (ja, zweimal `SlayTheSpire2` - kein Tippfehler), und die Pfade unter Windows und macOS folgen demselben Aufbau unter den oben genannten Ordnern. Bei manchen Setups ist es stattdessen eine einzelne Datei unter `couch-coop/seat-logs/slot-2.log`.
-
-**Welche Zeilen wichtig sind.** In beiden Logs enthalten die nützlichen Zeilen `[couchcoop]` - sie sehen aus wie `[INFO] [couchcoop] ...` -, dazu alle `[ERROR]`-Zeilen, auch solche, die couchcoop nicht erwähnen. Die reichen meist schon für sich.
-
-**Bevor du ein ganzes Log einfügst:** Die Steam-Diskussion ist öffentlich, und ein Log enthält deine eigene **SteamID64** (eine lange Zahl, die mit 7656 beginnt und auf dein Steam-Profil verweist) und den **Benutzernamen** deines Computers in Dateipfaden. Es enthält *keine* Passwörter und auch keine Konten anderer Spieler - nur deins. Wenn du das nicht posten möchtest, reicht es, diese beiden Angaben vor dem Einfügen per Suchen und Ersetzen zu ändern, oder poste einfach nur die `[couchcoop]`- und `[ERROR]`-Zeilen, und ich frage nach, wenn ich mehr brauche.
+Wenn ein altes Lesezeichen oder eine Verknüpfung auf dem Startbildschirm nicht mehr funktioniert, ersetze es mit der neu gescannten Adresse.
 
 ---
 
-Noch ein letzter Hinweis: Jeder, der die Beitrittsadresse erreichen kann, kann den Client öffnen und mitspielen, also nutze das nur in einem Netzwerk, dem du vertraust.
+## Noch immer Probleme? Schreibe in die Steam-Diskussion
+
+Beginne in der [Steam-Diskussion](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) mit diesen Angaben:
+
+- Wie weit es kommt: keine Seite, keine Spielerliste, Beitritt/Laden hängt oder Verbindung während des Spiels getrennt.
+- Ein Screenshot oder die genaue Fehlermeldung.
+- Das Betriebssystem des Computers sowie Handymodell und Browser.
+- Ob alle Handys betroffen sind oder nur eines.
+
+### Kopiere den Verbindungsbericht
+
+Öffne auf dem Computer **Couch Co-Op-QR-Code** und schaue unter **Verbindungen** nach. Wähle unter **Verbindungsprobleme** die fehlgeschlagene Verbindung, dann **Bericht kopieren**, und füge den Bericht in deinen Kommentar ein.
+
+Wenn dort keine Verbindung erscheint, erwähne das und gib die Informationen von oben an.
+
+Der Bericht enthält die Pfade zu den passenden Logdateien. Falls Logs benötigt werden, erklärt [Du hast ein Problem? Melde es in der Steam-Diskussion](reporting-a-problem.md), wie du sie findest. Entferne vor dem öffentlichen Posten deine Steam-Konto-ID und den Benutzernamen deines Computers, wenn du sie privat halten möchtest.
+
+Verwende die Mod in einem vertrauenswürdigen Netzwerk: Jeder, der die Beitrittsadresse erreichen kann, kann den Client öffnen und mitspielen.

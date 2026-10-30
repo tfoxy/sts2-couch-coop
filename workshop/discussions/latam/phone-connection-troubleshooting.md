@@ -2,126 +2,89 @@
 
 > Esta es una traducción de la discusión del Workshop de Steam [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/). Para hacer una pregunta o reportar un problema, deja un comentario en esa discusión. No necesitas escribir en inglés: puedes hacerlo en español.
 
-La mayoría de los problemas de conexión se reducen a unas pocas causas. Esta lista está ordenada, más o menos, de la más común a la menos común, así que vale la pena revisarla en orden.
+Prueba estos pasos si tu teléfono o tablet no puede conectarse. Para cierres inesperados o problemas durante una partida, consulta [¿Tienes un problema? Coméntalo en la discusión de Steam](reporting-a-problem.md).
 
-*Si tu teléfono llega sin problemas a la página para unirse y el problema es otro (un cierre inesperado, un jugador que nunca termina de unirse, algo que anda mal en el propio juego), revisa [¿Tienes algún problema? Publícalo en la discusión de Steam](reporting-a-problem.md).*
+### 1. Elige los ajustes de conexión
 
----
+En la computadora donde se ejecuta el juego, abre **Código QR de Couch Co-Op**.
 
-## Cosas que puedes probar
+- **Interfaz de red** (izquierda): elige **Por cable (Ethernet)** si la computadora está conectada al router por cable, o **Wi-Fi** si está conectada de forma inalámbrica. Elige la conexión al router que usa tu teléfono. Omite **Nombre de la PC (.local)**.
+- **Método de conexión** (derecha): elige **Dirección directa**, sin «(HTTPS)». La dirección debe empezar con `http://`, por ejemplo `http://192.168.1.5:13337`.
 
-### 1. Elige otra dirección en la pantalla del QR
+Vuelve a escanear el código QR después de cambiar estos ajustes.
 
-La pantalla del QR tiene dos selectores en la misma fila: interfaz de red a la izquierda y método de conexión a la derecha. **Nombre de la PC (.local)** está en la lista de la izquierda. Para diagnosticar problemas de conexión, elige tu interfaz Wi-Fi o Ethernet con una dirección numérica y **Dirección directa**, y vuelve a escanear. La dirección resultante puede ser **192.168.1.5:13337**; este método tiene menos elementos que puedan fallar y no necesita internet.
+Usa **Dirección directa** mientras buscas la causa del problema. Los métodos HTTPS son opciones para mejorar el rendimiento y la seguridad, con requisitos adicionales de configuración o conexión.
 
-**Sitio web** carga el cliente desde internet y luego se conecta a la PC; necesita internet en el celular y permiso del navegador para acceder a tu red local. **Nombre de dominio** se conecta directamente a la PC mediante su dominio generado y también necesita internet; algunos routers o proveedores bloquean esa dirección. Ambos ofrecen HTTPS, que habilita funciones del navegador para mejorar el rendimiento y la duración de la batería. El nombre **.local** depende de la resolución de nombres de tu red y puede fallar donde una dirección numérica funciona.
+### 2. Revisa la red del teléfono
 
-Cambiar la interfaz conserva el método elegido. Si la nueva interfaz no lo admite, una explicación reemplaza al QR. Los métodos no compatibles aparecen en gris y no se pueden seleccionar; pasa el cursor por encima o enfócalos con el teclado o control para leer la ayuda adicional **No disponible**. Elige otra interfaz o un método compatible para recuperar el QR. **Nombre de la PC (.local)** solo admite **Dirección directa**. Si **Nombre de dominio** necesita la configuración inicial o un nuevo intento, sigue siendo seleccionable en una interfaz compatible.
+- Conecta el teléfono al Wi-Fi de casa, no a la red de **invitados**. La computadora puede usar Wi-Fi o un cable al mismo router.
+- Revisa que el teléfono use Wi-Fi en lugar de datos móviles.
+- Desconecta temporalmente cualquier VPN del teléfono o de la computadora. También cuentan los bloqueadores de anuncios del teléfono que usan una conexión VPN.
 
-**En un iPhone o iPad, no uses para nada la opción *Sitio web*.** Safari (y cualquier otro navegador de iOS, porque en el fondo todos son Safari) no permite que una página cargada desde internet acceda a nada de tu red de casa. Es una regla del navegador, no una configuración, así que no hay nada que permitir ni nada que cambiar: la página va a cargar y después te va a decir que el juego no respondió, en cualquier red y sin importar cómo esté configurado tu firewall. En un iPhone o iPad, usa **Dirección directa** o **Nombre de dominio**. (Ahora la propia página te lo avisa, si llegas hasta ahí).
+**Si la página se abre pero se queda trabada al unirse, pasa al paso 6.**
 
-### 2. Revisa que el teléfono realmente esté en la misma red
+### 3. Windows: permite el juego en el firewall
 
-- En la misma red Wi-Fi que la computadora anfitriona, y no en la red de **invitados**. Las redes de invitados suelen impedir que los dispositivos se comuniquen entre sí, que es justo lo que se necesita aquí.
-- Sin usar datos móviles. Si la red Wi-Fi no tiene acceso a internet, a veces los teléfonos se cambian solos a datos móviles sin avisarte.
-- **Desactiva cualquier VPN del teléfono.** Esto le pasa a muchísima gente. También cuentan los bloqueadores de anuncios y las apps de "DNS privado" que funcionan como VPN.
+En tu red de casa:
 
-### 3. Lee lo que te dice la página mientras se une
+1. **Configuración > Red e Internet > Wi-Fi** (o Ethernet) > haz clic en tu red > cambia **Tipo de perfil de red** a **Red privada**.
+2. **Configuración > Privacidad y seguridad > Seguridad de Windows > Firewall y protección de red > Permitir a una aplicación atravesar el firewall**
+3. Busca **Slay the Spire 2** en la lista y verifica que la casilla **Privada** esté marcada. Si no aparece en la lista, usa **Permitir otra aplicación...** y busca el `.exe` del juego.
 
-Iniciar la partida de un jugador puede tardar hasta un minuto, y eso es normal, no una falla. Mientras tanto, la página ahora te muestra en qué punto va, en una línea debajo de *Uniéndote…*:
+Si antes cancelaste el aviso del firewall para el juego, elimina su entrada bloqueada y vuelve a agregar el juego.
 
-*Conectando con el anfitrión: paso 1 de 6, 14 s hasta ahora. Esto puede tardar hasta un minuto, así que deja esta página abierta.*
+Si tu antivirus tiene su propio firewall, permite el juego también ahí.
 
-Si esa línea va contando y cambiando de etapa, está funcionando: deja la página abierta. Las seis etapas son: conectando con el anfitrión, esperando al anfitrión, iniciando el juego de este jugador, conectando a este jugador con la partida, cargando la vista del juego y casi listo.
+Abrir la dirección en la computadora donde se ejecuta el juego no comprueba si el firewall permite que se conecte tu teléfono.
 
-### 4. Si se detiene, copia lo que dice la página
+### 4. Revisa si el navegador fuerza HTTPS
 
-La página para unirse y la vista de juego de cada jugador usan el mismo puerto del navegador en la computadora anfitriona (**13337** de forma predeterminada). Abrir otros puertos para el navegador no arregla un fallo al unirse.
-
-Si aparece un error durante *Uniéndote…* o *Cargando…*, incluye en tu reporte el texto exacto y la línea técnica gris, si la hay. Quien organiza la partida también puede abrir el panel **Conexiones** en la pantalla del QR para ver en qué paso falló. Si la página ni siquiera abre, revisa los consejos sobre la red y el firewall en las secciones 2, 5 y 6.
-
-Si la página se queda en *Uniéndote…* o *Cargando…* sin mostrar un error, indica en qué pantalla se detuvo y qué decía la última línea de progreso. Déjala abierta mientras la etapa de progreso siga cambiando.
-
-### 5. Windows: permite el juego en el firewall
-
-Primero revisa el tipo de red, porque esto solo ya bloquea muchas conexiones:
-
-- **Configuración > Red e Internet > Wi-Fi** (o Ethernet) > haz clic en tu red > cambia **Tipo de perfil de red** a **Red privada**.
-
-Después, permite el juego:
-
-- **Configuración > Privacidad y seguridad > Seguridad de Windows > Firewall y protección de red > Permitir a una aplicación atravesar el firewall**
-- Busca **Slay the Spire 2** en la lista y verifica que la casilla **Privada** esté marcada. Si no aparece en la lista, usa **Permitir otra aplicación...** y busca el `.exe` del juego.
-
-Si en algún momento respondiste "Cancelar" a un aviso del firewall de Windows, Windows lo recuerda como una regla de bloqueo y nunca más te va a volver a preguntar. En ese caso, tienes que borrar la entrada de arriba y volver a agregarla.
-
-**Abrir la dirección en un navegador de la propia computadora anfitriona no prueba nada.** Es lo primero que se le ocurre a cualquiera, y está comprobado que engaña: Windows no filtra el tráfico de una computadora hacia sí misma (ni siquiera hacia su propia dirección de red), así que, aunque el firewall esté bloqueando activamente todos los teléfonos, el navegador del propio anfitrión carga la página perfectamente. Si a ti te funcionó, eso te dice que el juego está corriendo y sirviendo la página. No dice absolutamente nada sobre el firewall.
-
-Marca **Pública** solo si tu red está configurada como pública y no puedes cambiarla. Si la marcas, el juego queda accesible en cualquier red a la que te conectes, incluidas las de cafeterías y hoteles.
-
-### 6. El router
-
-Algunos routers impiden que los dispositivos conectados a la misma red Wi-Fi se comuniquen entre sí. Busca una opción llamada **AP isolation**, **Client isolation** o **Wireless isolation** (en español, "aislamiento AP") y desactívala.
-
-También es bueno saber que un repetidor Wi-Fi o un adaptador powerline configurado en modo **router** en vez de en modo **bridge** / **access point** (puente / punto de acceso) pone tu teléfono en una red distinta de la del anfitrión, aunque el nombre de la red Wi-Fi se vea igual.
-
-### 7. Configuraciones del navegador que bloquean las direcciones simples
-
-Algunos navegadores intentan forzar HTTPS en todas las direcciones, y la dirección numérica simple no lo usa. (La opción **Nombre de dominio** de la pantalla del QR sí lo usa, así que, si el problema es que se fuerza HTTPS, también vale la pena probarla). Si la barra de direcciones muestra una advertencia de seguridad en vez del juego, desactiva estas opciones y vuelve a intentarlo:
+El método **Dirección directa** usa `http://`. Si el navegador intenta cambiarlo a `https://`, revisa su ajuste de conexiones seguras:
 
 - Chrome: **Configuración > Privacidad y seguridad > Seguridad > Usar siempre conexiones seguras**
 - Firefox: **Ajustes > Privacidad y seguridad > Seguridad de la conexión y del software > Configuración avanzada > Modo solo HTTPS**
 
-En iPhone, revisa también **Configuración > *tu nombre* > iCloud > Retransmisión privada** y "Ocultar dirección IP" en **Configuración > Apps > Safari**.
+Permite la dirección HTTP y vuelve a escanear el código QR. Mantén **Dirección directa** seleccionado en la computadora.
 
-### 8. Antivirus con su propio firewall
+### 5. Revisa el router
 
-Los paquetes de seguridad como ESET, Bitdefender, Norton, Kaspersky y Avast tienen su propio firewall, aparte del de Windows. Permitir el juego en Windows no sirve de nada con ellos. Revisa la configuración de red o de firewall del propio antivirus, o pausa su firewall un momento para ver si eso es lo que lo está bloqueando.
+El Wi-Fi de invitados suele impedir que los dispositivos se comuniquen entre sí. Usa la red principal de casa.
 
-### 9. Si antes funcionaba y dejó de funcionar
+Si ambos dispositivos ya están en esa red, revisa si el router tiene activado **AP isolation**, **Client isolation** o **Wireless isolation**. Estos ajustes impiden que los dispositivos se comuniquen entre sí.
 
-La dirección de la computadora anfitriona puede cambiar cuando vuelve a conectarse a la red Wi-Fi o después de reiniciar el router. Abre otra vez la pantalla del QR y vuelve a escanear: ahí va a estar la nueva dirección.
+Si usas un repetidor Wi-Fi, revisa que esté en modo **punto de acceso** (access point) o **puente** (bridge), en lugar de crear una red aparte.
 
-Si agregaste el cliente a la pantalla de inicio, lo que pase después depende de la opción desde la que lo instalaste:
+### 6. Si la página se abre pero tarda en unirse
 
-- Instalado desde la opción **Sitio web**: sigue funcionando y encuentra la nueva dirección por su cuenta. Solo ábrelo, no hace falta volver a escanear.
-- Instalado desde la **dirección numérica** o desde **Nombre de dominio**: el ícono apunta a la dirección vieja y no puede recuperarse. Bórralo y vuelve a agregarlo después de escanear de nuevo. (En Android, instalarlo desde la opción **Sitio web** evita esto para siempre. En un iPhone o iPad esa opción no puede funcionar, como se explica en la sección 1, así que volver a agregar el ícono es la única forma).
+Iniciar la partida de un jugador puede tardar hasta un minuto. Mantén la página abierta mientras la línea de progreso debajo de **Uniéndote…** vaya cambiando de etapa.
+
+Si aparece un error, toma una captura de pantalla o copia el texto exacto, incluida cualquier línea gris más pequeña.
+
+Si se queda en **Uniéndote…** o **Cargando…** sin mostrar un error, incluye el último mensaje de progreso en tu comentario.
+
+### 7. Si antes funcionaba
+
+La dirección de la computadora puede haber cambiado al volver a conectarse a la red o al reiniciar el router. Abre la pantalla del QR y vuelve a escanear.
+
+Si un marcador o acceso directo antiguo de la pantalla de inicio ya no funciona, reemplázalo usando la dirección recién escaneada.
 
 ---
 
 ## ¿Sigue sin funcionar? Comenta en la discusión de Steam
 
-Deja un comentario en [la discusión de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/); no necesitas responder todo. Con solo una o dos de estas respuestas, el reporte ya es mucho más fácil de resolver, y la primera pregunta vale más que todas las demás juntas.
+En [la discusión de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/), empieza por indicar:
 
-### ¿Hasta dónde llega?
+- Hasta dónde llega: no aparece la página, no hay lista de jugadores, se traba al unirse o cargar, o se desconecta durante la partida.
+- Una captura de pantalla o el mensaje de error exacto.
+- El sistema operativo de la computadora, el modelo del teléfono y el navegador.
+- Si falla en todos los teléfonos o solo en uno.
 
-Es lo más útil que me puedes decir, porque cada respuesta apunta a una causa diferente:
+### Copia el informe de conexión
 
-- el navegador nunca carga nada
-- la página carga, pero la lista de jugadores nunca aparece
-- puedes elegir un nombre, pero se queda en “Uniéndote…”: dime qué decía la línea de progreso de abajo y qué mensaje te apareció si esperaste
-- pasa de ahí y se queda en “**Cargando…**”: dime si aparece algún error y copia el texto exacto y la línea técnica gris
-- se conectó bien y después se desconectó durante la partida
+En la computadora, abre **Código QR de Couch Co-Op** y busca el panel **Conexiones**. Selecciona la conexión fallida en **Problemas de conexión**, elige **Copiar informe** y pega el informe en tu comentario.
 
-### Cualquier otra cosa que puedas agregar
+Si no aparece ninguna conexión, indícalo y publica los detalles de arriba.
 
-- El mensaje exacto que muestra el teléfono, incluida la línea gris de abajo. Una foto de la pantalla es perfecta.
-- Qué interfaz de red y método de conexión elegiste en los dos selectores, y el texto exacto que aparece en lugar del QR, si lo hay.
-- El sistema operativo del anfitrión, y el modelo y el navegador del teléfono o la tablet.
-- ¿Falla en **todos** los dispositivos o solo en uno? Si un teléfono funciona y otro no, eso descarta muchas cosas.
-- ¿Alguna vez funcionó, y cambió algo desde entonces?
-- Si el anfitrión está conectado por Wi-Fi o por Ethernet. Si hay alguna VPN activa en el anfitrión o en el teléfono. Si hay algún antivirus con firewall.
+El informe incluye las rutas de los archivos de registro correspondientes. Si hacen falta registros, [¿Tienes un problema? Coméntalo en la discusión de Steam](reporting-a-problem.md) explica cómo encontrarlos. Antes de publicar registros, elimina tu ID de cuenta de Steam y el nombre de usuario de la computadora si prefieres mantenerlos privados.
 
-### Tres cosas que te puede dar la computadora anfitriona
-
-- **El panel de conexiones.** En el anfitrión, abre la pantalla **Código QR de Couch Co-Op**: el panel **Conexiones** está ahí, debajo del código. Aparecen los dispositivos que llegaron lo suficientemente lejos, y todo lo que salió mal se guarda en **Problemas de conexión** (con un número al lado). Selecciona la fila y usa **Copiar informe**: eso copia un informe que ya incluye el paso que falla, los tiempos y el diagnóstico del propio anfitrión. Pégalo directamente en tu comentario. También indica la ruta exacta de los dos archivos de registro de abajo, así te ahorras buscarlos.
-- **El archivo de registro principal.** En Windows, `%APPDATA%\SlayTheSpire2\logs\godot.log`. En Linux, `~/.local/share/SlayTheSpire2/logs/godot.log`. En macOS, `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **El registro de cada jugador.** Cada jugador que se une tiene su propia copia del juego corriendo en segundo plano en el anfitrión, y cada una guarda su propio registro. **Si la unión llegó a *Uniéndote…* y después se agotó el tiempo de espera, este es el archivo que explica por qué**; el registro principal de arriba normalmente no lo explica. Los jugadores se numeran a partir del 2, así que la primera persona que se une es **`slot-2`**: en Linux, es `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` (sí, `SlayTheSpire2` dos veces; no es un error de tipeo), y las rutas de Windows y macOS siguen la misma estructura dentro de sus carpetas de arriba. En algunas configuraciones, en cambio, es un solo archivo en `couch-coop/seat-logs/slot-2.log`.
-
-**Qué líneas importan.** En cualquiera de los dos registros, las útiles contienen `[couchcoop]` (se ven así: `[INFO] [couchcoop] ...`), además de cualquier línea `[ERROR]`, aunque no mencione couchcoop. Normalmente con esas alcanza.
-
-**Antes de pegar un registro completo:** la discusión de Steam es pública, y un registro contiene tu propio **SteamID64** (un número largo que empieza con 7656 y que lleva a tu perfil de Steam) y el **nombre de usuario** de tu computadora, en las rutas de archivo. *No* contiene contraseñas, y tampoco contiene las cuentas de otros jugadores: solo la tuya. Si prefieres no publicar eso, alcanza con usar buscar y reemplazar en esos dos datos antes de pegarlo, o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, te lo pido.
-
----
-
-Una última advertencia: cualquiera que pueda acceder a la dirección para unirse puede abrir el cliente y jugar, así que úsalo en una red de confianza.
+Usa el mod en una red de confianza: cualquiera que pueda acceder a la dirección para unirse puede abrir el cliente y jugar.

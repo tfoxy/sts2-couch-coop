@@ -2,126 +2,89 @@
 
 > Bu metin, Steam Atölyesi'ndeki [Can't connect from a phone? Read this first](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) tartışmasının çevirisidir. Soru sormak veya bir sorun bildirmek için o tartışmaya yorum bırak — İngilizce yazman gerekmez, Türkçe yazabilirsin.
 
-Bağlantı sorunlarının çoğu birkaç nedenden birine dayanır. Bu liste kabaca en yaygından en az yaygına doğru sıralanmıştır, bu yüzden sırayla ilerlemeye değer.
+Telefonun veya tabletin bağlanamıyorsa bu adımları dene. Çökmeler veya oyun sırasında yaşanan sorunlar için [Bir sorun mu var? Steam tartışmasına yaz](reporting-a-problem.md) yazısına bak.
 
-*Telefonun katılma sayfasını sorunsuz açıyor ama sorun başka bir şeyse — bir çökme, katılmayı bir türlü tamamlayamayan bir oyuncu, oyunun kendisinde ters giden bir şey — bunun yerine [Bir sorun mu yaşıyorsun? Steam tartışmasına yaz](reporting-a-problem.md) sayfasına bak.*
+### 1. Bağlantı ayarlarını seç
 
----
+Oyunun çalıştığı bilgisayarda **Couch Co-Op QR Kodu** ekranını aç.
 
-## Denenecekler
+- **Ağ arayüzü** (solda): bilgisayar yönlendiriciye kabloyla bağlıysa **Kablolu (Ethernet)**, kablosuz bağlıysa **Wi-Fi** seç. Telefonunun kullandığı yönlendiriciye olan bağlantıyı seç. **PC adı (.local)** seçeneğini atla.
+- **Bağlantı yöntemi** (sağda): “(HTTPS)” yazmayan **Doğrudan adres** seçeneğini seç. Adres `http://` ile başlamalı; örneğin `http://192.168.1.5:13337`.
 
-### 1. QR ekranında farklı bir adres seç
+Bu ayarları değiştirdikten sonra QR kodunu yeniden tara.
 
-QR ekranında aynı satırda iki seçici var: solda ağ arayüzü, sağda bağlantı yöntemi. **PC adı (.local)** soldaki listede. Temel bağlantı sorunlarını araştırmak için sayısal adresi olan Wi-Fi veya Ethernet arayüzünü ve **Doğrudan adres** seçeneğini seçip yeniden tara. Adres **192.168.1.5:13337** gibi görünebilir; bu yöntem en az bileşene dayanır ve internet gerektirmez.
+Sorunu araştırırken **Doğrudan adres** kullan. HTTPS yöntemleri performans ve güvenlik için sunulan isteğe bağlı seçeneklerdir; ek kurulum veya bağlantı koşulları gerektirirler.
 
-**Web sitesi** istemciyi internetten yükler, ardından bilgisayara bağlanır; telefonda internet ve yerel ağa erişmek için tarayıcı izni gerekir. **Alan adı**, oluşturulan alan adı üzerinden bilgisayara doğrudan bağlanır ve o da internet gerektirir; bazı yönlendiriciler veya sağlayıcılar bu adresi engeller. İkisi de HTTPS sağlayarak daha iyi performans ve pil ömrü için tarayıcı özelliklerini açar. **.local** adı ağındaki ad çözümlemesine bağlıdır ve sayısal adresin çalıştığı yerde başarısız olabilir.
+### 2. Telefonun ağını kontrol et
 
-Arayüzü değiştirmek seçtiğin yöntemi korur. Yeni arayüz bunu desteklemiyorsa QR yerine bir açıklama görünür. Desteklenmeyen yöntemler gri gösterilir ve seçilemez; fareyle üzerlerine gelerek veya klavye/kontrolcüyle odaklanarak ek **Kullanılamıyor** ipucunu okuyabilirsin. QR kodunu geri getirmek için başka bir arayüz veya desteklenen bir yöntem seç. **PC adı (.local)** yalnızca **Doğrudan adres** seçeneğini destekler. **Alan adı** ilk kurulum veya yeniden deneme gerektiriyorsa desteklenen bir arayüzde seçilebilir kalır.
+- Telefonu **Misafir** ağına değil, evindeki Wi-Fi ağına bağla. Bilgisayar aynı yönlendiriciye Wi-Fi veya kabloyla bağlanabilir.
+- Telefonun mobil veri yerine Wi-Fi kullandığından emin ol.
+- Telefon veya bilgisayardaki VPN bağlantılarını geçici olarak kes. Telefonda VPN bağlantısı kullanan reklam engelleyiciler de buna dâhil.
 
-**iPhone veya iPad'de *Web sitesi* satırını hiç kullanma.** Safari — ve iOS'taki diğer tüm tarayıcılar, çünkü hepsinin altında aslında Safari vardır — internetten yüklenen bir sayfanın ev ağındaki hiçbir şeye ulaşmasına izin vermez. Bu bir ayar değil, tarayıcının kuralıdır; yani izin verilecek ya da değiştirilecek bir şey yoktur: sayfa yüklenir ve ardından, hangi ağda olursan ol ve güvenlik duvarın nasıl ayarlanmış olursa olsun, oyunun yanıt vermediğini söyler. iPhone veya iPad'de **Doğrudan adres** ya da **Alan adı** satırını kullan. (O noktaya kadar gelirsen sayfa artık bunu kendisi de söylüyor.)
+**Sayfa açılıyor ama katılma işlemi takılıyorsa 6. adıma geç.**
 
-### 2. Telefonun gerçekten aynı ağda olduğundan emin ol
+### 3. Windows: oyunun güvenlik duvarından geçmesine izin ver
 
-- Host bilgisayarla aynı Wi-Fi ağında olmalı ve **Misafir** ağında olmamalı. Misafir ağları genellikle cihazların birbiriyle konuşmasını engeller; oysa burada tam olarak buna ihtiyaç var.
-- Mobil veride olmamalı. Wi-Fi'ın internet erişimi yoksa telefonlar bazen sana haber vermeden kendiliğinden mobil veriye geçer.
-- **Telefondaki tüm VPN'leri kapat.** Pek çok kişi buna takılıyor. VPN olarak çalışan reklam engelleyiciler ve “Gizli DNS” uygulamaları da buna dahildir.
+Ev ağında:
 
-### 3. Katılırken sayfanın sana söylediklerini oku
+1. **Ayarlar > Ağ ve İnternet > Wi-Fi** (veya Ethernet) > ağına tıkla > **Ağ profili türü** ayarını **Özel ağ** yap.
+2. **Ayarlar > Gizlilik ve güvenlik > Windows Güvenliği > Güvenlik duvarı ve ağ koruması > Bir uygulamaya güvenlik duvarı üzerinden izin ver**
+3. Listede **Slay the Spire 2** oyununu bul ve **Özel** kutusunun işaretli olduğundan emin ol. Listede yoksa **Başka bir uygulamaya izin ver...** seçeneğini kullan ve oyunun `.exe` dosyasını seç.
 
-Bir oyuncunun oyununu başlatmak bir dakikayı bulabilir; bu bir arıza değil, normal bir durumdur. Bu sırada sayfa artık, *Katılıyor…* yazısının altındaki bir satırda nereye kadar geldiğini gösteriyor:
+Daha önce oyunun güvenlik duvarı istemini iptal ettiysen engellenen kaydını kaldır ve oyunu yeniden ekle.
 
-*Oda sahibine ulaşılıyor — adım 1/6, şu ana kadar 14 sn. Bu bir dakikayı bulabilir, lütfen bu sayfayı açık bırak.*
+Antivirüsünün kendi güvenlik duvarı varsa oyuna orada da izin ver.
 
-Bu satırdaki süre artıyor ve aşama değişiyorsa işlem devam ediyordur — sayfayı açık tut. Altı aşama şunlardır: oda sahibine ulaşılıyor, oda sahibi bekleniyor, bu oyuncunun oyunu başlatılıyor, bu oyuncu oyuna bağlanıyor, oyun görünümü yükleniyor, neredeyse hazır.
+Adresi oyunun çalıştığı bilgisayarda açmak, güvenlik duvarının telefonun bağlanmasına izin verip vermediğini test etmez.
 
-### 4. Durursa, sayfada yazanı kopyala
+### 4. Tarayıcının HTTPS’yi zorlayıp zorlamadığını kontrol et
 
-Katılma sayfası ve her oyuncunun oyun görüntüsü, ana bilgisayarda aynı tarayıcı portunu kullanır (varsayılan **13337**). Ek tarayıcı portları açmak başarısız bir katılma işlemini düzeltmez.
+**Doğrudan adres** yöntemi `http://` kullanır. Tarayıcın bunu `https://` olarak değiştirmeye çalışıyorsa güvenli bağlantı ayarını kontrol et:
 
-*Katılıyor…* veya *Yükleniyor…* sırasında bir hata görünürse tam metnini ve varsa gri teknik satırı raporuna ekle. Oyunu barındıran kişi, hangi adımın başarısız olduğunu görmek için QR ekranındaki **Bağlantılar** panelini de açabilir. Sayfa hiç açılmıyorsa 2, 5 ve 6. bölümlerdeki ağ ve güvenlik duvarı önerilerine bak.
-
-Sayfa hata göstermeden *Katılıyor…* veya *Yükleniyor…* ekranında kalırsa hangi ekrana ulaştığını ve son ilerleme satırında ne yazdığını söyle. İlerleme aşaması değişmeye devam ettiği sürece sayfayı açık tut.
-
-### 5. Windows: oyunun güvenlik duvarından geçmesine izin ver
-
-Önce ağ türünü kontrol et, çünkü tek başına bu bile pek çok bağlantıyı engeller:
-
-- **Ayarlar > Ağ ve İnternet > Wi-Fi** (veya Ethernet) > ağına tıkla > **Ağ profili türü** ayarını **Özel ağ** yap.
-
-Ardından oyuna izin ver:
-
-- **Ayarlar > Gizlilik ve güvenlik > Windows Güvenliği > Güvenlik duvarı ve ağ koruması > Bir uygulamaya güvenlik duvarı üzerinden izin ver**
-- Listede **Slay the Spire 2** oyununu bul ve **Özel** kutusunun işaretli olduğundan emin ol. Listede yoksa **Başka bir uygulamaya izin ver...** seçeneğini kullan ve oyunun `.exe` dosyasını seç.
-
-Bir noktada Windows güvenlik duvarı uyarısında “İptal” düğmesine bastıysan, Windows bunu bir engelleme kuralı olarak hatırlar ve bir daha asla sormaz. Bu durumda yukarıdaki girişi kaldırıp yeniden eklemen gerekir.
-
-**Adresi host bilgisayarın kendisindeki bir tarayıcıda açmak hiçbir şeyi kanıtlamaz.** Akla ilk gelen deneme budur ve ölçümler bunun yanıltıcı olduğunu gösteriyor: Windows, bir bilgisayarın kendisine giden trafiğini — kendi ağ adresine giden trafiği bile — filtrelemez; bu yüzden güvenlik duvarı tüm telefonları etkin biçimde engellerken bile host bilgisayarın kendi tarayıcısı sayfayı kusursuzca yükler. Bu sende çalıştıysa, oyunun çalıştığını ve sayfayı sunduğunu gösterir. Güvenlik duvarı hakkında ise hiçbir şey söylemez.
-
-**Ortak** kutusunu yalnızca ağın Ortak ağ olarak ayarlıysa ve bunu değiştiremiyorsan işaretle. Bu kutuyu işaretlemek, oyunu kafeler ve oteller dahil bağlandığın her ağda erişilebilir kılar.
-
-### 6. Yönlendirici
-
-Bazı yönlendiriciler aynı Wi-Fi'daki cihazların birbirine ulaşmasını engeller. **AP isolation**, **Client isolation** veya **Wireless isolation** adlı bir ayar ara (Türkçe arayüzlerde “AP İzolasyonu” olarak da geçebilir) ve kapat.
-
-Şunu da bilmekte fayda var: **bridge** (köprü) / **access point** (erişim noktası) modu yerine **router** (yönlendirici) modunda kurulmuş bir Wi-Fi genişletici veya powerline adaptörü, Wi-Fi adı aynı görünse bile telefonunu host bilgisayardan ayrı bir ağa koyar.
-
-### 7. Doğrudan adresleri engelleyen tarayıcı ayarları
-
-Bazı tarayıcılar her adresi HTTPS'ye zorlamaya çalışır; düz sayısal adres ise HTTPS kullanmaz. (QR ekranında HTTPS kullanan satır **Alan adı** satırıdır — yani sorun HTTPS zorlamasıysa bu satırı da denemeye değer.) Adres çubuğunda oyun yerine bir güvenlik uyarısı görünüyorsa şunları kapatıp yeniden dene:
-
-- Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman Alan adılar kullan**
+- Chrome: **Ayarlar > Gizlilik ve güvenlik > Güvenlik > Her zaman güvenli bağlantılar kullan**
 - Firefox: **Ayarlar > Gizlilik ve güvenlik > Bağlantı ve yazılım güvenliği > Gelişmiş ayarlar > Yalnızca HTTPS modu**
 
-iPhone'da ayrıca **Ayarlar > *adınız* > iCloud > Özel Geçiş** bölümünü ve **Ayarlar > Uygulamalar > Safari** bölümündeki “IP Adresini Gizle” ayarını kontrol et.
+HTTP adresine izin ver, ardından QR kodunu yeniden tara. Bilgisayarda **Doğrudan adres** seçili kalsın.
 
-### 8. Kendi güvenlik duvarı olan antivirüsler
+### 5. Yönlendiriciyi kontrol et
 
-ESET, Bitdefender, Norton, Kaspersky ve Avast gibi güvenlik paketlerinin Windows'unkinden ayrı, kendi güvenlik duvarı vardır. Oyuna Windows'ta izin vermek bunları hiç etkilemez. Paketin kendi ağ veya güvenlik duvarı ayarlarını kontrol et ya da engelleyenin bu olup olmadığını görmek için güvenlik duvarını kısa bir süreliğine duraklat.
+Misafir Wi-Fi ağı çoğu zaman cihazların birbiriyle iletişim kurmasını engeller. Evin ana ağını kullan.
 
-### 9. Önceden çalışıyorduysa ve sonra durduysa
+İki cihaz da zaten o ağdaysa yönlendiricide **AP isolation**, **Client isolation** veya **Wireless isolation** ayarının açık olup olmadığını kontrol et. Bu ayarlar cihazların birbirine ulaşmasını engeller.
 
-Host bilgisayarın adresi, Wi-Fi'a yeniden bağlandığında veya yönlendirici yeniden başlatıldıktan sonra değişebilir. QR ekranını yeniden aç ve tekrar tara — yeni adres orada olacaktır.
+Wi-Fi menzil genişletici kullanıyorsan ayrı bir ağ oluşturmak yerine **erişim noktası** (access point) veya **köprü** (bridge) modunda olduğundan emin ol.
 
-İstemciyi ana ekranına eklediysen, bundan sonra ne olacağı onu hangi satırdan yüklediğine bağlıdır:
+### 6. Sayfa açılıyor ama katılmak zaman alıyorsa
 
-- **Web sitesi** satırından yüklendiyse: çalışmaya devam eder ve yeni adresi kendisi bulur. Sadece aç — yeniden taramaya gerek yok.
-- **Sayısal adresten** veya **Alan adı** satırından yüklendiyse: simge eski adresi gösterir ve kendini düzeltemez. Simgeyi sil ve yeniden taradıktan sonra tekrar ekle. (Android'de bunun yerine **Web sitesi** satırından yüklemek bu sorunu kalıcı olarak önler. iPhone veya iPad'de bu satır çalışamaz — 1. bölüme bak — bu yüzden orada tek yol simgeyi yeniden eklemektir.)
+Bir oyuncunun oyununu başlatmak bir dakikaya kadar sürebilir. **Katılıyor…** altındaki ilerleme satırı aşama değiştirdiği sürece sayfayı açık tut.
 
----
+Hata çıkarsa ekran görüntüsü al veya varsa küçük gri satır da dâhil olmak üzere metni aynen kopyala.
 
-## Hâlâ takıldın mı? Steam tartışmasına yorum yaz
+Hata olmadan **Katılıyor…** veya **Yükleniyor…** üzerinde kalıyorsa yorumunda son ilerleme mesajını belirt.
 
-[Steam tartışmasına](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) bir yorum bırak — her şeyi yanıtlaman gerekmez. Aşağıdakilerden bir ya da ikisi bile bir raporla ilgilenmeyi çok daha kolay hale getirir ve ilk soru, diğer hepsinin toplamından daha değerlidir.
+### 7. Önceden çalışıyorsa
 
-### İş nereye kadar ilerliyor?
+Ağa yeniden bağlanınca veya yönlendirici yeniden başlatılınca bilgisayarın adresi değişmiş olabilir. QR ekranını aç ve yeniden tara.
 
-Bana söyleyebileceğin en faydalı şey budur, çünkü her yanıt farklı bir nedene işaret eder:
-
-- tarayıcı hiçbir şey yüklemiyor
-- sayfa yükleniyor ama oyuncu listesi hiç görünmüyor
-- bir isim seçebiliyorsun ama “Katılıyor…” ekranında kalıyor — altındaki ilerleme satırında ne yazdığını ve beklediysen hangi mesajı aldığını bana söyle
-- bu aşamayı geçiyor ama **“Yükleniyor…”** ekranında kalıyor — hata görünüp görünmediğini söyle ve tam metnini, varsa gri teknik satırla birlikte kopyala
-- sorunsuz bağlandı, sonra koşu sırasında bağlantı koptu
-
-### Ekleyebileceğin diğer her şey
-
-- Telefonun gösterdiği mesajın tam metni, altındaki gri satır dahil. Ekranın bir fotoğrafı mükemmel olur.
-- İki seçicide hangi ağ arayüzünü ve bağlantı yöntemini seçtiğin ve varsa QR yerine gösterilen açıklamanın tam metni.
-- Host bilgisayarın işletim sistemi, ayrıca telefon/tablet modeli ve tarayıcı.
-- **Her** cihazda mı başarısız oluyor, yoksa yalnızca birinde mi? Bir telefon çalışıp diğeri çalışmıyorsa bu pek çok olasılığı eler.
-- Daha önce hiç çalıştı mı ve o zamandan beri bir şey değişti mi?
-- Host bilgisayar Wi-Fi'da mı yoksa Ethernet'te mi. Host bilgisayarda veya telefonda çalışan bir VPN var mı. Güvenlik duvarı olan bir antivirüs var mı.
-
-### Host bilgisayardan alabileceğin üç şey
-
-- **Bağlantı paneli.** Host bilgisayarda **Couch Co-Op QR Kodu** ekranını aç — **Bağlantılar** paneli bu ekranda, kodun altındadır. Orada görünecek kadar ilerleyen cihazlar listelenir ve ters giden her şey **Bağlantı sorunları** altında tutulur (yanında bir sayıyla). Satırı seç ve **Raporu kopyala** düğmesini kullan — bu, başarısız olan adımı, süreleri ve host bilgisayarın kendi teşhisini zaten içeren bir rapor kopyalar. Raporu doğrudan yorumuna yapıştır. Rapor ayrıca aşağıdaki iki log dosyasının tam yolunu da belirtir, böylece onları aramak zorunda kalmazsın.
-- **Ana log dosyası.** Windows'ta `%APPDATA%\SlayTheSpire2\logs\godot.log`. Linux'ta `~/.local/share/SlayTheSpire2/logs/godot.log`. macOS'ta `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
-- **Oyuncu başına log.** Katılan her oyuncu için host bilgisayarda arka planda oyunun ayrı bir kopyası çalışır ve her kopya kendi log dosyasını tutar. **Katılma *Katılıyor…* aşamasına ulaşıp ardından zaman aşımına uğradıysa, nedenini açıklayan dosya budur** — yukarıdaki ana log genellikle bunu açıklamaz. Oyuncular 2'den başlayarak numaralandırılır, bu yüzden ilk katılan kişi `slot-2` olur: Linux'ta bu `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` dosyasıdır (evet, iki kez `SlayTheSpire2` — yazım hatası değil); Windows ve macOS yolları da yukarıdaki klasörlerin altında aynı yapıyı izler. Bazı kurulumlarda bunun yerine `couch-coop/seat-logs/slot-2.log` konumunda tek bir dosyadır.
-
-**Hangi satırlar önemli.** Her iki log dosyasında da işe yarayanlar `[couchcoop]` içeren satırlardır — `[INFO] [couchcoop] ...` gibi görünürler — ve bunlara ek olarak, couchcoop'tan hiç bahsetmeyenler dahil tüm `[ERROR]` satırları. Genellikle tek başlarına bunlar yeterlidir.
-
-**Bir log dosyasının tamamını yapıştırmadan önce:** Steam tartışması herkese açıktır ve bir log dosyası, dosya yollarında kendi **SteamID64** numaranı (7656 ile başlayan ve Steam profiline işaret eden uzun bir sayı) ve bilgisayarının **kullanıcı adını** içerir. Parola *içermez*, diğer oyuncuların hesaplarını da içermez — yalnızca seninkini. Bunları paylaşmak istemiyorsan yapıştırmadan önce bu ikisini bul-değiştir ile değiştirmen yeterlidir; ya da sadece `[couchcoop]` ve `[ERROR]` satırlarını paylaş, daha fazlasına ihtiyacım olursa sorarım.
+Eski bir yer imi veya ana ekran kısayolu artık çalışmıyorsa yeni taradığın adresi kullanarak değiştir.
 
 ---
 
-Son bir not: katılma adresine ulaşabilen herkes istemciyi açıp oynayabilir, bu yüzden bunu güvendiğin bir ağda kullan.
+## Hâlâ bağlanamıyor musun? Steam tartışmasına yaz
+
+[Steam tartışmasında](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) şunlarla başla:
+
+- Nereye kadar ilerlediği: sayfa açılmıyor, oyuncu listesi yok, katılma/yükleme takılıyor veya oyun sırasında bağlantı kopuyor.
+- Ekran görüntüsü veya hata mesajının tam metni.
+- Bilgisayarın işletim sistemi, telefon modeli ve tarayıcı.
+- Tüm telefonlarda mı yoksa sadece birinde mi başarısız olduğu.
+
+### Bağlantı raporunu kopyala
+
+Bilgisayarda **Couch Co-Op QR Kodu** ekranını aç ve **Bağlantılar** paneline bak. **Bağlantı sorunları** altındaki başarısız bağlantıyı seç, **Raporu kopyala** seçeneğini kullan ve raporu yorumuna yapıştır.
+
+Orada hiçbir bağlantı görünmüyorsa bunu söyle ve yukarıdaki bilgileri paylaş.
+
+Rapor ilgili günlük dosyalarının yollarını içerir. Günlükler gerekirse [Bir sorun mu var? Steam tartışmasına yaz](reporting-a-problem.md) yazısı onları nasıl bulacağını açıklar. Günlükleri herkese açık paylaşmadan önce Steam hesap kimliğini ve bilgisayar kullanıcı adını gizli tutmak istiyorsan bunları kaldır.
+
+Modu güvendiğin bir ağda kullan: katılma adresine ulaşabilen herkes istemciyi açıp oynayabilir.
