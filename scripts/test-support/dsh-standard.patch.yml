@@ -1,0 +1,29 @@
+# Minimal shape of @deepseek-ai/dsh-web-app/presets/standard.patch.yml.
+# Kept small and stable so the generator's extraction test does not depend on the
+# installed DSH version. It still exercises the parts the generator must preserve:
+# a persona row, a `!!js` condition, a nested group, and the delegation tool row.
+- insert:
+    - id: preset-standard
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: standard
+        order: 1
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are a coding agent powered by the {{model}} model.
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+          - id: delegation
+            name: cordis:group
+            group: true
+            config:
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent

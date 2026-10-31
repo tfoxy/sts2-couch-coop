@@ -1,27 +1,33 @@
 #!/usr/bin/env bash
-# Wire the COMMITTED agent config into this checkout's gitignored harness directories, for BOTH
-# Claude Code and OpenAI Codex CLI.
+# Wire the COMMITTED agent config into this checkout's gitignored harness directories, for
+# Claude Code, OpenAI Codex CLI and DeepSeek Harness.
 #
 # The source of truth is committed at agents/, skills/, AGENTS.md and scripts/claude-guard-bash.sh;
-# the harness directories that read it — .claude/, .agents/ and .codex/ — are gitignored, so this
-# script links or generates them from those committed files. A sibling repo's skills, listed in
+# the harness directories that read it — .claude/, .agents/, .codex/ and .dsh/ — are gitignored, so
+# this script links or generates them from those committed files. A sibling repo's skills, listed in
 # EXTRA_SKILLS below, are linked in the same shape when that sibling is checked out next door.
 #
 #   Claude Code reads   .claude/agents/*.md, .claude/skills/*, .claude/settings*.json, /.mcp.json
 #   Codex CLI reads     .codex/agents/*.toml, .codex/config.toml, .codex/hooks.json, .agents/skills/*
-#   both read           AGENTS.md (CLAUDE.md is a symlink to it) and scripts/claude-guard-bash.sh
+#   DeepSeek Harness    .dsh/profile.patch.yml (via scripts/dsh) and .agents/skills/*
+#   all read            AGENTS.md (CLAUDE.md is a symlink to it); Claude/Codex read the bash guard
 #   git reads           scripts/githooks/commit-msg and .gitmessage, wired through git config
 #
 # /.mcp.json carries local filesystem paths, so it is gitignored here too and a fresh worktree has
 # none; this script symlinks it to the main checkout's copy, and .codex/config.toml's
-# [mcp_servers.*] is generated from whichever file ends up there.
+# [mcp_servers.*] and .dsh/profile.patch.yml's MCP rows are generated from whichever file ends up
+# there plus the user's ~/.claude.json.
+#
+# The DeepSeek Harness overlay is repo-scoped: scripts/dsh passes it with --patch, so a worktree's
+# patch never leaks into the main checkout or another repo. The global ~/.dsh profile is not edited.
 #
 # Run this after cloning and in every new worktree (a linked worktree gets its own empty .claude/).
 # Idempotent: safe to re-run, second run changes nothing. Symlinks whose target no longer exists —
 # a deleted agent or skill — are pruned.
 #
 #   scripts/install-agent-config.sh            repo-local only; never writes outside the checkout
-#   scripts/install-agent-config.sh --user     also mirrors ~/.claude config into ~/.codex
+#   scripts/install-agent-config.sh --user     also mirrors ~/.claude config into ~/.codex and the
+#                                              shared ~/.agents root (DeepSeek Harness)
 #
 # Self-test: scripts/test-install-agent-config.sh
 
@@ -119,6 +125,10 @@ if { [ -e "$REPO/.codex" ] || [ -L "$REPO/.codex" ]; } && [ ! -d "$REPO/.codex" 
   echo "error: remove the stray file \`.codex\` first — this script needs .codex/ to be a directory" >&2
   exit 1
 fi
+if { [ -e "$REPO/.dsh" ] || [ -L "$REPO/.dsh" ]; } && [ ! -d "$REPO/.dsh" ]; then
+  echo "error: remove the stray file \`.dsh\` first — this script needs .dsh/ to be a directory" >&2
+  exit 1
+fi
 
 echo "==> memory"
 mkdir -p "$MEMORY"
@@ -176,6 +186,14 @@ fi
 echo "==> codex config"
 python3 "$REPO/scripts/gen-codex-config.py" "$REPO" "$MAIN"
 
+echo "==> dsh config"
+if [ -f "$REPO/scripts/gen-dsh-config.py" ]; then
+  python3 "$REPO/scripts/gen-dsh-config.py" "$REPO"
+  echo "    launch with: scripts/dsh"
+else
+  echo "    (skipped: scripts/gen-dsh-config.py is not present in this worktree)"
+fi
+
 echo "==> hook (Codex)"
 HOOKS="$REPO/.codex/hooks.json"
 # Codex hook commands run in the session cwd and there is no $CLAUDE_PROJECT_DIR equivalent, so the
@@ -216,9 +234,12 @@ fi
 # --------------------------------------------------------------------------------------------
 # Home-directory mirroring. Read-only unless --user was passed.
 # --------------------------------------------------------------------------------------------
-echo "==> user config (~/.codex)"
+echo "==> user config (~/.codex, ~/.agents)"
 USER_RULES="$HOME/.claude/CLAUDE.md"
 USER_AGENTS="$HOME/.codex/AGENTS.md"
+USER_DSH_AGENTS="$HOME/.agents/AGENTS.md"
+USER_CLAUDE_SKILLS="$HOME/.claude/skills"
+USER_DSH_SKILLS="$HOME/.agents/skills"
 
 if [ "$DO_USER" = 1 ]; then
   if [ ! -f "$USER_RULES" ]; then
@@ -236,6 +257,39 @@ if [ "$DO_USER" = 1 ]; then
   fi
 else
   echo "    ln -sfn \"$USER_RULES\" \"$USER_AGENTS\"   (run with --user)"
+fi
+
+# DeepSeek Harness reads user-global instructions from ~/.agents/AGENTS.md and user skills from
+# ~/.agents/skills. Mirror Claude's user files there with the same never-replace-real-content rules;
+# a real AGENTS.md or skills directory may belong to another agent.
+if [ "$DO_USER" = 1 ]; then
+  if [ ! -f "$USER_RULES" ]; then
+    echo "    (skipped ~/.agents/AGENTS.md: $USER_RULES does not exist)"
+  else
+    mkdir -p "$HOME/.agents"
+    if [ -L "$USER_DSH_AGENTS" ] && [ "$(readlink "$USER_DSH_AGENTS")" = "$USER_RULES" ]; then
+      echo "    ~/.agents/AGENTS.md -> ~/.claude/CLAUDE.md (already)"
+    elif [ -L "$USER_DSH_AGENTS" ] || { [ -e "$USER_DSH_AGENTS" ] && [ -s "$USER_DSH_AGENTS" ]; }; then
+      echo "    (skipped ~/.agents/AGENTS.md: it already has content of its own)" >&2
+    else
+      ln -sfn "$USER_RULES" "$USER_DSH_AGENTS"
+      echo "    ~/.agents/AGENTS.md -> ~/.claude/CLAUDE.md"
+    fi
+  fi
+  if [ ! -d "$USER_CLAUDE_SKILLS" ]; then
+    echo "    (skipped ~/.agents/skills: $USER_CLAUDE_SKILLS does not exist)"
+  elif [ -L "$USER_DSH_SKILLS" ] && [ "$(readlink "$USER_DSH_SKILLS")" = "$USER_CLAUDE_SKILLS" ]; then
+    echo "    ~/.agents/skills -> ~/.claude/skills (already)"
+  elif [ -e "$USER_DSH_SKILLS" ] || [ -L "$USER_DSH_SKILLS" ]; then
+    echo "    (skipped ~/.agents/skills: it already exists)" >&2
+  else
+    mkdir -p "$HOME/.agents"
+    ln -sfn "$USER_CLAUDE_SKILLS" "$USER_DSH_SKILLS"
+    echo "    ~/.agents/skills -> ~/.claude/skills"
+  fi
+else
+  echo "    ln -sfn \"$USER_RULES\" \"$USER_DSH_AGENTS\"   (run with --user)"
+  echo "    ln -sfn \"$USER_CLAUDE_SKILLS\" \"$USER_DSH_SKILLS\"   (run with --user)"
 fi
 
 # MCP servers registered globally for Claude Code but missing from ~/.codex/config.toml. That file
@@ -301,6 +355,13 @@ next steps for Codex:
       [projects."$REPO"]
       trust_level = "trusted"
     to ~/.codex/config.toml.
+next steps for DeepSeek Harness:
+  - launch this checkout with \`scripts/dsh\` (web profile). The overlay is
+    .dsh/profile.patch.yml; plain \`dsh web\` does not load it.
+  - restart the harness after changing agents/*.md or the MCP config; the overlay is
+    read at boot.
+  - run \`scripts/install-agent-config.sh --user\` once to mirror ~/.claude/CLAUDE.md
+    and ~/.claude/skills into the shared ~/.agents root.
 verify with: bash scripts/test-claude-guard.sh && bash scripts/test-install-agent-config.sh \\
-             && bash scripts/test-commit-msg-hook.sh
+             && python3 scripts/test-gen-dsh-config.py && bash scripts/test-commit-msg-hook.sh
 EOF

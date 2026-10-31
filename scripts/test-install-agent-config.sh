@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
-# Self-test for scripts/install-agent-config.sh (and scripts/gen-codex-config.py).
+# Self-test for scripts/install-agent-config.sh, scripts/gen-codex-config.py and
+# scripts/gen-dsh-config.py.
 #
 # Everything happens in a THROWAWAY detached worktree under mktemp -d, so the checkout you run this
 # from is never modified. The working-tree copies of scripts/, agents/ and skills/ are copied into
 # it, so this gates uncommitted work rather than HEAD.
 #
 # The `--user` half is hermetic: a fake $HOME plus a stub `codex` on PATH that records its argv.
-# Nothing here ever writes into the real ~/.claude, ~/.codex, or the real project memory store —
-# the memory assertions only look at a symlink target. (The installer does `mkdir -p` the main
-# checkout's .agents/memory, which is the point of it; it never puts files there.)
+# Nothing here ever writes into the real ~/.claude, ~/.codex, ~/.agents, or the real project memory
+# store — the memory assertions only look at a symlink target. (The installer does `mkdir -p` the
+# main checkout's .agents/memory, which is the point of it; it never puts files there.)
+#
+# DSH role-preset generation uses the committed fixture through DSH_PRESET_FILE, so it does not
+# depend on the installed harness. The launcher composition check is skipped when dsh or a web
+# profile is unavailable.
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO="$PWD"
 MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 MEMORY="$MAIN/.agents/memory"
+REAL_HOME="${HOME:-}"
 
 pass=0; fail=0
 eq() { # eq <desc> <want> <got>
@@ -72,6 +78,9 @@ git -C "$REPO" worktree add --detach "$WT" HEAD >/dev/null 2>&1 || die "git work
 for d in scripts agents skills; do
   cp -a "$REPO/$d/." "$WT/$d/" || die "copy $d"
 done
+# The shipped DSH standard preset is versioned with the installed harness; use the
+# committed fixture so role-preset generation is deterministic and hermetic.
+export DSH_PRESET_FILE="$WT/scripts/test-support/dsh-standard.patch.yml"
 
 # ---------------------------------------------------------------------------------------------
 # Fixtures the installer has to cope with.
@@ -107,11 +116,21 @@ printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"comman
 echo "== install (repo-local, no --user) =="
 INSTALL_LOG="$TMP/install.log"
 FAKEHOME_RO="$TMP/home-untouched"
-mkdir -p "$FAKEHOME_RO/.claude"
+mkdir -p "$FAKEHOME_RO/.claude/agents" "$FAKEHOME_RO/.claude/skills/user-skill"
 printf '# user rules\n' > "$FAKEHOME_RO/.claude/CLAUDE.md"
+printf -- '---\nname: user-agent\ndescription: A user-level agent.\n---\n\n# User agent\n\nUser body.\n' \
+  > "$FAKEHOME_RO/.claude/agents/user-agent.md"
+printf -- '---\nname: user-skill\ndescription: A user-level skill.\n---\n' \
+  > "$FAKEHOME_RO/.claude/skills/user-skill/SKILL.md"
+cat > "$FAKEHOME_RO/.claude.json" <<JSON
+{"mcpServers": {"user-only": {"command": "user-cmd", "args": ["--user"]}},
+ "projects": {"$(realpath "$WT")": {"mcpServers": {"project-user-only": {"command": "project-user-cmd"}}}}}
+JSON
 env HOME="$FAKEHOME_RO" bash "$WT/scripts/install-agent-config.sh" > "$INSTALL_LOG" 2>&1
 eq "installer exits 0" 0 "$?"
-ok "no home-dir writes without --user" test ! -e "$FAKEHOME_RO/.codex"
+ok "no .codex writes without --user" test ! -e "$FAKEHOME_RO/.codex"
+ok "no .agents writes without --user" test ! -e "$FAKEHOME_RO/.agents"
+ok "no .dsh writes in the home without --user" test ! -e "$FAKEHOME_RO/.dsh"
 
 echo "== Claude Code layout =="
 for f in "$WT"/agents/*.md; do
@@ -135,6 +154,19 @@ ok "sibling skill .claude/skills/gsw-wgpu-renderer resolves" \
   test -e "$WT/.claude/skills/gsw-wgpu-renderer/SKILL.md"
 ok "a real skill dir is not replaced"                    test -f "$WT/.claude/skills/godot-qa/MARKER"
 ok "a real skill dir stays a real dir"                   test ! -L "$WT/.claude/skills/godot-qa"
+
+echo "== DSH overlay =="
+PATCH="$WT/.dsh/profile.patch.yml"
+ok ".dsh/profile.patch.yml exists" test -f "$PATCH"
+ok "a user MCP server is present"              grep -qx '    - id: agentcfg-mcp-user-only' "$PATCH"
+ok "a project-scoped MCP server is present"    grep -qx '    - id: agentcfg-mcp-project-user-only' "$PATCH"
+for n in user-agent live-game-qa mirror-bench round-implementer touch-input-qa; do
+  ok "role preset $n"                          grep -qx "    - id: agentcfg-preset-$n" "$PATCH"
+done
+ok "the role tool is present"                  grep -q 'toolName: subagent_role' "$PATCH"
+ok "a role body is inlined as the persona"     grep -q '# Live-game QA' "$PATCH"
+ok "the shipped persona was replaced"          bash -c '! grep -q "You are a coding agent" "$1"' _ "$PATCH"
+ok "the DSH generator self-test passes"        python3 "$WT/scripts/test-gen-dsh-config.py"
 
 echo "== dangling links =="
 ok "a dangling .claude/agents symlink is pruned" test ! -L "$WT/.claude/agents/deleted-agent.md"
@@ -277,6 +309,46 @@ eq "sse falls back to a url"   "https://example.invalid/sse" \
   "$(tomlq "$CFG" "d['mcp_servers']['demo-sse']['url']")"
 eq "unknown transport skipped" "False" "$(tomlq "$CFG" "'demo-weird' in d['mcp_servers']")"
 
+echo "== dsh mcp_servers =="
+PATCH="$WT/.dsh/profile.patch.yml"
+ok "chrome-devtools project args reach DSH" \
+  grep -Fq 'args: ["chrome-devtools-mcp@latest", "--headless"]' "$PATCH"
+ok "demo-env literal and env reference reach DSH" python3 -c '
+import sys
+t = open(sys.argv[1], encoding="utf-8").read()
+assert "API_MODE: \"test\"" in t
+assert "TOKEN: !!js process.env.DEMO_TOKEN" in t
+' "$PATCH"
+ok "http Bearer becomes a JS expression" \
+  grep -Fq "Authorization: !!js '\"Bearer \" + (process.env.DEMO_TOKEN ?? \"\")'" "$PATCH"
+ok "other http headers kept" grep -Fq 'X-Extra: "1"' "$PATCH"
+ok "sse maps to streamable-http" python3 -c '
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+assert re.search(r"agentcfg-mcp-demo-sse.*?transport: streamable-http", t, re.S)
+' "$PATCH"
+ok "unknown transport skipped"  bash -c '! grep -q "agentcfg-mcp-demo-weird" "$1"' _ "$PATCH"
+ok "the user-level server still reaches DSH" grep -qx '    - id: agentcfg-mcp-user-only' "$PATCH"
+ok "installer warns about sse"        grep -q 'sse' "$TMP/install-mcp.log"
+ok "installer warns about unknown transport" grep -q 'unknown transport' "$TMP/install-mcp.log"
+
+echo "== dsh launcher =="
+if command -v dsh >/dev/null 2>&1 && [ -d "$REAL_HOME/.dsh/profiles/web" ]; then
+  mkdir -p "$TMP/dshhome/profiles"
+  cp -a "$REAL_HOME/.dsh/profiles/web" "$TMP/dshhome/profiles/"
+  (
+    cd "$WT" || exit 1
+    env HOME="$FAKEHOME_RO" DSH_HOME="$TMP/dshhome" bash scripts/dsh --dump-config
+  ) > "$TMP/dsh-dump.yml" 2> "$TMP/dsh-dump.err"
+  eq "scripts/dsh --dump-config exits 0" 0 "$?"
+  ok "…and composes the role tool"    grep -q 'agentcfg-tool-subagent-role' "$TMP/dsh-dump.yml"
+  ok "…and the MCP rows"              grep -q 'agentcfg-mcp-chrome-devtools' "$TMP/dsh-dump.yml"
+  ok "…with no unmatched-patch warning" \
+    bash -c '! grep -q "patch: .*not found" "$1"' _ "$TMP/dsh-dump.err"
+else
+  echo "    (skipped: dsh or ~/.dsh/profiles/web is unavailable)"
+fi
+
 echo "== generator string escaping =="
 # Both branches of toml_string must round-trip through a real TOML parser: the literal `'''…'''`
 # form, and the JSON-escaped fallback for bodies that contain `'''` or end in an apostrophe.
@@ -314,8 +386,8 @@ eq "hooks.json command resolves the repo root at hook time" \
 echo "== idempotency =="
 snapshot() { (
   cd "$1" || exit 1
-  find .claude .agents .codex .mcp.json -printf '%p %y %l\n' 2>/dev/null | LC_ALL=C sort
-  find .claude .agents .codex .mcp.json -type f -printf '%p\n' 2>/dev/null | LC_ALL=C sort \
+  find .claude .agents .codex .dsh .mcp.json -printf '%p %y %l\n' 2>/dev/null | LC_ALL=C sort
+  find .claude .agents .codex .dsh .mcp.json -type f -printf '%p\n' 2>/dev/null | LC_ALL=C sort \
     | xargs -r sha256sum
 ) }
 snapshot "$WT" > "$TMP/snap1"
@@ -355,11 +427,20 @@ cp -a "$REPO/scripts/." "$WT2/scripts/" || die "copy scripts"
 env HOME="$FAKEHOME_RO" bash "$WT2/scripts/install-agent-config.sh" > "$TMP/pre.log" 2>&1
 eq "installer refuses a non-directory .codex" 1 "$?"
 ok "…and says why" grep -q 'stray file' "$TMP/pre.log"
+rm -f "$WT2/.codex"
+: > "$WT2/.dsh"
+env HOME="$FAKEHOME_RO" bash "$WT2/scripts/install-agent-config.sh" > "$TMP/pre-dsh.log" 2>&1
+eq "installer refuses a non-directory .dsh" 1 "$?"
+ok "…and says why" grep -q 'stray file' "$TMP/pre-dsh.log"
 
 echo "== --user (hermetic: fake HOME + stub codex) =="
 FAKEHOME="$TMP/home"
-mkdir -p "$FAKEHOME/.claude" "$FAKEHOME/.codex" "$TMP/bin"
+mkdir -p "$FAKEHOME/.claude/skills/user-skill" "$FAKEHOME/.claude/agents" "$FAKEHOME/.codex" "$TMP/bin"
 printf '# user rules\n' > "$FAKEHOME/.claude/CLAUDE.md"
+printf -- '---\nname: user-skill\ndescription: A user skill.\n---\n' \
+  > "$FAKEHOME/.claude/skills/user-skill/SKILL.md"
+printf -- '---\nname: user-agent\ndescription: A user agent.\n---\n\n# User agent\n' \
+  > "$FAKEHOME/.claude/agents/user-agent.md"
 cat > "$FAKEHOME/.claude.json" <<'JSON'
 {"mcpServers": {
   "chrome-devtools": {"type":"stdio","command":"npx","args":["chrome-devtools-mcp@latest","--headless"],"env":{"A":"b"}},
@@ -380,6 +461,14 @@ env HOME="$FAKEHOME" CODEX_STUB_LOG="$STUB_LOG" PATH="$TMP/bin:$PATH" \
 eq "--user run exits 0" 0 "$?"
 eq "~/.codex/AGENTS.md -> ~/.claude/CLAUDE.md" "$FAKEHOME/.claude/CLAUDE.md" \
   "$(readlink "$FAKEHOME/.codex/AGENTS.md")"
+eq "~/.agents/AGENTS.md -> ~/.claude/CLAUDE.md" "$FAKEHOME/.claude/CLAUDE.md" \
+  "$(readlink "$FAKEHOME/.agents/AGENTS.md")"
+eq "~/.agents/skills -> ~/.claude/skills" "$FAKEHOME/.claude/skills" \
+  "$(readlink "$FAKEHOME/.agents/skills")"
+ok "the --user run picked up the user MCP server" \
+  grep -qx '    - id: agentcfg-mcp-chrome-devtools' "$WT/.dsh/profile.patch.yml"
+ok "the --user run picked up the user agent" \
+  grep -qx '    - id: agentcfg-preset-user-agent' "$WT/.dsh/profile.patch.yml"
 eq "stub codex was called once per missing server" 2 "$(wc -l < "$STUB_LOG")"
 ok "stdio server added with --env and a -- separator" \
   grep -qxF 'mcp add chrome-devtools --env A=b -- npx chrome-devtools-mcp@latest --headless' "$STUB_LOG"

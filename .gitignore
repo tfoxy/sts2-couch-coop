@@ -4,6 +4,9 @@
 # Generated Codex CLI config. No trailing slash: an older tool can leave a stray `.codex` FILE, and
 # `.codex/` would not match it (same reason as `.sts2` below).
 .codex
+# Generated DeepSeek Harness overlay (repo-scoped, launched by scripts/dsh). It carries the
+# same local MCP paths as /.mcp.json.
+.dsh/
 # MCP has local FS paths
 /.mcp.json
 

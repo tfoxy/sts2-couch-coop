@@ -30,12 +30,10 @@ import os
 import re
 import sys
 
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from agent_config import AgentError, is_inside, parse_agent  # noqa: E402
+
 BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---[ \t]*\r?\n", re.DOTALL)
-# A markdown link written for `agents/foo.md` points one level up (`](../docs/…`). The same text
-# lives at the repo root once it is inlined into a TOML string, so drop the one leading `../`.
-LINK_RE = re.compile(r"\]\(\.\./")
 
 warnings: list[str] = []
 
@@ -82,55 +80,9 @@ def toml_array(values: list[str]) -> str:
     return "[" + ", ".join(json.dumps(v) for v in values) + "]"
 
 
-def is_inside(root: str, path: str) -> bool:
-    """True when `path` is `root` itself or lives under it, with symlinks resolved."""
-    root, path = os.path.realpath(root), os.path.realpath(path)
-    try:
-        return os.path.commonpath([root, path]) == root
-    except ValueError:  # unrelated roots (different drives, or one is relative)
-        return False
-
-
 # --------------------------------------------------------------------------------------------
 # agents/*.md  ->  .codex/agents/<name>.toml
 # --------------------------------------------------------------------------------------------
-
-
-def parse_agent(path: str) -> tuple[str, str, str]:
-    """Return (name, description, body) for one `agents/*.md`."""
-    text = open(path, encoding="utf-8").read()
-    m = FRONTMATTER_RE.match(text)
-    if not m:
-        die(f"{path}: no `---` frontmatter block")
-    front, body = m.group(1), text[m.end() :]
-
-    fields: dict[str, str] = {}
-    key = None
-    for line in front.split("\n"):
-        km = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*)$", line)
-        if km:
-            key = km.group(1)
-            fields[key] = km.group(2).strip()
-        elif key is not None and line.strip():
-            # A wrapped scalar continues the previous key.
-            fields[key] = (fields[key] + " " + line.strip()).strip()
-    for k, v in fields.items():
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-            fields[k] = v[1:-1]
-
-    name = fields.get("name", "")
-    description = fields.get("description", "")
-    if not NAME_RE.match(name):
-        die(f"{path}: frontmatter name {name!r} is not ^[a-z0-9][a-z0-9-]*$")
-    if not description:
-        die(f"{path}: frontmatter has no description")
-    if name != os.path.splitext(os.path.basename(path))[0]:
-        warn(f"{path}: frontmatter name {name!r} does not match the filename")
-
-    body = LINK_RE.sub("](", body).lstrip("\n").rstrip() + "\n"
-    if not body.strip():
-        die(f"{path}: no body after the frontmatter")
-    return name, description, body
 
 
 def write_agent_toml(out_dir: str, name: str, description: str, body: str) -> str:
@@ -267,11 +219,14 @@ def main(argv: list[str]) -> int:
     for fname in sorted(os.listdir(src_dir)) if os.path.isdir(src_dir) else []:
         if not fname.endswith(".md"):
             continue
-        name, description, body = parse_agent(os.path.join(src_dir, fname))
-        if name in agent_names:
-            die(f"duplicate agent name {name!r}")
-        agent_names.append(name)
-        written.append(write_agent_toml(agents_out, name, description, body))
+        try:
+            spec = parse_agent(os.path.join(src_dir, fname), warn)
+        except AgentError as exc:
+            die(str(exc))
+        if spec.name in agent_names:
+            die(f"duplicate agent name {spec.name!r}")
+        agent_names.append(spec.name)
+        written.append(write_agent_toml(agents_out, spec.name, spec.description, spec.body))
 
     # Stale TOML from a renamed or deleted agent would still be scanned by newer Codex versions.
     keep = {f"{n}.toml" for n in agent_names}
