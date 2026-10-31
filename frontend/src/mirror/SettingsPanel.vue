@@ -257,8 +257,10 @@ const raiseHeldCard = forcedBind("raiseHeldCard");
 const unfocusOnRelease = forcedBind("unfocusOnRelease");
 const tapToFocus = forcedBind("tapToFocus");
 const confirmTap = forcedBind("confirmTap");
-const raiseHandCards = forcedBind("raiseHandCards");
-const uiScaling = forcedBind("uiScaling");
+// Raise hand cards and Readability scaling run as render-stream extension modules under the new renderer (TAG3), so
+// they are the viewer's there too — their saved value chooses whether the module attaches.
+const raiseHandCards = bind("raiseHandCards");
+const uiScaling = bind("uiScaling");
 const backstopOcclusion = forcedBind("backstopOcclusion");
 const refreshRate = bind("refreshRate");
 const tweenReplay = forcedBind("tweenReplay");
@@ -565,14 +567,14 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="raiseHandCards" :disabled="streamActive" data-testid="mirror-raise-hand" />
+            <input type="checkbox" v-model="raiseHandCards" data-testid="mirror-raise-hand" />
             <span>{{ t('settings.raiseHand') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('raiseHand', t('settings.raiseHand'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="uiScaling" :disabled="streamActive" data-testid="mirror-ui-scaling" />
+            <input type="checkbox" v-model="uiScaling" data-testid="mirror-ui-scaling" />
             <span>{{ t('settings.uiScaling') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('uiScaling', t('settings.uiScaling'))" />

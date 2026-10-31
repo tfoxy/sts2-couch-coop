@@ -10,6 +10,7 @@ import type {
 } from "@godot-scene-web/render-stream-client";
 
 import RenderStreamStage from "@/mirror/RenderStreamStage.vue";
+import { mirrorSettings } from "@/mirror/mirrorSettings";
 
 // The stage's own lifecycle (handoff-mirror-new-renderer.md §3 Q5) against a fake client: it connects on mount,
 // shows the loading line until the first drawn frame, emits `failed` on a stop, disposes on unmount, and disposes
@@ -32,6 +33,10 @@ function createClient(options: RenderStreamClientOptions): RenderStreamClient {
     options, connects: 0, disposed: false,
     connect() { fake.connects += 1; },
     setEndpoint: vi.fn(),
+    cssToPresentation: vi.fn(() => null),
+    presentationToCss: vi.fn((r) => r),
+    toGame: vi.fn(() => null),
+    clientToGame: vi.fn(() => null),
     stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0 }),
     dispose() { fake.disposed = true; },
     emit(status) { options.onStatus?.(status); }
@@ -52,6 +57,10 @@ beforeEach(() => {
   clients = [];
   visibility = "visible";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+  // The stage runs the extension modules on the viewer's saved choices; keep this suite's default mount a pure
+  // client (both modules off), so the "empty extension list" claim stays the baseline.
+  mirrorSettings.raiseHandCards = false;
+  mirrorSettings.uiScaling = false;
 });
 
 afterEach(() => {
@@ -77,6 +86,14 @@ describe("RenderStreamStage", () => {
     expect(options.endpoint).toEqual(endpoint);
     expect(options.core).toEqual(core);
     expect(clients[0].connects).toBe(1);
+  });
+
+  it("attaches the raise-hand and view-scale modules on the viewer's saved choices", () => {
+    mirrorSettings.raiseHandCards = true;
+    mirrorSettings.uiScaling = true;
+    mountStage();
+    expect((clients[0].options.extensions ?? []).map((e) => e.id))
+      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale"]);
   });
 
   // PRES-A: a seat launched at the viewer's aspect describes a wider presentation; the canvas takes that backing size

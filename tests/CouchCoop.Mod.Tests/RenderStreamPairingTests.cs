@@ -47,6 +47,7 @@ internal static class RenderStreamPairingTests
         DescriptorNeedsAWellFormedToken();
         TheTokenIsNeverLogged();
         HostCaptureVariableIsConfigurationNotAWarning();
+        ItemTaggerGroupsMatchTheModules();
     }
 
     private static void ConfigResolvesTheCalibrationBesideTheCapture()
@@ -136,6 +137,7 @@ internal static class RenderStreamPairingTests
             ["GRC_RESOURCE_INLINE_MAX_BYTES"] = "4096",
             ["GRC_PERF_TIMELINE_MAX_BYTES"] = "8388608",
             ["GRC_MESH_DYNAMIC"] = "auto",
+            ["GRC_ITEM_META"] = "scene,path,script,groups",
         };
         Assert(env.Count == expected.Count && expected.All(kv => env.TryGetValue(kv.Key, out var v) && v == kv.Value),
             "the streaming seat's environment is exactly the acceptance table: "
@@ -448,6 +450,49 @@ internal static class RenderStreamPairingTests
         Assert(StreamingSeatRole.EnvironmentVariable == StreamingSeatDescriptor.RoleEnvironmentVariable
                && StreamingSeatRole.EnvironmentVariable == "COUCHCOOP_STREAMING_SEAT",
             "the role and the descriptor read one flag");
+    }
+
+    private static void ItemTaggerGroupsMatchTheModules()
+    {
+        RenderStreamItemTagger.ItemTagFacts F(string name, string type, string? scene = null, string? parentName = null,
+            string? parentScene = null, bool rewardAncestor = false)
+            => new(name, type, scene, parentName, parentScene, rewardAncestor);
+
+        var groups = (RenderStreamItemTagger.ItemTagFacts f) => RenderStreamItemTagger.GroupsFor(f);
+        Assert(groups(F("NHandCardHolder-CARD", "NHandCardHolder")).Contains(RenderStreamItemTagger.HandHolderGroup),
+            "a hand card holder is tagged a holder");
+        Assert(groups(F("NPlayerHand", "NPlayerHand")).Contains(RenderStreamItemTagger.HandRootGroup),
+            "the hand root is tagged");
+        Assert(groups(F("CardHolderContainer", "Godot.Control")).Contains(RenderStreamItemTagger.HandContainerGroup),
+            "the hand container is tagged by name");
+        Assert(groups(F("Arrow", "NTargetingArrow")).Contains(RenderStreamItemTagger.TargetingArrowGroup),
+            "a targeting arrow is tagged");
+        Assert(groups(F("Screen", "NChooseACardSelectionScreen")).Contains(RenderStreamItemTagger.HandChoiceGroup)
+            && groups(F("SelectModeBackstop", "Godot.ColorRect")).Contains(RenderStreamItemTagger.HandChoiceGroup),
+            "both hand-choice hosts are tagged");
+        Assert(groups(F("HealthBar", "Godot.Control", parentName: "Creature",
+            parentScene: "res://scenes/combat/creature.tscn")).Contains(RenderStreamItemTagger.CreatureHudGroup),
+            "a creature HealthBar group is tagged");
+        Assert(groups(F("Intents", "Godot.Control", parentName: "Creature",
+            parentScene: "res://scenes/combat/creature.tscn")).Contains(RenderStreamItemTagger.CreatureHudGroup),
+            "a creature Intents group is tagged");
+        Assert(groups(F("SelectionReticle", "Godot.Control", parentName: "Creature",
+            parentScene: "res://scenes/combat/creature.tscn")).Contains(RenderStreamItemTagger.CreatureReticleGroup),
+            "a creature reticle is tagged");
+        Assert(groups(F("PowerContainer", "Godot.Control", parentName: "HealthBar",
+            parentScene: "res://scenes/combat/creature.tscn")).Contains(RenderStreamItemTagger.CreaturePowerGroup),
+            "a creature power container is tagged");
+        // The same names outside a creature are NOT tagged (a creature's own inner HealthBar must not move alone).
+        Assert(groups(F("HealthBar", "Godot.Control", parentName: "Elsewhere",
+            parentScene: "res://scenes/combat/creature_state_display.tscn")).Count == 0,
+            "a non-creature HealthBar is not a HUD group");
+        Assert(groups(F("CardReward", "NCardRewardSelectionScreen")).Contains(RenderStreamItemTagger.CardRewardRootGroup),
+            "the card-reward screen root is tagged");
+        Assert(groups(F("Card", "NCard", rewardAncestor: true)).Contains(RenderStreamItemTagger.CardRewardCardGroup)
+            && groups(F("Card", "NCard")).Count == 0,
+            "an NCard is tagged only under a card-reward screen");
+        Assert(groups(F("Relic", "NTreasureRoomRelicHolder")).Contains(RenderStreamItemTagger.TreasureRelicGroup),
+            "the treasure relic holder is tagged");
     }
 
     private static Dictionary<string, string> SeatEnvironment(string auth) => new()

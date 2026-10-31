@@ -325,6 +325,12 @@ public static class CouchCoopMod
             {
                 CouchCoopHeadlessVisualSuspender.Install();
             }
+            // TAG3: the streaming seat's item-identity groups for the render-stream client's extension modules. Only
+            // the streaming seat — no other instance has a capture reading groups, so tagging there is pure cost.
+            if (StreamingSeatRole.IsStreamingSeat)
+            {
+                Session.RenderStreamItemTagger.Install();
+            }
             // Deadlock backstop for the same freeze, WINDOWLESS ONLY (positive COUCHCOOP_HEADLESS_DEATH_DELAY_CAP
             // overrides the safe default):
             // A dying creature waits on every death delayer attached to it and nothing bounds that wait; the one

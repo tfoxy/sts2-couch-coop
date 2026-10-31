@@ -36,6 +36,7 @@ import {
 import { translate as t } from "@/i18n";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
+import { buildStreamExtensions } from "@/stream-ext/extensions";
 
 const props = withDefaults(defineProps<{
   endpoint: RenderStreamEndpoint;
@@ -163,7 +164,14 @@ function mountClient(): void {
   if (!canvas || client || stopped) return;
   const create = props.createClient ?? createRenderStreamClient;
   try {
-    client = create({ canvas, core: props.core, endpoint: props.endpoint, extensions: [], creditWindow: 2, onStatus });
+    client = create({
+      canvas,
+      core: props.core,
+      endpoint: props.endpoint,
+      extensions: buildStreamExtensions({ settings: mirrorSettings, presentationWidth: presentation.value[0] }),
+      creditWindow: 2,
+      onStatus
+    });
   } catch (error) {
     stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
     return;

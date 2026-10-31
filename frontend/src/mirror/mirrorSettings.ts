@@ -724,13 +724,13 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // this table (and its spec), and the panel binds it normally again.
 //
 // Rows NOT here are supported as saved: Audio, Safe-area padding, Refresh rate, Show overlay (and the network RTT),
-// and Widescreen stretch, which under the new renderer means "launch my seat at my aspect": the page sends its stream
-// box's aspect with the request for a streaming seat and the host launches the seat that wide
-// (GRC_ROOT_SIZE=presentation:<W>x1080, PRES-A). It takes effect at the seat's next start (re-launch on change: PRES-R).
-// Stage is disabled but keeps its saved value — see STREAM_DISABLED_ROWS.
+// Widescreen stretch, which under the new renderer means "launch my seat at my aspect" (PRES-A), and — since TAG3 —
+// Raise hand cards and Readability scaling, which run as opt-in render-stream extension modules
+// (stream-ext/raisedHand.ts and viewScale.ts) on the viewer's saved value. Stage is disabled but keeps its saved
+// value — see STREAM_DISABLED_ROWS.
 export type StreamForcedKey =
   | "quality" | "shaderMode" | "particleMode" | "staticBgEnabled"
-  | "raiseHeldCard" | "unfocusOnRelease" | "tapToFocus" | "confirmTap" | "raiseHandCards" | "uiScaling"
+  | "raiseHeldCard" | "unfocusOnRelease" | "tapToFocus" | "confirmTap"
   | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeSpines" | "freezeDecor";
 
 export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protocol: RenderStreamWireVersion) => MirrorSettings[K] } = {
@@ -747,9 +747,6 @@ export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protoc
   unfocusOnRelease: () => false,
   tapToFocus: () => false,
   confirmTap: () => false,
-  // STS2 client transforms: they return as opt-in render-stream extension modules.
-  raiseHandCards: () => false,
-  uiScaling: () => false,
   // A DOM-mirror compositing optimization.
   backstopOcclusion: () => false,
   // Records the node-geometry wire and input, neither of which exists here.

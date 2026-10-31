@@ -118,10 +118,12 @@ describe("mirrorSettings — the renderer keys", () => {
 
   it("leaves Widescreen stretch the viewer's: it sets the streaming seat's width (PRES-A)", () => {
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("stretchEnabled");
+    expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("raiseHandCards");
+    expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("uiScaling");
     expect(Object.keys(STREAM_RENDER_OVERRIDES).sort()).toEqual([
       "backstopOcclusion", "confirmTap", "freezeDecor", "freezeParticles", "freezeSpines", "particleMode", "quality",
-      "raiseHandCards", "raiseHeldCard", "reproRecorder", "shaderMode", "staticBgEnabled", "tapToFocus", "tweenReplay",
-      "uiScaling", "unfocusOnRelease"
+      "raiseHeldCard", "reproRecorder", "shaderMode", "staticBgEnabled", "tapToFocus", "tweenReplay",
+      "unfocusOnRelease"
     ]);
   });
 
