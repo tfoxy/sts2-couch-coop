@@ -1755,13 +1755,15 @@ onBeforeUnmount(() => {
            while a combat hand is on screen. -->
       <MirrorHandRaiseButton />
     </MirrorView>
-    <!-- "Use new renderer (Beta)": the game's own draw calls through the render-stream client. View only — no
-         input path exists here, and the gear/fullscreen pair uses the fixed browser-space chrome (no scaled DOM
-         stage hosts it). A stop falls back to MirrorView above for the session. -->
+    <!-- "Use new renderer (Beta)": the game's own draw calls through the render-stream client. With the INP2 input
+         channel, pointer input maps through INP1 and rides the same seat socket as MirrorView's inputCapture; the
+         gear/fullscreen pair still uses the fixed browser-space chrome (no scaled DOM stage hosts it). A stop falls
+         back to MirrorView above for the session. -->
     <RenderStreamStage
       v-else-if="showStream && renderStreamEndpoint && renderStreamCore"
       :endpoint="renderStreamEndpoint"
       :core="renderStreamCore"
+      :send-input="viewControls.sendInput"
       @failed="onRenderStreamFailed"
       @refresh-endpoint="onRenderStreamRefresh"
     />

@@ -130,4 +130,16 @@ describe("host access", () => {
     expect(seat.client.state.nodes.size).toBe(1);
     expect(seat.socket.sent[0]).toMatchObject({ type: "input", kind: "click" });
   });
+
+  // INP2: the new renderer controls the seat through the stream while the node-geometry scene is NOT watched
+  // (`sendWatch(false)`). Input is authorized by hostAccess.allowed, so it must still flow when watching is off.
+  it("sends input while allowed even when the scene is not watched (the stream's input channel)", () => {
+    const { client, socket } = connect();
+    socket.access(true, 1);
+    socket.emit(frame);
+    client.sendWatch(false);
+    socket.sent = [];
+    client.sendInput({ kind: "click", coordX: 844, coordY: 948 });
+    expect(socket.sent).toEqual([{ type: "input", requestId: "input:1", kind: "click", coordX: 844, coordY: 948 }]);
+  });
 });

@@ -45,7 +45,6 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
   ["mirror-static-bg", "staticBgEnabled", "checkbox"],
   ["mirror-raise-card", "raiseHeldCard", "checkbox"],
   ["mirror-unfocus", "unfocusOnRelease", "checkbox"],
-  ["mirror-tap-focus", "tapToFocus", "checkbox"],
   ["mirror-confirm-tap", "confirmTap", "checkbox"],
   ["mirror-backstop-occlusion", "backstopOcclusion", "checkbox"],
   ["mirror-repro-recorder", "reproRecorder", "checkbox"],
@@ -56,8 +55,9 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
 ];
 // Widescreen stretch is supported since PRES-A: under the new renderer it sets the width the seat is launched at.
 // Raise hand cards and Readability scaling are supported since TAG3: they run as render-stream extension modules.
+// Tap to focus is supported since INP2: the input channel implements the touch two-step.
 const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-stretch", "mirror-refresh-rate",
-  "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling"];
+  "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling", "mirror-tap-focus"];
 
 function available(): void {
   renderStreamContext.coreProblem = null;

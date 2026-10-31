@@ -20,7 +20,8 @@
 //     none within `refreshTimeoutMs`) is a stop;
 //   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on.
 //
-// VIEW ONLY. Nothing here listens for input or sends anything to the game.
+// VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
+// the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import {
@@ -34,8 +35,10 @@ import {
 } from "@godot-scene-web/render-stream-client";
 
 import { translate as t } from "@/i18n";
+import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
+import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 
 const props = withDefaults(defineProps<{
@@ -43,11 +46,14 @@ const props = withDefaults(defineProps<{
   core: RenderStreamCore;
   /** Injectable for specs; the package's factory otherwise. */
   createClient?: (options: RenderStreamClientOptions) => RenderStreamClient;
+  /** The upstream input sender (the seat socket's `input` message); absent ⇒ the stage stays view-only. */
+  sendInput?: (message: MirrorInputMessage) => void;
   hiddenDisposeMs?: number;
   /** How long an `unauthorized` stream waits for the seat's current descriptor before it stops. */
   refreshTimeoutMs?: number;
 }>(), {
   createClient: undefined,
+  sendInput: undefined,
   hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
   refreshTimeoutMs: 10_000
 });
@@ -68,6 +74,9 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 const canvasGeneration = ref(0);
 const phase = ref<Phase>("connecting");
 let client: RenderStreamClient | null = null;
+// INP2: the input channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
+// fresh client gets a fresh capture on the fresh canvas).
+let streamInput: StreamInput | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
 // The `unauthorized` refresh: asked at most once per stream (re-armed by a drawn frame), and while it is pending
@@ -176,11 +185,21 @@ function mountClient(): void {
     stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
+  if (props.sendInput) {
+    streamInput = createStreamInput({
+      stage: canvas,
+      getClient: () => client,
+      send: props.sendInput,
+      tapToFocus: () => mirrorSettings.tapToFocus
+    });
+  }
   phase.value = "connecting";
   client.connect();
 }
 
 function disposeClient(): void {
+  streamInput?.dispose();
+  streamInput = null;
   const current = client;
   client = null;
   if (current) {

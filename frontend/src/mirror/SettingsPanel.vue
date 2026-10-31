@@ -255,7 +255,9 @@ const stretchEnabled = bind("stretchEnabled");
 const safeAreaPaddingEnabled = bind("safeAreaPaddingEnabled");
 const raiseHeldCard = forcedBind("raiseHeldCard");
 const unfocusOnRelease = forcedBind("unfocusOnRelease");
-const tapToFocus = forcedBind("tapToFocus");
+// Tap to focus is the viewer's under the new renderer too (INP2): the input channel implements the touch two-step
+// on the hit item's identity, so the saved value chooses whether a touch tap focuses first or plays immediately.
+const tapToFocus = bind("tapToFocus");
 const confirmTap = forcedBind("confirmTap");
 // Raise hand cards and Readability scaling run as render-stream extension modules under the new renderer (TAG3), so
 // they are the viewer's there too — their saved value chooses whether the module attaches.
@@ -553,7 +555,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="tapToFocus" :disabled="streamActive" data-testid="mirror-tap-focus" />
+            <input type="checkbox" v-model="tapToFocus" data-testid="mirror-tap-focus" />
             <span>{{ t('settings.tapFocus') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('tapFocus', t('settings.tapFocus'))" />

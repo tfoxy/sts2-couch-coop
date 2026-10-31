@@ -571,7 +571,10 @@ export function connectMirrorClient(options: {
   }
 
   function sendInput(message: MirrorInputMessage): void {
-    if (!watching || !client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
+    // Gated on hostAccess.allowed (the viewer is authorized to control this seat), NOT on `watching`: the old
+    // mirror only controlled while it pulled the node-geometry scene, but the new renderer (INP2) controls the
+    // same seat through the stream while `watch` is off, and a receive-only page has no `sendInput` wired.
+    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
     inputSequence += 1;
