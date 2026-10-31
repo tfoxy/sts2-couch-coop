@@ -5,6 +5,7 @@ import type { ExtensionFrame, ItemMeta, ItemMetaBatch, ItemQuery, OverrideTable,
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 import { RS_GROUP_CARD_REWARD_ROOT, RS_GROUP_TREASURE_RELIC } from "@/stream-ext/groups";
 import { createViewScaleExtension, resolveStreamViewScale, scaleStampAffine } from "@/stream-ext/viewScale";
+import { VIEW_SCALE_PILE } from "@/mirror/viewScale";
 import { createMirrorSettings } from "@/mirror/mirrorSettings";
 
 function meta(id: number, groups: string[], scene: string | null = null, path: string | null = null): ItemMeta {
@@ -28,6 +29,14 @@ describe("viewScale — resolution", () => {
 
   it("resolves neutral for an untagged item with no table entry", () => {
     expect(resolveStreamViewScale(meta(1, [], "res://scenes/elsewhere.tscn", "Nothing"))).toBeNull();
+  });
+
+  it("matches a scene-root entry: the capture's root path '.' is the mirror's ''", () => {
+    // The capture spells an instance root's path "." (get_path_to on itself); the mirror's relPath
+    // spells the same node "" (its scene walk collects no name for the root). The table's scene-ROOT
+    // entries (combat piles, map points, deck view) are written against the "" spelling.
+    const pile = resolveStreamViewScale(meta(1, [], "res://scenes/combat/draw_pile.tscn", "."));
+    expect(pile).toMatchObject({ scale: VIEW_SCALE_PILE, pivot: "bottomLeft", isGroup: false });
   });
 
   it("builds the scale-about-anchor affine (scale then translate)", () => {
@@ -93,6 +102,29 @@ describe("viewScale — extension glue", () => {
     ext.onItemMeta!(batch([meta(1, [], "res://scenes/merchant/merchant_inventory.tscn", "SlotsContainer")]));
     ext.beforeDraw!({ seq: 1, now: 0, overrides, query, requestRedraw: () => {} });
     expect(overrides.written.has(1)).toBe(false);
+    ext.dispose!();
+  });
+
+  it("measures a widget whose sprite is drawn in a child (own rect null, subtree rect set)", () => {
+    const overrides = new FakeOverrides();
+    // A combat pile button: its own commands are empty (the sprite is a child), so `rect` is null;
+    // the subtree rect is the button's 80x80 visual. The stream must still scale it (the old
+    // mirror's DOM element bounding box included that child).
+    const query: ItemQuery = {
+      parent: () => null,
+      children: () => new Uint32Array(0),
+      transform: () => [1, 0, 0, 1, 15, 985],
+      rect: () => null,
+      subtreeRect: (id) => (id === 1 ? { x: 17, y: 985, w: 94, h: 83 } : null),
+      visible: () => true,
+      meta: () => null,
+      hitTest: () => null
+    };
+    const ext = createViewScaleExtension({ designWidth: 1920 });
+    ext.onItemMeta!(batch([meta(1, [], "res://scenes/combat/draw_pile.tscn", ".")]));
+    ext.beforeDraw!({ seq: 1, now: 0, overrides, query, requestRedraw: () => {} });
+    expect(overrides.written.has(1)).toBe(true);
+    expect(overrides.written.get(1)![0]).toBeCloseTo(1.25);
     ext.dispose!();
   });
 });

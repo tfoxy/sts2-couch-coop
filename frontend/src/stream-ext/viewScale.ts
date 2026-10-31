@@ -49,7 +49,12 @@ export function resolveStreamViewScale(m: ItemMeta): Desired | null {
   if (m.groups.includes(RS_GROUP_CARD_REWARD_ROOT)) return { ...CARD_REWARD_GROUP_RESOLVED };
   if (m.groups.includes(RS_GROUP_CARD_REWARD_CARD)) return { ...CARD_REWARD_CARD_RESOLVED };
   if (m.groups.includes(RS_GROUP_TREASURE_RELIC)) return { ...TREASURE_RELIC_RESOLVED };
-  const resolved: ViewScaleResolved = resolveViewScale(m.scene ?? null, m.path ?? null);
+  // The capture's `path` is the instance root's get_path_to(node), which spells the root itself "."
+  // (Godot's own self-path); the old mirror's relPath spells the root "" (its scene walk collects no
+  // name for the root). Normalise so the table's scene-ROOT entries (piles, map points, deck view)
+  // match. Non-root paths ("A", "A/B") are identical in both conventions.
+  const path = m.path === "." ? "" : (m.path ?? null);
+  const resolved: ViewScaleResolved = resolveViewScale(m.scene ?? null, path);
   return viewScaleActive(resolved)
     ? {
         scale: resolved.scale,
@@ -100,7 +105,13 @@ export function createViewScaleExtension(options: ViewScaleOptions): RenderStrea
       dirty = false;
 
       for (const [id, d] of desired) {
-        const box = d.isGroup ? f.query.subtreeRect(id) : f.query.rect(id);
+        // Measure the widget's whole visual bounds, not just its own draw commands: a combat pile
+        // button draws its sprite in a child (the root has no own commands), and the old mirror's
+        // node rect was the DOM element's bounding box, which includes descendants. The subtree rect
+        // is the own-command rect's superset, so this reads the pile / map point / deck-view widgets
+        // the same way the mirror did. `isGroup` only differs in the mirror's DOM block scaling,
+        // which has no stream twin: every override here is one rigid subtree transform.
+        const box = f.query.subtreeRect(id) ?? f.query.rect(id);
         if (box === null || boxFullyOutsideDesign(box, options.designWidth, DESIGN_HEIGHT)) {
           f.overrides.clear(id);
           continue;
