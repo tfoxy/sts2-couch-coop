@@ -43,9 +43,6 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
   ["mirror-shader-mode", "shaderMode", "select"],
   ["mirror-particle-mode", "particleMode", "select"],
   ["mirror-static-bg", "staticBgEnabled", "checkbox"],
-  ["mirror-raise-card", "raiseHeldCard", "checkbox"],
-  ["mirror-unfocus", "unfocusOnRelease", "checkbox"],
-  ["mirror-confirm-tap", "confirmTap", "checkbox"],
   ["mirror-backstop-occlusion", "backstopOcclusion", "checkbox"],
   ["mirror-repro-recorder", "reproRecorder", "checkbox"],
   ["mirror-tween-replay", "tweenReplay", "checkbox"],
@@ -55,9 +52,12 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
 ];
 // Widescreen stretch is supported since PRES-A: under the new renderer it sets the width the seat is launched at.
 // Raise hand cards and Readability scaling are supported since TAG3: they run as render-stream extension modules.
-// Tap to focus is supported since INP2: the input channel implements the touch two-step.
+// Tap to focus is supported since INP2: the input channel implements the touch two-step. Raise held card, Un-focus
+// on release and Confirm tap are supported since the held-card / confirm-tap modules landed (the input channel's
+// peek and confirm gestures).
 const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-stretch", "mirror-refresh-rate",
-  "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling", "mirror-tap-focus"];
+  "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling", "mirror-tap-focus",
+  "mirror-raise-card", "mirror-unfocus", "mirror-confirm-tap"];
 
 function available(): void {
   renderStreamContext.coreProblem = null;

@@ -58,9 +58,11 @@ beforeEach(() => {
   visibility = "visible";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
   // The stage runs the extension modules on the viewer's saved choices; keep this suite's default mount a pure
-  // client (both modules off), so the "empty extension list" claim stays the baseline.
+  // client (every module off), so the "empty extension list" claim stays the baseline.
   mirrorSettings.raiseHandCards = false;
   mirrorSettings.uiScaling = false;
+  mirrorSettings.raiseHeldCard = false;
+  mirrorSettings.confirmTap = false;
 });
 
 afterEach(() => {
@@ -94,6 +96,14 @@ describe("RenderStreamStage", () => {
     mountStage();
     expect((clients[0].options.extensions ?? []).map((e) => e.id))
       .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale"]);
+  });
+
+  it("attaches the held-card and confirm-tap modules on the viewer's saved choices", () => {
+    mirrorSettings.raiseHeldCard = true;
+    mirrorSettings.confirmTap = true;
+    mountStage();
+    expect((clients[0].options.extensions ?? []).map((e) => e.id))
+      .toEqual(["couchcoop.heldCard", "couchcoop.confirmTap"]);
   });
 
   // PRES-A: a seat launched at the viewer's aspect describes a wider presentation; the canvas takes that backing size

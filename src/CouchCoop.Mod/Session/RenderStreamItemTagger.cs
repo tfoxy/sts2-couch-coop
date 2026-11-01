@@ -37,6 +37,9 @@ internal static class RenderStreamItemTagger
     internal const string CardRewardRootGroup = "couchcoop_rs_card_reward_root";
     internal const string CardRewardCardGroup = "couchcoop_rs_card_reward_card";
     internal const string TreasureRelicGroup = "couchcoop_rs_treasure_relic";
+    internal const string EventOptionGroup = "couchcoop_rs_event_option";
+    internal const string ShopItemGroup = "couchcoop_rs_shop_item";
+    internal const string RestSiteGroup = "couchcoop_rs_rest_site";
 
     // The node-type leaves and names the groups key on (the old mirror's raise/viewScale identity, verbatim).
     private const string HandHolderType = "NHandCardHolder";
@@ -53,6 +56,12 @@ internal static class RenderStreamItemTagger
     private const string CardRewardScreenType = "NCardRewardSelectionScreen";
     private const string CardType = "NCard";
     private const string TreasureRelicType = "NTreasureRoomRelicHolder";
+    // CONFIRM TAP: the three confirm-eligible families the handoff asked to tag. The shop set is the whole merchant
+    // inventory (relic / potion / card / the card-removal service coin) because every one of them spends gold.
+    private const string EventOptionType = "NEventOptionButton";
+    private const string RestSiteType = "NRestSiteButton";
+    private static readonly string[] ShopItemTypes =
+        ["NMerchantRelic", "NMerchantPotion", "NMerchantCard", "NMerchantCardRemoval"];
 
     private static SceneTree? _tree;
     private static bool _installed;
@@ -201,6 +210,9 @@ internal static class RenderStreamItemTagger
         if (facts.TypeLeaf == TreasureRelicType) groups.Add(TreasureRelicGroup);
         if (facts.TypeLeaf == CardRewardScreenType) groups.Add(CardRewardRootGroup);
         if (facts.TypeLeaf == CardType && facts.CardRewardAncestor) groups.Add(CardRewardCardGroup);
+        if (facts.TypeLeaf == EventOptionType) groups.Add(EventOptionGroup);
+        if (facts.TypeLeaf == RestSiteType) groups.Add(RestSiteGroup);
+        if (Array.IndexOf(ShopItemTypes, facts.TypeLeaf) >= 0) groups.Add(ShopItemGroup);
 
         var parentIsCreature = facts.ParentSceneFile?.EndsWith(CreatureSceneFileSuffix, StringComparison.Ordinal) == true;
         if (parentIsCreature)

@@ -493,6 +493,16 @@ internal static class RenderStreamPairingTests
             "an NCard is tagged only under a card-reward screen");
         Assert(groups(F("Relic", "NTreasureRoomRelicHolder")).Contains(RenderStreamItemTagger.TreasureRelicGroup),
             "the treasure relic holder is tagged");
+        Assert(groups(F("Option", "NEventOptionButton")).Contains(RenderStreamItemTagger.EventOptionGroup),
+            "an event option button is tagged");
+        Assert(groups(F("Rest", "NRestSiteButton")).Contains(RenderStreamItemTagger.RestSiteGroup),
+            "a rest-site choice is tagged");
+        foreach (var shop in new[] { "NMerchantRelic", "NMerchantPotion", "NMerchantCard", "NMerchantCardRemoval" })
+        {
+            Assert(groups(F("Item", shop)).Contains(RenderStreamItemTagger.ShopItemGroup),
+                $"a merchant inventory item ({shop}) is tagged a shop item");
+        }
+        Assert(groups(F("Else", "NCard")).Count == 0, "an ordinary widget is not confirm-tagged");
     }
 
     private static Dictionary<string, string> SeatEnvironment(string auth) => new()

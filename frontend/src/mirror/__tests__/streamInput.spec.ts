@@ -7,6 +7,8 @@ import {
   type StreamInputClient,
   type StreamGamePoint
 } from "@/mirror/streamInput";
+import type { ConfirmTapController } from "@/stream-ext/confirmTap";
+import type { HeldCardController } from "@/stream-ext/heldCard";
 
 // INP2 — the render-stream input channel. These specs pin the two things the increment owns: the mapping (every
 // pointer event goes through INP1's `clientToGame`, so a raised card's tap reaches its game centre, and a letterbox
@@ -59,6 +61,11 @@ function makeInput(options: {
   map?: (x: number, y: number) => { x: number; y: number; item: number | null };
   tapToFocus?: () => boolean;
   clock?: () => number;
+  heldCard?: HeldCardController;
+  raiseHeldCard?: () => boolean;
+  unfocusOnRelease?: () => boolean;
+  confirmTap?: ConfirmTapController;
+  confirmTapEnabled?: () => boolean;
 } = {}): void {
   const map = options.map ?? ((x, y) => ({ x, y, item: null }));
   let client: StreamInputClient | null = stubClient(map);
@@ -67,9 +74,44 @@ function makeInput(options: {
     getClient: () => client,
     send: (m) => sent.push(m),
     tapToFocus: options.tapToFocus,
-    now: options.clock
+    now: options.clock,
+    heldCard: options.heldCard,
+    raiseHeldCard: options.raiseHeldCard,
+    unfocusOnRelease: options.unfocusOnRelease,
+    confirmTap: options.confirmTap,
+    confirmTapEnabled: options.confirmTapEnabled
   });
   void client;
+}
+
+/** A fake held-card controller: `handCardFor` answers with the same item id when `isHand` says so. */
+function heldController(isHand: (item: number | null) => boolean): { controller: HeldCardController; setHeld: ReturnType<typeof vi.fn> } {
+  const setHeld = vi.fn();
+  return {
+    controller: {
+      handCardFor: (item) => (isHand(item) ? item : null),
+      setHeld,
+      dispose: vi.fn()
+    } as HeldCardController,
+    setHeld
+  };
+}
+
+/** A fake confirm-tap controller that classifies `item` as `hit`, and records show/hide. */
+function confirmController(hit: { id: number; kind: "shop" } | null): { controller: ConfirmTapController; show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> } {
+  const show = vi.fn();
+  const hide = vi.fn();
+  return {
+    controller: {
+      classify: () => hit,
+      show,
+      hide,
+      dispose: vi.fn(),
+      state: { targetId: null, kind: null, rect: null }
+    } as ConfirmTapController,
+    show,
+    hide
+  };
 }
 
 beforeEach(() => {
@@ -242,6 +284,137 @@ describe("createStreamInput — mapping cannot be skipped", () => {
     stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 480, clientY: 270 }));
     stage.dispatchEvent(pointerEvent("pointerup", { clientX: 480, clientY: 270 }));
     flushFrames();
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("createStreamInput — held-card lift (raiseHeldCard / unfocusOnRelease)", () => {
+  it("a still hold on a hand card becomes a peek: focus + lift, no play on release", () => {
+    vi.useFakeTimers();
+    try {
+      const held = heldController((item) => item === 7);
+      makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller });
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 900 }));
+      expect(held.setHeld).not.toHaveBeenCalled(); // still below PEEK_MS
+
+      vi.advanceTimersByTime(100);
+      expect(held.setHeld).toHaveBeenCalledWith(7, 900, "peek");
+      expect(sent).toContainEqual({ kind: "hover", coordX: 640, coordY: 900 });
+
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 900 }));
+      expect(held.setHeld).toHaveBeenLastCalledWith(null, 900, "drag"); // lift cleared
+      expect(sent.filter((m) => m.kind === "click")).toEqual([]); // a peek never plays the card
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a peek release un-focuses by re-hovering the seat centre only when unfocusOnRelease is on", () => {
+    vi.useFakeTimers();
+    try {
+      const held = heldController((item) => item === 7);
+      makeInput({
+        map: (x, y) => ({ x, y, item: 7 }),
+        heldCard: held.controller,
+        unfocusOnRelease: () => false
+      });
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 900 }));
+      vi.advanceTimersByTime(100);
+      const before = sent.length;
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 900 }));
+      // No extra hover beyond the peek's own focus hover (off ⇒ no un-focus).
+      expect(sent.length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not peek a hand card while raiseHeldCard is off", () => {
+    vi.useFakeTimers();
+    try {
+      const held = heldController((item) => item === 7);
+      makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller, raiseHeldCard: () => false });
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 900 }));
+      vi.advanceTimersByTime(100);
+      expect(held.setHeld).not.toHaveBeenCalled();
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 900 }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a touch drag on a hand card lifts it above the fingertip, then clears on release", () => {
+    const held = heldController((item) => item === 7);
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 900 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 300 })); // past the slop → drag
+    flushFrames();
+    expect(held.setHeld).toHaveBeenCalledWith(7, 300, "drag");
+    stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 300 }));
+    expect(held.setHeld).toHaveBeenLastCalledWith(null, 0, "drag");
+  });
+
+  it("does not lift a touch drag on a non-hand card", () => {
+    const held = heldController(() => false);
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 900 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 300 }));
+    flushFrames();
+    expect(held.setHeld).not.toHaveBeenCalled();
+    stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 300 }));
+  });
+});
+
+describe("createStreamInput — confirm tap", () => {
+  it("a tap on a confirm-eligible widget focuses + shows the button, and commit re-sends the click", () => {
+    const confirm = confirmController({ id: 8, kind: "shop" });
+    makeInput({
+      map: (x, y) => ({ x, y, item: 8 }),
+      confirmTap: confirm.controller,
+      confirmTapEnabled: () => true,
+      tapToFocus: () => true
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]); // focus only — no bare tap
+    expect(confirm.show).toHaveBeenCalledWith(8, "shop");
+
+    capture.commitConfirm();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 640, coordY: 360 });
+    expect(confirm.hide).toHaveBeenCalled();
+  });
+
+  it("a tap outside a confirm-eligible widget is a normal tap even with confirmTap on", () => {
+    const confirm = confirmController(null);
+    makeInput({
+      map: (x, y) => ({ x, y, item: 5 }),
+      confirmTap: confirm.controller,
+      confirmTapEnabled: () => true,
+      tapToFocus: () => false
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 640, coordY: 360 }]);
+    expect(confirm.show).not.toHaveBeenCalled();
+  });
+
+  it("a confirm-eligible tap is a normal tap when confirmTap is off", () => {
+    const confirm = confirmController({ id: 8, kind: "shop" });
+    makeInput({
+      map: (x, y) => ({ x, y, item: 8 }),
+      confirmTap: confirm.controller,
+      confirmTapEnabled: () => false,
+      tapToFocus: () => false
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 640, coordY: 360 }]);
+    expect(confirm.show).not.toHaveBeenCalled();
+  });
+
+  it("commitConfirm with no button up sends nothing", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }) });
+    capture.commitConfirm();
     expect(sent).toEqual([]);
   });
 });

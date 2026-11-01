@@ -253,12 +253,15 @@ function forcedBind<K extends StreamForcedKey>(key: K, persist = true): Writable
 // launched at (PRES-A), from the seat's next start.
 const stretchEnabled = bind("stretchEnabled");
 const safeAreaPaddingEnabled = bind("safeAreaPaddingEnabled");
-const raiseHeldCard = forcedBind("raiseHeldCard");
-const unfocusOnRelease = forcedBind("unfocusOnRelease");
+// Raise held card and Un-focus on release run as the held-card stream-ext module plus the input channel's peek /
+// drag gesture, so they are the viewer's under the new renderer too.
+const raiseHeldCard = bind("raiseHeldCard");
+const unfocusOnRelease = bind("unfocusOnRelease");
 // Tap to focus is the viewer's under the new renderer too (INP2): the input channel implements the touch two-step
 // on the hit item's identity, so the saved value chooses whether a touch tap focuses first or plays immediately.
 const tapToFocus = bind("tapToFocus");
-const confirmTap = forcedBind("confirmTap");
+// Confirm tap runs as the confirm-tap stream-ext module plus the input channel's confirm gesture (a DOM button).
+const confirmTap = bind("confirmTap");
 // Raise hand cards and Readability scaling run as render-stream extension modules under the new renderer (TAG3), so
 // they are the viewer's there too — their saved value chooses whether the module attaches.
 const raiseHandCards = bind("raiseHandCards");
@@ -541,14 +544,14 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="raiseHeldCard" :disabled="streamActive" data-testid="mirror-raise-card" />
+            <input type="checkbox" v-model="raiseHeldCard" data-testid="mirror-raise-card" />
             <span>{{ t('settings.raiseCard') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('raiseCard', t('settings.raiseCard'))" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="unfocusOnRelease" :disabled="streamActive" data-testid="mirror-unfocus" />
+            <input type="checkbox" v-model="unfocusOnRelease" data-testid="mirror-unfocus" />
             <span>{{ t('settings.unfocus') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('unfocus', t('settings.unfocus'))" />
@@ -562,7 +565,7 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="confirmTap" :disabled="streamActive" data-testid="mirror-confirm-tap" />
+            <input type="checkbox" v-model="confirmTap" data-testid="mirror-confirm-tap" />
             <span>{{ t('settings.confirmTap') }}</span>
           </label>
           <SettingsHelpTip v-bind="help('confirmTap', t('settings.confirmTap'))" />

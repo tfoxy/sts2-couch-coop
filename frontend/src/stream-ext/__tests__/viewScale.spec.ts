@@ -55,6 +55,7 @@ class FakeOverrides implements OverrideTable {
   translate(): void { this.writes++; }
   scaleAbout(): void { this.writes++; }
   setGlobal(): void { this.writes++; }
+  freeze(): void { this.writes++; }
   clear(id: number): void { this.writes++; this.written.delete(id); }
   clearAll(): void { this.writes++; }
   get(): null { return null; }
@@ -130,18 +131,25 @@ describe("viewScale — extension glue", () => {
 });
 
 describe("extensions — off is an empty list", () => {
-  it("runs neither module for a viewer with both saved settings off", () => {
+  it("runs no module for a viewer with every saved setting off", () => {
     const settings = createMirrorSettings(undefined, "", { storage: null });
     settings.raiseHandCards = false;
     settings.uiScaling = false;
-    expect(buildStreamExtensions({ settings, presentationWidth: 1920 })).toEqual([]);
+    settings.raiseHeldCard = false;
+    settings.confirmTap = false;
+    const built = buildStreamExtensions({ settings, presentationWidth: 1920 });
+    expect(built.extensions).toEqual([]);
+    expect(built.heldCard).toBeNull();
+    expect(built.confirmTap).toBeNull();
   });
 
   it("runs one module per saved setting, in product order", () => {
     const settings = createMirrorSettings(undefined, "", { storage: null });
     settings.raiseHandCards = true;
     settings.uiScaling = false;
-    const list = buildStreamExtensions({ settings, presentationWidth: 2520 });
+    settings.raiseHeldCard = false;
+    settings.confirmTap = false;
+    const list = buildStreamExtensions({ settings, presentationWidth: 2520 }).extensions;
     expect(list.map((e) => e.id)).toEqual(["couchcoop.raisedHand"]);
   });
 });

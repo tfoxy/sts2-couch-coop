@@ -22,7 +22,7 @@
 //
 // VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
 // the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import {
   createRenderStreamClient,
@@ -40,6 +40,7 @@ import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
 import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
+import type { ConfirmTapController } from "@/stream-ext/confirmTap";
 
 const props = withDefaults(defineProps<{
   endpoint: RenderStreamEndpoint;
@@ -77,6 +78,8 @@ let client: RenderStreamClient | null = null;
 // INP2: the input channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
 // fresh client gets a fresh capture on the fresh canvas).
 let streamInput: StreamInput | null = null;
+// CONFIRM TAP: the live module controller (recreated per client mount), whose reactive `state` drives the button.
+const confirmController = shallowRef<ConfirmTapController | null>(null);
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
 // The `unauthorized` refresh: asked at most once per stream (re-armed by a drawn frame), and while it is pending
@@ -103,6 +106,19 @@ const overlayText = computed(() => {
     default: return null;
   }
 });
+
+// CONFIRM TAP: the button's live anchor, in page px. The module holds the widget's presentation-space rect; the
+// client maps it through `presentationToCss` (canvas-local, letterboxing included). Null while no widget is armed.
+const confirmAnchor = computed(() => {
+  const c = confirmController.value;
+  const rect = c?.state.rect ?? null;
+  if (c === null || c.state.targetId === null || rect === null || client === null) return null;
+  return client.presentationToCss(rect);
+});
+
+function commitConfirm(): void {
+  streamInput?.commitConfirm();
+}
 
 function onStatus(status: RenderStreamStatus): void {
   emit("status", status);
@@ -171,13 +187,15 @@ function stop(reason: string): void {
 function mountClient(): void {
   const canvas = canvasEl.value;
   if (!canvas || client || stopped) return;
+  const built = buildStreamExtensions({ settings: mirrorSettings, presentationWidth: presentation.value[0] });
+  confirmController.value = built.confirmTap;
   const create = props.createClient ?? createRenderStreamClient;
   try {
     client = create({
       canvas,
       core: props.core,
       endpoint: props.endpoint,
-      extensions: buildStreamExtensions({ settings: mirrorSettings, presentationWidth: presentation.value[0] }),
+      extensions: built.extensions,
       creditWindow: 2,
       onStatus
     });
@@ -190,7 +208,12 @@ function mountClient(): void {
       stage: canvas,
       getClient: () => client,
       send: props.sendInput,
-      tapToFocus: () => mirrorSettings.tapToFocus
+      tapToFocus: () => mirrorSettings.tapToFocus,
+      heldCard: built.heldCard ?? undefined,
+      raiseHeldCard: () => mirrorSettings.raiseHeldCard,
+      unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
+      confirmTap: built.confirmTap ?? undefined,
+      confirmTapEnabled: () => mirrorSettings.confirmTap
     });
   }
   phase.value = "connecting";
@@ -200,6 +223,7 @@ function mountClient(): void {
 function disposeClient(): void {
   streamInput?.dispose();
   streamInput = null;
+  confirmController.value = null;
   const current = client;
   client = null;
   if (current) {
@@ -303,6 +327,20 @@ defineExpose({
       />
     </div>
     <p v-if="overlayText" class="render-stream-status" role="status" data-testid="render-stream-status">{{ overlayText }}</p>
+    <button
+      v-if="confirmAnchor"
+      class="render-stream-confirm"
+      :style="{
+        left: `${confirmAnchor.x}px`,
+        top: `${confirmAnchor.y}px`,
+        width: `${confirmAnchor.w}px`,
+        height: `${confirmAnchor.h}px`
+      }"
+      data-testid="render-stream-confirm-button"
+      @pointerdown.stop
+      @pointerup.stop
+      @click.stop="commitConfirm"
+    >{{ t('a11y.confirm') }}</button>
   </div>
 </template>
 
@@ -349,5 +387,23 @@ defineExpose({
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
   pointer-events: none;
+}
+
+/* CONFIRM TAP: the client confirm button, anchored over the confirm-eligible widget the tap focused. The stage maps
+   the widget's presentation rect through the client, so the button tracks the widget (focus growth included). */
+.render-stream-confirm {
+  position: fixed;
+  z-index: 10;
+  box-sizing: border-box;
+  min-width: 88px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 8px;
+  background: rgba(20, 20, 24, 0.92);
+  color: #fff;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  cursor: pointer;
 }
 </style>

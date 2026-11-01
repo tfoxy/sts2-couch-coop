@@ -121,9 +121,12 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("raiseHandCards");
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("uiScaling");
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("tapToFocus"); // INP2: the input channel two-steps
+    expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("raiseHeldCard"); // the held-card module
+    expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("unfocusOnRelease"); // the peek-release pair
+    expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("confirmTap"); // the confirm-tap module
     expect(Object.keys(STREAM_RENDER_OVERRIDES).sort()).toEqual([
-      "backstopOcclusion", "confirmTap", "freezeDecor", "freezeParticles", "freezeSpines", "particleMode", "quality",
-      "raiseHeldCard", "reproRecorder", "shaderMode", "staticBgEnabled", "tweenReplay", "unfocusOnRelease"
+      "backstopOcclusion", "freezeDecor", "freezeParticles", "freezeSpines", "particleMode", "quality",
+      "reproRecorder", "shaderMode", "staticBgEnabled", "tweenReplay"
     ]);
   });
 

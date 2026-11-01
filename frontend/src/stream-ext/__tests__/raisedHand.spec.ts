@@ -94,6 +94,7 @@ class FakeOverrides implements OverrideTable {
     this.values.set(id, { transform: [sx, 0, 0, sy, px - sx * px, py - sy * py] });
   }
   setGlobal(): void { this.writes++; }
+  freeze(): void { this.writes++; }
   clear(id: number): void { this.cleared.push(id); }
   clearAll(): void { this.writes++; }
   get(): null { return null; }

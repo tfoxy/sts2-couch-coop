@@ -728,10 +728,11 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // Raise hand cards and Readability scaling, which run as opt-in render-stream extension modules
 // (stream-ext/raisedHand.ts and viewScale.ts) on the viewer's saved value. Stage is disabled but keeps its saved
 // value — see STREAM_DISABLED_ROWS. Since INP2, Tap to focus is the viewer's again: the input channel
-// (streamInput.ts) implements the touch two-step on the hit item's identity.
+// (streamInput.ts) implements the touch two-step on the hit item's identity. Raise held card, Un-focus on release
+// and Confirm tap leave this table too: they run as the held-card and confirm-tap stream-ext modules plus the input
+// channel's peek / confirm gestures.
 export type StreamForcedKey =
   | "quality" | "shaderMode" | "particleMode" | "staticBgEnabled"
-  | "raiseHeldCard" | "unfocusOnRelease" | "confirmTap"
   | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeSpines" | "freezeDecor";
 
 export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protocol: RenderStreamWireVersion) => MirrorSettings[K] } = {
@@ -743,11 +744,6 @@ export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protoc
   particleMode: (protocol) => (protocol >= 12 ? "dynamic" : "off"),
   // The live background is in the stream.
   staticBgEnabled: () => false,
-  // Held-card raise, peek un-focus and the confirm button still need item_meta identity + client-side overrides;
-  // until they land, their rows stay forced off under the new renderer.
-  raiseHeldCard: () => false,
-  unfocusOnRelease: () => false,
-  confirmTap: () => false,
   // A DOM-mirror compositing optimization.
   backstopOcclusion: () => false,
   // Records the node-geometry wire and input, neither of which exists here.
