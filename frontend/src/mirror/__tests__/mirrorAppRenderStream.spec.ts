@@ -505,3 +505,103 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(fake.clients[0].disposed).toBe(true);
   });
 });
+
+// THE CHECKBOX AFTER A RE-JOIN (the field report "after a re-join with a desktop tab already present under the
+// same name, the phone's renderer checkbox sent no set-renderer"): what the page must do once its seat is joined
+// again, pinned here so the send path cannot regress while the field case is reproduced.
+//
+// Two shapes, and only one of them may send NOTHING:
+//   * the seat does not stream yet -> switching the checkbox on asks the HOST (on the socket that owns the seat,
+//     which after a re-join is the NEW one) to restart it as the streaming seat;
+//   * the seat already streams -> no request, because there is nothing to restart: the page draws the descriptor
+//     the seat's own session carried. A second browser on the same seat (the "same name" tab) is the everyday way
+//     this happens, and it is why a missing set-renderer is not by itself a bug.
+describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
+  const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
+    token: "e".repeat(64), protocol: 13, presentation: [1920, 1080] };
+  const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
+    session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
+    ...HEADLESS_FREEZES, ...over
+  });
+
+  async function pickAlice(): Promise<MockWebSocket> {
+    Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true, stopped: null,
+      coreLoadFailed: false });
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    return host;
+  }
+
+  it("asks the host again after the page has re-joined its seat, on the socket that owns it", async () => {
+    const host = await pickAlice();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession());
+    await settle();
+    expect(renderStreamContext.seatJoined).toBe(true);
+
+    // The re-join: the seat socket drops, the page falls back to a fresh host socket and re-joins by the seat it was
+    // granted. The host reuses that seat (a second device with the same name gets the same instance, not a new one),
+    // so the page is joined again with no descriptor.
+    seat.close();
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await settle();
+    const rejoined = latest();
+    expect(rejoined).not.toBe(host);
+    rejoined.emit(sessionMessage());
+    await settle();
+    expect(rejoined.ofType("join")[0]).toMatchObject({ playerId: "p:1003" });
+    rejoined.emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    latest().emit(seatSession());
+    await settle();
+    expect(renderStreamContext.seatJoined).toBe(true);
+
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(rejoined.ofType("set-renderer")).toEqual([{ type: "set-renderer", renderer: "stream" }]);
+    expect(host.ofType("set-renderer")).toHaveLength(0);
+  });
+
+  it("sends nothing when the seat already streams, and draws that descriptor instead", async () => {
+    const host = await pickAlice();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    latest().emit(seatSession({ renderStream: descriptor }));
+    await settle();
+    expect(renderStreamAvailability.value).toMatchObject({ available: true, source: "session" });
+    expect(renderStreamContext.seatJoined).toBe(true);
+
+    mirrorSettings.renderer = "stream";
+    await settle();
+    // Nothing to ask for: this viewer's seat is the streaming seat, so the page connects to it.
+    expect(host.ofType("set-renderer")).toHaveLength(0);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(fake.clients).toHaveLength(1);
+  });
+
+  it("asks on the host socket when the seat was reached over the shared route", async () => {
+    // A shared-port host answers with `/ws?seat=<id>` on its OWN origin instead of a seat port. The seat socket is
+    // then a second socket to the host's origin, and the request must still go out on the host socket (the one that
+    // owns the seat), never on the seat socket.
+    const host = await pickAlice();
+    host.emit(sessionMessage({ headlessMirrorPath: `/ws?seat=${"a".repeat(32)}` }));
+    await settle();
+    const seat = latest();
+    expect(seat).not.toBe(host);
+    seat.emit(seatSession());
+    await settle();
+
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("set-renderer")).toEqual([{ type: "set-renderer", renderer: "stream" }]);
+    expect(seat.ofType("set-renderer")).toHaveLength(0);
+  });
+});
