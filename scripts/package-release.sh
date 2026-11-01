@@ -277,6 +277,11 @@ mkdir -p "$sdk_root_dir" "$publish_root" "$references_dir" "$payload_dir" "$outp
   corepack pnpm install --frozen-lockfile
 )
 npm --prefix "$repo_root/frontend" ci
+# PRODUCTION dependencies only. What ships is `frontend/package.json`'s `dependencies` (vue, vue-i18n); the dev
+# tree (vite, vitest, Playwright) never reaches the payload, so its advisories are not release blockers and this
+# gate does not pretend to cover them. The level is high on purpose: moderate findings in shipped code are
+# reviewed when they appear, not silently tolerated by lowering this.
+# (2026-11-01: vue-i18n ^11.4.13 -> ^11.4.17 clears the five high @intlify advisories this gate failed on.)
 npm --prefix "$repo_root/frontend" audit --omit=dev --audit-level=high
 
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-msdf-generator.sh"
