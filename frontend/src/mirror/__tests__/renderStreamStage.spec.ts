@@ -38,6 +38,7 @@ function createClient(options: RenderStreamClientOptions): RenderStreamClient {
     toGame: vi.fn(() => null),
     clientToGame: vi.fn(() => null),
     stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0 }),
+    recording: () => null,
     dispose() { fake.disposed = true; },
     emit(status) { options.onStatus?.(status); }
   };
