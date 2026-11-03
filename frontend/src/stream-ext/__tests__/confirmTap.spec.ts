@@ -97,4 +97,27 @@ describe("confirmTap — identity + button state", () => {
     expect(controller.state.rect).toBeNull();
     extension.dispose!();
   });
+
+  it("follows the widget's rect while the button is up, writing state only when it moved", () => {
+    const { extension, controller } = createConfirmTapExtension();
+    const rects: Record<number, Rect> = { 10: { x: 100, y: 200, w: 300, h: 80 } };
+    const query = fakeQuery({ 20: 10, 10: null }, rects);
+    extension.onItemMeta!(batch([meta(10, [RS_GROUP_EVENT_OPTION])]));
+    extension.beforeDraw!(frame(query));
+    controller.show(10, "event");
+    const first = controller.state.rect;
+
+    extension.beforeDraw!(frame(query)); // unchanged: the same object stays (no reactive write)
+    expect(controller.state.rect).toBe(first);
+
+    rects[10] = { x: 100, y: 180, w: 330, h: 88 }; // the focused option grew
+    extension.beforeDraw!(frame(query));
+    expect(controller.state.rect).toEqual({ x: 100, y: 180, w: 330, h: 88 });
+
+    controller.hide();
+    rects[10] = { x: 0, y: 0, w: 1, h: 1 };
+    extension.beforeDraw!(frame(query)); // no button: nothing is tracked
+    expect(controller.state.rect).toBeNull();
+    extension.dispose!();
+  });
 });

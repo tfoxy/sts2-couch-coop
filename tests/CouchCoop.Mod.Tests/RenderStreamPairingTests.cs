@@ -48,6 +48,8 @@ internal static class RenderStreamPairingTests
         TheTokenIsNeverLogged();
         HostCaptureVariableIsConfigurationNotAWarning();
         ItemTaggerGroupsMatchTheModules();
+        ItemTaggerGroupNamesMatchTheSharedTable();
+        ItemTaggerReadsParentFactsOnlyForCreatureNames();
     }
 
     private static void ConfigResolvesTheCalibrationBesideTheCapture()
@@ -454,9 +456,9 @@ internal static class RenderStreamPairingTests
 
     private static void ItemTaggerGroupsMatchTheModules()
     {
-        RenderStreamItemTagger.ItemTagFacts F(string name, string type, string? scene = null, string? parentName = null,
+        RenderStreamItemTagger.ItemTagFacts F(string name, string type, string? parentName = null,
             string? parentScene = null, bool rewardAncestor = false)
-            => new(name, type, scene, parentName, parentScene, rewardAncestor);
+            => new(name, type, parentName, parentScene, rewardAncestor);
 
         var groups = (RenderStreamItemTagger.ItemTagFacts f) => RenderStreamItemTagger.GroupsFor(f);
         Assert(groups(F("NHandCardHolder-CARD", "NHandCardHolder")).Contains(RenderStreamItemTagger.HandHolderGroup),
@@ -503,6 +505,55 @@ internal static class RenderStreamPairingTests
                 $"a merchant inventory item ({shop}) is tagged a shop item");
         }
         Assert(groups(F("Else", "NCard")).Count == 0, "an ordinary widget is not confirm-tagged");
+    }
+
+    // TWO-SIDED LOCKSTEP (C# side): the tagger's `<Role>Group` consts equal tests/fixtures/render-stream/item-groups.json,
+    // keyed by role (`HandHolderGroup` ↔ `hand_holder`). The frontend's stream-ext/__tests__/groups.spec.ts asserts its
+    // `RS_GROUP_<ROLE>` exports equal the same table, so a name renamed on one side only fails a test.
+    private static void ItemTaggerGroupNamesMatchTheSharedTable()
+    {
+        var path = Path.Combine(RepoRoot(), "tests", "fixtures", "render-stream", "item-groups.json");
+        var table = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))!
+            .Where(entry => !entry.Key.StartsWith('_'))
+            .ToDictionary(entry => entry.Key, entry => entry.Value);
+
+        var consts = typeof(RenderStreamItemTagger)
+            .GetFields(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic)
+            .Where(field => field.IsLiteral && field.FieldType == typeof(string) && field.Name.EndsWith("Group", StringComparison.Ordinal))
+            .ToDictionary(field => RoleKey(field.Name[..^"Group".Length]), field => (string)field.GetRawConstantValue()!);
+
+        Assert(table.Count == 14, $"the shared table lists the 14 groups (got {table.Count})");
+        Assert(consts.Count == table.Count && consts.All(entry => table.TryGetValue(entry.Key, out var name) && name == entry.Value),
+            "the tagger's group consts equal the shared table: "
+            + string.Join(", ", consts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={entry.Value}")));
+
+        static string RoleKey(string pascal) =>
+            string.Concat(pascal.Select((c, i) => char.IsUpper(c) && i > 0 ? "_" + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString()));
+    }
+
+    // BuildFacts runs for every node on the streaming seat, so the parent's facts are read only for names a creature
+    // HUD rule keys on. Every rule that reads ParentName/ParentSceneFile must key on one of those names.
+    private static void ItemTaggerReadsParentFactsOnlyForCreatureNames()
+    {
+        foreach (var name in new[] { "HealthBar", "Intents", "SelectionReticle", "PowerContainer" })
+        {
+            Assert(RenderStreamItemTagger.NeedsParentFacts(name), $"{name} reads its parent's facts");
+        }
+
+        foreach (var name in new[] { "Card", "CardHolderContainer", "SelectModeBackstop", "Creature", "healthbar" })
+        {
+            Assert(!RenderStreamItemTagger.NeedsParentFacts(name), $"{name} does not read its parent's facts");
+        }
+
+        // Any other name groups the same whatever its parent is: the facts BuildFacts leaves null cannot matter.
+        const string creature = "res://scenes/combat/creature.tscn";
+        foreach (var (name, type) in new[] { ("Arrow", "NTargetingArrow"), ("Relic", "NTreasureRoomRelicHolder"), ("Else", "Godot.Control") })
+        {
+            var bare = RenderStreamItemTagger.GroupsFor(new(name, type, null, null, false));
+            var withParent = RenderStreamItemTagger.GroupsFor(new(name, type, "HealthBar", creature, false));
+            Assert(bare.SequenceEqual(withParent), $"{name}'s groups do not depend on its parent");
+        }
     }
 
     private static Dictionary<string, string> SeatEnvironment(string auth) => new()

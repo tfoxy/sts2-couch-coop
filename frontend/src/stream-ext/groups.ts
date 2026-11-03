@@ -1,6 +1,7 @@
 // The mod's own item-meta group names (C# RenderStreamItemTagger). A module's `wants.groups` must list exactly the
 // groups it reads; the seat grants groups whole, so only these names ever leave the host. One copy on each side,
-// kept in lockstep by the C# runner's item-tagger test and the vitest spec that asserts this list.
+// both pinned to tests/fixtures/render-stream/item-groups.json: the C# runner's item-tagger test asserts the
+// tagger's consts equal it, and stream-ext/__tests__/groups.spec.ts asserts these RS_GROUP_<ROLE> exports do.
 
 export const RS_GROUP_HAND_HOLDER = "couchcoop_rs_hand_holder";
 export const RS_GROUP_HAND_ROOT = "couchcoop_rs_hand_root";

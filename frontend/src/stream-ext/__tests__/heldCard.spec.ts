@@ -142,4 +142,28 @@ describe("heldCard — identity + override", () => {
     expect(overrides.written.size).toBe(0);
     extension.dispose!();
   });
+
+  it("asks the session for a redraw on every hold change, so the lift shows without waiting for a transaction", () => {
+    const { extension, controller } = createHeldCardExtension();
+    const query = fakeQuery({ 12: 11, 11: 10, 10: 9, 9: null });
+    const overrides = new FakeOverrides();
+    let redraws = 0;
+    extension.onSession!({ sessionId: "s", streamId: "t", itemMeta: null, requestRedraw: () => { redraws++; } });
+    extension.onItemMeta!(batch([meta(10, [RS_GROUP_HAND_HOLDER])]));
+    extension.beforeDraw!(frame(1, overrides, query));
+
+    controller.setHeld(12, 1000, "peek");
+    expect(redraws).toBe(1);
+    // The redraw is a seq-null frame: it applies the lift though no transaction arrived.
+    extension.beforeDraw!({ seq: null, now: 0, overrides, query, requestRedraw: () => {} });
+    expect(overrides.written.get(11)).toEqual([0, -HELD_CARD_PEEK_LIFT_PX]);
+
+    controller.setHeld(12, 900, "drag"); // the finger moved
+    expect(redraws).toBe(2);
+    controller.setHeld(null, 0, "drag");
+    expect(redraws).toBe(3);
+    controller.setHeld(null, 0, "drag"); // already clear: nothing to redraw
+    expect(redraws).toBe(3);
+    extension.dispose!();
+  });
 });

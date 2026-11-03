@@ -1,0 +1,17 @@
+{
+  "_comment": "The streaming seat's item-meta group names, keyed by role. C# RenderStreamItemTagger (<Role>Group consts) and frontend stream-ext/groups.ts (RS_GROUP_<ROLE> exports) must each equal this table exactly; RenderStreamPairingTests and stream-ext/__tests__/groups.spec.ts assert it.",
+  "hand_holder": "couchcoop_rs_hand_holder",
+  "hand_root": "couchcoop_rs_hand_root",
+  "hand_container": "couchcoop_rs_hand_container",
+  "targeting_arrow": "couchcoop_rs_targeting_arrow",
+  "hand_choice": "couchcoop_rs_hand_choice",
+  "creature_hud": "couchcoop_rs_creature_hud",
+  "creature_reticle": "couchcoop_rs_creature_reticle",
+  "creature_power": "couchcoop_rs_creature_power",
+  "card_reward_root": "couchcoop_rs_card_reward_root",
+  "card_reward_card": "couchcoop_rs_card_reward_card",
+  "treasure_relic": "couchcoop_rs_treasure_relic",
+  "event_option": "couchcoop_rs_event_option",
+  "shop_item": "couchcoop_rs_shop_item",
+  "rest_site": "couchcoop_rs_rest_site"
+}

@@ -19,13 +19,15 @@ namespace CouchCoop.Mod.Session;
 ///
 /// <para><b>Cost.</b> Runs only on the streaming seat (<see cref="StreamingSeatRole.IsStreamingSeat"/>): the
 /// host's headed instance and a normal headless seat have no capture reading groups, so nothing is installed. On
-/// the streaming seat it is one <c>SceneTree.NodeAdded</c> handler; the per-node work is a type-leaf read (already
-/// computed by the producer) plus a bounded parent walk only for NCard nodes, and <c>AddToGroup</c> on the few
-/// nodes that match.</para>
+/// the streaming seat it is one <c>SceneTree.NodeAdded</c> handler; the per-node work is a managed type-leaf read and
+/// one name marshal. Everything else is read only for the nodes that can use it: the parent's scene path and name
+/// only for the four creature HUD names, and the bounded ancestor walk only for NCard nodes. <c>AddToGroup</c> runs
+/// on the few nodes that match.</para>
 /// </remarks>
 internal static class RenderStreamItemTagger
 {
-    // The mod's own group names (the frontend's stream-ext/groups.ts asks for exactly these).
+    // The mod's own group names (the frontend's stream-ext/groups.ts asks for exactly these). Both copies are pinned
+    // to tests/fixtures/render-stream/item-groups.json (role key = this const's name minus "Group", snake_cased).
     internal const string HandHolderGroup = "couchcoop_rs_hand_holder";
     internal const string HandRootGroup = "couchcoop_rs_hand_root";
     internal const string HandContainerGroup = "couchcoop_rs_hand_container";
@@ -139,8 +141,7 @@ internal static class RenderStreamItemTagger
             return;
         }
 
-        var parent = node.GetParent();
-        foreach (var group in GroupsFor(BuildFacts(node, parent)))
+        foreach (var group in GroupsFor(BuildFacts(node)))
         {
             node.AddToGroup(group);
         }
@@ -150,34 +151,42 @@ internal static class RenderStreamItemTagger
     internal readonly record struct ItemTagFacts(
         string Name,
         string TypeLeaf,
-        string? SceneFile,
         string? ParentName,
         string? ParentSceneFile,
         bool CardRewardAncestor);
 
-    internal static ItemTagFacts BuildFacts(Node node, Node? parent)
+    // Called for EVERY node entering the streaming seat's tree, so it reads only what GroupsFor can use for this node:
+    // the type leaf is managed (no interop) and the name is one marshal; the parent and its scene path and name are read
+    // only for the creature HUD names (the only rules that key on them), and the ancestor walk only for an NCard. A
+    // fact that cannot change this node's groups is left null/false.
+    internal static ItemTagFacts BuildFacts(Node node)
     {
         var type = node.GetType().Name;
-        var sceneFile = node.SceneFilePath;
-        if (string.IsNullOrWhiteSpace(sceneFile))
-        {
-            sceneFile = null;
-        }
+        var name = node.Name.ToString();
+        var isCard = type == CardType;
+        var needsParentFacts = NeedsParentFacts(name);
+        var parent = isCard || needsParentFacts ? node.GetParent() : null;
 
+        string? parentName = null;
         string? parentSceneFile = null;
-        if (parent is not null && GodotObject.IsInstanceValid(parent) && !string.IsNullOrWhiteSpace(parent.SceneFilePath))
+        if (needsParentFacts && parent is not null && GodotObject.IsInstanceValid(parent))
         {
-            parentSceneFile = parent.SceneFilePath;
+            var path = parent.SceneFilePath;
+            parentSceneFile = string.IsNullOrWhiteSpace(path) ? null : path;
+            parentName = parent.Name.ToString();
         }
 
         return new ItemTagFacts(
-            node.Name.ToString(),
+            name,
             type,
-            sceneFile,
-            parent is not null && GodotObject.IsInstanceValid(parent) ? parent.Name.ToString() : null,
+            parentName,
             parentSceneFile,
-            HasAncestor(parent, CardRewardScreenType));
+            isCard && HasAncestor(parent, CardRewardScreenType));
     }
+
+    /// <summary>Whether a node with this name can be a creature HUD item — the only rules keyed on the parent.</summary>
+    internal static bool NeedsParentFacts(string name) =>
+        name is CreatureHealthBarName or CreatureIntentsName or CreatureReticleName or CreaturePowerName;
 
     private static bool HasAncestor(Node? node, string typeLeaf)
     {

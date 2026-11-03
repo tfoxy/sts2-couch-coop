@@ -90,6 +90,11 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
     return query.subtreeRect(id) ?? query.rect(id);
   }
 
+  function sameRect(a: Rect | null, b: Rect | null): boolean {
+    if (a === null || b === null) return a === b;
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
+
   const controller: ConfirmTapController = {
     classify(hitItem) {
       if (query === null) return null;
@@ -138,6 +143,12 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
     },
     beforeDraw: (f) => {
       query = f.query;
+      // While the button is up, follow the widget (its focus growth, a shop shelf sliding in): the rect is re-read
+      // per drawn frame and written only when it moved, so an idle button costs no reactive churn.
+      if (state.targetId !== null) {
+        const rect = anchorRect(state.targetId);
+        if (!sameRect(rect, state.rect)) state.rect = rect;
+      }
     },
     dispose: () => controller.dispose()
   };

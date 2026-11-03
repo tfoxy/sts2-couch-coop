@@ -16,9 +16,16 @@
 //
 // DIRTY ONLY. The desired override is a function of the held card, the finger's game y, the gesture mode and the
 // targeting arrow's visibility (the game aiming drops a drag's lift), so it recomputes on a new transaction or a
-// controller call — never per frame otherwise.
+// controller call — never per frame otherwise. A controller call asks the session for a redraw, so the lift shows
+// on the next frame callback rather than waiting for the seat's next transaction.
 
-import type { ItemMeta, ItemMetaBatch, ItemQuery, RenderStreamExtension } from "@godot-scene-web/render-stream-client";
+import type {
+  ExtensionSession,
+  ItemMeta,
+  ItemMetaBatch,
+  ItemQuery,
+  RenderStreamExtension
+} from "@godot-scene-web/render-stream-client";
 
 import { decideHeldLift, heldLiftPx, type HeldMode } from "@/mirror/raise/heldLift";
 import { HELD_CARD_GROUPS, RS_GROUP_HAND_HOLDER, RS_GROUP_TARGETING_ARROW } from "@/stream-ext/groups";
@@ -49,6 +56,7 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
   const written = new Set<number>();
 
   let query: ItemQuery | null = null;
+  let session: ExtensionSession | null = null;
   let heldCard: number | null = null;
   let heldMode: HeldMode = "drag";
   let heldFingerY = 0;
@@ -99,6 +107,7 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
           heldEnteredPlayZone = false;
           dragStartY = null;
           dirty = true;
+          session?.requestRedraw();
         }
         return;
       }
@@ -114,12 +123,14 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
         heldFingerY = gameY;
       }
       dirty = true;
+      session?.requestRedraw();
     },
     dispose() {
       holders.clear();
       arrows.clear();
       written.clear();
       query = null;
+      session = null;
       heldCard = null;
       heldLifted = false;
       heldEnteredPlayZone = false;
@@ -131,6 +142,9 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
   const extension: RenderStreamExtension = {
     id: "couchcoop.heldCard",
     wants: { groups: [...HELD_CARD_GROUPS] },
+    onSession: (s) => {
+      session = s;
+    },
     onItemMeta: (b) => {
       if (b.form === "full") {
         holders.clear();

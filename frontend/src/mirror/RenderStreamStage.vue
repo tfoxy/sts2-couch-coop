@@ -18,7 +18,10 @@
 //   * `unauthorized` (the hub refused the token: the seat restarted with a new one): ask MirrorApp ONCE for the
 //     seat's current descriptor (`refresh-endpoint`); a different one arriving reconnects with it, the same one (or
 //     none within `refreshTimeoutMs`) is a stop;
-//   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on.
+//   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on;
+//   * the extension modules: built from the viewer's four module settings and the seat's presentation width at
+//     mount, so a change to any of them mid-session remounts the client (a fresh canvas and a fresh join) with the
+//     new list — the modules' `wants` ride the hello, so an attached client cannot gain or drop one in place.
 //
 // VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
 // the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message.
@@ -69,6 +72,7 @@ const emit = defineEmits<{
 
 type Phase = "connecting" | "loading" | "streaming" | "reconnecting" | "suspended" | "failed";
 
+const frameEl = ref<HTMLElement | null>(null);
 const canvasEl = ref<HTMLCanvasElement | null>(null);
 // Bumped whenever a client has been disposed and another may follow: the <canvas> is keyed on it, so every client gets
 // a canvas whose WebGL context nobody has lost yet.
@@ -80,6 +84,12 @@ let client: RenderStreamClient | null = null;
 let streamInput: StreamInput | null = null;
 // CONFIRM TAP: the live module controller (recreated per client mount), whose reactive `state` drives the button.
 const confirmController = shallowRef<ConfirmTapController | null>(null);
+// Bumped when the canvas's CSS box moves or resizes (a resize, a rotation, the safe-area preference), so the confirm
+// button's page-px anchor — the client's `presentationToCss`, which reads the live layout — is recomputed.
+const layoutTick = ref(0);
+let layoutObserver: ResizeObserver | null = null;
+// The extension inputs the mounted client was built from (see `extensionsKey`); null while no client is mounted.
+let mountedExtensionsKey: string | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
 // The `unauthorized` refresh: asked at most once per stream (re-armed by a drawn frame), and while it is pending
@@ -110,6 +120,7 @@ const overlayText = computed(() => {
 // CONFIRM TAP: the button's live anchor, in page px. The module holds the widget's presentation-space rect; the
 // client maps it through `presentationToCss` (canvas-local, letterboxing included). Null while no widget is armed.
 const confirmAnchor = computed(() => {
+  void layoutTick.value;
   const c = confirmController.value;
   const rect = c?.state.rect ?? null;
   if (c === null || c.state.targetId === null || rect === null || client === null) return null;
@@ -184,9 +195,22 @@ function stop(reason: string): void {
   }
 }
 
+// Everything `buildStreamExtensions` reads: the four module settings and the seat's presentation width (the view-scale
+// clamp's design width). A seat relaunched at a new width, or a module toggled mid-session, changes it.
+function extensionsKey(): string {
+  return [
+    mirrorSettings.raiseHandCards,
+    mirrorSettings.uiScaling,
+    mirrorSettings.raiseHeldCard,
+    mirrorSettings.confirmTap,
+    presentation.value[0]
+  ].join("|");
+}
+
 function mountClient(): void {
   const canvas = canvasEl.value;
   if (!canvas || client || stopped) return;
+  mountedExtensionsKey = extensionsKey();
   const built = buildStreamExtensions({ settings: mirrorSettings, presentationWidth: presentation.value[0] });
   confirmController.value = built.confirmTap;
   const create = props.createClient ?? createRenderStreamClient;
@@ -224,6 +248,7 @@ function disposeClient(): void {
   streamInput?.dispose();
   streamInput = null;
   confirmController.value = null;
+  mountedExtensionsKey = null;
   const current = client;
   client = null;
   if (current) {
@@ -257,6 +282,18 @@ function onVisibilityChange(): void {
   if (!client && !stopped) void nextTick(mountClient);
 }
 
+// The mounted client runs a stale extension list: replace it with a fresh client (on a fresh canvas, since dispose
+// loses the old one's context) built from the current settings and presentation. A suspended stage has no client and
+// builds from the current values when it next mounts.
+function remountIfStale(): void {
+  if (stopped || client === null || mountedExtensionsKey === extensionsKey()) return;
+  disposeClient();
+  phase.value = "connecting";
+  void nextTick(mountClient);
+}
+
+watch(extensionsKey, remountIfStale);
+
 // A later descriptor (a seat restarted with a new port or token) reconnects in place. While an `unauthorized` refresh
 // is pending, the next descriptor is its answer: a different one reconnects (the failed client starts a fresh
 // session on `connect()`), the same one means the token really is refused.
@@ -268,12 +305,21 @@ watch(() => props.endpoint, (endpoint) => {
       stop(UNAUTHORIZED);
       return;
     }
+    // A new presentation width needs new extensions: the remount connects the fresh client on this descriptor.
+    if (client !== null && mountedExtensionsKey !== extensionsKey()) {
+      remountIfStale();
+      return;
+    }
     try {
       client?.setEndpoint(endpoint);
       client?.connect();
     } catch (error) {
       stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
     }
+    return;
+  }
+  if (client !== null && mountedExtensionsKey !== extensionsKey()) {
+    remountIfStale();
     return;
   }
   try {
@@ -283,8 +329,18 @@ watch(() => props.endpoint, (endpoint) => {
   }
 });
 
+function bumpLayout(): void {
+  layoutTick.value += 1;
+}
+
 onMounted(() => {
   document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("resize", bumpLayout);
+  window.addEventListener("orientationchange", bumpLayout);
+  if (typeof ResizeObserver !== "undefined" && frameEl.value !== null) {
+    layoutObserver = new ResizeObserver(bumpLayout);
+    layoutObserver.observe(frameEl.value);
+  }
   if (document.visibilityState === "hidden") {
     // Mounted in a background tab: wait to be seen rather than pay for a full join nobody watches.
     phase.value = "suspended";
@@ -295,6 +351,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  window.removeEventListener("resize", bumpLayout);
+  window.removeEventListener("orientationchange", bumpLayout);
+  layoutObserver?.disconnect();
+  layoutObserver = null;
   clearHiddenTimer();
   clearRefresh();
   stopped = true;
@@ -311,6 +371,7 @@ defineExpose({
 
 <template>
   <div
+    ref="frameEl"
     class="render-stream-frame"
     :class="{ 'render-stream-frame-safe-area': mirrorSettings.safeAreaPaddingEnabled }"
     data-testid="render-stream-stage"
@@ -373,6 +434,12 @@ defineExpose({
 
 .render-stream-canvas {
   display: block;
+  /* The canvas is a game surface driven by pointer events (INP2): no browser pan/zoom gesture may claim a touch.
+     .game-surface's `touch-action: manipulation` still allows panning, so without this a phone drag past the slop
+     arrives as `pointercancel`; and a long press must not start a text selection. MirrorView's stage does the same. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   width: min(100cqw, calc(100cqh * var(--render-stream-aspect, 1.7777778)));
   height: min(100cqh, calc(100cqw / var(--render-stream-aspect, 1.7777778)));
 }

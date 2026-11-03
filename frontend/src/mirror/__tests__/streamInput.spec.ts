@@ -42,23 +42,29 @@ function pointerEvent(
   return event;
 }
 
-const touch = (type: string, init: { clientX: number; clientY: number }) =>
+const touch = (type: string, init: { clientX: number; clientY: number; pointerId?: number }) =>
   pointerEvent(type, { ...init, pointerType: "touch" });
 
-/** A client whose mapping is an explicit, non-identity function, so a test can tell mapped from raw coordinates. */
-function stubClient(
-  map: (clientX: number, clientY: number) => { x: number; y: number; item: number | null }
-): StreamInputClient {
+/** A mapping that refuses everything outside the 0..1000 square (the letterbox / off-canvas region). */
+const inside = (x: number, y: number) => x >= 0 && y >= 0 && x <= 1000 && y <= 1000;
+
+type StubMap = (clientX: number, clientY: number) => { x: number; y: number; item: number | null } | null;
+
+/**
+ * A client whose mapping is an explicit, non-identity function, so a test can tell mapped from raw coordinates. A
+ * null answer is a point the mapping refuses (a letterbox bar, off the canvas).
+ */
+function stubClient(map: StubMap): StreamInputClient {
   return {
-    clientToGame: (clientX, clientY): StreamGamePoint => {
+    clientToGame: (clientX, clientY): StreamGamePoint | null => {
       const p = map(clientX, clientY);
-      return { point: { x: p.x, y: p.y }, item: p.item, drawn: { x: clientX, y: clientY } };
+      return p === null ? null : { point: { x: p.x, y: p.y }, item: p.item, drawn: { x: clientX, y: clientY } };
     }
   };
 }
 
 function makeInput(options: {
-  map?: (x: number, y: number) => { x: number; y: number; item: number | null };
+  map?: StubMap;
   tapToFocus?: () => boolean;
   clock?: () => number;
   heldCard?: HeldCardController;
@@ -186,11 +192,16 @@ describe("createStreamInput — mapping + send path", () => {
     ]);
   });
 
-  it("a touch tap sends a single full click (press+release in one turn) when tapToFocus is off", () => {
+  it("a touch tap hovers the point, then sends a single full click when tapToFocus is off", () => {
+    // The hover first: a hover-first widget (character select) ignores a press the cursor never reached, and a
+    // finger, unlike a mouse, never travelled there.
     makeInput({ map: (x, y) => ({ x, y, item: 7 }), tapToFocus: () => false });
     stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
-    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 640, coordY: 360 }]);
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
   });
 
   it("with tapToFocus on, a touch tap arms the hit item (hover) and a later re-tap of it commits", () => {
@@ -204,6 +215,7 @@ describe("createStreamInput — mapping + send path", () => {
     stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
     expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
       { kind: "hover", coordX: 640, coordY: 360 },
       { kind: "click", button: "left", coordX: 640, coordY: 360 }
     ]);
@@ -220,12 +232,16 @@ describe("createStreamInput — mapping + send path", () => {
     expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
   });
 
-  it("a touch drag past the slop sends press + hover stream + release", () => {
+  it("a touch drag past the slop sends hover + press at the start, the hover stream, then release", () => {
     makeInput({ map: (x, y) => ({ x, y, item: 7 }) });
     stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 100 }));
     stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 100 })); // past 8px slop → press
     flushFrames();
-    expect(sent[0]).toEqual({ kind: "click", button: "left", pressed: true, coordX: 100, coordY: 100 });
+    expect(sent.slice(0, 3)).toEqual([
+      { kind: "hover", coordX: 100, coordY: 100 },
+      { kind: "click", button: "left", pressed: true, coordX: 100, coordY: 100 },
+      { kind: "hover", coordX: 200, coordY: 100 }
+    ]);
     stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 100 }));
     expect(sent.at(-1)).toEqual({ kind: "click", button: "left", pressed: false, coordX: 200, coordY: 100 });
   });
@@ -254,8 +270,11 @@ describe("createStreamInput — mapping cannot be skipped", () => {
     makeInput({ map: (x, y) => ({ x, y: y + 119, item: 7 }), tapToFocus: () => false });
     stage.dispatchEvent(touch("pointerdown", { clientX: 960, clientY: 540 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 960, clientY: 540 }));
-    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 960, coordY: 659 }]);
-    expect(sent[0].coordY).not.toBe(540);
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 960, coordY: 659 },
+      { kind: "click", button: "left", coordX: 960, coordY: 659 }
+    ]);
+    expect(sent[1].coordY).not.toBe(540);
   });
 
   it("sends nothing for a point the mapping refuses (a letterbox bar)", () => {
@@ -394,7 +413,10 @@ describe("createStreamInput — confirm tap", () => {
     });
     stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
-    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 640, coordY: 360 }]);
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
     expect(confirm.show).not.toHaveBeenCalled();
   });
 
@@ -408,7 +430,10 @@ describe("createStreamInput — confirm tap", () => {
     });
     stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
-    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 640, coordY: 360 }]);
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
     expect(confirm.show).not.toHaveBeenCalled();
   });
 
@@ -416,5 +441,244 @@ describe("createStreamInput — confirm tap", () => {
     makeInput({ map: (x, y) => ({ x, y, item: null }) });
     capture.commitConfirm();
     expect(sent).toEqual([]);
+  });
+});
+
+describe("createStreamInput — a press that went out is always released", () => {
+  it("a mouse press inside released outside the picture sends the release at the last mapped point", () => {
+    makeInput({ map: (x, y) => (inside(x, y) ? { x: x * 2, y: y * 2, item: null } : null) });
+    stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 100, clientY: 100 }));
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 400, clientY: 300 }));
+    flushFrames();
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 1200, clientY: 300 })); // off the picture
+    flushFrames();
+    stage.dispatchEvent(pointerEvent("pointerup", { clientX: 1300, clientY: 300 })); // capture still delivers it
+    expect(sent).toEqual([
+      { kind: "click", button: "left", pressed: true, coordX: 200, coordY: 200 },
+      { kind: "hover", coordX: 800, coordY: 600 },
+      { kind: "click", button: "left", pressed: false, coordX: 800, coordY: 600 }
+    ]);
+  });
+
+  it("a mouse press released outside with no motion releases at the press point", () => {
+    makeInput({ map: (x, y) => (inside(x, y) ? { x, y, item: null } : null) });
+    stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 100, clientY: 100 }));
+    stage.dispatchEvent(pointerEvent("pointerup", { clientX: -50, clientY: 100 }));
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", pressed: false, coordX: 100, coordY: 100 });
+  });
+
+  it("a touch drag that slides off the picture stays a drag and releases at the last mapped point", () => {
+    const held = heldController((item) => item === 7);
+    makeInput({ map: (x, y) => (inside(x, y) ? { x, y, item: 7 } : null), heldCard: held.controller });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 990, clientY: 500 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 995, clientY: 500 })); // inside, below the slop
+    stage.dispatchEvent(touch("pointermove", { clientX: 1100, clientY: 480 })); // past the slop, already off
+    flushFrames();
+    // The slop is measured on the raw travel, so the press goes out (at the start) though the move maps nowhere.
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 990, coordY: 500 },
+      { kind: "click", button: "left", pressed: true, coordX: 990, coordY: 500 }
+    ]);
+    stage.dispatchEvent(touch("pointermove", { clientX: 900, clientY: 450 })); // back on
+    flushFrames();
+    expect(held.setHeld).toHaveBeenLastCalledWith(7, 450, "drag");
+    stage.dispatchEvent(touch("pointermove", { clientX: 1100, clientY: 400 })); // off again
+    flushFrames();
+    stage.dispatchEvent(touch("pointerup", { clientX: 1100, clientY: 400 }));
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", pressed: false, coordX: 900, coordY: 450 });
+    expect(held.setHeld).toHaveBeenLastCalledWith(null, 0, "drag");
+  });
+
+  it("dispose releases a held mouse press", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }) });
+    stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 100, clientY: 100 }));
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 150, clientY: 120 }));
+    flushFrames();
+    capture.dispose();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", pressed: false, coordX: 150, coordY: 120 });
+    const count = sent.length;
+    capture.dispose(); // idempotent: nothing held any more
+    expect(sent).toHaveLength(count);
+  });
+
+  it("dispose releases a held touch drag, but owes nothing for a touch that never pressed", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }) });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 100 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 100 }));
+    flushFrames();
+    capture.dispose();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", pressed: false, coordX: 200, coordY: 100 });
+
+    sent = [];
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }) });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 100 })); // a potential tap: nothing sent
+    capture.dispose();
+    expect(sent).toEqual([]);
+  });
+
+  it("a pointercancel after motion releases at the last mapped point when its own point maps nowhere", () => {
+    makeInput({ map: (x, y) => (inside(x, y) ? { x, y, item: null } : null) });
+    stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 100, clientY: 100 }));
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 300, clientY: 100 }));
+    flushFrames();
+    stage.dispatchEvent(pointerEvent("pointercancel", { clientX: 5000, clientY: 100 }));
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", pressed: false, coordX: 300, coordY: 100 });
+  });
+});
+
+describe("createStreamInput — moves are mapped once per frame", () => {
+  it("maps only the newest move of a frame (no per-event clientToGame)", () => {
+    const calls: Array<[number, number]> = [];
+    makeInput({
+      map: (x, y) => {
+        calls.push([x, y]);
+        return { x, y, item: null };
+      }
+    });
+    for (let i = 1; i <= 5; i++) stage.dispatchEvent(pointerEvent("pointermove", { clientX: i * 10, clientY: 10 }));
+    expect(calls).toEqual([]);
+    flushFrames();
+    expect(calls).toEqual([[50, 10]]);
+    expect(sent).toEqual([{ kind: "hover", coordX: 50, coordY: 10 }]);
+  });
+
+  it("a stray finger's motion during a drag never moves the cursor", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }) });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 100, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 100, pointerId: 1 })); // drag
+    flushFrames();
+    const before = sent.length;
+    stage.dispatchEvent(touch("pointerdown", { clientX: 600, clientY: 600, pointerId: 2 })); // stray: a drag is on
+    stage.dispatchEvent(touch("pointermove", { clientX: 650, clientY: 650, pointerId: 2 }));
+    flushFrames();
+    expect(sent).toHaveLength(before);
+  });
+});
+
+describe("createStreamInput — two-finger scroll", () => {
+  it("vertical two-finger drift becomes wheel ticks at the latch centroid (natural direction), never a click", () => {
+    makeInput({ map: (x, y) => ({ x: x * 2, y: y * 2, item: 7 }), tapToFocus: () => false });
+    // A 540-px-tall stage: 2 presentation px per client px, so the 56-px wheel step is 28 client px.
+    stage.getBoundingClientRect = () => ({ left: 0, top: 0, width: 960, height: 540, right: 960, bottom: 540, x: 0, y: 0, toJSON: () => ({}) });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 200, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointerdown", { clientX: 200, clientY: 200, pointerId: 2 }));
+    // Fingers DOWN 30 client px each: 60 presentation px of centroid drift ⇒ one wheel-up, 4 px carried.
+    stage.dispatchEvent(touch("pointermove", { clientX: 100, clientY: 230, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 230, pointerId: 2 }));
+    flushFrames();
+    expect(sent).toEqual([{ kind: "click", button: "wheel-up", coordX: 300, coordY: 400 }]);
+    // Fingers UP 60 client px (120 presentation px from 4 carried): two wheel-downs.
+    stage.dispatchEvent(touch("pointermove", { clientX: 100, clientY: 170, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 170, pointerId: 2 }));
+    flushFrames();
+    expect(sent.slice(1)).toEqual([
+      { kind: "click", button: "wheel-down", coordX: 300, coordY: 400 },
+      { kind: "click", button: "wheel-down", coordX: 300, coordY: 400 }
+    ]);
+    stage.dispatchEvent(touch("pointerup", { clientX: 100, clientY: 170, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 400, pointerId: 2 })); // one finger left: inert
+    stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 400, pointerId: 2 }));
+    flushFrames();
+    expect(sent).toHaveLength(3);
+    expect(sent.every((m) => m.kind === "click" && (m.button === "wheel-up" || m.button === "wheel-down"))).toBe(true);
+  });
+
+  it("a still two-finger touch sends nothing (the first finger's tap is cancelled)", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), tapToFocus: () => false });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 200, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointerdown", { clientX: 200, clientY: 200, pointerId: 2 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 100, clientY: 200, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 200, pointerId: 2 }));
+    flushFrames();
+    expect(sent).toEqual([]);
+    // And the channel is free again: a following tap is a normal tap.
+    stage.dispatchEvent(touch("pointerdown", { clientX: 300, clientY: 300, pointerId: 3 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 300, clientY: 300, pointerId: 3 }));
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 300, coordY: 300 });
+  });
+
+  it("small two-finger jitter below the scroll threshold sends no tick", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }) });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 200, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointerdown", { clientX: 200, clientY: 200, pointerId: 2 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 100, clientY: 210, pointerId: 1 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 210, pointerId: 2 }));
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("createStreamInput — touch hovers before every press edge", () => {
+  it("a tap on clear colour with tapToFocus on hovers, then commits", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }), tapToFocus: () => true });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 10, clientY: 20 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 10, clientY: 20 }));
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 10, coordY: 20 },
+      { kind: "click", button: "left", coordX: 10, coordY: 20 }
+    ]);
+  });
+});
+
+describe("createStreamInput — confirm button dismissal", () => {
+  it("a later tap elsewhere hides the confirm button (and is a normal tap)", () => {
+    let hit: { id: number; kind: "shop" } | null = { id: 8, kind: "shop" };
+    const confirm = confirmController(null);
+    confirm.controller.classify = () => hit;
+    makeInput({
+      map: (x, y) => ({ x, y, item: 8 }),
+      confirmTap: confirm.controller,
+      confirmTapEnabled: () => true,
+      tapToFocus: () => false
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    expect(confirm.show).toHaveBeenCalledWith(8, "shop");
+    expect(confirm.hide).not.toHaveBeenCalled();
+
+    hit = null; // the next tap lands on an ordinary widget
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 100 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 100, clientY: 100 }));
+    expect(confirm.hide).toHaveBeenCalledTimes(1);
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 100, coordY: 100 });
+    // The commit no longer fires: the button it belonged to is gone.
+    const count = sent.length;
+    capture.commitConfirm();
+    expect(sent).toHaveLength(count);
+  });
+
+  it("a mouse click elsewhere hides the confirm button", () => {
+    const confirm = confirmController({ id: 8, kind: "shop" });
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), confirmTap: confirm.controller, confirmTapEnabled: () => true });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    expect(confirm.show).toHaveBeenCalled();
+    stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 10, clientY: 10 }));
+    expect(confirm.hide).toHaveBeenCalledTimes(1);
+    stage.dispatchEvent(pointerEvent("pointerup", { clientX: 10, clientY: 10 }));
+  });
+
+  it("re-tapping the same confirm widget keeps the button up for it", () => {
+    const confirm = confirmController({ id: 8, kind: "shop" });
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), confirmTap: confirm.controller, confirmTapEnabled: () => true });
+    for (let i = 0; i < 2; i++) {
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    }
+    expect(confirm.show).toHaveBeenCalledTimes(2);
+    expect(confirm.show).toHaveBeenLastCalledWith(8, "shop");
+    capture.commitConfirm();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 640, coordY: 360 });
+  });
+});
+
+describe("createStreamInput — held-card lift follows raiseHeldCard live", () => {
+  it("a touch drag on a hand card does not lift while raiseHeldCard is off", () => {
+    const held = heldController((item) => item === 7);
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller, raiseHeldCard: () => false });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 100, clientY: 900 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 200, clientY: 300 }));
+    flushFrames();
+    expect(held.setHeld).not.toHaveBeenCalledWith(7, expect.anything(), "drag");
+    stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 300 }));
   });
 });
