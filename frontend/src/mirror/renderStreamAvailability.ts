@@ -39,6 +39,11 @@ import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/r
  * freed); a visible tab then reconnects as a fresh join. */
 export const RENDER_STREAM_HIDDEN_DISPOSE_MS = 60_000;
 
+/** How long the stage's JS chunk may take before the page falls back to the old renderer. One chunk from the host's
+ * own server over phone Wi-Fi: 15 s covers a very slow link and still leaves about half of the host's 30 s
+ * slow-view window (ConnectionRegistry.NoticeSlowView) for the fallback's first frame. */
+export const RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS = 15_000;
+
 export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "needs-proxy"
   | "not-streaming";
 

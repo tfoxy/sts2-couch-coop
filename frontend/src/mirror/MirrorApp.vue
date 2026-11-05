@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch, type Component } from "vue";
 import { translate as t } from "@/i18n";
 
 import FullscreenButton from "@/components/FullscreenButton.vue";
@@ -23,6 +23,7 @@ import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
 import {
   currentJoinRendererRequest,
+  RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS,
   streamSeatAspect,
   parseLanOffer,
   renderStreamAvailability,
@@ -32,6 +33,7 @@ import {
   syncRuntimeRenderer
 } from "@/mirror/renderStreamAvailability";
 import { renderStreamCoreConfig } from "@/mirror/renderStreamCore";
+import { importRenderStreamStage } from "@/mirror/renderStreamStageLoader";
 import { rendererComparisonViewRevision } from "@/mirror/rendererComparison";
 import StaticBackground from "@/mirror/StaticBackground.vue";
 import { designPx } from "@/mirror/stageFit";
@@ -972,8 +974,49 @@ const joinMode = computed(() =>
 // own input channel, INP2), and the `/ws` socket keeps carrying the session, settings and audio. The two renderers are
 // never both live.
 const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
-// Loaded on first use: a viewer who never switches the beta on never downloads the client.
-const RenderStreamStage = defineAsyncComponent(() => import("@/mirror/RenderStreamStage.vue"));
+// Loaded on first use: a viewer who never switches the beta on never downloads the client. A chunk that fails or
+// stalls (a flaky phone on the LAN) would leave nothing drawn and no `failed` ever emitted, so the load falls back
+// like a failed stream: `stopRenderStream("stage-load-failed: …")`, MirrorView mounts and completes the join. Vue's
+// own `timeout` / `onError` cannot do this (its timeout never reaches `onError`, and `fail()` rethrows through the
+// app error handler), so the loader settles itself with an inert component and reports through the stop reason.
+// RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS is sized for one chunk over a slow phone link.
+function loadRenderStreamStage(attempt: number): Promise<Component> {
+  return new Promise<Component>((resolve) => {
+    let settled = false;
+    const stop = (detail: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      // Only this attempt's own failure counts: a stopped stream (any reason) or a newer attempt owns the state.
+      if (attempt === stageAttempt.value && renderStreamContext.stopped === null) {
+        stopRenderStream(`stage-load-failed: ${detail}`, mirrorSettings);
+      }
+      resolve(inertStage);
+    };
+    const timer = setTimeout(
+      () => stop(`timed out after ${RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS / 1000}s`),
+      RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS
+    );
+    importRenderStreamStage().then(
+      (module) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(module.default);
+      },
+      (error: unknown) => stop(error instanceof Error ? error.message : String(error))
+    );
+  });
+}
+const inertStage: Component = { render: () => null };
+// Vue caches a loader's result for the life of the wrapper, a failed one included, so every attempt gets a wrapper
+// of its own: "Try again" (`stopped` back to null) bumps this and the next mount imports afresh.
+const stageAttempt = ref(0);
+const RenderStreamStage = computed(() => {
+  const attempt = stageAttempt.value;
+  return defineAsyncComponent(() => loadRenderStreamStage(attempt));
+});
+watch(() => renderStreamContext.stopped, (stopped) => { if (stopped === null) stageAttempt.value += 1; });
 // The stream's endpoint and core, while it is available. `core` is the served wasm (renderStreamCore.ts).
 const renderStreamCore = renderStreamCoreConfig().core;
 const renderStreamEndpoint = computed(() => {

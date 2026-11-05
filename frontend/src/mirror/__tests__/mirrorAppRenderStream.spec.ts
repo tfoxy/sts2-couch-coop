@@ -10,7 +10,13 @@ import type { RenderStreamClientOptions, RenderStreamStatus } from "@godot-scene
 // stream fails.
 
 const fake = vi.hoisted(() => ({
-  clients: [] as Array<{ options: RenderStreamClientOptions; connects: number; disposed: boolean }>
+  clients: [] as Array<{ options: RenderStreamClientOptions; connects: number; disposed: boolean }>,
+  // The stage chunk's import (renderStreamStageLoader.ts): the real one unless a spec swaps it.
+  stageImport: null as null | (() => Promise<unknown>)
+}));
+const realStageImport = () => import("@/mirror/RenderStreamStage.vue");
+vi.mock("@/mirror/renderStreamStageLoader", () => ({
+  importRenderStreamStage: () => (fake.stageImport ?? realStageImport)()
 }));
 
 vi.mock("@godot-scene-web/render-stream-client", async (importOriginal) => ({
@@ -35,8 +41,14 @@ vi.mock("@/mirror/renderStreamCore", () => ({
 }));
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
+import MirrorView from "@/mirror/MirrorView.vue";
 import { DEFAULT_REFRESH_RATE, mirrorSettings } from "@/mirror/mirrorSettings";
-import { renderStreamAvailability, renderStreamContext } from "@/mirror/renderStreamAvailability";
+import {
+  RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS,
+  renderStreamAvailability,
+  renderStreamContext,
+  retryRenderStream
+} from "@/mirror/renderStreamAvailability";
 
 class MockWebSocket extends EventTarget {
   static OPEN = 1;
@@ -137,6 +149,7 @@ beforeEach(() => {
   globalThis.localStorage?.clear();
   MockWebSocket.instances = [];
   fake.clients.length = 0;
+  fake.stageImport = null;
   realWebSocket = globalThis.WebSocket;
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
   // Widescreen stretch off unless a test turns it on: a streaming-seat request then carries no `aspect` (PRES-A).
@@ -580,6 +593,132 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     // This viewer's seat is the streaming seat, so the page connects to it.
     expect(allSent().filter((m) => m.type === "set-renderer")).toHaveLength(0);
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(fake.clients).toHaveLength(1);
+  });
+});
+
+// The stage is a separate JS chunk. One that fails, or does not arrive in time (a flaky phone on the LAN), falls back
+// to the old renderer exactly like a failed stream: the join's frame receipt is MirrorView's, so without the fallback
+// the host's join would wait at "the browser is displaying the game" forever.
+describe("MirrorApp — the stage chunk fails to load", () => {
+  const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
+    token: "f".repeat(64), protocol: 13, presentation: [1920, 1080] };
+  const seatSession = () => sessionMessage({
+    session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
+    ...HEADLESS_FREEZES, renderStream: descriptor
+  });
+  const sceneDelta = {
+    type: "scene-delta", full: true, screenType: "run", screenInstanceId: "run:1",
+    upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+    removedIds: [], orderedIds: ["root"]
+  };
+
+  // The fallback mounts the real MirrorView, which watches its frame with a ResizeObserver jsdom does not have.
+  beforeEach(() => {
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    };
+  });
+  afterEach(() => {
+    delete (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver;
+  });
+
+  /** Join Alice's streaming seat; the host answers the join with attempt "join-1". */
+  async function joinStreamingSeat(): Promise<{ host: MockWebSocket; seat: MockWebSocket }> {
+    Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true, stopped: null,
+      coreLoadFailed: false });
+    mirrorSettings.renderer = "stream";
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, connectionAttemptId: "join-1" }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession());
+    await settle();
+    return { host, seat };
+  }
+
+  const stageMounted = () => app!.find('[data-testid="render-stream-stage"]').exists();
+
+  it("falls back to MirrorView with the stop reason set when the chunk rejects", async () => {
+    fake.stageImport = () => Promise.reject(new Error("Failed to fetch dynamically imported module"));
+    const { seat } = await joinStreamingSeat();
+
+    expect(renderStreamContext.stopped).toBe("stage-load-failed: Failed to fetch dynamically imported module");
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(stageMounted()).toBe(false);
+    expect(fake.clients).toHaveLength(0);
+
+    seat.emit(sceneDelta);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+  });
+
+  it("falls back after the timeout when the chunk never resolves", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      fake.stageImport = () => new Promise(() => {});
+      await joinStreamingSeat();
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(mirrorSettings.runtimeRenderer).toBe("stream");
+
+      vi.advanceTimersByTime(RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS - 1);
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+
+      vi.advanceTimersByTime(1);
+      await settle();
+      expect(renderStreamContext.stopped).toBe(
+        `stage-load-failed: timed out after ${RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS / 1000}s`);
+      expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+      expect(stageMounted()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("completes the join from MirrorView's first frame for the join's attempt after the fallback", async () => {
+    fake.stageImport = () => Promise.reject(new Error("chunk 404"));
+    const { host, seat } = await joinStreamingSeat();
+    seat.emit(sceneDelta);
+    await settle();
+
+    const view = app!.findComponent(MirrorView);
+    expect(view.props("connectionAttemptId")).toBe("join-1");
+    expect(host.ofType("client-frame-presented")).toEqual([]);
+    // As in mirrorJoinUrl.spec.ts: jsdom does not paint, so the view's own presentation callback is driven directly
+    // (the same callback its two-frame paint check ends in).
+    view.props("onFirstSceneFramePresented")!("join-1");
+    expect(host.ofType("client-frame-presented")).toEqual([{ type: "client-frame-presented", attemptId: "join-1" }]);
+    expect(seat.ofType("client-frame-presented")).toEqual([]);
+  });
+
+  it("Try again imports the chunk afresh and mounts the stage", async () => {
+    let imports = 0;
+    fake.stageImport = () => {
+      imports += 1;
+      return imports === 1 ? Promise.reject(new Error("flaky")) : realStageImport();
+    };
+    await joinStreamingSeat();
+    expect(imports).toBe(1);
+    expect(renderStreamContext.stopped).toBe("stage-load-failed: flaky");
+    expect(stageMounted()).toBe(false);
+
+    retryRenderStream();
+    await settle();
+
+    expect(imports).toBe(2);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(stageMounted()).toBe(true);
     expect(fake.clients).toHaveLength(1);
   });
 });
