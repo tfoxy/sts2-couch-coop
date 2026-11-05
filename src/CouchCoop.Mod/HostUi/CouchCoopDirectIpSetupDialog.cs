@@ -103,13 +103,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         AddDynamic(_content, _status, 23);
         _status.AddThemeColorOverride("font_color", CouchCoopGameUiTheme.ConnectionFailureRed);
         _content.MoveChild(_status, 0);
-        _advancedButton = Button(_content, "advanced", () =>
-        {
-            _flow.ToggleAdvanced();
-            RefreshText();
-            if (_flow.ShowAdvanced) Reveal(_advanced.Start);
-            else Reveal(_advancedButton);
-        });
+        _advancedButton = Button(_content, "advanced", ToggleAdvanced);
         _advanced = new DirectIpSetupHelpView(L, (label, size, role) =>
         {
             Style(label, size, role != DirectIpSetupHelpView.TextRole.Body);
@@ -371,6 +365,13 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         Place(_scroll, layout.Content);
         Place(_back, layout.Back);
         Place(_primary, layout.Primary);
+    }
+
+    private void ToggleAdvanced()
+    {
+        _flow.ToggleAdvanced();
+        RefreshText();
+        Reveal(_flow.ShowAdvanced ? _advanced.Start : _advancedButton);
     }
 
     private void Reveal(Control control) => Callable.From(() =>
