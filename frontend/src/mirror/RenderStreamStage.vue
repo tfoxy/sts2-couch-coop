@@ -66,6 +66,8 @@ const emit = defineEmits<{
   /** The stream stopped for good this session (`<reason>: <detail>`, or `ended`). */
   failed: [reason: string];
   status: [status: RenderStreamStatus];
+  /** The stream drew its first frame: the join's "the browser displays the game" step. Once per mount. */
+  "first-frame": [];
   /** The hub refused our token: send the seat's current descriptor (a new `endpoint` prop), once. */
   "refresh-endpoint": [];
 }>();
@@ -96,6 +98,8 @@ let layoutObserver: ResizeObserver | null = null;
 let mountedExtensionsKey: string | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
+// Whether this mount has told the app it drew (`first-frame`): the join completes on the first frame, not every one.
+let firstFrameReported = false;
 // The `unauthorized` refresh: asked at most once per stream (re-armed by a drawn frame), and while it is pending
 // the descriptor the client was refused with and the timer that gives up on a new one.
 let refreshAsked = false;
@@ -145,7 +149,13 @@ function onStatus(status: RenderStreamStatus): void {
     case "streaming":
       // The session arrived first (`firstFrame: false`); the loading line stays up until something has drawn.
       phase.value = status.firstFrame ? "streaming" : "loading";
-      if (status.firstFrame) refreshAsked = false;
+      if (status.firstFrame) {
+        refreshAsked = false;
+        if (!firstFrameReported) {
+          firstFrameReported = true;
+          emit("first-frame");
+        }
+      }
       break;
     case "reconnecting":
       phase.value = "reconnecting";

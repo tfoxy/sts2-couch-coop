@@ -157,6 +157,19 @@ describe("RenderStreamStage", () => {
     expect(status().text()).toBe("Reconnecting…");
   });
 
+  // The join's last step ("the browser displays the game") waits for this: once per mount, on the first drawn frame.
+  it("emits first-frame once, on the first drawn frame only", async () => {
+    mountStage();
+    clients[0].emit({ kind: "streaming", firstFrame: false });
+    await nextTick();
+    expect(wrapper!.emitted("first-frame")).toBeUndefined();
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    clients[0].emit({ kind: "reconnecting", attempt: 1, inMs: 1000 });
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    await nextTick();
+    expect(wrapper!.emitted("first-frame")).toHaveLength(1);
+  });
+
   // CAR9: the carrier the client opened is on the stage's DOM, for QA, and only while a session streams.
   it("names the open carrier in data-stream-carrier while streaming", async () => {
     mountStage();

@@ -465,6 +465,12 @@ function onFirstSceneFramePresented(attemptId: string): void {
     startClientVitals();
   }
 }
+// The new renderer's first drawn frame completes the join exactly as MirrorView's does: "the browser displays the
+// game" (the host's LoadingView step waits for it), credited to the attempt this view was bound for.
+function onStreamFirstFrame(): void {
+  const target = presentationTarget.value;
+  if (target) onFirstSceneFramePresented(target.attemptId);
+}
 function onSceneRenderError(attemptId: string, error: unknown): void {
   const target = presentationTarget.value;
   if (target?.attemptId === attemptId && target.view === activeClient) {
@@ -1730,6 +1736,7 @@ onBeforeUnmount(() => {
       :core="renderStreamCore"
       :send-input="viewControls.sendInput"
       @failed="onRenderStreamFailed"
+      @first-frame="onStreamFirstFrame"
       @refresh-endpoint="onRenderStreamRefresh"
     />
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP

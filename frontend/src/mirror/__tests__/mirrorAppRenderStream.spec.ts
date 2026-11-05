@@ -288,6 +288,35 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     return seat;
   }
 
+  // The host's LoadingView step completes on `client-frame-presented`; MirrorView is unmounted under the stream, so
+  // the stage's first drawn frame has to send it, for the attempt the join was answered with, on the host socket.
+  it("completes the join on the stream's first drawn frame", async () => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, connectionAttemptId: "join-1" }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession({ renderStream: descriptor }));
+    await settle();
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(host.ofType("client-frame-presented")).toEqual([]);
+
+    fail({ kind: "streaming", firstFrame: false });
+    await settle();
+    expect(host.ofType("client-frame-presented")).toEqual([]);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(host.ofType("client-frame-presented")).toEqual([{ type: "client-frame-presented", attemptId: "join-1" }]);
+    expect(seat.ofType("client-frame-presented")).toEqual([]);
+  });
+
   it("asks the host for a streaming seat in the join, only when the viewer chose it and this page can draw it", async () => {
     canStream();
     mirrorSettings.renderer = "stream";
