@@ -145,14 +145,14 @@ internal sealed partial class BrowserServerRouteTests
     {
         private readonly TempStaticRoot _root;
         private readonly HopCountingMainThread _mainThread;
-        private readonly IGameMainThread? _previousThread;
+        private readonly IGameMainThread _previousThread;
         private readonly CouchCoopBrowserServer _server;
         private readonly SeatBrowserPipe _pipe;
         private readonly TcpListener _host;
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _relay;
 
-        private RelayedSeat(TempStaticRoot root, HopCountingMainThread mainThread, IGameMainThread? previousThread,
+        private RelayedSeat(TempStaticRoot root, HopCountingMainThread mainThread, IGameMainThread previousThread,
             CouchCoopBrowserServer server, SeatBrowserPipe pipe, TcpListener host, string pipeName, string pipeToken)
         {
             _root = root;

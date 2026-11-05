@@ -227,7 +227,7 @@ internal static class SeatModBuildTests
         // System.Text.Json encoder escapes every non-ASCII character, which would rewrite a player's
         // localized settings into an equivalent-but-different file on each spawn.
         Assert(root.GetProperty("player_label").GetString() == "Zoë — 日本語", "non-ASCII values round-trip");
-        Assert(updated.Contains("Zoë — 日本語", StringComparison.Ordinal),
+        Assert(updated!.Contains("Zoë — 日本語", StringComparison.Ordinal),
             "non-ASCII values are written literally, not as \\uXXXX escapes");
         Assert(!updated.EndsWith('\n'), "no trailing newline is added (the game writes none)");
         Assert(updated.Contains("\n  \"language\"", StringComparison.Ordinal),

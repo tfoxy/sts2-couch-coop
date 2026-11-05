@@ -517,7 +517,7 @@ internal static class HeadlessConnectionLifecycleTests
         Assert(!row.Issue!.Summary.Contains("Steam Cloud", StringComparison.Ordinal)
                 && row.Issue.Detail!.Contains("your saves were protected", StringComparison.Ordinal),
             "…and is told its saves were protected, because the record is only written once they are");
-        Assert(row.Issue.Detail.Contains("recorded that it bound port", StringComparison.Ordinal)
+        Assert(row.Issue.Detail!.Contains("recorded that it bound port", StringComparison.Ordinal)
                 && row.Issue.Detail.Contains("not made", StringComparison.Ordinal),
             "…with the evidence tail saying what cleared it, and that no probe was spent on a non-member");
     }

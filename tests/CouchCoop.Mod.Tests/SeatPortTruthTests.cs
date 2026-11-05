@@ -807,7 +807,7 @@ internal static class SeatPortTruthTests
                     await using var stream = client.GetStream();
                     // Enough of a request to get past the client's own framing; the body is irrelevant here.
                     var scratch = new byte[1024];
-                    await stream.ReadAsync(scratch, _stop.Token);
+                    _ = await stream.ReadAsync(scratch, _stop.Token);
                     var response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray();
                     await stream.WriteAsync(response, _stop.Token);
                 }

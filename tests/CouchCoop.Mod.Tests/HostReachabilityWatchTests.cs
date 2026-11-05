@@ -297,10 +297,9 @@ internal static class HostReachabilityWatchTests
 
     private sealed class FakeTime : TimeProvider
     {
-        private long _timestamp;
         public override long TimestampFrequency => 1000;
-        public override long GetTimestamp() => _timestamp;
-        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddMilliseconds(_timestamp);
+        public override long GetTimestamp() => 0;
+        public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch;
     }
 
     private sealed class ControlledDelay

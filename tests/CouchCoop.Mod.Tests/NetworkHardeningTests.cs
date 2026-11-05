@@ -228,7 +228,7 @@ internal static class NetworkHardeningTests
             stop.Cancel();
             try
             {
-                await replay.ReadAsync(new byte[1], stop.Token);
+                _ = await replay.ReadAsync(new byte[1], stop.Token);
                 throw new Exception("a cancelled prefix read consumed data");
             }
             catch (OperationCanceledException) { }
