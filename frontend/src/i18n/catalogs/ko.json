@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "이 페이지에서 새 렌더러를 불러오지 못했습니다.",
   "settings.newRendererNoWebgl2": "이 브라우저에서는 새 렌더러를 실행할 수 없습니다.",
   "settings.newRendererHostView": "호스트 자신의 게임을 볼 때는 사용할 수 없습니다.",
-  "settings.newRendererLanOff": "이 호스트에서는 새 렌더러를 다른 기기로 스트리밍하는 기능이 꺼져 있습니다. 호스트가 COUCHCOOP_RENDER_STREAM_LAN=1로 켤 수 있습니다. 그때까지는 호스트 컴퓨터에서 미러를 여세요.",
   "settings.newRendererNeedsProxy": "이 페이지에서는 호스트의 새 렌더러 스트림을 실행할 수 없습니다. Chrome이나 Edge에서 호스트의 HTTPS 링크를 열거나, 호스트 컴퓨터에서 미러를 여세요.",
   "settings.newRendererNotStreaming": "이 플레이어의 좌석은 스트리밍 중이 아닙니다. 좌석이 다음에 시작될 때 적용됩니다.",
   "settings.newRendererStopped": "새 렌더러가 중지됨: {reason}",

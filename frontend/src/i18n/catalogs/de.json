@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "Der neue Renderer konnte auf dieser Seite nicht geladen werden.",
   "settings.newRendererNoWebgl2": "Dieser Browser kann den neuen Renderer nicht ausführen.",
   "settings.newRendererHostView": "Nicht verfügbar, wenn du das Spiel des Hosts selbst ansiehst.",
-  "settings.newRendererLanOff": "Das Streamen des neuen Renderers an andere Geräte ist auf diesem Host ausgeschaltet. Der Host kann es mit COUCHCOOP_RENDER_STREAM_LAN=1 einschalten; bis dahin öffne den Spiegel auf dem Host-Computer.",
   "settings.newRendererNeedsProxy": "Diese Seite kann den Stream des neuen Renderers vom Host nicht ausführen. Öffne den HTTPS-Link des Hosts in Chrome oder Edge oder den Spiegel auf dem Host-Computer.",
   "settings.newRendererNotStreaming": "Der Platz dieses Spielers streamt nicht. Die Einstellung gilt beim nächsten Start des Platzes.",
   "settings.newRendererStopped": "Neuer Renderer angehalten: {reason}",

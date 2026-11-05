@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "Le nouveau moteur de rendu n'a pas pu se charger sur cette page.",
   "settings.newRendererNoWebgl2": "Ce navigateur ne peut pas exécuter le nouveau moteur de rendu.",
   "settings.newRendererHostView": "Indisponible quand vous regardez la partie de l'hôte lui-même.",
-  "settings.newRendererLanOff": "La diffusion du nouveau moteur de rendu vers d'autres appareils est désactivée sur cet hôte. L'hôte peut l'activer avec COUCHCOOP_RENDER_STREAM_LAN=1 ; en attendant, ouvrez le miroir sur l'ordinateur hôte.",
   "settings.newRendererNeedsProxy": "Cette page ne peut pas lire le flux du nouveau moteur de rendu de l'hôte. Ouvrez le lien HTTPS de l'hôte dans Chrome ou Edge, ou le miroir sur l'ordinateur hôte.",
   "settings.newRendererNotStreaming": "La place de ce joueur ne diffuse pas. Le réglage s'appliquera au prochain démarrage de la place.",
   "settings.newRendererStopped": "Nouveau moteur de rendu arrêté : {reason}",

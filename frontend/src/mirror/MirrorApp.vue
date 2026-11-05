@@ -1031,7 +1031,7 @@ watch(
   () => [hostSession.value, joined.value, seatViewSession.value] as const,
   ([session, isJoined, seatSession]) => {
     if (session === null) return;
-    // CAR7b: the host's LAN offer, on every host session while its setting is on (absent means off).
+    // CAR7b: the host's LAN offer, on every host session while it has a capture (absent means none).
     renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan);
     const restart = parseSeatRestart(session.rendererSeat);
     if (restart !== null) {

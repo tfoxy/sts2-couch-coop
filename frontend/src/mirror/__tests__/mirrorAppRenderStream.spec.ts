@@ -467,7 +467,8 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     renderStreamContext.page = { https: true, secureContext: true, webTransport: true };
     mirrorSettings.renderer = "stream";
     await settle();
-    expect(renderStreamAvailability.value.reason).toBe("lan-off");
+    // No offer: the host has no capture.
+    expect(renderStreamAvailability.value.reason).toBe("not-streaming");
     expect(host.ofType("set-renderer")).toHaveLength(0);
     mirrorSettings.renderer = "mirror";
     await settle();

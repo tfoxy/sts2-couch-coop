@@ -119,10 +119,10 @@ network attack. Files and networks outside the configured service boundaries rem
 
 ## New renderer over the LAN
 
-By default the new renderer's stream (godot-scene-web's render-stream hub, inside the streaming seat process) listens
-on loopback only and accepts only the host's own loopback page origins. The host setting
-`COUCHCOOP_RENDER_STREAM_LAN=1` (off by default, [configuration.md](configuration.md)) exposes it on every
-interface, on the seat's hub port (TCP and UDP). What that adds:
+The new renderer's stream (godot-scene-web's render-stream hub, inside the streaming seat process) listens on every
+interface, on the seat's hub port (TCP and UDP), as the browser server and the player sockets do
+([configuration.md](configuration.md)). It runs only while a streaming seat runs, that is while a player has chosen
+"Use new renderer (Beta)". What it adds:
 
 - **Who can connect.** Anyone on the reachable network can reach the port. A stream session needs the seat's 64-hex
   token (32 random bytes, regenerated per seat process), which the seat hands only to a browser connection whose
@@ -135,11 +135,12 @@ interface, on the seat's hub port (TCP and UDP). What that adds:
 - **Confidentiality.** WebTransport is always encrypted (TLS 1.3, a per-process self-signed certificate pinned by hash
   in the descriptor). wss uses a certificate the host already has (its Direct-IP HTTPS leaf, else the published
   secure-origin certificate); the seat receives a PEM copy in its private evidence directory, written owner-only on
-  Unix and never logged, and plaintext from LAN peers is then refused. A host with neither serves plain WebSocket on
-  the LAN, where token and frames cross unencrypted, as a plain-http page's own couch socket does: the host's
-  plain-http LAN page streams over it.
+  Unix and never logged. Plain WebSocket is also served on the LAN, beside wss on the same port
+  (godot-scene-web's `GRC_LIVE_LAN_PLAINTEXT=allow`), for the host's plain-http LAN page: there token and frames
+  cross unencrypted, as that page's own couch socket does. A page on the host's https link is described wss or
+  WebTransport, never plain WebSocket.
 - **New parsers on the LAN.** The capture's WebSocket/HTTP parser and godot-scene-web's net module (QUIC, HTTP/3 and
-  TLS in Rust: wtransport, quinn, rustls) become reachable from the LAN while the setting is on. They run in the seat
+  TLS in Rust: wtransport, quinn, rustls) are reachable from the LAN while a streaming seat runs. They run in the seat
   process, not the host's; a fault there stops that carrier, not the game (godot-scene-web carrier-design.md D17).
 - **Not the public website.** The pages.dev bootstrap page cannot be allowed (its origin carries no port, and the
   stream's allow-list takes only exact `scheme://host:port` entries), and Chrome puts WebTransport and wss from a

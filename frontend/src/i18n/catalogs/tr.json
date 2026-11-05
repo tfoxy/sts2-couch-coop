@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "Yeni işleyici bu sayfada yüklenemedi.",
   "settings.newRendererNoWebgl2": "Bu tarayıcı yeni işleyiciyi çalıştıramıyor.",
   "settings.newRendererHostView": "Sunucunun kendi oyununu izlerken kullanılamaz.",
-  "settings.newRendererLanOff": "Bu sunucuda yeni işleyicinin diğer cihazlara yayını kapalı. Sunucu bunu COUCHCOOP_RENDER_STREAM_LAN=1 ile açabilir; o zamana kadar aynayı sunucu bilgisayarında açın.",
   "settings.newRendererNeedsProxy": "Bu sayfa, sunucunun yeni işleyici yayınını çalıştıramıyor. Sunucunun HTTPS bağlantısını Chrome veya Edge'de ya da aynayı sunucu bilgisayarında açın.",
   "settings.newRendererNotStreaming": "Bu oyuncunun yeri yayın yapmıyor. Yer bir sonraki başlatılışında geçerli olur.",
   "settings.newRendererStopped": "Yeni işleyici durdu: {reason}",

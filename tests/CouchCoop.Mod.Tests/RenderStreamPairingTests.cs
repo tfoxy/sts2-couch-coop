@@ -52,14 +52,13 @@ internal static class RenderStreamPairingTests
         DescriptorNeedsAWellFormedToken();
         DescriptorOffersWebTransportWithItsCertificate();
         DescriptorJsonOmitsAbsentMembers();
-        LanSettingIsOffByDefault();
         LanPageOriginsAreTheHostsOwnPages();
         LanLaunchListensOnEveryInterface();
         LanPairIsWrittenOwnerOnly();
         LanReadsTheSecureOriginCertificate();
         await LanReadsTheDirectIpLeafAsync();
         LanDescriptorMatrix();
-        LanOfferFollowsTheSetting();
+        LanOfferIsAlwaysMade();
         TheTokenIsNeverLogged();
         HostCaptureVariableIsConfigurationNotAWarning();
         ItemTaggerGroupsMatchTheModules();
@@ -519,18 +518,9 @@ internal static class RenderStreamPairingTests
         Assert(unpinned == "{\"url\":\"https://h:1/render-stream\"}", $"no certificateHashes member when unpinned: {unpinned}");
     }
 
-    // ---- CAR7b: "Stream the new renderer over the LAN" ------------------------------------------------------------
+    // ---- CAR7b: streaming the new renderer to the host's LAN pages ------------------------------------------------
 
     private static readonly IPAddress LanAddress = IPAddress.Parse("192.168.1.77");
-
-    private static void LanSettingIsOffByDefault()
-    {
-        foreach (var on in new[] { "1", "true", "ON", " yes " })
-            Assert(StreamingSeatLan.IsEnabled(on), $"'{on}' turns LAN streaming on");
-        foreach (var off in new string?[] { null, "", "0", "false", "off", "lan", "2" })
-            Assert(!StreamingSeatLan.IsEnabled(off), $"'{off}' leaves it off");
-        Assert(new StreamingSeatLaunch.Config(Extension, Calibration).Lan == false, "a configured capture is loopback-only by default");
-    }
 
     private static void LanPageOriginsAreTheHostsOwnPages()
     {
@@ -553,7 +543,7 @@ internal static class RenderStreamPairingTests
 
     private static void LanLaunchListensOnEveryInterface()
     {
-        var config = new StreamingSeatLaunch.Config(Extension, Calibration, NetModule: "/opt/capture/librender_stream_net.so", Lan: true);
+        var config = new StreamingSeatLaunch.Config(Extension, Calibration, NetModule: "/opt/capture/librender_stream_net.so");
         var origins = StreamingSeatLaunch.AllowedOrigins(13337, "https://192.168.1.77:13337");
         var env = StreamingSeatLaunch.Environment(config, 13366, "/ev", origins, lan: new StreamingSeatLaunch.LanLaunch("/ev/c.pem", "/ev/k.pem"));
         Assert(env["GRC_LIVE_EXPOSE"] == "lan" && env["GRC_LIVE_LISTEN"] == "0.0.0.0:13366" && env["GRC_LIVE_WT_LISTEN"] == "0.0.0.0:13366",
@@ -562,9 +552,12 @@ internal static class RenderStreamPairingTests
             "with the token and the LAN origins godot-scene-web requires for lan");
         Assert(env["GRC_LIVE_TLS_CERT"] == "/ev/c.pem" && env["GRC_LIVE_TLS_KEY"] == "/ev/k.pem" && env["GRC_LIVE_WT_CERT"] == "self",
             "wss through the host's pair; WebTransport keeps its pinned self-signed certificate");
+        Assert(env[StreamingSeatDescriptor.LanPlaintextEnvironmentVariable] == "allow",
+            "with a pair, plain ws is still served to the host's http LAN pages");
         var noTls = StreamingSeatLaunch.Environment(config, 13366, "/ev", origins, lan: new StreamingSeatLaunch.LanLaunch());
-        Assert(noTls["GRC_LIVE_EXPOSE"] == "lan" && !noTls.ContainsKey("GRC_LIVE_TLS_CERT") && !noTls.ContainsKey("GRC_LIVE_TLS_KEY"),
-            "no host certificate: LAN without wss (plain ws, F6)");
+        Assert(noTls["GRC_LIVE_EXPOSE"] == "lan" && !noTls.ContainsKey("GRC_LIVE_TLS_CERT") && !noTls.ContainsKey("GRC_LIVE_TLS_KEY")
+               && !noTls.ContainsKey(StreamingSeatDescriptor.LanPlaintextEnvironmentVariable),
+            "no host certificate: LAN without wss (plain ws, F6, needs no option)");
         var off = StreamingSeatLaunch.Environment(config, 13366, "/ev", origins);
         Assert(off["GRC_LIVE_LISTEN"] == "127.0.0.1:13366" && !off.ContainsKey("GRC_LIVE_EXPOSE") && !off.ContainsKey("GRC_LIVE_TLS_CERT"),
             "no LAN launch: loopback exactly as before");
@@ -575,23 +568,16 @@ internal static class RenderStreamPairingTests
         var dir = Directory.CreateTempSubdirectory("cc-lan-pair").FullName;
         try
         {
-            var harness = new Harness(configured: true);
-            var manager = harness.Manager;
-            // Setting off: a stale pair is removed and nothing is added.
             File.WriteAllText(Path.Combine(dir, StreamingSeatLan.KeyFileName), "stale");
-            IReadOnlyList<string> origins = ["http://127.0.0.1:13337"];
-            var (offLan, _) = manager.PrepareStreamingSeatLanLocked(dir, 13337, ref origins);
-            Assert(offLan is null && origins.Count == 1 && !File.Exists(Path.Combine(dir, StreamingSeatLan.KeyFileName)),
-                "setting off: no LAN launch, no LAN origins, a stale key removed");
-
-            var lanHarness = new Harness(configured: true, lan: true);
+            IReadOnlyList<string> origins;
+            var lanHarness = new Harness(configured: true);
             lanHarness.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, null,
                 new StreamingSeatLan.TlsPair("direct-ip", "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n", "SECRET-KEY"));
             origins = ["http://127.0.0.1:13337"];
             var (lan, kind) = lanHarness.Manager.PrepareStreamingSeatLanLocked(dir, 13337, ref origins);
             var key = Path.Combine(dir, StreamingSeatLan.KeyFileName);
             Assert(lan is { TlsCertificate: not null, TlsKey: not null } && kind == "direct-ip" && lan.TlsKey == key,
-                "setting on with a certificate: a LAN launch with the pair's paths and its kind (never the key) for the log");
+                "a certificate: a LAN launch with the pair's paths and its kind (never the key) for the log, the stale key replaced");
             Assert(origins.Contains("https://192.168.1.77:13337") && origins[0] == "http://127.0.0.1:13337",
                 $"the LAN origins appended after the loopback ones: {string.Join(' ', origins)}");
             Assert(File.ReadAllText(key) == "SECRET-KEY", "the key is written as given");
@@ -709,7 +695,14 @@ internal static class RenderStreamPairingTests
 
         var httpIp = D(env, "http://192.168.1.77:13337");
         Assert(httpIp is { Url: "wss://192.168.1.77:13366/render-stream", WebTransport: null },
-            "a plain-http LAN page: no WebTransport (not a secure context); wss, which the hub's certificate names");
+            "a plain-http LAN page on a hub that refuses LAN plaintext: no WebTransport (not a secure context); wss");
+        var both = new Dictionary<string, string>(env) { [StreamingSeatDescriptor.LanPlaintextEnvironmentVariable] = "allow" };
+        Assert(D(both, "http://192.168.1.77:13337") is
+               { Url: "ws://192.168.1.77:13366/render-stream", ResourceBase: "http://192.168.1.77:13366", WebTransport: null },
+            "a hub serving LAN plaintext beside wss: the plain-http page gets plain ws, no certificate to trust");
+        Assert(D(both, "http://192-168-1-77.my.local-ip.co:13337") is null, "... still only for an origin the host allowed");
+        Assert(D(both, "https://192.168.1.77:13337") is { Url: "wss://192.168.1.77:13366/render-stream" },
+            "... and an https page keeps wss");
 
         var plain = new Dictionary<string, string>(env);
         plain.Remove("GRC_LIVE_TLS_CERT");
@@ -726,15 +719,14 @@ internal static class RenderStreamPairingTests
 
         var loopbackHub = new Dictionary<string, string>(env) { ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366" };
         loopbackHub.Remove("GRC_LIVE_EXPOSE");
-        Assert(D(loopbackHub, "https://192.168.1.77:13337") is null, "a LAN page with the setting off (no lan exposure): none");
+        Assert(D(loopbackHub, "https://192.168.1.77:13337") is null, "a LAN page on a loopback-only hub (no lan exposure): none");
         var lanListenNoExpose = new Dictionary<string, string>(env);
         lanListenNoExpose.Remove("GRC_LIVE_EXPOSE");
         Assert(D(lanListenNoExpose, "http://127.0.0.1:13337") is null, "0.0.0.0 without lan exposure is not this host's launch");
     }
 
-    private static void LanOfferFollowsTheSetting()
+    private static void LanOfferIsAlwaysMade()
     {
-        Assert(new Harness(configured: true).Manager.RenderStreamLanOffer("https://192.168.1.77:13337") is null, "setting off: no offer");
         Assert(new Harness(configured: false).Manager.RenderStreamLanOffer("https://192.168.1.77:13337") is null, "no capture: no offer");
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var request = new CertificateRequest("CN=wild", key, HashAlgorithmName.SHA256);
@@ -742,15 +734,15 @@ internal static class RenderStreamPairingTests
         san.AddDnsName("*.my.local-ip.co");
         request.CertificateExtensions.Add(san.Build());
         using var leaf = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(9));
-        var lan = new Harness(configured: true, lan: true);
+        var lan = new Harness(configured: true);
         lan.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, "my.local-ip.co",
             new StreamingSeatLan.TlsPair("secure-origin", leaf.ExportCertificatePem(), "k"));
-        Assert(lan.Manager.RenderStreamLanOffer("https://192-168-1-77.my.local-ip.co:13337") is (false, true, false),
-            "on, no net module, a certificate naming this page's host: tls only");
-        Assert(lan.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, false),
-            "the same certificate does not name an IP page: no tls for it, and no plain ws (the hub refuses LAN plaintext)");
-        Assert(lan.Manager.RenderStreamLanOffer(null) is (false, false, false), "no Origin: nothing it could name");
-        var plain = new Harness(configured: true, lan: true);
+        Assert(lan.Manager.RenderStreamLanOffer("https://192-168-1-77.my.local-ip.co:13337") is (false, true, true),
+            "no net module, a certificate naming this page's host: tls, and plain ws (served beside it)");
+        Assert(lan.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, true),
+            "the same certificate does not name an IP page: no tls for it, but plain ws for its plain-http page");
+        Assert(lan.Manager.RenderStreamLanOffer(null) is (false, false, true), "no Origin: no certificate it could name");
+        var plain = new Harness(configured: true);
         plain.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, null, null);
         Assert(plain.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, true),
             "no certificate at all: plain ws for a plain-http LAN page (CAR9)");
@@ -918,7 +910,7 @@ internal static class RenderStreamPairingTests
         public readonly List<FakeProcess> Spawned = [];
         public readonly HeadlessClientManager Manager;
 
-        public Harness(bool configured, int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth, bool lan = false)
+        public Harness(bool configured, int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth)
         {
             HeadlessClientManager? manager = null;
             Manager = manager = new HeadlessClientManager(
@@ -930,7 +922,7 @@ internal static class RenderStreamPairingTests
                     return process;
                 },
                 readinessProbe: (_, _) => Task.FromResult(true),
-                streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration, maxWidth, Lan: lan) : null);
+                streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration, maxWidth) : null);
         }
     }
 

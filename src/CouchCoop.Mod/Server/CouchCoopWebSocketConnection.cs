@@ -1917,7 +1917,7 @@ public sealed class CouchCoopWebSocketConnection
                 : WithRendererSeat(envelope);
 
     // On the HOST, the session of a viewer whose seat has a renderer request in hand carries what became of it (MIR-4),
-    // and every host session carries the LAN streaming offer while that host setting is on (CAR7b).
+    // and every host session carries the LAN streaming offer while a capture is configured (CAR7b).
     private BrowserEnvelope WithRendererSeat(BrowserEnvelope envelope)
     {
         if (!string.Equals(envelope.Type, "session", StringComparison.Ordinal) || _headlessManager is not { } manager)

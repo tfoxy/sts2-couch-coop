@@ -8,16 +8,15 @@ using CouchCoop.Mod.Server;
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// "Stream the new renderer over the LAN" (CAR7b): the host setting that lets the streaming seat's render-stream hub
-/// serve the host's own LAN pages, not only its loopback page. Off by default.
+/// Streaming the new renderer to the host's LAN pages (CAR7b): the streaming seat's render-stream hub serves the host's
+/// own LAN pages, not only its loopback page. Always on, as the host's browser server and seat relays are.
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE SETTING IS THE HOST'S (<see cref="EnvironmentVariable"/>, docs/configuration.md). Off, the hub stays on
-/// 127.0.0.1 exactly as before and a LAN page reads "lan-off". On, the seat is launched with godot-scene-web's
-/// opt-in LAN exposure (carrier-design.md D10): <c>GRC_LIVE_EXPOSE=lan</c>, the hub on <c>0.0.0.0</c> (the
-/// interfaces the browser server serves), token auth (always on), and an origin allow-list extended with the host's
-/// own LAN page origins (<see cref="PageOrigins"/>).
+/// The seat is launched with godot-scene-web's LAN exposure (carrier-design.md D10): <c>GRC_LIVE_EXPOSE=lan</c>, the
+/// hub on <c>0.0.0.0</c> (the interfaces the browser server serves), token auth (always on), and an origin allow-list
+/// extended with the host's own LAN page origins (<see cref="PageOrigins"/>). The hub runs only while a viewer has
+/// asked for the new renderer.
 /// </para>
 /// <para>
 /// CARRIERS ON THE LAN. WebTransport (with the net module) uses the capture's self-signed certificate, pinned by
@@ -25,9 +24,9 @@ namespace CouchCoop.Mod.Session;
 /// already trusts and that names the page's host: the host's Direct-IP HTTPS leaf (IP SANs; preferred, because the
 /// operator set it up and its devices trust its CA) or else the secure-origin certificate (the published wildcard for
 /// <c>&lt;dashed ip&gt;.&lt;domain&gt;</c>). Its PEM pair is written into the seat's private evidence directory (mode
-/// 0600 on Unix) as <c>GRC_LIVE_TLS_CERT</c>/<c>KEY</c>; the key is never logged. With a pair the capture refuses
-/// plaintext from LAN peers (<c>tls-required</c>), so a plain-http LAN page can only use wss; without one, plain ws
-/// is served on the LAN (godot-scene-web F6), as the host's own plain-http page already is.
+/// 0600 on Unix) as <c>GRC_LIVE_TLS_CERT</c>/<c>KEY</c>; the key is never logged. Plain ws is served to LAN peers
+/// either way (with a pair through <c>GRC_LIVE_LAN_PLAINTEXT=allow</c>), so the host's plain-http LAN page streams
+/// over ws, as its own socket to the host already does, with no certificate the device must trust.
 /// </para>
 /// <para>
 /// NOT THE PUBLIC WEBSITE ORIGIN. The pages.dev bootstrap page is served on the default https port, so its Origin
@@ -37,15 +36,9 @@ namespace CouchCoop.Mod.Session;
 /// </remarks>
 internal static class StreamingSeatLan
 {
-    /// <summary>The host setting: <c>1</c>/<c>true</c>/<c>on</c>/<c>yes</c> turns LAN streaming on. Anything else is off.</summary>
-    internal const string EnvironmentVariable = "COUCHCOOP_RENDER_STREAM_LAN";
-
     /// <summary>The PEM pair's file names in the seat's private evidence directory.</summary>
     internal const string CertificateFileName = "tls-cert.pem";
     internal const string KeyFileName = "tls-key.pem";
-
-    internal static bool IsEnabled(string? value)
-        => value?.Trim().ToLowerInvariant() is "1" or "true" or "on" or "yes";
 
     /// <summary>Which certificate wss uses: <c>direct-ip</c>, <c>secure-origin</c>, or none.</summary>
     internal sealed record TlsPair(string Kind, string CertificatePem, string KeyPem);
@@ -234,7 +227,7 @@ internal static class StreamingSeatLan
         return (certificate, key);
     }
 
-    /// <summary>Remove a pair a previous launch left behind (LAN off, or no certificate this time).</summary>
+    /// <summary>Remove a pair a previous launch left behind (no certificate this time).</summary>
     internal static void DeletePair(string evidenceDirectory)
     {
         File.Delete(Path.Combine(evidenceDirectory, CertificateFileName));

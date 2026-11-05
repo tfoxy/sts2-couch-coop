@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "Nie udało się wczytać nowego renderera na tej stronie.",
   "settings.newRendererNoWebgl2": "Ta przeglądarka nie może uruchomić nowego renderera.",
   "settings.newRendererHostView": "Niedostępne podczas oglądania gry samego hosta.",
-  "settings.newRendererLanOff": "Transmisja nowego renderera na inne urządzenia jest na tym hoście wyłączona. Host może ją włączyć przez COUCHCOOP_RENDER_STREAM_LAN=1; do tego czasu otwórz lustro na komputerze hosta.",
   "settings.newRendererNeedsProxy": "Ta strona nie może odtworzyć transmisji nowego renderera z hosta. Otwórz link HTTPS hosta w Chrome lub Edge albo lustro na komputerze hosta.",
   "settings.newRendererNotStreaming": "Miejsce tego gracza nie jest transmitowane. Zadziała przy następnym uruchomieniu miejsca.",
   "settings.newRendererStopped": "Nowy renderer zatrzymany: {reason}",

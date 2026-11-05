@@ -188,7 +188,8 @@ describe("renderStreamAvailability", () => {
     expect(reason({ coreLoadFailed: true })).toBe("core-build");
     expect(reason({ webgl2: false, directView: true })).toBe("no-webgl2");
     expect(reason({ directView: true })).toBe("host-view");
-    expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("lan-off");
+    // A LAN page on a host with no capture (no offer): its seat cannot stream either.
+    expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("not-streaming");
     expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: { webTransport: false, tls: false, ws: true },
       page: { https: true, secureContext: true, webTransport: true } })).toBe("needs-proxy");
     expect(reason({ qaEndpoint: null })).toBe("not-streaming");
@@ -203,7 +204,6 @@ describe("renderStreamAvailability", () => {
     expect(withRestart("refused")).toBe("seat-restart-refused");
     expect(withRestart("failed")).toBe("seat-restart-failed");
     // Everything that outranks not-streaming outranks the restart too, and the seat's descriptor wins over a stale one.
-    expect(withRestart("restarting", { pageLoopback: false })).toBe("lan-off");
     expect(withRestart("restarting", { directView: true })).toBe("host-view");
     const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
       token: "a".repeat(64), protocol: 12 });
@@ -229,7 +229,8 @@ describe("renderStreamAvailability", () => {
     expect(canRequestStreamingSeat(at({ seatRestart: { state: "failed", reason: null, detail: null } }), true)).toBe(true);
     expect(canRequestStreamingSeat(at({ seatRestart: { state: "restarting", reason: null, detail: null } }), true)).toBe(false);
     expect(canRequestStreamingSeat(at({ seatRestart: { state: "pending", reason: null, detail: null } }), true)).toBe(false);
-    expect(canRequestStreamingSeat(at({ pageLoopback: false }), true)).toBe(false);
+    expect(canRequestStreamingSeat(at({ pageLoopback: false, lanOffer: { webTransport: false, tls: false, ws: true },
+      page: { https: true, secureContext: true, webTransport: true } }), true)).toBe(false);
     expect(canRequestStreamingSeat(at({ directView: true }), true)).toBe(false);
     expect(canRequestStreamingSeat(at({ webgl2: false }), true)).toBe(false);
   });
@@ -329,9 +330,9 @@ describe("renderStreamAvailability", () => {
       expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: ws })).toMatchObject({ available: true });
     });
 
-    it("says lan-off, not needs-proxy, when the host's setting is off, and asks for no streaming seat", () => {
+    it("says not-streaming, not needs-proxy, on a host with no capture (no offer), and asks for no streaming seat", () => {
       for (const page of Object.values(pages)) {
-        expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: null, page }).reason).toBe("lan-off");
+        expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: null, page }).reason).toBe("not-streaming");
         expect(joinRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
           pageLoopback: false, qaEndpoint: null, lanOffer: null, page })).toBeUndefined();
       }

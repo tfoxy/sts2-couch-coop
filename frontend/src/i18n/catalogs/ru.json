@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "Не удалось загрузить новый рендерер на этой странице.",
   "settings.newRendererNoWebgl2": "Этот браузер не может запустить новый рендерер.",
   "settings.newRendererHostView": "Недоступно при просмотре игры самого хоста.",
-  "settings.newRendererLanOff": "Трансляция нового рендерера на другие устройства на этом хосте выключена. Хост может включить её через COUCHCOOP_RENDER_STREAM_LAN=1; а пока откройте зеркало на компьютере хоста.",
   "settings.newRendererNeedsProxy": "Эта страница не может воспроизвести трансляцию нового рендерера хоста. Откройте HTTPS-ссылку хоста в Chrome или Edge либо зеркало на компьютере хоста.",
   "settings.newRendererNotStreaming": "Место этого игрока не транслируется. Настройка сработает при следующем запуске места.",
   "settings.newRendererStopped": "Новый рендерер остановлен: {reason}",

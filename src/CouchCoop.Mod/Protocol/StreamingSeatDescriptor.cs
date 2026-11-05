@@ -24,15 +24,15 @@ namespace CouchCoop.Mod.Protocol;
 /// <para>
 /// ONLY FOR A PAGE THE HUB WILL SERVE. The descriptor goes out only on a connection whose browser <c>Origin</c> is
 /// exactly one of <c>GRC_LIVE_ALLOWED_ORIGINS</c>: the hub answers any other Origin with 403. A request with no Origin
-/// is not a browser and gets none either. Not the streaming seat, no listener, no token: none. By default the hub is
-/// loopback only and only the host's loopback page is allowed; a LAN page could not reach it and sees "unavailable".
+/// is not a browser and gets none either. Not the streaming seat, no listener, no token: none.
 /// </para>
 /// <para>
-/// LAN PAGES (CAR7b, <c>GRC_LIVE_EXPOSE=lan</c>, the host's "Stream the new renderer over the LAN"). The hub listens
-/// on <c>0.0.0.0</c> and the host has allowed its LAN page origins. Such a page is described at its own host on the
-/// hub's port: <c>webTransport</c> for an https page (self-signed, pinned by hash, whatever the host name), and
-/// <c>wss://</c> when the consumer certificate (<c>GRC_LIVE_TLS_CERT</c>) names that host, or plain <c>ws://</c> for an
-/// http page when there is no certificate. A page no carrier could serve gets no descriptor.
+/// LAN PAGES (CAR7b, <c>GRC_LIVE_EXPOSE=lan</c>, which the host always launches). The hub listens on <c>0.0.0.0</c>
+/// and the host has allowed its LAN page origins. Such a page is described at its own host on the hub's port:
+/// <c>webTransport</c> for an https page (self-signed, pinned by hash, whatever the host name); plain <c>ws://</c> for
+/// an http page, which the hub serves beside wss (<see cref="LanPlaintextEnvironmentVariable"/>); and <c>wss://</c> for
+/// an https page when the consumer certificate (<c>GRC_LIVE_TLS_CERT</c>) names that host. A page no carrier could
+/// serve gets no descriptor.
 /// </para>
 /// <para>
 /// In <c>Protocol/</c>, not <c>Session/</c>, because the hot-reload assembly compiles the connection that calls it
@@ -49,6 +49,9 @@ internal static class StreamingSeatDescriptor
 
     /// <summary><c>COUCHCOOP_STREAMING_SEAT</c>: exactly <c>1</c> marks the streaming seat.</summary>
     internal const string RoleEnvironmentVariable = "COUCHCOOP_STREAMING_SEAT";
+
+    /// <summary>godot-scene-web's <c>GRC_LIVE_LAN_PLAINTEXT</c>: <c>allow</c> serves plain ws to LAN peers beside wss.</summary>
+    internal const string LanPlaintextEnvironmentVariable = "GRC_LIVE_LAN_PLAINTEXT";
 
     private static readonly bool IsStreamingSeat = Environment.GetEnvironmentVariable(RoleEnvironmentVariable) == "1";
 
@@ -126,15 +129,18 @@ internal static class StreamingSeatDescriptor
         }
         else
         {
-            // WITH a consumer certificate the hub refuses plaintext from LAN peers (tls-required), so a LAN page gets
-            // wss -- usable when the certificate names the page's host. WITHOUT one, plain ws, which an https page
-            // cannot open (mixed content): that page streams over WebTransport or not at all.
+            // An http page gets plain ws whenever the hub serves LAN plaintext: always without a consumer certificate,
+            // and with one under GRC_LIVE_LAN_PLAINTEXT=allow (otherwise the hub refuses it, tls-required). Plain ws
+            // needs no certificate the device must trust, and is no less private than that page's own socket. An
+            // https page cannot open plain ws (mixed content): it gets wss when the certificate names its host, else
+            // WebTransport or nothing.
             var certificate = environment("GRC_LIVE_TLS_CERT");
             var covers = !string.IsNullOrWhiteSpace(certificate) && certificateCovers?.Invoke(certificate, host) == true;
             var plain = string.IsNullOrWhiteSpace(certificate);
-            var socketWorks = covers || (plain && page.Scheme == "http");
+            var plainServed = plain || environment(LanPlaintextEnvironmentVariable)?.Trim() == "allow";
+            var tls = !plain && !(plainServed && page.Scheme == "http");
+            var socketWorks = tls ? covers : page.Scheme == "http";
             if (!socketWorks && webTransport is null) return null;
-            var tls = !plain;
             (url, resourceBase) = ($"{(tls ? "wss" : "ws")}://{host}:{portText}/render-stream",
                 $"{(tls || page.Scheme == "https" ? "https" : "http")}://{host}:{portText}");
         }

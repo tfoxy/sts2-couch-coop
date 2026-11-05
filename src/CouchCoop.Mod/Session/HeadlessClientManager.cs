@@ -545,7 +545,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.Calibration} "
                 + $"maxWidth={config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
-                + $"carriers={(config.NetModule is null ? "ws" : "ws,wt")} lan={(config.Lan ? "on" : "off")}");
+                + $"carriers={(config.NetModule is null ? "ws" : "ws,wt")}");
         }
         else if (streaming.Refusal is { } refusal)
         {
@@ -2282,7 +2282,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         if (_streamingConfig is null) refusal = "no capture is configured";
         else if (hostUserDir is null) refusal = "the host user dir is unresolved";
         else if (SeatPortAvailability.TestBindRefusal(
-                     hubPort, _streamingConfig.Lan ? System.Net.IPAddress.Any : System.Net.IPAddress.Loopback) is { } bindError)
+                     hubPort, System.Net.IPAddress.Any) is { } bindError)
         {
             refusal = $"render-stream hub port {hubPort.ToString(CultureInfo.InvariantCulture)} is in use ({bindError})";
         }
@@ -2316,8 +2316,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         var aspect = _streamingAspect.TryGetValue(slot, out var requested) ? requested : (double?)null;
         var width = StreamingSeatPresentationWidthLocked(slot);
         StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, width, lan));
-        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub={(lan is null ? "127.0.0.1" : "0.0.0.0")}:{hubPort.ToString(CultureInfo.InvariantCulture)} "
-            + $"lan={(lan is null ? "off" : "on")} tls={lanTls} "
+        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=0.0.0.0:{hubPort.ToString(CultureInfo.InvariantCulture)} "
+            + $"tls={lanTls} "
             + $"presentation={width.ToString(CultureInfo.InvariantCulture)}x{StreamingSeatLaunch.PresentationHeight.ToString(CultureInfo.InvariantCulture)} aspect={(aspect is double a ? a.ToString("0.####", CultureInfo.InvariantCulture) : "none")} "
             + $"cap={_streamingConfig!.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
             + $"carriers={(_streamingConfig.NetModule is null ? "ws" : "ws,wt")} "
@@ -2329,14 +2329,14 @@ public sealed partial class HeadlessClientManager : IDisposable
 
     /// <summary>
     /// What a streaming seat launched now would offer the page at <paramref name="pageOrigin"/> (CAR7b): WebTransport,
-    /// wss with a host certificate that names that page's host, and plain ws (CAR9), which the seat serves to LAN pages
-    /// only when the host has no certificate (with one the capture refuses LAN plaintext); null while the host setting
-    /// is off or no capture is configured. The host's certificates are re-read at most once a minute (it can prepare
-    /// HTTPS while it runs). Plain values, not the DTO: the hot-reload assembly compiles its own copy of the browser DTOs.
+    /// wss with a host certificate that names that page's host, and plain ws (CAR9), which the seat always serves to
+    /// LAN pages (beside wss when the host has a certificate); null when no capture is configured. The host's
+    /// certificates are re-read at most once a minute (it can prepare HTTPS while it runs). Plain values, not the DTO:
+    /// the hot-reload assembly compiles its own copy of the browser DTOs.
     /// </summary>
     public (bool WebTransport, bool Tls, bool Ws)? RenderStreamLanOffer(string? pageOrigin)
     {
-        if (_streamingConfig is not { Lan: true } config) return null;
+        if (_streamingConfig is not { } config) return null;
         var now = Environment.TickCount64;
         var cached = Volatile.Read(ref _lanOffer);
         if (cached is null || now - cached.At >= 60_000)
@@ -2346,20 +2346,18 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
 
         var host = Uri.TryCreate(pageOrigin, UriKind.Absolute, out var page) ? page.Host : null;
-        return (config.NetModule is not null, host is not null && StreamingSeatLan.Covers(cached.Context.Tls, host),
-            cached.Context.Tls is null);
+        return (config.NetModule is not null, host is not null && StreamingSeatLan.Covers(cached.Context.Tls, host), true);
     }
 
     /// <summary>The host's LAN context for a streaming launch (tests replace it); null means gather it from this machine.</summary>
     internal Func<StreamingSeatLan.Context>? StreamingSeatLanContext { get; set; }
 
     /// <summary>
-    /// "Stream the new renderer over the LAN" (<see cref="StreamingSeatLan"/>): with the host setting on, add the host's
-    /// LAN page origins and write its certificate's PEM pair into the seat's private evidence directory. With it off,
-    /// remove any pair a previous launch left. Returns the LAN launch (null when off) and the certificate kind for the
-    /// log; never the key.
+    /// Stream the new renderer to the host's LAN pages (<see cref="StreamingSeatLan"/>): remove any pair a previous
+    /// launch left, add the host's LAN page origins and write its certificate's PEM pair into the seat's private
+    /// evidence directory. Returns the LAN launch and the certificate kind for the log; never the key.
     /// </summary>
-    internal (StreamingSeatLaunch.LanLaunch? Lan, string Tls) PrepareStreamingSeatLanLocked(
+    internal (StreamingSeatLaunch.LanLaunch Lan, string Tls) PrepareStreamingSeatLanLocked(
         string evidence, int hostPort, ref IReadOnlyList<string> origins)
     {
         try
@@ -2371,7 +2369,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             CouchCoopLog.Stderr($"render-stream lan: stale certificate not removed ({exception.GetType().Name})");
         }
 
-        if (_streamingConfig is not { Lan: true }) return (null, "none");
         var context = StreamingSeatLanContext?.Invoke() ?? StreamingSeatLan.Gather(CouchCoopLog.Stderr);
         var merged = new List<string>(origins);
         foreach (var origin in StreamingSeatLan.PageOrigins(context, hostPort))

@@ -88,9 +88,9 @@ public sealed record BrowserEnvelope(
     // their seat as the streaming seat. Only the host's own connection for a bound seat carries it, and only while
     // there is something to say (Session/HeadlessClientManager.StreamingRestart.cs); null (omitted) otherwise.
     BrowserRendererSeatDto? RendererSeat = null,
-    // "Stream the new renderer over the LAN" (CAR7b): on the HOST's connections only, while the host setting is on and a
-    // capture is configured, what its streaming seat would offer a LAN page, so the page can tell "off on this host"
-    // from "this page cannot use it" before it joins. Null (omitted) when the setting is off.
+    // The new renderer on the LAN (CAR7b): on the HOST's connections only, while a capture is configured, what its
+    // streaming seat would offer this page, so the page can tell whether it could use the stream before it joins.
+    // Null (omitted) with no capture.
     BrowserRenderStreamLanDto? RenderStreamLan = null);
 
 // The `renderStreamLan` wire shape: { "webTransport": true, "tls": true, "ws": false } (camelCased by BrowserJson).

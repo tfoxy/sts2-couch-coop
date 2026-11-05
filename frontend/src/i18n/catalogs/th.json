@@ -109,7 +109,6 @@
   "settings.newRendererCoreLoadFailed": "โหลดตัวเรนเดอร์ใหม่ในหน้านี้ไม่ได้",
   "settings.newRendererNoWebgl2": "เบราว์เซอร์นี้ใช้ตัวเรนเดอร์ใหม่ไม่ได้",
   "settings.newRendererHostView": "ใช้ไม่ได้ขณะดูเกมของโฮสต์เอง",
-  "settings.newRendererLanOff": "โฮสต์นี้ปิดการสตรีมตัวเรนเดอร์ใหม่ไปยังอุปกรณ์อื่นไว้ โฮสต์เปิดได้ด้วย COUCHCOOP_RENDER_STREAM_LAN=1 ระหว่างนี้ให้เปิดมิเรอร์บนคอมพิวเตอร์โฮสต์",
   "settings.newRendererNeedsProxy": "หน้านี้เล่นสตรีมตัวเรนเดอร์ใหม่ของโฮสต์ไม่ได้ เปิดลิงก์ HTTPS ของโฮสต์ใน Chrome หรือ Edge หรือเปิดมิเรอร์บนคอมพิวเตอร์โฮสต์",
   "settings.newRendererNotStreaming": "ที่นั่งของผู้เล่นคนนี้ไม่ได้สตรีมอยู่ จะมีผลเมื่อที่นั่งเริ่มทำงานครั้งถัดไป",
   "settings.newRendererStopped": "ตัวเรนเดอร์ใหม่หยุดทำงาน: {reason}",

@@ -133,10 +133,8 @@ internal static class StreamingSeatLaunch
     /// </summary>
     /// <param name="NetModule">The net module beside the capture (<see cref="NetModuleFileName"/>), or null: the seat then
     /// serves WebSocket only.</param>
-    /// <param name="Lan">The host's <see cref="StreamingSeatLan.EnvironmentVariable"/>: the hub also serves its LAN pages.</param>
     internal sealed record Config(
-        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null,
-        bool Lan = false);
+        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null);
 
     /// <summary>
     /// A LAN launch (<see cref="StreamingSeatLan"/>): the hub on every interface, and wss through this PEM pair when the
@@ -254,8 +252,7 @@ internal static class StreamingSeatLaunch
 
         var maxWidth = ParseMaxPresentationWidth(
             System.Environment.GetEnvironmentVariable(MaxPresentationWidthEnvironmentVariable), out var warning);
-        var lan = StreamingSeatLan.IsEnabled(System.Environment.GetEnvironmentVariable(StreamingSeatLan.EnvironmentVariable));
-        return result with { Config = config with { MaxPresentationWidth = maxWidth, Lan = lan }, Warning = warning };
+        return result with { Config = config with { MaxPresentationWidth = maxWidth }, Warning = warning };
     }
 
     /// <summary>
@@ -279,9 +276,7 @@ internal static class StreamingSeatLaunch
 
     /// <summary>
     /// The page origins the hub accepts: this host's own loopback page (both spellings a player can type), plus
-    /// the dev extras. A LAN or HTTPS page is deliberately absent: it could not reach a loopback hub, so the seat
-    /// withholds the descriptor from it and the page shows "lan-off". The host's LAN setting adds them
-    /// (<see cref="StreamingSeatLan.PageOrigins"/>).
+    /// the dev extras. The host's LAN pages are added at launch (<see cref="StreamingSeatLan.PageOrigins"/>).
     /// </summary>
     internal static IReadOnlyList<string> AllowedOrigins(int hostBrowserPort, string? extraOrigins)
     {
@@ -313,9 +308,10 @@ internal static class StreamingSeatLaunch
     /// <see cref="PresentationHeight"/>.
     /// </param>
     /// <param name="lan">
-    /// Null: the hub listens on loopback only (the default). Set: it listens on every interface under
-    /// <c>GRC_LIVE_EXPOSE=lan</c> (token auth and the origin list are already there), with wss through the pair when
-    /// one is given. The caller has put the LAN page origins into <paramref name="allowedOrigins"/>.
+    /// Set (what the host always launches): the hub listens on every interface under <c>GRC_LIVE_EXPOSE=lan</c> (token
+    /// auth and the origin list are already there), with wss through the pair when one is given, beside plain ws for
+    /// the host's http pages. The caller has put the LAN page origins into <paramref name="allowedOrigins"/>. Null: the
+    /// hub listens on loopback only.
     /// </param>
     internal static IReadOnlyDictionary<string, string> Environment(
         Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins,
@@ -382,6 +378,9 @@ internal static class StreamingSeatLaunch
             {
                 environment["GRC_LIVE_TLS_CERT"] = certificate;
                 environment["GRC_LIVE_TLS_KEY"] = key;
+                // The host's plain-http LAN pages stream over plain ws, as their own socket to the host already is;
+                // without this the capture refuses LAN plaintext once it has a certificate (tls-required).
+                environment[Protocol.StreamingSeatDescriptor.LanPlaintextEnvironmentVariable] = "allow";
             }
         }
 

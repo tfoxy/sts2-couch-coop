@@ -7,12 +7,10 @@
 //                  is `renderStreamCoreCause` (a release always carries a verified core, so there only the load fails)
 //   no-webgl2      this browser gives no WebGL2 context
 //   host-view      watching the host's own game (`directView`), which never streams
-//   lan-off        a page that is not the host's loopback page, on a host whose "Stream the new renderer over the LAN"
-//                  setting is off (the host session carries no `renderStreamLan` offer)
 //   needs-proxy    no carrier the seat offers can work on this page (`lanCarrierUsable` / `endpointCarrierUsable`):
-//                  an https page cannot use plain ws, WebTransport needs a secure context and the API, and a host
-//                  with a certificate refuses plain ws from the LAN. A plain-http LAN page runs the client (CAR9:
-//                  godot-scene-web's loader hashes the core without `crypto.subtle` there) and streams over ws.
+//                  an https page cannot use plain ws, and WebTransport needs a secure context and the API. A
+//                  plain-http LAN page runs the client (CAR9: godot-scene-web's loader hashes the core without
+//                  `crypto.subtle` there) and streams over plain ws, which the seat always serves to LAN pages.
 //   not-streaming  joined, but this seat has no descriptor; it applies when the seat next starts
 //   seat-restarting / seat-restart-pending / seat-restart-refused / seat-restart-failed
 //                  in place of not-streaming, what the host did with this viewer's mid-session request to restart
@@ -42,7 +40,7 @@ import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/r
  * freed); a visible tab then reconnects as a fresh join. */
 export const RENDER_STREAM_HIDDEN_DISPOSE_MS = 60_000;
 
-export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "lan-off" | "needs-proxy"
+export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "needs-proxy"
   | "not-streaming"
   | "seat-restarting" | "seat-restart-pending" | "seat-restart-refused" | "seat-restart-failed";
 
@@ -75,13 +73,14 @@ export function parseSeatRestart(raw: unknown): RenderStreamSeatRestart | null {
 }
 export type RenderStreamEndpointSource = "qa-override" | "session";
 
-/** The host session's `renderStreamLan` (CAR7b): what its streaming seat offers a LAN page. Absent: the setting is off. */
+/** The host session's `renderStreamLan` (CAR7b): what its streaming seat offers a LAN page. Absent: the host has no
+ * capture, so no seat of it streams. */
 export interface RenderStreamLanOffer {
   /** The seat serves WebTransport (self-signed, pinned by hash: any secure-context page). */
   webTransport: boolean;
   /** The seat serves wss with a host certificate that names this page's host. */
   tls: boolean;
-  /** The seat serves plain ws to LAN pages: the host has no certificate (with one, the hub refuses LAN plaintext). */
+  /** The seat serves plain ws to LAN pages (always, beside wss when the host has a certificate). */
   ws: boolean;
 }
 
@@ -135,7 +134,7 @@ export interface RenderStreamAvailabilityInputs {
   sessionEndpoint: RenderStreamEndpoint | null;
   /** Whether this page is on a loopback http origin, which a streaming seat always serves. */
   pageLoopback: boolean;
-  /** The host's LAN offer (CAR7b), null while its setting is off. Defaults to null. */
+  /** The host's LAN offer (CAR7b), null when the host has no capture. Defaults to null. */
   lanOffer?: RenderStreamLanOffer | null;
   /** What this page can open. Defaults to a loopback http page's facts. */
   page?: RenderStreamPageFacts;
@@ -165,10 +164,7 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
       ? { available: true, reason: null, endpoint: inputs.sessionEndpoint, source: "session" }
       : unavailable("needs-proxy");
   }
-  if (!inputs.pageLoopback) {
-    if (!inputs.lanOffer) return unavailable("lan-off");
-    if (!lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
-  }
+  if (!inputs.pageLoopback && inputs.lanOffer && !lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
   return unavailable(inputs.seatRestart ? SEAT_RESTART_REASONS[inputs.seatRestart.state] : "not-streaming");
 }
 
@@ -257,7 +253,7 @@ export const renderStreamContext = reactive({
   seatJoined: false,
   /** The host session's `rendererSeat` (MirrorApp writes it). */
   seatRestart: null as RenderStreamSeatRestart | null,
-  /** The host session's `renderStreamLan` (MirrorApp writes it): null while the host's LAN setting is off. */
+  /** The host session's `renderStreamLan` (MirrorApp writes it): null when the host has no capture. */
   lanOffer: null as RenderStreamLanOffer | null,
   /** This page's carrier facts; read from the browser when left `undefined` (specs pin them). */
   page: undefined as RenderStreamPageFacts | undefined

@@ -208,9 +208,6 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     }, "This dev build's new renderer is out of date. On the host, run scripts/build-local-mod.sh to rebuild it."],
     ["no-webgl2", () => { renderStreamContext.webgl2 = false; }, "This browser can't run the new renderer."],
     ["host-view", () => { renderStreamContext.directView = true; }, "Not available when watching the host's own game."],
-    ["lan-off", () => { mirrorSettings.renderStreamUrl = null; renderStreamContext.pageLoopback = false; },
-      "Streaming the new renderer to other devices is off on this host. The host can turn it on with "
-      + "COUCHCOOP_RENDER_STREAM_LAN=1; until then, open the mirror on the host computer."],
     ["needs-proxy", () => {
       mirrorSettings.renderStreamUrl = null;
       renderStreamContext.pageLoopback = false;
