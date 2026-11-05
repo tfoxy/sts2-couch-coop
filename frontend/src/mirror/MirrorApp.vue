@@ -25,7 +25,6 @@ import {
   currentJoinRendererRequest,
   streamSeatAspect,
   parseLanOffer,
-  parseSeatRestart,
   renderStreamAvailability,
   renderStreamContext,
   sessionRenderStreamEndpoint,
@@ -260,9 +259,6 @@ const joinSession = shallowRef<BrowserSessionEnvelope | null>(null);
 // keeps sending it to the gated socket we hold open, and it is the one source of the static background a seat
 // viewer shows (see `seatViewBackground`).
 const hostSession = shallowRef<BrowserSessionEnvelope | null>(null);
-// The latest `session` from a SEAT socket (null while the active socket is the host's, or the seat has not spoken yet).
-// MIR-4: the restarted seat's first session is what ends "restarting" on the page.
-const seatViewSession = shallowRef<BrowserSessionEnvelope | null>(null);
 // True only after the host assigns us a headless game instance and we've reconnected to it.
 // Prevents the host's scene stream from showing before the player has joined.
 const joined = ref(false);
@@ -657,7 +653,6 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
         c.sendSceneAck();
       }
       joinSession.value = c.session;
-      seatViewSession.value = c === hostClient ? null : c.session;
       // Only a live session from the active client resolves a view. The active-client guard above excludes stale
       // redirect callbacks; the connected/session checks (inside) keep disconnect and unmount from releasing a
       // pending Neow gate.
@@ -997,50 +992,17 @@ watch(
   },
   { immediate: true }
 );
-// TURNING IT ON AFTER THE SEAT STARTED (MIR-4, handoff-mirror-new-renderer.md §8). The seat's role is fixed at its
-// launch, so the host restarts this viewer's own seat as the streaming seat — at once in a lobby, staged until the run
-// ends mid-run — and says what it did in its own `session` (`rendererSeat`). The panel's setter is the only writer of
-// `renderer` once mounted, so a change seen here while joined is the viewer's. The request goes on the HOST socket,
-// which owns the seat; "stream" only when this page could draw the stream and the seat does not stream yet, "mirror"
-// to withdraw a staged request (a running seat is never restarted for turning it off).
+// The page follows this viewer's own seat once it runs (renderStreamAvailability.ts header): the choice rode the join.
 watch(
   () => [joined.value, directView.value] as const,
   ([isJoined, isDirect]) => { renderStreamContext.seatJoined = isJoined && !isDirect; },
   { immediate: true }
 );
+// CAR7b: the host's LAN offer, on every host session while it has a capture (absent means none). Read before a join
+// too: it decides whether the checkbox can be switched on and whether the join asks for the stream.
 watch(
-  () => mirrorSettings.renderer,
-  (renderer) => {
-    if (!joined.value || directView.value || hostClient === activeClient) return;
-    if (renderer === "stream") {
-      if (renderStreamContext.sessionEndpoint !== null || currentJoinRendererRequest() !== "stream") return;
-      // At this page's aspect when Widescreen stretch is on (PRES-A); read now, never re-sent on a resize (PRES-R).
-      hostClient.sendRendererRequest("stream", streamSeatAspect(mirrorSettings));
-    } else {
-      hostClient.sendRendererRequest("mirror");
-    }
-  }
-);
-// The host's answer lives on its session. Read while joined, or whenever the host says something: the host socket is
-// replaced when the restarted seat's socket drops (the reconnect re-joins), and a new socket's pre-join sessions —
-// which carry nothing because no seat is bound to them yet — must not wipe a "restarting" the viewer is waiting on.
-// Nor may the re-join's own reply: the host clears the request as soon as the restarted seat is ready, which is
-// before this page has heard from that seat, so "restarting" stands until the seat's own session arrives (with the
-// descriptor, which switches the stream on; or without it, and then "not streaming" is the truth).
-watch(
-  () => [hostSession.value, joined.value, seatViewSession.value] as const,
-  ([session, isJoined, seatSession]) => {
-    if (session === null) return;
-    // CAR7b: the host's LAN offer, on every host session while it has a capture (absent means none).
-    renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan);
-    const restart = parseSeatRestart(session.rendererSeat);
-    if (restart !== null) {
-      renderStreamContext.seatRestart = restart;
-    } else if (isJoined) {
-      const waiting = renderStreamContext.seatRestart?.state === "restarting" && seatSession === null;
-      if (!waiting) renderStreamContext.seatRestart = null;
-    }
-  },
+  hostSession,
+  (session) => { if (session !== null) renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan); },
   { immediate: true }
 );
 // The stage's one ask after `unauthorized`: this seat's current descriptor, in a fresh `session`.
@@ -1528,7 +1490,6 @@ function handleActiveClientDrop(): void {
   directView.value = false;
   pendingName.value = null;
   joinSession.value = null;
-  seatViewSession.value = null;
   hostSession.value = null;
   // Re-run the host handshake to obtain a current view route. The host may retain this seat during its reconnect
   // grace or the run, in which case the next join reuses the same live game.

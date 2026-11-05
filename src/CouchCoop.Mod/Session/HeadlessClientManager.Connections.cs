@@ -131,7 +131,7 @@ public sealed partial class HeadlessClientManager
     /// </param>
     public async Task<int?> EnsureHeadlessAsync(Guid sessionId, string? displayName, CancellationToken ct,
         bool allowNewSlot = true, Action<ulong, string?>? onSlotBound = null, ulong? targetNetId = null,
-        JoinSeatFacts? hostFacts = null, bool wantsStreamingSeat = false, bool relaunch = false,
+        JoinSeatFacts? hostFacts = null, bool wantsStreamingSeat = false,
         double? streamingAspect = null)
     {
         Task[] cleanup;
@@ -184,7 +184,6 @@ public sealed partial class HeadlessClientManager
                 routeMode,
                 targetNetId,
                 wantsStreamingSeat,
-                relaunch,
                 streamingAspect);
         }
         catch

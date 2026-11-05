@@ -42,7 +42,7 @@ public sealed record BrowserJoinRequestEnvelope(
     JsonElement? Aspect = null);
 
 /// <summary>
-/// The <c>aspect</c> a page sends with its streaming-seat request (<c>join</c> and <c>set-renderer</c>): a finite JSON
+/// The <c>aspect</c> a page sends with its streaming-seat request (<c>join</c>): a finite JSON
 /// number, or null. The range is the host's to judge (<c>StreamingSeatLaunch.PresentationWidth</c>).
 /// </summary>
 internal static class BrowserAspect

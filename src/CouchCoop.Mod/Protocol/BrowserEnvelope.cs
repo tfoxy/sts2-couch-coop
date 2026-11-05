@@ -84,10 +84,6 @@ public sealed record BrowserEnvelope(
     // and only on a connection whose page Origin the hub allows (Session/StreamingSeatDescriptor.cs). The token is a
     // credential: it travels on this already-authorized socket only, never in a log line or a URL.
     BrowserRenderStreamDto? RenderStream = null,
-    // "Use new renderer (Beta)" turned on mid-session (MIR-4): what the HOST did with this viewer's request to restart
-    // their seat as the streaming seat. Only the host's own connection for a bound seat carries it, and only while
-    // there is something to say (Session/HeadlessClientManager.StreamingRestart.cs); null (omitted) otherwise.
-    BrowserRendererSeatDto? RendererSeat = null,
     // The new renderer on the LAN (CAR7b): on the HOST's connections only, while a capture is configured, what its
     // streaming seat would offer this page, so the page can tell whether it could use the stream before it joins.
     // Null (omitted) with no capture.
@@ -96,17 +92,9 @@ public sealed record BrowserEnvelope(
 // The `renderStreamLan` wire shape: { "webTransport": true, "tls": true, "ws": false } (camelCased by BrowserJson).
 // `webTransport`: the seat serves WebTransport (any secure-context page can use it). `tls`: the seat serves wss with a
 // certificate of this host's (Direct-IP HTTPS or the secure origin) that names THIS page's host. `ws`: the seat serves
-// plain ws to LAN pages, which it does exactly when the host has no certificate at all; with one it refuses LAN
-// plaintext, so a plain-http page on a host name the certificate does not name (`tls` and `ws` both false) has no
-// socket carrier. A page reading a host without `ws` (before CAR9) takes `tls: false` as plain ws.
+// plain ws to LAN pages, which it always does (beside wss when the host has a certificate). A page reading a host
+// without `ws` (before CAR9) takes `tls: false` as plain ws.
 public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls, bool Ws);
-
-// The `rendererSeat` wire shape: { "state": "restarting" | "pending" | "refused" | "failed", "reason": "<code>",
-// "detail": "<English evidence>" } (camelCased by BrowserJson; reason and detail omitted when null).
-public sealed record BrowserRendererSeatDto(
-    string State,
-    string? Reason = null,
-    string? Detail = null);
 
 // The `renderStream` wire shape, @godot-scene-web/render-stream-client's endpoint descriptor:
 // { "url": "ws://127.0.0.1:13366/render-stream", "resourceBase": "http://127.0.0.1:13366", "token": "<64 hex>",

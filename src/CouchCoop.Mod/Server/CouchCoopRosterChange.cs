@@ -32,14 +32,4 @@ public static class CouchCoopRosterChange
         ArgumentNullException.ThrowIfNull(roster);
         return roster.Run is null && roster.Lobby is null;
     }
-
-    /// <summary>
-    /// True on a lobby screen with no run behind it (character select, the load-saved-run lobby): where a seat may be
-    /// launched again, so a streaming-seat restart staged during a run can start.
-    /// </summary>
-    public static bool IsLobbyWithoutRun(RosterFacts roster)
-    {
-        ArgumentNullException.ThrowIfNull(roster);
-        return roster.Run is null && roster.Lobby is not null;
-    }
 }

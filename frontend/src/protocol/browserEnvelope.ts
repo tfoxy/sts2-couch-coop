@@ -211,10 +211,6 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // and is validated by it before use (mirror/renderStreamAvailability.ts). The token is a credential: never log
   // it, never put it in a URL.
   renderStream?: BrowserRenderStreamDescriptor | null;
-  // "Use new renderer (Beta)" turned on mid-session (MIR-4): on the HOST's connection only, what became of this
-  // viewer's request to restart their seat as the streaming seat. Absent when there is nothing to say. Parsed where
-  // it is used (renderStreamAvailability's parseSeatRestart).
-  rendererSeat?: unknown;
   // The new renderer on the LAN (CAR7b): on the HOST's connection only, while the host has a capture, what its
   // streaming seat offers this page ({ webTransport, tls, ws }). Absent with no capture. Parsed where it is used
   // (renderStreamAvailability's parseLanOffer).
@@ -592,7 +588,6 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       // anything the client could not connect with.
       renderStream: value.renderStream !== null && typeof value.renderStream === "object"
         ? value.renderStream as BrowserRenderStreamDescriptor : null,
-      rendererSeat: value.rendererSeat !== null && typeof value.rendererSeat === "object" ? value.rendererSeat : null,
       renderStreamLan: value.renderStreamLan !== null && typeof value.renderStreamLan === "object" ? value.renderStreamLan : null,
       scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };

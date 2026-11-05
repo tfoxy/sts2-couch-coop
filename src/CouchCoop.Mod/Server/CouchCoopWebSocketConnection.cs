@@ -990,44 +990,6 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
-                if (string.Equals(type, "set-renderer", StringComparison.Ordinal))
-                {
-                    // `{type:"set-renderer", renderer:"stream"|"mirror", aspect?}`: the viewer switched "Use new renderer
-                    // (Beta)" after their seat started (MIR-4). On the host, for this session's own seat only: ON
-                    // restarts it as the streaming seat (or stages that mid-run), OFF withdraws a staged request. The
-                    // answer is this connection's next `session` (`rendererSeat`), sent now and on every change.
-                    // `aspect` (only with "stream", only while the page's Widescreen stretch is on) sets the seat's
-                    // presentation width (PRES-A).
-                    var renderer = document.RootElement.TryGetProperty("renderer", out var rendererElement)
-                        && rendererElement.ValueKind == JsonValueKind.String ? rendererElement.GetString() : null;
-                    var aspect = BrowserAspect.Read(document.RootElement.TryGetProperty("aspect", out var aspectElement)
-                        ? aspectElement : null);
-                    if (_headlessManager is { } seats && renderer is "stream" or "mirror")
-                    {
-                        if (renderer == "stream")
-                        {
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    await seats.RequestStreamingSeatAsync(session.Id, aspect, CancellationToken.None).ConfigureAwait(false);
-                                }
-                                catch (Exception exception)
-                                {
-                                    CouchCoopLog.Stderr($"streaming seat request failed: {exception.GetType().Name}: {exception.Message}");
-                                }
-                                await ResendSessionAsync(null, CancellationToken.None).ConfigureAwait(false);
-                            }, CancellationToken.None);
-                        }
-                        else
-                        {
-                            seats.CancelStreamingSeatRequest(session.Id);
-                            await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                    continue;
-                }
-
                 if (string.Equals(type, "session-refresh", StringComparison.Ordinal))
                 {
                     // `{type:"session-refresh"}`: send this connection's `session` again. The new renderer asks once
@@ -1914,26 +1876,15 @@ public sealed class CouchCoopWebSocketConnection
         => string.Equals(envelope.Type, "session", StringComparison.Ordinal)
             && StreamingSeatDescriptor.ForOrigin(_requestOrigin) is { } descriptor
                 ? envelope with { RenderStream = descriptor }
-                : WithRendererSeat(envelope);
+                : WithRenderStreamLan(envelope);
 
-    // On the HOST, the session of a viewer whose seat has a renderer request in hand carries what became of it (MIR-4),
-    // and every host session carries the LAN streaming offer while a capture is configured (CAR7b).
-    private BrowserEnvelope WithRendererSeat(BrowserEnvelope envelope)
-    {
-        if (!string.Equals(envelope.Type, "session", StringComparison.Ordinal) || _headlessManager is not { } manager)
-        {
-            return envelope;
-        }
-
-        if (manager.RenderStreamLanOffer(_requestOrigin) is { } offer)
-        {
-            envelope = envelope with { RenderStreamLan = new BrowserRenderStreamLanDto(offer.WebTransport, offer.Tls, offer.Ws) };
-        }
-
-        return _session is { } session && manager.SeatRendererStateFor(session.Id) is { } seat
-            ? envelope with { RendererSeat = new BrowserRendererSeatDto(seat.State, seat.Reason, seat.Detail) }
-            : envelope;
-    }
+    // On the HOST, every session carries the LAN streaming offer while a capture is configured (CAR7b): before a join
+    // it decides whether the page can choose the new renderer and whether its join asks for the stream.
+    private BrowserEnvelope WithRenderStreamLan(BrowserEnvelope envelope)
+        => string.Equals(envelope.Type, "session", StringComparison.Ordinal) && _headlessManager is { } manager
+            && manager.RenderStreamLanOffer(_requestOrigin) is { } offer
+                ? envelope with { RenderStreamLan = new BrowserRenderStreamLanDto(offer.WebTransport, offer.Tls, offer.Ws) }
+                : envelope;
 
     private Task SendResultAsync(BrowserActionResultEnvelope envelope)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));

@@ -13,13 +13,13 @@ import {
   type MirrorSettingsStorage
 } from "@/mirror/mirrorSettings";
 import {
-  canRequestStreamingSeat,
   computeRenderStreamAvailability,
   isLoopbackHttpPage,
   joinRendererRequest,
-  parseSeatRestart,
   qaRenderStreamEndpoint,
+  rendererLockedToSeat,
   renderStreamAvailability,
+  renderStreamChoosable,
   renderStreamContext,
   resolveRuntimeRenderer,
   sessionRenderStreamEndpoint,
@@ -30,8 +30,7 @@ import {
   stopRenderStream,
   streamSeatAspect,
   syncRuntimeRenderer,
-  type RenderStreamAvailabilityInputs,
-  type RenderStreamSeatRestart
+  type RenderStreamAvailabilityInputs
 } from "@/mirror/renderStreamAvailability";
 
 // MIR-2's unit checks (handoff-mirror-new-renderer.md §6): the `renderer` key persists and `runtimeRenderer` does
@@ -196,43 +195,35 @@ describe("renderStreamAvailability", () => {
     expect(reason({})).toBeNull();
   });
 
-  it("puts the host's answer to a mid-session restart in place of not-streaming (MIR-4)", () => {
-    const withRestart = (state: RenderStreamSeatRestart["state"], over: Partial<RenderStreamAvailabilityInputs> = {}) =>
-      computeRenderStreamAvailability({ ...base, seatRestart: { state, reason: null, detail: null }, ...over }).reason;
-    expect(withRestart("restarting")).toBe("seat-restarting");
-    expect(withRestart("pending")).toBe("seat-restart-pending");
-    expect(withRestart("refused")).toBe("seat-restart-refused");
-    expect(withRestart("failed")).toBe("seat-restart-failed");
-    // Everything that outranks not-streaming outranks the restart too, and the seat's descriptor wins over a stale one.
-    expect(withRestart("restarting", { directView: true })).toBe("host-view");
+  it("locks the checkbox to a joined seat, unless a QA endpoint brings its own hub", () => {
+    const at = (over: Partial<RenderStreamAvailabilityInputs>) => computeRenderStreamAvailability({ ...base, ...over });
     const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
       token: "a".repeat(64), protocol: 12 });
-    expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: seat,
-      seatRestart: { state: "restarting", reason: null, detail: null } })).toMatchObject({ available: true, source: "session" });
+    expect(rendererLockedToSeat(at({}), true)).toBe(true);
+    expect(rendererLockedToSeat(at({ sessionEndpoint: seat }), true)).toBe(true);
+    expect(rendererLockedToSeat(at({}), false)).toBe(false);
+    expect(rendererLockedToSeat(at({ qaEndpoint: qa }), true)).toBe(false);
   });
 
-  it("parses the host session's rendererSeat, refusing what it does not understand", () => {
-    expect(parseSeatRestart({ state: "failed", reason: "capture-not-started", detail: "no hub" }))
-      .toEqual({ state: "failed", reason: "capture-not-started", detail: "no hub" });
-    expect(parseSeatRestart({ state: "pending" })).toEqual({ state: "pending", reason: null, detail: null });
-    expect(parseSeatRestart(null)).toBeNull();
-    expect(parseSeatRestart(undefined)).toBeNull();
-    expect(parseSeatRestart({ state: "exploded" })).toBeNull();
-    expect(parseSeatRestart("restarting")).toBeNull();
-  });
-
-  it("lets a joined seat that does not stream ask for a restart, and only then", () => {
-    const at = (over: Partial<RenderStreamAvailabilityInputs>) => computeRenderStreamAvailability({ ...base, ...over });
-    expect(canRequestStreamingSeat(at({}), true)).toBe(true);
-    expect(canRequestStreamingSeat(at({}), false)).toBe(false);
-    expect(canRequestStreamingSeat(at({ seatRestart: { state: "refused", reason: "another-seat-streaming", detail: null } }), true)).toBe(true);
-    expect(canRequestStreamingSeat(at({ seatRestart: { state: "failed", reason: null, detail: null } }), true)).toBe(true);
-    expect(canRequestStreamingSeat(at({ seatRestart: { state: "restarting", reason: null, detail: null } }), true)).toBe(false);
-    expect(canRequestStreamingSeat(at({ seatRestart: { state: "pending", reason: null, detail: null } }), true)).toBe(false);
-    expect(canRequestStreamingSeat(at({ pageLoopback: false, lanOffer: { webTransport: false, tls: false, ws: true },
-      page: { https: true, secureContext: true, webTransport: true } }), true)).toBe(false);
-    expect(canRequestStreamingSeat(at({ directView: true }), true)).toBe(false);
-    expect(canRequestStreamingSeat(at({ webgl2: false }), true)).toBe(false);
+  it("can be chosen before a join exactly when the join would ask for the stream", () => {
+    const saved = mirrorSettings.renderer;
+    try {
+      Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: false,
+        page: { https: false, secureContext: false, webTransport: false } });
+      mirrorSettings.renderer = "mirror";
+      // A plain-http LAN page, before the host's offer arrives (or on a host with no capture): nothing to ask for.
+      expect(renderStreamChoosable.value).toBe(false);
+      renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
+      // The saved choice is off, and still the checkbox can be switched on: the question is what the join would do.
+      expect(renderStreamChoosable.value).toBe(true);
+      renderStreamContext.directView = true;
+      expect(renderStreamChoosable.value).toBe(false);
+      renderStreamContext.directView = false;
+      renderStreamContext.webgl2 = false;
+      expect(renderStreamChoosable.value).toBe(false);
+    } finally {
+      mirrorSettings.renderer = saved;
+    }
   });
 
   it("prefers the QA endpoint, then the seat's own descriptor", () => {
@@ -397,13 +388,24 @@ describe("renderStreamAvailability", () => {
     expect(isLoopbackHttpPage({ protocol: "https:", hostname: "127.0.0.1" })).toBe(false);
   });
 
-  it("runs the stream only for a saved choice, when available, until it stops", () => {
+  it("runs the stream for a QA endpoint only by the saved choice, when available, until it stops", () => {
     const yes = computeRenderStreamAvailability({ ...base, qaEndpoint: qa });
     const no = computeRenderStreamAvailability(base);
     expect(resolveRuntimeRenderer("stream", yes, null)).toBe("stream");
     expect(resolveRuntimeRenderer("mirror", yes, null)).toBe("mirror");
     expect(resolveRuntimeRenderer("stream", no, null)).toBe("mirror");
     expect(resolveRuntimeRenderer("stream", yes, "host-error: bye")).toBe("mirror");
+  });
+
+  it("follows the viewer's own streaming seat whatever the saved choice, until it stops", () => {
+    const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
+      token: "a".repeat(64), protocol: 12 });
+    const streaming = computeRenderStreamAvailability({ ...base, sessionEndpoint: seat });
+    expect(resolveRuntimeRenderer("mirror", streaming, null)).toBe("stream");
+    expect(resolveRuntimeRenderer("stream", streaming, null)).toBe("stream");
+    expect(resolveRuntimeRenderer("mirror", streaming, "live-connect-failed: never opened")).toBe("mirror");
+    // A seat started without the stream: the old renderer, whatever was saved.
+    expect(resolveRuntimeRenderer("stream", computeRenderStreamAvailability(base), null)).toBe("mirror");
   });
 
   it("promotes the live renderer when available, falls back on a stop, and keeps the saved choice", () => {

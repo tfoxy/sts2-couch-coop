@@ -13,7 +13,7 @@ import {
   type MirrorSettings
 } from "@/mirror/mirrorSettings";
 import type { MirrorLatency } from "@/mirror/mirrorClient";
-import { renderStreamContext, stopRenderStream } from "@/mirror/renderStreamAvailability";
+import { renderStreamContext, sessionRenderStreamEndpoint, stopRenderStream } from "@/mirror/renderStreamAvailability";
 
 // "Use new renderer (Beta)" in the panel (handoff-mirror-new-renderer.md §3 Q4, MIR-2's component checks): the
 // checkbox is first, every row the stream does not support yet is disabled and SHOWS its forced value, the
@@ -85,7 +85,7 @@ afterEach(() => {
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     renderStreamProtocol: 12, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
   Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null,
-    seatJoined: false, seatRestart: null, lanOffer: null, page: undefined });
+    seatJoined: false, sessionEndpoint: null, lanOffer: null, page: undefined });
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
@@ -215,8 +215,11 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
       renderStreamContext.page = { https: true, secureContext: true, webTransport: false };
     }, "This page can't run the host's new-renderer stream. Open the host's HTTPS link in Chrome or Edge, or the mirror "
       + "on the host computer."],
-    ["not-streaming", () => { mirrorSettings.renderStreamUrl = null; },
-      "This player's seat isn't streaming. It applies when the seat next starts."]
+    ["not-streaming (a LAN page on a host with no capture)", () => {
+      mirrorSettings.renderStreamUrl = null;
+      renderStreamContext.pageLoopback = false;
+      renderStreamContext.page = { https: false, secureContext: false, webTransport: false };
+    }, "This host isn't set up to stream the new renderer."]
   ])("shows the %s reason and disables the checkbox", async (_name, arrange, text) => {
     available();
     arrange();
@@ -229,56 +232,64 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY)).toBeNull();
   });
 
-  it("keeps a saved choice visible and clearable on a seat that does not stream", async () => {
-    mirrorSettings.renderer = "stream";
-    mountPanel();
-    await nextTick();
-    expect(el("mirror-renderer").checked).toBe(true);
-    expect(el("mirror-renderer").disabled).toBe(false);
-    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toContain("isn't streaming");
-    // Not streaming: the old renderer runs, so nothing is forced.
-    expect(el("mirror-stretch").disabled).toBe(false);
-    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
-    expect(mirrorSettings.renderer).toBe("mirror");
-  });
-
-  // MIR-4: on a joined seat that does not stream, the checkbox can be switched ON — that asks the host to restart the
-  // seat as the streaming seat (MirrorApp sends it) — and the reason line follows the host's answer.
-  it("can be switched on for a joined seat that does not stream, and says it restarts the seat", async () => {
-    renderStreamContext.seatJoined = true;
+  // The choice rides the join: before one, the checkbox can be switched on whenever the join would ask for the stream.
+  it("can be switched on in the name form, before any seat exists, and says it applies on joining", async () => {
     mountPanel();
     await nextTick();
     expect(el("mirror-renderer").disabled).toBe(false);
-    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toContain("restarts your player");
+    const applies = "Applies when you join: your player starts with the new renderer.";
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe(applies);
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
     expect(mirrorSettings.renderer).toBe("stream");
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}")).toEqual({ renderer: "stream" });
+    // Nothing to draw yet: the old renderer runs, so nothing is forced.
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
-    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
-      .toBe("This player's seat isn't streaming. It applies when the seat next starts.");
+    expect(el("mirror-stretch").disabled).toBe(false);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe(applies);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(mirrorSettings.renderer).toBe("mirror");
   });
 
-  it.each([
-    [{ state: "restarting", reason: null, detail: null }, "Restarting your player so it can stream…", false],
-    [{ state: "pending", reason: null, detail: null }, "Starts when the current run ends.", false],
-    [{ state: "refused", reason: "another-seat-streaming", detail: "Slot 3 streams." },
-      "Your player can't stream right now: another player's seat is streaming", true],
-    [{ state: "refused", reason: "no-capture", detail: null }, "Your player can't stream right now: this host isn't set up to stream", true],
-    [{ state: "failed", reason: "capture-not-started", detail: "no hub" },
-      "Couldn't restart your player to stream: the stream didn't start. It's back on the old renderer.", true],
-    [{ state: "failed", reason: "launch-failed", detail: "The game process did not start." },
-      "Couldn't restart your player to stream: The game process did not start. It's back on the old renderer.", true]
-  ] as const)("shows the host's answer %o", async (restart, text, canAskAgain) => {
+  it("can be switched on from a plain-http LAN page once the host offers the stream (CAR9)", async () => {
+    renderStreamContext.pageLoopback = false;
+    renderStreamContext.page = { https: false, secureContext: false, webTransport: false };
+    mountPanel();
+    await nextTick();
+    expect(el("mirror-renderer").disabled).toBe(true);
+    renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
+    await nextTick();
+    expect(el("mirror-renderer").disabled).toBe(false);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(mirrorSettings.renderer).toBe("stream");
+  });
+
+  it("is locked to a joined seat started without the stream, whatever was saved", async () => {
     renderStreamContext.seatJoined = true;
-    renderStreamContext.seatRestart = { ...restart };
     mirrorSettings.renderer = "stream";
     mountPanel();
     await nextTick();
+    expect(el("mirror-renderer").checked).toBe(false);
+    expect(el("mirror-renderer").disabled).toBe(true);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
+      .toBe("Your player's game started with the old renderer and keeps it while it runs.");
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    // The saved choice is untouched, for the next join.
+    expect(mirrorSettings.renderer).toBe("stream");
+  });
+
+  it("is locked on for a joined streaming seat, whatever was saved", async () => {
+    renderStreamContext.seatJoined = true;
+    renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+    mountPanel();
+    await nextTick();
     expect(el("mirror-renderer").checked).toBe(true);
-    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe(text);
-    // Off is always possible; on again only once the host has given up on the request.
+    expect(el("mirror-renderer").disabled).toBe(true);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
+      .toBe("Your player's game started with the new renderer and keeps it while it runs.");
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
     expect(mirrorSettings.renderer).toBe("mirror");
-    expect(el("mirror-renderer").disabled).toBe(!canAskAgain);
+    expect(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY)).toBeNull();
   });
 
   it("says the stream stopped, falls back, and Try again resumes it", async () => {

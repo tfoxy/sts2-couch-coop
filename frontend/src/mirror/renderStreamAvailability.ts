@@ -11,23 +11,22 @@
 //                  an https page cannot use plain ws, and WebTransport needs a secure context and the API. A
 //                  plain-http LAN page runs the client (CAR9: godot-scene-web's loader hashes the core without
 //                  `crypto.subtle` there) and streams over plain ws, which the seat always serves to LAN pages.
-//   not-streaming  joined, but this seat has no descriptor; it applies when the seat next starts
-//   seat-restarting / seat-restart-pending / seat-restart-refused / seat-restart-failed
-//                  in place of not-streaming, what the host did with this viewer's mid-session request to restart
-//                  their seat as the streaming seat (MIR-4, the host session's `rendererSeat`)
+//   not-streaming  no seat descriptor: before a join (the choice then rides the join), or a joined seat that was
+//                  started without the stream
 //
 // The ENDPOINT comes from the `session` envelope of this viewer's own seat (MIR-3: the host's streaming seat sends
 // it to a page origin its hub allows) or, for QA, from `?renderStream=` (source `qa-override`, info only).
 //
-// The join asks for a streaming seat (`renderer: "stream"`, `joinRendererRequest`) when the viewer chose the new
-// renderer and this page could run it. The host launches at most one per host, and only at a seat's start.
-// Turning the checkbox on AFTER the seat started asks the host to restart that seat as the streaming seat
-// (`{type:"set-renderer"}`, MirrorApp): at once in a lobby, staged until the run ends mid-run (handoff §8).
+// THE CHOICE RIDES THE JOIN. The join asks for a streaming seat (`renderer: "stream"`, `joinRendererRequest`) when
+// the viewer chose the new renderer and this page could run it; the host launches at most one per host, and only at
+// a seat's start. So the checkbox can be switched on before a join exactly when that join would ask
+// (`renderStreamChoosable`). Once this viewer's seat runs, the page follows THAT seat's renderer: the checkbox shows
+// it and is locked (`renderStreamLockedToSeat`), and a reused seat keeps its role, so it holds until the seat ends.
 //
-// The live renderer (`runtimeRenderer`) is derived, never chosen: `stream` exactly while the viewer's choice is
-// `stream`, the feature is available, and the stream has not stopped this session. A stopped stream falls back to
-// the old renderer with a status line, and the saved choice stays `stream` — the canvas stage's
-// `stage` / `runtimeStage` / `stageFailure` contract.
+// The live renderer (`runtimeRenderer`) is derived, never chosen: `stream` exactly while this viewer's own seat
+// streams (or, for a QA endpoint, while the viewer's choice is `stream`), the feature is available, and the stream
+// has not stopped this session. A stopped stream falls back to the old renderer with a status line, and the saved
+// choice stays — the canvas stage's `stage` / `runtimeStage` / `stageFailure` contract.
 
 import { computed, reactive } from "vue";
 
@@ -41,36 +40,8 @@ import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/r
 export const RENDER_STREAM_HIDDEN_DISPOSE_MS = 60_000;
 
 export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "needs-proxy"
-  | "not-streaming"
-  | "seat-restarting" | "seat-restart-pending" | "seat-restart-refused" | "seat-restart-failed";
+  | "not-streaming";
 
-/** The host session's `rendererSeat`: what became of this viewer's request to restart their seat as the streaming
- * seat. `reason` is a host code (`another-seat-streaming`, `no-capture`, `capture-not-started`, …); `detail` English
- * evidence for the host's report, shown only when the code is not one this page has a sentence for. */
-export interface RenderStreamSeatRestart {
-  state: "restarting" | "pending" | "refused" | "failed";
-  reason: string | null;
-  detail: string | null;
-}
-
-const SEAT_RESTART_REASONS: Record<RenderStreamSeatRestart["state"], RenderStreamUnavailableReason> = {
-  restarting: "seat-restarting",
-  pending: "seat-restart-pending",
-  refused: "seat-restart-refused",
-  failed: "seat-restart-failed"
-};
-
-/** The `rendererSeat` field of a host `session`, or null when absent or not understood. */
-export function parseSeatRestart(raw: unknown): RenderStreamSeatRestart | null {
-  if (raw === null || typeof raw !== "object") return null;
-  const value = raw as { state?: unknown; reason?: unknown; detail?: unknown };
-  if (typeof value.state !== "string" || !(value.state in SEAT_RESTART_REASONS)) return null;
-  return {
-    state: value.state as RenderStreamSeatRestart["state"],
-    reason: typeof value.reason === "string" ? value.reason : null,
-    detail: typeof value.detail === "string" ? value.detail : null
-  };
-}
 export type RenderStreamEndpointSource = "qa-override" | "session";
 
 /** The host session's `renderStreamLan` (CAR7b): what its streaming seat offers a LAN page. Absent: the host has no
@@ -138,8 +109,6 @@ export interface RenderStreamAvailabilityInputs {
   lanOffer?: RenderStreamLanOffer | null;
   /** What this page can open. Defaults to a loopback http page's facts. */
   page?: RenderStreamPageFacts;
-  /** What the host did with a mid-session request to restart this viewer's seat as the streaming seat (MIR-4). */
-  seatRestart?: RenderStreamSeatRestart | null;
 }
 
 export type RenderStreamAvailability =
@@ -165,17 +134,15 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
       : unavailable("needs-proxy");
   }
   if (!inputs.pageLoopback && inputs.lanOffer && !lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
-  return unavailable(inputs.seatRestart ? SEAT_RESTART_REASONS[inputs.seatRestart.state] : "not-streaming");
+  return unavailable("not-streaming");
 }
 
 /**
- * Whether switching the checkbox ON would ask the host to restart this viewer's seat as the streaming seat: a joined
- * seat (not the host's own game) that does not stream, on a page that could draw the stream, with no restart already
- * running or staged. A refused or failed request may be asked again.
+ * Whether the checkbox is locked to this viewer's seat: it holds a seat of its own (joined, not the host's view), so
+ * the page follows that seat's renderer. A QA endpoint brings its own hub and stays switchable.
  */
-export function canRequestStreamingSeat(availability: RenderStreamAvailability, seatJoined: boolean): boolean {
-  return seatJoined && (availability.reason === "not-streaming" || availability.reason === "seat-restart-refused"
-    || availability.reason === "seat-restart-failed");
+export function rendererLockedToSeat(availability: RenderStreamAvailability, seatJoined: boolean): boolean {
+  return seatJoined && availability.source !== "qa-override";
 }
 
 /**
@@ -249,10 +216,8 @@ export const renderStreamContext = reactive({
   coreProblem: undefined as RenderStreamCoreProblem | null | undefined,
   webgl2: undefined as boolean | undefined,
   pageLoopback: undefined as boolean | undefined,
-  /** This viewer holds a seat of its own (joined, not the host's view): a restart can be asked for it. */
+  /** This viewer holds a seat of its own (joined, not the host's view): the page follows that seat's renderer. */
   seatJoined: false,
-  /** The host session's `rendererSeat` (MirrorApp writes it). */
-  seatRestart: null as RenderStreamSeatRestart | null,
   /** The host session's `renderStreamLan` (MirrorApp writes it): null when the host has no capture. */
   lanOffer: null as RenderStreamLanOffer | null,
   /** This page's carrier facts; read from the browser when left `undefined` (specs pin them). */
@@ -280,14 +245,13 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
   qaEndpoint: qaRenderStreamEndpoint(mirrorSettings),
   sessionEndpoint: renderStreamContext.sessionEndpoint,
   pageLoopback: renderStreamContext.pageLoopback ?? isLoopbackHttpPage(),
-  seatRestart: renderStreamContext.seatRestart,
   lanOffer: renderStreamContext.lanOffer,
   page: renderStreamContext.page ?? probePageFacts()
 }));
 
-/** `canRequestStreamingSeat` for this page, now. */
-export const streamingSeatRequestable = computed(() =>
-  canRequestStreamingSeat(renderStreamAvailability.value, renderStreamContext.seatJoined));
+/** `rendererLockedToSeat` for this page, now. */
+export const renderStreamLockedToSeat = computed(() =>
+  rendererLockedToSeat(renderStreamAvailability.value, renderStreamContext.seatJoined));
 
 /**
  * What a join asks the host for: `"stream"` (launch this viewer's seat as the streaming seat) when the viewer chose
@@ -309,8 +273,13 @@ export function joinRendererRequest(
 
 /** `joinRendererRequest` for this page, now. */
 export function currentJoinRendererRequest(settings: MirrorSettings = mirrorSettings): "stream" | undefined {
+  return currentJoinRendererRequestFor(settings.renderer, settings);
+}
+
+function currentJoinRendererRequestFor(renderer: MirrorSettings["renderer"],
+  settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): "stream" | undefined {
   return joinRendererRequest({
-    renderer: settings.renderer,
+    renderer,
     coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
     coreLoadFailed: renderStreamContext.coreLoadFailed,
     webgl2: renderStreamContext.webgl2 ?? probeWebgl2(),
@@ -320,6 +289,14 @@ export function currentJoinRendererRequest(settings: MirrorSettings = mirrorSett
     page: renderStreamContext.page ?? probePageFacts()
   });
 }
+
+/**
+ * Whether the checkbox can be switched ON for this page before a join: the join would then ask for the stream
+ * (`joinRendererRequest` with the choice on), or a QA endpoint brings its own. Not on the host's own view.
+ */
+export const renderStreamChoosable = computed(() => !renderStreamContext.directView
+  && (renderStreamAvailability.value.source === "qa-override"
+    || currentJoinRendererRequestFor("stream", mirrorSettings) === "stream"));
 
 /** The box whose aspect `streamSeatAspect` reports: width and height in CSS pixels. */
 export interface StreamBoxSize { width: number; height: number }
@@ -354,11 +331,12 @@ export function streamSeatAspect(
   return Number.isFinite(aspect) && aspect > 0 ? aspect : undefined;
 }
 
-/** The rule for the live renderer (see the header). */
+/** The rule for the live renderer (see the header): this viewer's own seat decides; a QA endpoint, the choice. */
 export function resolveRuntimeRenderer(
   renderer: MirrorSettings["renderer"], availability: RenderStreamAvailability, stopped: string | null
 ): MirrorSettings["runtimeRenderer"] {
-  return renderer === "stream" && availability.available && stopped === null ? "stream" : "mirror";
+  const wanted = availability.source === "session" || renderer === "stream";
+  return wanted && availability.available && stopped === null ? "stream" : "mirror";
 }
 
 /** Re-derive `runtimeRenderer` (and the stream's protocol) after any input changed. */

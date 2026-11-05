@@ -31,8 +31,9 @@ import {
   renderStreamAvailability,
   renderStreamContext,
   renderStreamCoreCause,
+  renderStreamChoosable,
+  renderStreamLockedToSeat,
   retryRenderStream,
-  streamingSeatRequestable,
   syncRuntimeRenderer,
   type RenderStreamCoreCause,
   type RenderStreamUnavailableReason
@@ -104,23 +105,19 @@ const failureReason = computed(() => settings.stage === "canvas" && rendererRunt
 const audioUsesHttp = computed(() => hostBase().startsWith("http://"));
 const audioHelpText = computed(() => `${t("settings.help.audio")}${audioUsesHttp.value ? t("settings.help.audioHttp") : ""}`);
 
-// THE NEW-RENDERER CHECKBOX. It shows the SAVED choice (like Stage), and is the only writer of it. It can be
-// switched ON only while the feature is available; a saved `on` can always be switched off, so a viewer whose seat
-// does not stream is never stuck with a choice they cannot clear. What renders follows from the saved choice and
-// availability (syncRuntimeRenderer), so checking it while available is what starts the stream. It can ALSO be
-// switched on while this viewer's own seat runs without streaming (MIR-4): MirrorApp then asks the host to restart
-// that seat as the streaming seat, and the reason line follows the host's answer.
+// THE NEW-RENDERER CHECKBOX. The choice rides the join (renderStreamAvailability.ts header). Before a join it shows
+// the SAVED choice (like Stage) and is the only writer of it: it can be switched ON exactly when the join would then
+// ask for the stream (`renderStreamChoosable`), and a saved `on` can always be switched off. Once this viewer's seat
+// runs it shows THAT seat's renderer (on iff the seat sent a descriptor) and is locked: the seat keeps its renderer
+// while it runs. The saved choice is left as it was, for the next join.
 const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/i18n").MessageKey> = {
   // Refined by its cause below (CORE_CAUSE_KEYS); this is the load-failure sentence.
   "core-build": "settings.newRendererCoreLoadFailed",
   "no-webgl2": "settings.newRendererNoWebgl2",
   "host-view": "settings.newRendererHostView",
   "needs-proxy": "settings.newRendererNeedsProxy",
-  "not-streaming": "settings.newRendererNotStreaming",
-  "seat-restarting": "settings.newRendererSeatRestarting",
-  "seat-restart-pending": "settings.newRendererSeatRestartPending",
-  "seat-restart-refused": "settings.newRendererSeatRestartRefused",
-  "seat-restart-failed": "settings.newRendererSeatRestartFailed"
+  // Refined below: before a join, and for a seat started with the stream.
+  "not-streaming": "settings.newRendererNotStreaming"
 };
 // `core-build` says what is wrong with the core and, for a dev build, what fixes it. A release always carries a
 // verified core (scripts/verify-release-archive.sh), so a player only ever sees the load failure.
@@ -130,16 +127,10 @@ const CORE_CAUSE_KEYS: Record<RenderStreamCoreCause, import("@/i18n").MessageKey
   unverified: "settings.newRendererCoreUnverified",
   "load-failed": "settings.newRendererCoreLoadFailed"
 };
-// The host's refusal/failure codes this page has its own sentence for; any other shows the host's English detail.
-const SEAT_RESTART_CAUSE_KEYS: Record<string, import("@/i18n").MessageKey> = {
-  "another-seat-streaming": "settings.newRendererAnotherSeatStreaming",
-  "no-capture": "settings.newRendererNoCapture",
-  "capture-not-started": "settings.newRendererCaptureNotStarted"
-};
 const newRenderer = computed<boolean>({
-  get: () => settings.renderer === "stream",
+  get: () => renderStreamLockedToSeat.value ? renderStreamContext.sessionEndpoint !== null : settings.renderer === "stream",
   set: (on) => {
-    if (on && !renderStreamAvailability.value.available && !streamingSeatRequestable.value) return;
+    if (renderStreamLockedToSeat.value || (on && !renderStreamChoosable.value)) return;
     settings.renderer = on ? "stream" : "mirror";
     persistMirrorSetting("renderer", settings.renderer);
     // A deliberate switch is a fresh start: forget this session's stop, then derive what renders.
@@ -147,26 +138,25 @@ const newRenderer = computed<boolean>({
     syncRuntimeRenderer(settings);
   }
 });
-const newRendererDisabled = computed(() => !renderStreamAvailability.value.available && settings.renderer !== "stream"
-  && !streamingSeatRequestable.value);
+const newRendererDisabled = computed(() => renderStreamLockedToSeat.value
+  || (!renderStreamChoosable.value && settings.renderer !== "stream"));
 const newRendererReason = computed(() => {
   const reason = renderStreamAvailability.value.reason;
+  if (renderStreamLockedToSeat.value) {
+    // The seat decides: streaming (no reason) or started without the stream (not-streaming). A reason that outranks
+    // not-streaming still says why this page cannot draw what the seat streams.
+    if (reason === null) return t("settings.newRendererSeatLocked");
+    if (reason === "not-streaming") return t("settings.newRendererNotStreaming");
+  }
   if (reason === null) return null;
   if (reason === "core-build") return t(CORE_CAUSE_KEYS[renderStreamCoreCause.value ?? "load-failed"]);
-  if (reason === "seat-restart-refused" || reason === "seat-restart-failed") {
-    const restart = renderStreamContext.seatRestart;
-    const causeKey = restart?.reason ? SEAT_RESTART_CAUSE_KEYS[restart.reason] : undefined;
-    const cause = causeKey ? t(causeKey) : (restart?.detail ?? restart?.reason ?? "").replace(/[.\s]+$/, "");
-    return t(NEW_RENDERER_REASON_KEYS[reason], { reason: cause });
-  }
-  // A seat that does not stream yet, with the checkbox off: switching it on restarts the seat, so say that instead
-  // of "it applies when the seat next starts".
-  if (reason === "not-streaming" && settings.renderer !== "stream" && streamingSeatRequestable.value) {
-    return t("settings.newRendererRestartsSeat");
+  if (reason === "not-streaming") {
+    // Before a join: the choice applies when this viewer joins, or this host cannot stream at all.
+    return t(renderStreamChoosable.value ? "settings.newRendererAppliesOnJoin" : "settings.newRendererNoCapture");
   }
   return t(NEW_RENDERER_REASON_KEYS[reason]);
 });
-const newRendererStopped = computed(() => settings.renderer === "stream" ? renderStreamContext.stopped : null);
+const newRendererStopped = computed(() => newRenderer.value ? renderStreamContext.stopped : null);
 
 function selectStage(value: "dom" | "canvas"): void {
   if (streamActive.value) return;
