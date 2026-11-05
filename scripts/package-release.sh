@@ -287,8 +287,13 @@ npm --prefix "$repo_root/frontend" audit --omit=dev --audit-level=high
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-msdf-generator.sh"
 
 # The "Use new renderer (Beta)" parts: the client's wasm core (the frontend build below emits it into
-# frontend/app/render-stream/, or warns and ships none) and the streaming seat's capture extension. Both are built
-# from the same godot-scene-web checkout, and the capture comes with the committed engine calibration record.
+# frontend/app/render-stream/, or warns and ships none), the streaming seat's capture extension and its net module
+# (WebTransport and wss, a Rust cdylib). All are built from the same godot-scene-web checkout, and the capture comes
+# with the committed engine calibration record. Both Rust builds run cargo --offline from their Cargo.lock, so the
+# crates are fetched first (a no-op where they are cached; a fresh release runner has none).
+for manifest in experiments/render-stream/web/gsw-rs/Cargo.toml experiments/render-stream/rs-net/Cargo.toml; do
+  cargo fetch --locked --manifest-path "$source_parent/godot-scene-web/$manifest"
+done
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-stream-client.sh"
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-capture.sh"
 [[ -s "$repo_root/.sts2/render-stream-client-web/build.json" ]] || { echo "render-stream client core was not built" >&2; exit 1; }
@@ -398,7 +403,7 @@ cp -a "$publish_root/$first_lane/." "$payload_dir/"
 
 # The streaming seat's capture, beside the shared tree (StreamingSeatLaunch.PackagedConfig looks for it there).
 mkdir -p "$payload_dir/render-capture"
-for name in librender_stream_capture.so render_stream_capture.gdextension calibration; do
+for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
   cp "$repo_root/.sts2/render-capture/$name" "$payload_dir/render-capture/$name"
 done
 
@@ -441,6 +446,8 @@ cp "$capture_license_source/capture/vendor/LICENSE.txt" "$license_dir/render-cap
 cp "$capture_license_source/capture/vendor/zlib/LICENSE" "$license_dir/render-capture/zlib-LICENSE"
 cp "$capture_license_source/capture/vendor/zstd/LICENSE" "$license_dir/render-capture/zstd-LICENSE"
 cp "$capture_license_source/third_party/basis_universal/LICENSE" "$license_dir/render-capture/basis_universal-LICENSE"
+# The net module statically links its crates; their licences, from the same Cargo.lock it was built from.
+python3 "$repo_root/scripts/render-capture-net-licenses.py" "$source_parent/godot-scene-web" "$license_dir/render-capture/net"
 
 npm_license_manifest="$license_dir/npm-dependencies.tsv"
 printf 'package\tversion\tdeclared-license\tlicense-file\n' > "$npm_license_manifest"

@@ -2268,8 +2268,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
-    /// Make this launch the streaming seat: its private evidence directory (with any previous process's token
-    /// removed, so a stale one can never be handed out), and <see cref="StreamingSeatLaunch.Environment"/>. Drops
+    /// Make this launch the streaming seat: its private evidence directory (with any previous process's token and
+    /// certificate hash removed, so a stale one can never be handed out), and <see cref="StreamingSeatLaunch.Environment"/>. Drops
     /// the role instead — the seat then launches as a normal one, and the viewer sees "not streaming" — when the
     /// hub's port is taken or the evidence directory cannot be prepared.
     /// </summary>
@@ -2291,6 +2291,8 @@ public sealed partial class HeadlessClientManager : IDisposable
                 evidence = StreamingSeatLaunch.EvidenceDirectory(hostUserDir, slot);
                 Directory.CreateDirectory(evidence);
                 File.Delete(Path.Combine(evidence, Protocol.StreamingSeatDescriptor.TokenFileName));
+                // And its WebTransport certificate hash: a stale one would pin a certificate this seat never serves.
+                File.Delete(Path.Combine(evidence, Protocol.StreamingSeatDescriptor.CertificateHashFileName));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -2314,6 +2316,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)} "
             + $"presentation={width.ToString(CultureInfo.InvariantCulture)}x{StreamingSeatLaunch.PresentationHeight.ToString(CultureInfo.InvariantCulture)} aspect={(aspect is double a ? a.ToString("0.####", CultureInfo.InvariantCulture) : "none")} "
             + $"cap={_streamingConfig!.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
+            + $"carriers={(_streamingConfig.NetModule is null ? "ws" : "ws,wt")} "
             + $"origins={string.Join(',', origins)} evidence={evidence}");
     }
 

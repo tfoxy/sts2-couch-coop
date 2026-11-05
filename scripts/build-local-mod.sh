@@ -16,6 +16,7 @@ usage: scripts/build-local-mod.sh [--output <dir>] [--configuration Debug|Releas
 By default, builds into game.modsDir/couchcoop or game.path/mods/couchcoop, resolved via
 `sts2 --json config resolve` (falling back to reading sts2.local.yaml directly).
 Honours $SPIRECTL_DEPLOY_OUTPUT_DIR (set by `sts2 game deploy --build`) when no --output is given.
+Builds the new renderer's parts when stale (scripts/build-render-stream.sh); COUCHCOOP_SKIP_RENDER_STREAM=1 skips.
 EOF
 }
 
@@ -145,6 +146,12 @@ dotnet build "$repo_root/src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csp
   -p:HotReloadDeployDir="$output_dir/hot-reload"
 
 "$repo_root/scripts/build-msdf-generator.sh"
+# "Use new renderer (Beta)": the client core, the streaming seat's capture and its net module, each rebuilt only
+# when stale, and render-capture/ deployed beside the assemblies (where StreamingSeatLaunch finds it, as in a
+# release). Before the frontend build, which emits the core into frontend/app/render-stream/. Its summary goes to
+# stderr: this script's own last stdout line is the JSON `sts2 game deploy` reads.
+# COUCHCOOP_SKIP_RENDER_STREAM=1 skips it.
+"$repo_root/scripts/build-render-stream.sh" --payload "$output_dir" >&2
 COUCHCOOP_FRONTEND_OUT_DIR="$output_dir/frontend" npm --prefix "$repo_root/frontend" run build
 
 # Last, because it stamps what was actually published: a dev manifest version that cannot lose the

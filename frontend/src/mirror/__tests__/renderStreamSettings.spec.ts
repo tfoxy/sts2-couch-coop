@@ -23,6 +23,7 @@ import {
   renderStreamContext,
   resolveRuntimeRenderer,
   sessionRenderStreamEndpoint,
+  coreBuildCause,
   stopRenderStream,
   streamSeatAspect,
   syncRuntimeRenderer,
@@ -238,6 +239,30 @@ describe("renderStreamAvailability", () => {
     expect(sessionRenderStreamEndpoint(null)).toBeNull();
     expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: "short", protocol: 12 })).toBeNull();
     expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: null, protocol: 9 })).toBeNull();
+  });
+
+  it("keeps the seat's WebTransport carrier, exactly as the seat serialises it (CAR7)", () => {
+    // BrowserRenderStreamDto's JSON (C#, null members omitted): the client validates it and keeps `webTransport`, which
+    // its `carrier: "auto"` default prefers on a secure-context page such as the host's own loopback http page.
+    const hash = "c".repeat(64);
+    const seat = sessionRenderStreamEndpoint(JSON.parse(JSON.stringify({ url: "ws://127.0.0.1:13366/render-stream",
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13, presentation: [1920, 1080],
+      webTransport: { url: "https://127.0.0.1:13366/render-stream", certificateHashes: [hash] } })));
+    expect(seat?.webTransport).toEqual({ url: "https://127.0.0.1:13366/render-stream", certificateHashes: [hash] });
+    expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: seat })).toMatchObject({ available: true, source: "session" });
+    // A malformed carrier spoils the whole descriptor (the client never guesses), which the seat's own checks prevent.
+    expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
+      token: null, protocol: 13, webTransport: null })).toBeNull();
+    expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
+      token: null, protocol: 13, webTransport: { url: "http://127.0.0.1:1/render-stream" } })).toBeNull();
+  });
+
+  it("names why the core is unusable: the build's problem first, then a failed load", () => {
+    expect(coreBuildCause(null, false)).toBeNull();
+    expect(coreBuildCause("missing", false)).toBe("missing");
+    expect(coreBuildCause("stale", true)).toBe("stale");
+    expect(coreBuildCause("unverified", false)).toBe("unverified");
+    expect(coreBuildCause(null, true)).toBe("load-failed");
   });
 
   it("asks the host for a streaming seat only when the viewer chose it and this page can draw it", () => {

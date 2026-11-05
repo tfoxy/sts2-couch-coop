@@ -68,7 +68,8 @@ is_allowed_payload_file() {
     licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
     # The streaming seat's capture (scripts/build-render-capture.sh). Linux-only, and the calibration record
     # has no extension on purpose: STS2 scans every *.json under a mod folder as a mod manifest.
-    render-capture/librender_stream_capture.so|render-capture/render_stream_capture.gdextension|render-capture/calibration) return 0 ;;
+    # librender_stream_net.so is godot-scene-web's net module (WebTransport and wss), loaded from beside the capture.
+    render-capture/librender_stream_capture.so|render-capture/render_stream_capture.gdextension|render-capture/calibration|render-capture/librender_stream_net.so) return 0 ;;
     licenses/render-capture/Godot-gdextension-LICENSE.txt|licenses/render-capture/zlib-LICENSE|licenses/render-capture/zstd-LICENSE|licenses/render-capture/basis_universal-LICENSE) return 0 ;;
     # The new renderer's client core, emitted by the frontend build (renderStreamClientAssets). build.json is
     # served and shipped as the extensionless `core-build` for the same manifest reason.
@@ -80,6 +81,12 @@ is_allowed_payload_file() {
       ;;
     licenses/msdf-generator/*)
       leaf="${path#licenses/msdf-generator/}"
+      [[ "$leaf" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+      return
+      ;;
+    # The net module's crate licences (scripts/render-capture-net-licenses.py), the MSDF bundle's format.
+    licenses/render-capture/net/*)
+      leaf="${path#licenses/render-capture/net/}"
       [[ "$leaf" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
       return
       ;;
@@ -135,6 +142,9 @@ required_files=(
   render-capture/librender_stream_capture.so
   render-capture/render_stream_capture.gdextension
   render-capture/calibration
+  render-capture/librender_stream_net.so
+  licenses/render-capture/net/THIRD_PARTY_NOTICES.md
+  licenses/render-capture/net/manifest.tsv
   licenses/render-capture/Godot-gdextension-LICENSE.txt
   licenses/render-capture/zlib-LICENSE
   licenses/render-capture/zstd-LICENSE
@@ -165,14 +175,17 @@ payload_lane_directories() {
   sed -n 's#^lanes/\([^/][^/]*\)/.*#\1#p' "$1" | LC_ALL=C sort -u
 }
 
-verify_msdf_license_bundle() {
-  local root="$1" manifest="$1/licenses/msdf-generator/manifest.tsv"
+# A crate licence bundle: manifest.tsv (crate, version, chosen_spdx, license_filename), one non-empty licence file per
+# row, THIRD_PARTY_NOTICES.md, and nothing else. Two ship: the MSDF generator's (from godot-scene-web) and the
+# render-stream net module's (scripts/render-capture-net-licenses.py).
+verify_crate_license_bundle() {
+  local bundle="$1" label="$2" manifest="$1/manifest.tsv"
   local crate version chosen_spdx license_filename header
-  local referenced="$tmp_dir/msdf-license-references.txt"
-  local shipped="$tmp_dir/msdf-license-shipped.txt"
+  local referenced="$tmp_dir/crate-license-references.txt"
+  local shipped="$tmp_dir/crate-license-shipped.txt"
   header="$(head -n 1 "$manifest")"
   [[ "$header" == $'crate\tversion\tchosen_spdx\tlicense_filename' ]] || {
-    echo "MSDF generator license manifest has an invalid header" >&2
+    echo "$label license manifest has an invalid header" >&2
     return 1
   }
   : > "$referenced"
@@ -180,26 +193,31 @@ verify_msdf_license_bundle() {
     [[ -n "$crate" ]] || continue
     [[ "$crate" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ && "$version" =~ ^[0-9][A-Za-z0-9.+_-]*$ \
       && -n "$chosen_spdx" && "$license_filename" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || {
-      echo "MSDF generator license manifest has an invalid row" >&2
+      echo "$label license manifest has an invalid row" >&2
       return 1
     }
-    [[ -s "$root/licenses/msdf-generator/$license_filename" ]] || {
-      echo "MSDF generator license text is missing or empty: $license_filename" >&2
+    [[ -s "$bundle/$license_filename" ]] || {
+      echo "$label license text is missing or empty: $license_filename" >&2
       return 1
     }
     printf '%s\n' "$license_filename" >> "$referenced"
   done < <(tail -n +2 "$manifest")
-  [[ -s "$referenced" && -s "$root/licenses/msdf-generator/THIRD_PARTY_NOTICES.md" ]] || {
-    echo "MSDF generator license bundle is empty" >&2
+  [[ -s "$referenced" && -s "$bundle/THIRD_PARTY_NOTICES.md" ]] || {
+    echo "$label license bundle is empty" >&2
     return 1
   }
-  find "$root/licenses/msdf-generator" -maxdepth 1 -type f -printf '%f\n' \
+  find "$bundle" -maxdepth 1 -type f -printf '%f\n' \
     | sed '/^manifest\.tsv$/d; /^THIRD_PARTY_NOTICES\.md$/d' \
     | LC_ALL=C sort > "$shipped"
   diff <(LC_ALL=C sort -u "$referenced") "$shipped" >/dev/null || {
-    echo "MSDF generator license files disagree with manifest" >&2
+    echo "$label license files disagree with manifest" >&2
     return 1
   }
+}
+
+verify_license_bundles() {
+  verify_crate_license_bundle "$1/licenses/msdf-generator" "MSDF generator"
+  verify_crate_license_bundle "$1/licenses/render-capture/net" "Render-stream net module"
 }
 
 verify_file_list() {
@@ -494,7 +512,7 @@ if [[ -n "$archive" ]]; then
     exit 1
   }
   payload_root="$extract_root/couchcoop"
-  verify_msdf_license_bundle "$payload_root"
+  verify_license_bundles "$payload_root"
   verify_loader_has_no_hot_reload_symbols "$payload_root/couchcoop.dll"
   verify_build_info_and_manifest \
     "$payload_root/build-info.txt" "$payload_root/couchcoop.json" "$version" "${payload_lanes[@]}"
@@ -531,7 +549,7 @@ release_list_files "$payload" > "$file_list"
 verify_file_list "$file_list"
 resolve_payload_lanes "$file_list"
 verify_lane_expectations
-verify_msdf_license_bundle "$payload"
+verify_license_bundles "$payload"
 verify_loader_has_no_hot_reload_symbols "$payload/couchcoop.dll"
 verify_build_info_and_manifest \
   "$payload/build-info.txt" "$payload/couchcoop.json" "$version" "${payload_lanes[@]}"

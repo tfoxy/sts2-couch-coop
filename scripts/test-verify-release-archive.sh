@@ -119,9 +119,14 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   for file in rs_gsw_wasm_client.js rs_gsw_wasm_bg.wasm core-build; do
     printf 'fixture\n' > "$root/frontend/app/render-stream/$file"
   done
-  for file in librender_stream_capture.so render_stream_capture.gdextension calibration; do
+  for file in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
     printf 'fixture\n' > "$root/render-capture/$file"
   done
+  mkdir -p "$root/licenses/render-capture/net"
+  printf 'fixture notice\n' > "$root/licenses/render-capture/net/THIRD_PARTY_NOTICES.md"
+  printf 'crate\tversion\tchosen_spdx\tlicense_filename\nring\t0.17.14\tApache-2.0 AND ISC\tring-0.17.14.txt\n' \
+    > "$root/licenses/render-capture/net/manifest.tsv"
+  printf 'fixture license\n' > "$root/licenses/render-capture/net/ring-0.17.14.txt"
   for file in Godot-gdextension-LICENSE.txt zlib-LICENSE zstd-LICENSE basis_universal-LICENSE; do
     printf 'fixture\n' > "$root/licenses/render-capture/$file"
   done
@@ -231,6 +236,27 @@ unlisted_msdf_license="$(clone_payload unlisted-msdf-license)"
 printf 'extra\n' > "$unlisted_msdf_license/licenses/msdf-generator/extra.LICENSE"
 expect_reject_saying unlisted-msdf-license 'license files disagree with manifest' \
   "$verifier" --payload "$unlisted_msdf_license" --version 1.2.3 "${all_lane_args[@]}"
+
+# The net module (WebTransport and wss for the streaming seat) and its crate licences ship together.
+missing_net_module="$(clone_payload missing-net-module)"
+rm "$missing_net_module/render-capture/librender_stream_net.so"
+expect_reject_saying missing-net-module 'release payload is missing: render-capture/librender_stream_net.so' \
+  "$verifier" --payload "$missing_net_module" --version 1.2.3 "${all_lane_args[@]}"
+
+missing_net_license="$(clone_payload missing-net-license)"
+rm "$missing_net_license/licenses/render-capture/net/ring-0.17.14.txt"
+expect_reject_saying missing-net-license 'Render-stream net module license text is missing' \
+  "$verifier" --payload "$missing_net_license" --version 1.2.3 "${all_lane_args[@]}"
+
+unlisted_net_license="$(clone_payload unlisted-net-license)"
+printf 'extra\n' > "$unlisted_net_license/licenses/render-capture/net/extra.txt"
+expect_reject_saying unlisted-net-license 'license files disagree with manifest' \
+  "$verifier" --payload "$unlisted_net_license" --version 1.2.3 "${all_lane_args[@]}"
+
+missing_net_manifest="$(clone_payload missing-net-manifest)"
+rm "$missing_net_manifest/licenses/render-capture/net/manifest.tsv"
+expect_reject_saying missing-net-manifest 'release payload is missing: licenses/render-capture/net/manifest.tsv' \
+  "$verifier" --payload "$missing_net_manifest" --version 1.2.3 "${all_lane_args[@]}"
 
 # ------------------------------------------------------------------------------------------------
 # The merged layout: one payload, one lane directory per game branch, named by that lane's floor.

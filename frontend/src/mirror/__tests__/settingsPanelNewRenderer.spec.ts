@@ -196,8 +196,16 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
   });
 
   it.each([
-    ["core-build", () => { renderStreamContext.coreProblem = "stale"; }, "The new renderer isn't built on this host."],
-    ["core-build (load failed)", () => { renderStreamContext.coreLoadFailed = true; }, "The new renderer isn't built on this host."],
+    ["core-build (missing)", () => { renderStreamContext.coreProblem = "missing"; },
+      "This dev build has no new renderer. On the host, run scripts/build-local-mod.sh to build it."],
+    ["core-build (stale)", () => { renderStreamContext.coreProblem = "stale"; },
+      "This dev build's new renderer is out of date. On the host, run scripts/build-local-mod.sh to rebuild it."],
+    ["core-build (unverified)", () => { renderStreamContext.coreProblem = "unverified"; },
+      "This dev build can't check which sources its new renderer came from. On the host, run scripts/build-local-mod.sh from a git checkout."],
+    ["core-build (load failed)", () => { renderStreamContext.coreLoadFailed = true; }, "The new renderer couldn't load on this page."],
+    ["core-build (stale outranks a load failure)", () => {
+      renderStreamContext.coreProblem = "stale"; renderStreamContext.coreLoadFailed = true;
+    }, "This dev build's new renderer is out of date. On the host, run scripts/build-local-mod.sh to rebuild it."],
     ["no-webgl2", () => { renderStreamContext.webgl2 = false; }, "This browser can't run the new renderer."],
     ["host-view", () => { renderStreamContext.directView = true; }, "Not available when watching the host's own game."],
     ["needs-proxy", () => { mirrorSettings.renderStreamUrl = null; renderStreamContext.pageLoopback = false; },

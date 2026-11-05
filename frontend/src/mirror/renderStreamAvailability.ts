@@ -3,7 +3,8 @@
 // ONE computed availability (handoff-mirror-new-renderer.md §3 Q3). Its reasons, in precedence order, are what
 // the settings panel shows under the checkbox:
 //
-//   core-build     the core wasm is missing or stale here (dev), or failed to load
+//   core-build     the core wasm is missing, stale or unverifiable in this (dev) build, or failed to load; which one
+//                  is `renderStreamCoreCause` (a release always carries a verified core, so there only the load fails)
 //   no-webgl2      this browser gives no WebGL2 context
 //   host-view      watching the host's own game (`directView`), which never streams
 //   needs-proxy    no descriptor, and this page's origin is not one a loopback stream can serve (LAN / HTTPS)
@@ -177,6 +178,19 @@ export const renderStreamContext = reactive({
   /** The host session's `rendererSeat` (MirrorApp writes it). */
   seatRestart: null as RenderStreamSeatRestart | null
 });
+
+/** Why the reason is `core-build`: the build's problem with the core, or a load that failed this session. */
+export type RenderStreamCoreCause = RenderStreamCoreProblem | "load-failed";
+
+/** `core-build`'s cause, or null when the core is usable. The build's own problem outranks a load failure. */
+export function coreBuildCause(coreProblem: RenderStreamCoreProblem | null, coreLoadFailed: boolean): RenderStreamCoreCause | null {
+  return coreProblem ?? (coreLoadFailed ? "load-failed" : null);
+}
+
+/** `coreBuildCause` for this page, now. */
+export const renderStreamCoreCause = computed<RenderStreamCoreCause | null>(() => coreBuildCause(
+  renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
+  renderStreamContext.coreLoadFailed));
 
 export const renderStreamAvailability = computed<RenderStreamAvailability>(() => computeRenderStreamAvailability({
   coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,

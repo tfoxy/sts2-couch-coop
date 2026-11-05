@@ -22,8 +22,9 @@
 // problem as "unavailable: core-build" and keeps running; the client independently refuses a `build.json`
 // whose tree differs from `expectedTree`. Dev re-evaluates on every page load, so a rebuild needs no restart.
 //
-// A build with no usable core still succeeds (the beta is then unavailable, with its reason): scripts/package-release.sh
-// builds this core before the frontend, and scripts/verify-release-archive.sh requires its three files.
+// A build with no usable core still succeeds (the beta is then unavailable, with its reason): scripts/build-local-mod.sh
+// (through scripts/build-render-stream.sh, only when stale) and scripts/package-release.sh build this core before the
+// frontend, and scripts/verify-release-archive.sh requires its three files.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -126,7 +127,7 @@ export function renderStreamClientAssets(options: RenderStreamClientAssetsOption
       const judged = status();
       if (judged.problem !== null) {
         this.warn(`render-stream client core ${judged.problem} in ${options.dir}: the new renderer (Beta) is unavailable `
-          + "in this build (scripts/build-render-stream-client.sh builds it)");
+          + "in this build (scripts/build-local-mod.sh builds it when stale; scripts/build-render-stream.sh alone)");
         return;
       }
       for (const [served, name] of Object.entries(RENDER_STREAM_CORE_SERVED)) {

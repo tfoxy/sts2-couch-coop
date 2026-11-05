@@ -209,7 +209,7 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // seat). Present only on the streaming seat's own connection, and only for a page origin the hub allows; absent
   // ⇒ the new renderer is unavailable here. Mirrors `@godot-scene-web/render-stream-client`'s endpoint descriptor
   // and is validated by it before use (mirror/renderStreamAvailability.ts). The token is a credential: never log
-  // it, never put it in a URL. Nothing sends this yet.
+  // it, never put it in a URL.
   renderStream?: BrowserRenderStreamDescriptor | null;
   // "Use new renderer (Beta)" turned on mid-session (MIR-4): on the HOST's connection only, what became of this
   // viewer's request to restart their seat as the streaming seat. Absent when there is nothing to say. Parsed where
@@ -236,6 +236,15 @@ export interface BrowserRenderStreamDescriptor {
   /** The seat's `GRC_STREAM_VERSION`. */
   protocol: 11 | 12 | 13;
   presentation?: [number, number];
+  /** The hub's WebTransport carrier (CAR7; the client's `carrier: "auto"` prefers it on a secure-context page). */
+  webTransport?: BrowserRenderStreamWebTransport;
+}
+
+// The descriptor's `webTransport` (BrowserRenderStreamWebTransportDto server-side): an https URL, plus the SHA-256s
+// (64 lowercase hex) of the self-signed certificate the page pins as `serverCertificateHashes`.
+export interface BrowserRenderStreamWebTransport {
+  url: string;
+  certificateHashes?: string[];
 }
 
 // The `atlasManifest` wire shape (BrowserAtlasManifestDto server-side). `directory` says what the page list

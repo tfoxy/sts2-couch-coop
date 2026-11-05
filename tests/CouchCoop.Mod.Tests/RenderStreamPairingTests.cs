@@ -33,6 +33,7 @@ internal static class RenderStreamPairingTests
         APackagedCaptureIsTheFallback();
         AllowedOriginsAreTheHostPageAndValidExtras();
         LaunchEnvironmentIsTheAcceptanceTable();
+        TheNetModuleAddsWebTransport();
         PresentationWidthFollowsTheAspect();
         TheFloat32GuardMatchesGodot();
         TheCapIsTheOperatorsSetting();
@@ -45,6 +46,8 @@ internal static class RenderStreamPairingTests
         await AJoinsAspectSetsItsSeatsWidthAsync();
         DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin();
         DescriptorNeedsAWellFormedToken();
+        DescriptorOffersWebTransportWithItsCertificate();
+        DescriptorJsonOmitsAbsentMembers();
         TheTokenIsNeverLogged();
         HostCaptureVariableIsConfigurationNotAWarning();
         ItemTaggerGroupsMatchTheModules();
@@ -119,6 +122,7 @@ internal static class RenderStreamPairingTests
             ["GRC_MODE"] = "arm",
             ["GRC_CALIBRATION"] = Calibration,
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
+            ["GRC_LIVE_CARRIERS"] = "ws",
             ["GRC_STREAM_VERSION"] = "13",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = "/home/p/couch-coop/render-stream/slot-2",
@@ -149,6 +153,38 @@ internal static class RenderStreamPairingTests
         Assert(StreamingSeatLaunch.HubPortForSlot(3) == HeadlessClientManager.SlotToPort(3) + 9
                && StreamingSeatLaunch.HubPortForSlot(3) < HeadlessClientManager.SlotToPort(4),
             "the hub port is the last of the slot's own band, stable per slot");
+    }
+
+    private static void TheNetModuleAddsWebTransport()
+    {
+        const string net = "/opt/capture/librender_stream_net.so";
+        var files = new HashSet<string> { Extension, Calibration, net };
+        var found = StreamingSeatLaunch.ResolveConfig(Extension, null, files.Contains);
+        Assert(found.Config == new StreamingSeatLaunch.Config(Extension, Calibration, NetModule: net),
+            "the net module beside the capture is found");
+        var without = StreamingSeatLaunch.ResolveConfig(Extension, null, new HashSet<string> { Extension, Calibration }.Contains);
+        Assert(without.Config is { NetModule: null }, "no net module beside the capture: none");
+
+        var env = StreamingSeatLaunch.Environment(found.Config!, StreamingSeatLaunch.HubPortForSlot(2), "/ev",
+            StreamingSeatLaunch.AllowedOrigins(13337, null));
+        Assert(env["GRC_LIVE_CARRIERS"] == "ws,wt" && env["GRC_LIVE_NET_MODULE"] == net
+               && env["GRC_LIVE_WT_LISTEN"] == "127.0.0.1:13366" && env["GRC_LIVE_WT_CERT"] == "self",
+            "with the module: WebSocket and WebTransport on one port number, the module named, a self-signed certificate");
+        Assert(env["GRC_LIVE_LISTEN"] == "127.0.0.1:13366" && !env.ContainsKey("GRC_LIVE_EXPOSE")
+               && !env.ContainsKey("GRC_LIVE_TLS_CERT"),
+            "still loopback only, with no consumer certificate");
+        var plain = StreamingSeatLaunch.Environment(without.Config!, StreamingSeatLaunch.HubPortForSlot(2), "/ev",
+            StreamingSeatLaunch.AllowedOrigins(13337, null));
+        Assert(plain["GRC_LIVE_CARRIERS"] == "ws" && !plain.ContainsKey("GRC_LIVE_NET_MODULE") && !plain.ContainsKey("GRC_LIVE_WT_LISTEN"),
+            "without it: WebSocket alone (listing wt with no module would refuse the whole listener)");
+
+        var root = Path.Combine(Path.GetTempPath(), "cc-payload");
+        var packaged = Path.Combine(root, "render-capture", "render_stream_capture.gdextension");
+        var payload = new HashSet<string> { packaged, Path.Combine(root, "render-capture", "calibration"),
+            Path.Combine(root, "render-capture", StreamingSeatLaunch.NetModuleFileName) };
+        Assert(StreamingSeatLaunch.ResolveConfig(null, null, payload.Contains, root).Config?.NetModule
+               == Path.Combine(root, "render-capture", StreamingSeatLaunch.NetModuleFileName),
+            "a deployed render-capture/ carries the net module beside the capture");
     }
 
     private static void PresentationWidthFollowsTheAspect()
@@ -412,6 +448,63 @@ internal static class RenderStreamPairingTests
         }
         Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, _ => Token + "\n")?.Token == Token,
             "the file's trailing newline is not part of the token");
+    }
+
+    private static void DescriptorOffersWebTransportWithItsCertificate()
+    {
+        var hash = new string('c', 64);
+        var env = new Dictionary<string, string>(SeatEnvironment(auth: "token"))
+        {
+            ["GRC_LIVE_CARRIERS"] = "ws,wt",
+            ["GRC_LIVE_WT_LISTEN"] = "127.0.0.1:13366",
+        };
+        string? Token_(string _) => Token;
+        string? asked = null;
+        var both = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_,
+            path => { asked = path; return hash + "\n"; });
+        Assert(both?.WebTransport is { Url: "https://127.0.0.1:13366/render-stream", CertificateHashes: [var pinned] } && pinned == hash,
+            "wt listed and its hash written: webTransport on the same port, pinned by that hash");
+        Assert(asked == Path.Combine("/home/p/ev", StreamingSeatDescriptor.CertificateHashFileName),
+            "the hash is the net module's live-cert-sha256");
+        Assert(both!.Url == "ws://127.0.0.1:13366/render-stream", "the WebSocket url stays, as the fallback");
+
+        var defaulted = new Dictionary<string, string>(env);
+        defaulted.Remove("GRC_LIVE_WT_LISTEN");
+        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", defaulted.GetValueOrDefault, Token_, _ => hash)
+               ?.WebTransport?.Url == "https://127.0.0.1:13366/render-stream",
+            "no GRC_LIVE_WT_LISTEN: the capture's default, GRC_LIVE_LISTEN's host and port");
+
+        foreach (var bad in new string?[] { null, "", new string('C', 64), new string('c', 63) })
+        {
+            var described = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_, _ => bad);
+            Assert(described is { WebTransport: null }, $"no or a malformed hash ('{bad}'): WebSocket only, never a guess");
+        }
+
+        var wsOnly = new Dictionary<string, string>(env) { ["GRC_LIVE_CARRIERS"] = "ws" };
+        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", wsOnly.GetValueOrDefault, Token_,
+                   _ => throw new InvalidOperationException("no hash is read when wt is not listed")) is { WebTransport: null },
+            "wt not listed: no webTransport, and no hash read");
+        var lanWt = new Dictionary<string, string>(env) { ["GRC_LIVE_WT_LISTEN"] = "0.0.0.0:13366" };
+        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", lanWt.GetValueOrDefault, Token_, _ => hash)
+               is { WebTransport: null },
+            "a non-loopback wt listener is not described to a loopback page");
+        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_) is { WebTransport: null },
+            "no hash reader: no webTransport");
+    }
+
+    private static void DescriptorJsonOmitsAbsentMembers()
+    {
+        // The client's validator is strict: an unknown key or an explicit null `webTransport` fails the descriptor.
+        var plain = BrowserJson.Serialize(new BrowserRenderStreamDto("ws://127.0.0.1:13366/render-stream",
+            "http://127.0.0.1:13366", Token, 13, [1920, 1080]));
+        Assert(!plain.Contains("webTransport", StringComparison.Ordinal), $"no webTransport member at all: {plain}");
+        var wt = BrowserJson.Serialize(new BrowserRenderStreamDto("ws://127.0.0.1:13366/render-stream",
+            "http://127.0.0.1:13366", Token, 13, [1920, 1080],
+            new BrowserRenderStreamWebTransportDto("https://127.0.0.1:13366/render-stream", [new string('c', 64)])));
+        Assert(wt.Contains("\"webTransport\":{\"url\":\"https://127.0.0.1:13366/render-stream\",\"certificateHashes\":[\"", StringComparison.Ordinal),
+            $"the client's key names: {wt}");
+        var unpinned = BrowserJson.Serialize(new BrowserRenderStreamWebTransportDto("https://h:1/render-stream"));
+        Assert(unpinned == "{\"url\":\"https://h:1/render-stream\"}", $"no certificateHashes member when unpinned: {unpinned}");
     }
 
     private static void TheTokenIsNeverLogged()

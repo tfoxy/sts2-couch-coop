@@ -31,6 +31,14 @@ namespace CouchCoop.Mod.Session;
 /// <c>GRC_*</c> is dropped first, from every seat, so a value on the host can never leak into a seat.
 /// </para>
 /// <para>
+/// TWO CARRIERS WHEN THE NET MODULE IS THERE (CAR7). With godot-scene-web's net module
+/// (<see cref="NetModuleFileName"/>) beside the capture, the hub serves WebSocket and WebTransport
+/// (<c>GRC_LIVE_CARRIERS=ws,wt</c>), the latter on the same port number over UDP with a self-signed certificate the
+/// page pins by hash (the capture writes it to <c>$GRC_EVIDENCE_DIR/live-cert-sha256</c>). Without the module the
+/// seat lists <c>ws</c> alone: listing <c>wt</c> with no loadable module refuses the whole listener
+/// (<c>net-module-missing</c>), so a hand-staged capture without it still streams.
+/// </para>
+/// <para>
 /// THE SEAT RUNS AT ITS VIEWER'S ASPECT (PRES-A). STS2 stretches its 1920x1080 base with aspect <c>expand</c>, so a
 /// seat launched at <c>GRC_ROOT_SIZE=presentation:&lt;W&gt;x1080</c> lays the game itself out W wide.
 /// <see cref="PresentationWidth"/> turns the aspect the page sent (only with its Widescreen stretch on) into W, up to
@@ -82,6 +90,14 @@ internal static class StreamingSeatLaunch
     /// </summary>
     internal const string PackagedCalibrationFileName = "calibration";
 
+    /// <summary>
+    /// The net module's file name. The capture looks for it beside its own library; the host looks beside the
+    /// <c>.gdextension</c>, which is the same directory in every layout that ships it (a payload's
+    /// <c>render-capture/</c>, scripts/build-render-capture.sh's staging, godot-scene-web's <c>capture/build/</c>), and
+    /// names the file it found in <c>GRC_LIVE_NET_MODULE</c> so the capture loads exactly that one.
+    /// </summary>
+    internal const string NetModuleFileName = "librender_stream_net.so";
+
     /// <summary>Where a released payload carries the capture, under the payload root (scripts/package-release.sh).</summary>
     internal static readonly string[] PackagedExtensionRelativePath = ["render-capture", "render_stream_capture.gdextension"];
 
@@ -115,7 +131,10 @@ internal static class StreamingSeatLaunch
     /// What the operator configured: the capture to load, its calibration record, and the widest presentation a seat
     /// is launched at (<see cref="MaxPresentationWidthEnvironmentVariable"/>).
     /// </summary>
-    internal sealed record Config(string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth);
+    /// <param name="NetModule">The net module beside the capture (<see cref="NetModuleFileName"/>), or null: the seat then
+    /// serves WebSocket only.</param>
+    internal sealed record Config(
+        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null);
 
     /// <summary>
     /// The operator's <see cref="MaxPresentationWidthEnvironmentVariable"/>: unset or not an integer is the default
@@ -205,9 +224,13 @@ internal static class StreamingSeatLaunch
             }
         }
 
-        return fileExists(calibrationPath)
-            ? new ConfigResult(new Config(request.Path, calibrationPath), null)
-            : new ConfigResult(null, $"the capture's calibration record does not exist: '{calibrationPath}'");
+        if (!fileExists(calibrationPath))
+        {
+            return new ConfigResult(null, $"the capture's calibration record does not exist: '{calibrationPath}'");
+        }
+
+        var netModule = Path.Combine(Path.GetDirectoryName(request.Path)!, NetModuleFileName);
+        return new ConfigResult(new Config(request.Path, calibrationPath, NetModule: fileExists(netModule) ? netModule : null), null);
     }
 
     /// <summary>Read the host's own configuration once (the variables cannot change while it runs).</summary>
@@ -286,13 +309,16 @@ internal static class StreamingSeatLaunch
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(allowedOrigins);
         ArgumentOutOfRangeException.ThrowIfLessThan(presentationWidth, PresentationBaseWidth);
-        return new Dictionary<string, string>(StringComparer.Ordinal)
+        var hub = $"127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)}";
+        var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [StreamingSeatRole.EnvironmentVariable] = "1",
             [RenderCaptureExtensionLoader.EnvironmentVariable] = config.Extension,
             ["GRC_MODE"] = "arm",
             ["GRC_CALIBRATION"] = config.Calibration,
-            ["GRC_LIVE_LISTEN"] = $"127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)}",
+            ["GRC_LIVE_LISTEN"] = hub,
+            // The carriers the hub serves (see the remarks): WebSocket always, WebTransport with the net module.
+            ["GRC_LIVE_CARRIERS"] = config.NetModule is null ? "ws" : "ws,wt",
             ["GRC_STREAM_VERSION"] = StreamVersion.ToString(CultureInfo.InvariantCulture),
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = evidenceDirectory,
@@ -324,6 +350,15 @@ internal static class StreamingSeatLaunch
             // viewer's page actually asks (an extension's `wants`), so a pure viewer pays the same as before.
             ["GRC_ITEM_META"] = "scene,path,script,groups",
         };
+        if (config.NetModule is { } netModule)
+        {
+            environment["GRC_LIVE_NET_MODULE"] = netModule;
+            // UDP, the same number as the WebSocket port (TCP and UDP port spaces are separate): one port per seat.
+            environment["GRC_LIVE_WT_LISTEN"] = hub;
+            environment["GRC_LIVE_WT_CERT"] = "self";
+        }
+
+        return environment;
     }
 
     /// <summary>The capture's <c>GRC_ROOT_SIZE</c> value for a seat <paramref name="presentationWidth"/> wide.</summary>

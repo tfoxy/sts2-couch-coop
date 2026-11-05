@@ -30,9 +30,11 @@ import {
 import {
   renderStreamAvailability,
   renderStreamContext,
+  renderStreamCoreCause,
   retryRenderStream,
   streamingSeatRequestable,
   syncRuntimeRenderer,
+  type RenderStreamCoreCause,
   type RenderStreamUnavailableReason
 } from "@/mirror/renderStreamAvailability";
 import { applyQualityChoice } from "@/mirror/qualityPreset";
@@ -109,7 +111,8 @@ const audioHelpText = computed(() => `${t("settings.help.audio")}${audioUsesHttp
 // switched on while this viewer's own seat runs without streaming (MIR-4): MirrorApp then asks the host to restart
 // that seat as the streaming seat, and the reason line follows the host's answer.
 const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/i18n").MessageKey> = {
-  "core-build": "settings.newRendererCoreBuild",
+  // Refined by its cause below (CORE_CAUSE_KEYS); this is the load-failure sentence.
+  "core-build": "settings.newRendererCoreLoadFailed",
   "no-webgl2": "settings.newRendererNoWebgl2",
   "host-view": "settings.newRendererHostView",
   "needs-proxy": "settings.newRendererNeedsProxy",
@@ -118,6 +121,14 @@ const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/
   "seat-restart-pending": "settings.newRendererSeatRestartPending",
   "seat-restart-refused": "settings.newRendererSeatRestartRefused",
   "seat-restart-failed": "settings.newRendererSeatRestartFailed"
+};
+// `core-build` says what is wrong with the core and, for a dev build, what fixes it. A release always carries a
+// verified core (scripts/verify-release-archive.sh), so a player only ever sees the load failure.
+const CORE_CAUSE_KEYS: Record<RenderStreamCoreCause, import("@/i18n").MessageKey> = {
+  missing: "settings.newRendererCoreMissing",
+  stale: "settings.newRendererCoreStale",
+  unverified: "settings.newRendererCoreUnverified",
+  "load-failed": "settings.newRendererCoreLoadFailed"
 };
 // The host's refusal/failure codes this page has its own sentence for; any other shows the host's English detail.
 const SEAT_RESTART_CAUSE_KEYS: Record<string, import("@/i18n").MessageKey> = {
@@ -141,6 +152,7 @@ const newRendererDisabled = computed(() => !renderStreamAvailability.value.avail
 const newRendererReason = computed(() => {
   const reason = renderStreamAvailability.value.reason;
   if (reason === null) return null;
+  if (reason === "core-build") return t(CORE_CAUSE_KEYS[renderStreamCoreCause.value ?? "load-failed"]);
   if (reason === "seat-restart-refused" || reason === "seat-restart-failed") {
     const restart = renderStreamContext.seatRestart;
     const causeKey = restart?.reason ? SEAT_RESTART_CAUSE_KEYS[restart.reason] : undefined;
@@ -302,7 +314,8 @@ function fmt(value: number | null): string {
 const REFRESH_PRESETS = [24, 30, 40, 60] as const;
 
 const networkOk = computed(() => props.latency.p95 !== null && props.latency.p95 <= TARGET_MS);
-// Input-to-frame does not exist while the new renderer is view-only, so its row reads "—" there.
+// "Game (end-to-end)" times the old renderer's main-thread ping echo, which says nothing about how fast the stream's
+// own frames arrive, so its row reads "—" while the new renderer draws (taps do reach the game there since INP2).
 const hasGame = computed(() => props.latency.gameCount > 0 && !streamActive.value);
 
 // The "Host performance" section acts on whichever game serves this connection, and that changes what the freezes
