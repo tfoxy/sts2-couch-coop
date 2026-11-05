@@ -100,7 +100,7 @@ export function endpointCarrierUsable(endpoint: RenderStreamEndpoint, page: Rend
 
 export interface RenderStreamAvailabilityInputs {
   coreProblem: RenderStreamCoreProblem | null;
-  /** The core was found but failed to load this session (a runtime `core-load-failed`). */
+  /** The core was found but failed to load this session (a runtime `core-load-failed`, except a timeout). */
   coreLoadFailed: boolean;
   webgl2: boolean;
   directView: boolean;
@@ -355,7 +355,10 @@ export function syncRuntimeRenderer(settings: MirrorSettings = mirrorSettings): 
 /** The stream stopped (failed, ended, or its descriptor went away): fall back to the old renderer for this session. */
 export function stopRenderStream(reason: string, settings: MirrorSettings = mirrorSettings): void {
   renderStreamContext.stopped = reason;
-  if (/^core-load-failed\b/.test(reason)) renderStreamContext.coreLoadFailed = true;
+  // A load that timed out (`core-load-failed: timeout after <ms> ms in <steps>`) only stops this attempt: a slow
+  // phone loads the core in about a second, so the 30 s deadline means a passing network or server stall, and
+  // "Try again" should load it again. Any other load failure (a stale core, say) holds for the session.
+  if (/^core-load-failed\b(?!: timeout\b)/.test(reason)) renderStreamContext.coreLoadFailed = true;
   syncRuntimeRenderer(settings);
 }
 

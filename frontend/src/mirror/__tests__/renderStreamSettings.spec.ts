@@ -22,6 +22,7 @@ import {
   renderStreamChoosable,
   renderStreamContext,
   resolveRuntimeRenderer,
+  retryRenderStream,
   sessionRenderStreamEndpoint,
   coreBuildCause,
   endpointCarrierUsable,
@@ -424,6 +425,33 @@ describe("renderStreamAvailability", () => {
       expect(mirrorSettings.runtimeRenderer).toBe("mirror");
     } finally {
       Object.assign(mirrorSettings, { renderer: saved.renderer, renderStreamUrl: saved.url, runtimeRenderer: "mirror" });
+    }
+  });
+
+  it("stops on a core load timeout without holding the core unusable, so Try again loads it again", () => {
+    const saved = { renderer: mirrorSettings.renderer, url: mirrorSettings.renderStreamUrl };
+    try {
+      Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true });
+      Object.assign(mirrorSettings, { renderer: "stream", renderStreamUrl: "ws://127.0.0.1:9/render-stream",
+        renderStreamProtocol: 12 });
+      syncRuntimeRenderer();
+
+      stopRenderStream("core-load-failed: timeout after 30000 ms in wasm fetch + glue import");
+      expect(renderStreamContext.coreLoadFailed).toBe(false);
+      expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+      retryRenderStream();
+      expect(renderStreamAvailability.value.available).toBe(true);
+      expect(mirrorSettings.runtimeRenderer).toBe("stream");
+
+      // Without the detail, or with any other one, a failed load still holds for the session.
+      for (const reason of ["core-load-failed", "core-load-failed: stale core", "core-load-failed: timeouts"]) {
+        renderStreamContext.coreLoadFailed = false;
+        stopRenderStream(reason);
+        expect(renderStreamContext.coreLoadFailed, reason).toBe(true);
+      }
+    } finally {
+      Object.assign(mirrorSettings, { renderer: saved.renderer, renderStreamUrl: saved.url, runtimeRenderer: "mirror" });
+      Object.assign(renderStreamContext, { coreLoadFailed: false, stopped: null });
     }
   });
 });
