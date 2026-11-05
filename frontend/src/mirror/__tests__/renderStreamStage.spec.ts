@@ -6,6 +6,7 @@ import type {
   RenderStreamClient,
   RenderStreamClientOptions,
   RenderStreamEndpoint,
+  RenderStreamStats,
   RenderStreamStatus
 } from "@godot-scene-web/render-stream-client";
 
@@ -26,20 +27,21 @@ interface Fake extends RenderStreamClient {
   options: RenderStreamClientOptions;
   connects: number;
   disposed: boolean;
+  carrier: RenderStreamStats["carrier"];
   emit(status: RenderStreamStatus): void;
 }
 
 let clients: Fake[] = [];
 function createClient(options: RenderStreamClientOptions): RenderStreamClient {
   const fake: Fake = {
-    options, connects: 0, disposed: false,
+    options, connects: 0, disposed: false, carrier: null,
     connect() { fake.connects += 1; },
     setEndpoint: vi.fn(),
     cssToPresentation: vi.fn(() => null),
     presentationToCss: vi.fn((r) => r),
     toGame: vi.fn(() => null),
     clientToGame: vi.fn(() => null),
-    stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0 }),
+    stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0, carrier: fake.carrier }),
     recording: () => null,
     dispose() { fake.disposed = true; },
     emit(status) { options.onStatus?.(status); }
@@ -90,7 +92,28 @@ describe("RenderStreamStage", () => {
     expect(options.extensions).toEqual([]);
     expect(options.endpoint).toEqual(endpoint);
     expect(options.core).toEqual(core);
+    expect(options.carrier).toBe("auto");
     expect(clients[0].connects).toBe(1);
+  });
+
+  it("installs window.__renderStreamStats while mounted and removes it on unmount (CAR9 QA)", async () => {
+    const seam = () => (window as unknown as { __renderStreamStats?: () => RenderStreamStats }).__renderStreamStats;
+    mountStage();
+    clients[0].carrier = "websocket";
+    expect(seam()?.()).toMatchObject({ appliesPerSec: 0, carrier: "websocket" });
+    wrapper!.unmount();
+    wrapper = null;
+    expect(seam()).toBeUndefined();
+  });
+
+  it("opens the carrier ?rsCarrier= forces for the session (CAR9 QA)", () => {
+    mirrorSettings.renderStreamCarrier = "websocket";
+    try {
+      mountStage();
+      expect(clients[0].options.carrier).toBe("websocket");
+    } finally {
+      mirrorSettings.renderStreamCarrier = "auto";
+    }
   });
 
   it("attaches the raise-hand and view-scale modules on the viewer's saved choices", () => {
@@ -132,6 +155,29 @@ describe("RenderStreamStage", () => {
     clients[0].emit({ kind: "reconnecting", attempt: 1, inMs: 1000 });
     await nextTick();
     expect(status().text()).toBe("Reconnecting…");
+  });
+
+  // CAR9: the carrier the client opened is on the stage's DOM, for QA, and only while a session streams.
+  it("names the open carrier in data-stream-carrier while streaming", async () => {
+    mountStage();
+    const frame = () => wrapper!.get('[data-testid="render-stream-stage"]').attributes("data-stream-carrier");
+    expect(frame()).toBeUndefined();
+    clients[0].carrier = "webtransport";
+    clients[0].emit({ kind: "streaming", firstFrame: false });
+    await nextTick();
+    expect(frame()).toBe("webtransport");
+    clients[0].carrier = null;
+    clients[0].emit({ kind: "reconnecting", attempt: 1, inMs: 1000 });
+    await nextTick();
+    expect(frame()).toBeUndefined();
+    clients[0].carrier = "websocket";
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    await nextTick();
+    expect(frame()).toBe("websocket");
+    expect((wrapper!.vm as unknown as { stats(): RenderStreamStats }).stats().carrier).toBe("websocket");
+    clients[0].emit({ kind: "failed", reason: "host-error", detail: "capture stopped" });
+    await nextTick();
+    expect(frame()).toBeUndefined();
   });
 
   it("emits failed once with the reason and disposes the client", async () => {

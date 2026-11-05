@@ -1927,7 +1927,7 @@ public sealed class CouchCoopWebSocketConnection
 
         if (manager.RenderStreamLanOffer(_requestOrigin) is { } offer)
         {
-            envelope = envelope with { RenderStreamLan = new BrowserRenderStreamLanDto(offer.WebTransport, offer.Tls) };
+            envelope = envelope with { RenderStreamLan = new BrowserRenderStreamLanDto(offer.WebTransport, offer.Tls, offer.Ws) };
         }
 
         return _session is { } session && manager.SeatRendererStateFor(session.Id) is { } seat

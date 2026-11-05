@@ -189,6 +189,8 @@ export function parseSpineMode(raw: string | null): SpineMode {
 export type MirrorRenderer = "mirror" | "stream";
 /** The render-stream protocol versions the client speaks (`@godot-scene-web/render-stream-client`'s 11 | 12 | 13). */
 export type RenderStreamWireVersion = 11 | 12 | 13;
+/** Which live carrier the new renderer's client opens (godot-scene-web's `RenderStreamCarrier`). */
+export type RenderStreamCarrierChoice = "auto" | "websocket" | "webtransport";
 export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 13;
 
 export interface MirrorSettings {
@@ -219,6 +221,12 @@ export interface MirrorSettings {
   renderStreamUrl: string | null;
   /** The wire version of the stream in use (`?rsProtocol=11|12`, default 12): decides the Particles row's forced value. */
   renderStreamProtocol: RenderStreamWireVersion;
+  /**
+   * QA only (`?rsCarrier=auto|websocket|webtransport`, default `auto`), session-only: the client's `carrier`. `auto`
+   * prefers WebTransport on a secure page and falls back to the socket once; `websocket` forces ws/wss, so a QA leg can
+   * prove wss on a page that would otherwise choose WebTransport (CAR9).
+   */
+  renderStreamCarrier: RenderStreamCarrierChoice;
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
   // auto-detection and leaves every row below at its product default; a rung is this device's tier AND a preset
   // over the three rows it implies (shaders, particles, static background — qualityPreset.ts). The rows stay
@@ -460,12 +468,14 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 //   keyboard         — the keyboard capture's twin of `gamepad`, for the same reason and on the same terms.
 //   runtimeRenderer  — the live renderer; it drops to `mirror` when a stream fails, and `renderer` stays saved.
 //   renderStream*    — the QA endpoint is per session (`?renderStream=`), like every endpoint: a stream address
-//                      describes one host's seat, never this viewer.
+//                      describes one host's seat, never this viewer. So are its protocol and the QA carrier
+//                      (`?rsProtocol=`, `?rsCarrier=`).
 export const NEVER_PERSISTED_SETTING_KEYS = [
   "runtimeStage",
   "runtimeRenderer",
   "renderStreamUrl",
   "renderStreamProtocol",
+  "renderStreamCarrier",
   "effectModePinned",
   "spineMode",
   "gamepad",
@@ -499,6 +509,11 @@ export function parseRenderStreamUrl(raw: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+/** `?rsCarrier=auto|websocket|webtransport`; anything else is `auto`. */
+export function parseRenderStreamCarrier(raw: string | null): RenderStreamCarrierChoice {
+  return raw === "websocket" || raw === "webtransport" ? raw : "auto";
 }
 
 /** `?rsProtocol=11|12|13`; anything else is the default. */
@@ -886,6 +901,7 @@ export function createMirrorSettings(
     runtimeRenderer: "mirror",
     renderStreamUrl: parseRenderStreamUrl(params.get("renderStream")),
     renderStreamProtocol: parseRenderStreamProtocol(params.get("rsProtocol")),
+    renderStreamCarrier: parseRenderStreamCarrier(params.get("rsCarrier")),
     stage,
     textMethod: parseTextMethod(params.get("textMethod")) ?? saved.textMethod ?? "bitmap",
     runtimeStage: stage,

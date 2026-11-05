@@ -471,15 +471,39 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(host.ofType("set-renderer")).toHaveLength(0);
     mirrorSettings.renderer = "mirror";
     await settle();
-    host.emit(sessionMessage({ renderStreamLan: { webTransport: true, tls: true } }));
+    host.emit(sessionMessage({ renderStreamLan: { webTransport: true, tls: true, ws: false } }));
     await settle();
-    expect(renderStreamContext.lanOffer).toEqual({ webTransport: true, tls: true });
+    expect(renderStreamContext.lanOffer).toEqual({ webTransport: true, tls: true, ws: false });
     mirrorSettings.renderer = "stream";
     await settle();
     expect(host.ofType("set-renderer").at(-1)).toMatchObject({ renderer: "stream" });
     host.emit(sessionMessage());
     await settle();
     expect(renderStreamContext.lanOffer).toBeNull();
+  });
+
+  it("on a plain-http LAN page, asks for the stream over the host's plain ws (CAR9)", async () => {
+    const { host } = await joinNormalSeat();
+    renderStreamContext.pageLoopback = false;
+    renderStreamContext.page = { https: false, secureContext: false, webTransport: true };
+    host.emit(sessionMessage({ renderStreamLan: { webTransport: true, tls: false, ws: true } }));
+    await settle();
+    expect(renderStreamAvailability.value.reason).toBe("not-streaming");
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("set-renderer").at(-1)).toMatchObject({ renderer: "stream" });
+  });
+
+  it("on a plain-http LAN page of a host whose certificate names another host, says needs-proxy (CAR9)", async () => {
+    const { host } = await joinNormalSeat();
+    renderStreamContext.pageLoopback = false;
+    renderStreamContext.page = { https: false, secureContext: false, webTransport: true };
+    host.emit(sessionMessage({ renderStreamLan: { webTransport: true, tls: false, ws: false } }));
+    await settle();
+    expect(renderStreamAvailability.value.reason).toBe("needs-proxy");
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("set-renderer")).toHaveLength(0);
   });
 
   it("switches to the stream when the restarted seat's descriptor arrives, and a pre-join session keeps the wait", async () => {

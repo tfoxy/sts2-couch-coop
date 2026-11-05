@@ -9,10 +9,10 @@
 //   host-view      watching the host's own game (`directView`), which never streams
 //   lan-off        a page that is not the host's loopback page, on a host whose "Stream the new renderer over the LAN"
 //                  setting is off (the host session carries no `renderStreamLan` offer)
-//   needs-proxy    this page cannot run the stream: it is not a secure context (a plain-http LAN page; the client's
-//                  core loader needs `crypto.subtle`, `pageRunsClient`), or no carrier the seat offers can work on it
-//                  (`lanCarrierUsable` / `endpointCarrierUsable`: an https page cannot use plain ws, WebTransport
-//                  needs the API)
+//   needs-proxy    no carrier the seat offers can work on this page (`lanCarrierUsable` / `endpointCarrierUsable`):
+//                  an https page cannot use plain ws, WebTransport needs a secure context and the API, and a host
+//                  with a certificate refuses plain ws from the LAN. A plain-http LAN page runs the client (CAR9:
+//                  godot-scene-web's loader hashes the core without `crypto.subtle` there) and streams over ws.
 //   not-streaming  joined, but this seat has no descriptor; it applies when the seat next starts
 //   seat-restarting / seat-restart-pending / seat-restart-refused / seat-restart-failed
 //                  in place of not-streaming, what the host did with this viewer's mid-session request to restart
@@ -79,16 +79,22 @@ export type RenderStreamEndpointSource = "qa-override" | "session";
 export interface RenderStreamLanOffer {
   /** The seat serves WebTransport (self-signed, pinned by hash: any secure-context page). */
   webTransport: boolean;
-  /** The seat serves wss with a host certificate, and then refuses plain ws from the LAN; false: plain ws. */
+  /** The seat serves wss with a host certificate that names this page's host. */
   tls: boolean;
+  /** The seat serves plain ws to LAN pages: the host has no certificate (with one, the hub refuses LAN plaintext). */
+  ws: boolean;
 }
 
-/** The `renderStreamLan` field of a host `session`, or null when absent or not understood. */
+/**
+ * The `renderStreamLan` field of a host `session`, or null when absent or not understood. A host from before CAR9
+ * sends no `ws`; its `tls: false` then meant plain ws.
+ */
 export function parseLanOffer(raw: unknown): RenderStreamLanOffer | null {
   if (raw === null || typeof raw !== "object") return null;
-  const value = raw as { webTransport?: unknown; tls?: unknown };
+  const value = raw as { webTransport?: unknown; tls?: unknown; ws?: unknown };
   if (typeof value.webTransport !== "boolean" || typeof value.tls !== "boolean") return null;
-  return { webTransport: value.webTransport, tls: value.tls };
+  if (value.ws !== undefined && typeof value.ws !== "boolean") return null;
+  return { webTransport: value.webTransport, tls: value.tls, ws: value.ws ?? !value.tls };
 }
 
 /** What this page can open: the facts the carrier matrix needs. */
@@ -103,21 +109,12 @@ export interface RenderStreamPageFacts {
 
 /**
  * Whether a LAN offer has a carrier this page can use: WebTransport on a secure-context page with WebTransport; wss
- * whenever the seat has a certificate (an http page may open wss; whether the device trusts that certificate is not
- * knowable here); plain ws only from an http page, and only when the seat has no certificate (with one it refuses
- * plaintext from the LAN).
+ * whenever the seat has a certificate naming this page's host (an http page may open wss; whether the device trusts
+ * that certificate is not knowable here); plain ws only from an http page, and only when the seat has no certificate
+ * (with one it refuses plaintext from the LAN). Any page runs the client, a plain-http one included (CAR9).
  */
 export function lanCarrierUsable(offer: RenderStreamLanOffer, page: RenderStreamPageFacts): boolean {
-  return (offer.webTransport && page.secureContext && page.webTransport) || offer.tls || !page.https;
-}
-
-/**
- * Whether the client can run on this page at all: only in a secure context (https, or http on loopback). The
- * render-stream client verifies its core with `crypto.subtle`, which a plain-http LAN page does not have, so the core
- * fails to load there whatever the carrier (godot-scene-web's loader; reported upstream).
- */
-export function pageRunsClient(page: RenderStreamPageFacts): boolean {
-  return page.secureContext;
+  return (offer.webTransport && page.secureContext && page.webTransport) || offer.tls || (offer.ws && !page.https);
 }
 
 /** The same question for a descriptor the seat sent: its WebTransport member, or its socket url's scheme. */
@@ -164,13 +161,13 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
   // A loopback http page is a secure context by definition, whatever a probe (or jsdom) reports.
   const page = inputs.pageLoopback ? { ...(inputs.page ?? LOOPBACK_PAGE), secureContext: true } : inputs.page ?? LOOPBACK_PAGE;
   if (inputs.sessionEndpoint) {
-    return pageRunsClient(page) && endpointCarrierUsable(inputs.sessionEndpoint, page)
+    return endpointCarrierUsable(inputs.sessionEndpoint, page)
       ? { available: true, reason: null, endpoint: inputs.sessionEndpoint, source: "session" }
       : unavailable("needs-proxy");
   }
   if (!inputs.pageLoopback) {
     if (!inputs.lanOffer) return unavailable("lan-off");
-    if (!pageRunsClient(page) || !lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
+    if (!lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
   }
   return unavailable(inputs.seatRestart ? SEAT_RESTART_REASONS[inputs.seatRestart.state] : "not-streaming");
 }
@@ -309,7 +306,7 @@ export function joinRendererRequest(
 ): "stream" | undefined {
   const page = inputs.page ?? LOOPBACK_PAGE;
   const reachable = inputs.pageLoopback
-    || (inputs.lanOffer != null && pageRunsClient(page) && lanCarrierUsable(inputs.lanOffer, page));
+    || (inputs.lanOffer != null && lanCarrierUsable(inputs.lanOffer, page));
   return inputs.renderer === "stream" && inputs.coreProblem === null && !inputs.coreLoadFailed && inputs.webgl2
     && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
 }

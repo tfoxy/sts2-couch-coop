@@ -216,7 +216,7 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // it is used (renderStreamAvailability's parseSeatRestart).
   rendererSeat?: unknown;
   // "Stream the new renderer over the LAN" (CAR7b): on the HOST's connection only, while that host setting is on,
-  // what its streaming seat offers a LAN page ({ webTransport, tls }). Absent when the setting is off. Parsed where it
+  // what its streaming seat offers a LAN page ({ webTransport, tls, ws }). Absent when the setting is off. Parsed where it
   // is used (renderStreamAvailability's parseLanOffer).
   renderStreamLan?: unknown;
   // Current hosts always accept an absolute scroll offset (`set-scroll-offset`).

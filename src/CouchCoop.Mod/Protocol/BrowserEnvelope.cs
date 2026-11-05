@@ -93,12 +93,13 @@ public sealed record BrowserEnvelope(
     // from "this page cannot use it" before it joins. Null (omitted) when the setting is off.
     BrowserRenderStreamLanDto? RenderStreamLan = null);
 
-// The `renderStreamLan` wire shape: { "webTransport": true, "tls": true } (camelCased by BrowserJson). `webTransport`:
-// the seat serves WebTransport (any secure-context page can use it). `tls`: the seat serves wss with a certificate of
-// this host's (Direct-IP HTTPS or the secure origin) that names THIS page's host. With a certificate the seat refuses
-// plain ws from the LAN, so `tls: false` on a host that has one (for another host name) leaves a plain-http page no
-// carrier; the page cannot tell those apart and may try, and then sees "not streaming".
-public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls);
+// The `renderStreamLan` wire shape: { "webTransport": true, "tls": true, "ws": false } (camelCased by BrowserJson).
+// `webTransport`: the seat serves WebTransport (any secure-context page can use it). `tls`: the seat serves wss with a
+// certificate of this host's (Direct-IP HTTPS or the secure origin) that names THIS page's host. `ws`: the seat serves
+// plain ws to LAN pages, which it does exactly when the host has no certificate at all; with one it refuses LAN
+// plaintext, so a plain-http page on a host name the certificate does not name (`tls` and `ws` both false) has no
+// socket carrier. A page reading a host without `ws` (before CAR9) takes `tls: false` as plain ws.
+public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls, bool Ws);
 
 // The `rendererSeat` wire shape: { "state": "restarting" | "pending" | "refused" | "failed", "reason": "<code>",
 // "detail": "<English evidence>" } (camelCased by BrowserJson; reason and detail omitted when null).

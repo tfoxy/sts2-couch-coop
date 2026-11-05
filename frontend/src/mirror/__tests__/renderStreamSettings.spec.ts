@@ -26,7 +26,6 @@ import {
   coreBuildCause,
   endpointCarrierUsable,
   lanCarrierUsable,
-  pageRunsClient,
   parseLanOffer,
   stopRenderStream,
   streamSeatAspect,
@@ -56,7 +55,7 @@ afterEach(() => {
 describe("mirrorSettings — the renderer keys", () => {
   it("persists `renderer` and never the live renderer or the QA endpoint", () => {
     expect(PERSISTED_SETTING_KEYS).toContain("renderer");
-    for (const key of ["runtimeRenderer", "renderStreamUrl", "renderStreamProtocol"] as const) {
+    for (const key of ["runtimeRenderer", "renderStreamUrl", "renderStreamProtocol", "renderStreamCarrier"] as const) {
       expect(NEVER_PERSISTED_SETTING_KEYS as readonly string[]).toContain(key);
       expect(PERSISTED_SETTING_KEYS as readonly string[]).not.toContain(key);
     }
@@ -73,13 +72,17 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(readStoredMirrorSettings(memoryStorage({ renderer: 7 }))).toEqual({});
   });
 
-  it("layers ?renderer= / ?renderStream= / ?rsProtocol= for the session and never writes them back", () => {
+  it("layers ?renderer= / ?renderStream= / ?rsProtocol= / ?rsCarrier= for the session and never writes them back", () => {
     const storage = memoryStorage({ renderer: "mirror" });
     const settings = createMirrorSettings(undefined,
-      "?renderer=stream&renderStream=ws://127.0.0.1:14861/render-stream&rsProtocol=11", { storage });
+      "?renderer=stream&renderStream=ws://127.0.0.1:14861/render-stream&rsProtocol=11&rsCarrier=websocket", { storage });
     expect(settings.renderer).toBe("stream");
     expect(settings.renderStreamUrl).toBe("ws://127.0.0.1:14861/render-stream");
     expect(settings.renderStreamProtocol).toBe(11);
+    expect(settings.renderStreamCarrier).toBe("websocket");
+    expect(createMirrorSettings(undefined, "?rsCarrier=webtransport", { storage: null }).renderStreamCarrier).toBe("webtransport");
+    expect(createMirrorSettings(undefined, "?rsCarrier=quic", { storage: null }).renderStreamCarrier).toBe("auto");
+    expect(createMirrorSettings(undefined, "", { storage: null }).renderStreamCarrier).toBe("auto");
     // The live renderer is derived later (syncRuntimeRenderer), never from the URL directly.
     expect(settings.runtimeRenderer).toBe("mirror");
     expect(storage.raw()).toEqual({ renderer: "mirror" });
@@ -186,7 +189,7 @@ describe("renderStreamAvailability", () => {
     expect(reason({ webgl2: false, directView: true })).toBe("no-webgl2");
     expect(reason({ directView: true })).toBe("host-view");
     expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("lan-off");
-    expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: { webTransport: false, tls: false },
+    expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: { webTransport: false, tls: false, ws: true },
       page: { https: true, secureContext: true, webTransport: true } })).toBe("needs-proxy");
     expect(reason({ qaEndpoint: null })).toBe("not-streaming");
     expect(reason({})).toBeNull();
@@ -272,7 +275,9 @@ describe("renderStreamAvailability", () => {
   });
 
   // CAR7b: which LAN page can use which carrier. A page is (https?, secure context?, WebTransport?); the host offers
-  // WebTransport (net module) and wss (a host certificate) or, without a certificate, plain ws.
+  // WebTransport (net module), wss (a host certificate naming the page's host), and plain ws only when it has no
+  // certificate at all. CAR9: every page runs the client, a plain-http LAN page included (godot-scene-web hashes the
+  // core without crypto.subtle there), so the carrier alone decides.
   describe("the LAN carrier matrix", () => {
     const pages = {
       httpsChrome: { https: true, secureContext: true, webTransport: true },
@@ -280,36 +285,46 @@ describe("renderStreamAvailability", () => {
       httpLan: { https: false, secureContext: false, webTransport: true }
     } as const;
     const offers = {
-      wtTls: { webTransport: true, tls: true },
-      wtPlain: { webTransport: true, tls: false },
-      tlsOnly: { webTransport: false, tls: true },
-      plainOnly: { webTransport: false, tls: false }
+      wtTls: { webTransport: true, tls: true, ws: false },
+      wtPlain: { webTransport: true, tls: false, ws: true },
+      tlsOnly: { webTransport: false, tls: true, ws: false },
+      plainOnly: { webTransport: false, tls: false, ws: true },
+      // The host has a certificate, but for another host name (an IP page on a secure-origin host): no wss for this
+      // page, and the hub refuses plain ws from the LAN.
+      wtOtherCert: { webTransport: true, tls: false, ws: false },
+      otherCert: { webTransport: false, tls: false, ws: false }
     } as const;
     // [page, offer, usable]
     const matrix: [keyof typeof pages, keyof typeof offers, boolean][] = [
       ["httpsChrome", "wtTls", true], ["httpsChrome", "wtPlain", true], ["httpsChrome", "tlsOnly", true],
-      ["httpsChrome", "plainOnly", false],
+      ["httpsChrome", "plainOnly", false], ["httpsChrome", "wtOtherCert", true], ["httpsChrome", "otherCert", false],
       ["httpsNoWt", "wtTls", true], ["httpsNoWt", "wtPlain", false], ["httpsNoWt", "tlsOnly", true],
-      ["httpsNoWt", "plainOnly", false],
-      ["httpLan", "wtTls", true], ["httpLan", "wtPlain", true], ["httpLan", "tlsOnly", true], ["httpLan", "plainOnly", true]
+      ["httpsNoWt", "plainOnly", false], ["httpsNoWt", "wtOtherCert", false], ["httpsNoWt", "otherCert", false],
+      ["httpLan", "wtTls", true], ["httpLan", "wtPlain", true], ["httpLan", "tlsOnly", true], ["httpLan", "plainOnly", true],
+      ["httpLan", "wtOtherCert", false], ["httpLan", "otherCert", false]
     ];
     it.each(matrix)("a %s page with a %s offer: a usable carrier=%s", (page, offer, usable) => {
       expect(lanCarrierUsable(offers[offer], pages[page])).toBe(usable);
-      // A plain-http LAN page has carriers but cannot run the client (no crypto.subtle outside a secure context).
-      const runs = usable && pageRunsClient(pages[page]);
       const at = computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: offers[offer], page: pages[page] });
-      expect(at.reason).toBe(runs ? "not-streaming" : "needs-proxy");
+      expect(at.reason).toBe(usable ? "not-streaming" : "needs-proxy");
       expect(joinRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
-        pageLoopback: false, qaEndpoint: null, lanOffer: offers[offer], page: pages[page] })).toBe(runs ? "stream" : undefined);
+        pageLoopback: false, qaEndpoint: null, lanOffer: offers[offer], page: pages[page] })).toBe(usable ? "stream" : undefined);
     });
 
-    it("never runs the client on a page that is not a secure context", () => {
-      expect(pageRunsClient(pages.httpLan)).toBe(false);
-      expect(pageRunsClient(pages.httpsChrome)).toBe(true);
+    it("streams a plain-http LAN page over the seat's ws, never WebTransport (CAR9)", () => {
+      const token = "a".repeat(64);
       const ws = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
-        resourceBase: "http://192.168.1.77:13366", token: "a".repeat(64), protocol: 13 })!;
+        resourceBase: "http://192.168.1.77:13366", token, protocol: 13 })!;
+      expect(endpointCarrierUsable(ws, pages.httpLan)).toBe(true);
       expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, sessionEndpoint: ws, page: pages.httpLan }))
-        .toMatchObject({ available: false, reason: "needs-proxy" });
+        .toMatchObject({ available: true, source: "session", endpoint: ws });
+      // WebTransport needs a secure context: a WebTransport member does not make a descriptor usable on an http page,
+      // only its socket url does (the seat describes none for an http page anyway).
+      const wtOnHttps = sessionRenderStreamEndpoint({ url: "wss://192.168.1.77:13366/render-stream",
+        resourceBase: "https://192.168.1.77:13366", token, protocol: 13,
+        webTransport: { url: "https://192.168.1.77:13366/render-stream", certificateHashes: ["c".repeat(64)] } })!;
+      expect(endpointCarrierUsable({ ...wtOnHttps, url: "ws://192.168.1.77:13366/render-stream" },
+        { https: true, secureContext: false, webTransport: true })).toBe(false);
       // The host's loopback http page IS a secure context.
       expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: ws })).toMatchObject({ available: true });
     });
@@ -348,7 +363,12 @@ describe("renderStreamAvailability", () => {
     });
 
     it("parses the host session's offer, refusing what it does not understand", () => {
-      expect(parseLanOffer({ webTransport: true, tls: false })).toEqual({ webTransport: true, tls: false });
+      expect(parseLanOffer({ webTransport: true, tls: false, ws: false })).toEqual({ webTransport: true, tls: false, ws: false });
+      expect(parseLanOffer({ webTransport: false, tls: false, ws: true })).toEqual({ webTransport: false, tls: false, ws: true });
+      // A host from before CAR9 sends no `ws`: its `tls: false` meant plain ws.
+      expect(parseLanOffer({ webTransport: true, tls: false })).toEqual({ webTransport: true, tls: false, ws: true });
+      expect(parseLanOffer({ webTransport: true, tls: true })).toEqual({ webTransport: true, tls: true, ws: false });
+      expect(parseLanOffer({ webTransport: true, tls: true, ws: "no" })).toBeNull();
       expect(parseLanOffer(null)).toBeNull();
       expect(parseLanOffer({ webTransport: "yes", tls: false })).toBeNull();
       expect(parseLanOffer({ tls: true })).toBeNull();

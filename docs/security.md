@@ -136,8 +136,8 @@ interface, on the seat's hub port (TCP and UDP). What that adds:
   in the descriptor). wss uses a certificate the host already has (its Direct-IP HTTPS leaf, else the published
   secure-origin certificate); the seat receives a PEM copy in its private evidence directory, written owner-only on
   Unix and never logged, and plaintext from LAN peers is then refused. A host with neither serves plain WebSocket on
-  the LAN, where token and frames would cross unencrypted, as a plain-http page's own couch socket does; today no
-  plain-http page can use it, because the browser client needs a secure page to load at all.
+  the LAN, where token and frames cross unencrypted, as a plain-http page's own couch socket does: the host's
+  plain-http LAN page streams over it.
 - **New parsers on the LAN.** The capture's WebSocket/HTTP parser and godot-scene-web's net module (QUIC, HTTP/3 and
   TLS in Rust: wtransport, quinn, rustls) become reachable from the LAN while the setting is on. They run in the seat
   process, not the host's; a fault there stops that carrier, not the game (godot-scene-web carrier-design.md D17).

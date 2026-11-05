@@ -745,13 +745,17 @@ internal static class RenderStreamPairingTests
         var lan = new Harness(configured: true, lan: true);
         lan.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, "my.local-ip.co",
             new StreamingSeatLan.TlsPair("secure-origin", leaf.ExportCertificatePem(), "k"));
-        Assert(lan.Manager.RenderStreamLanOffer("https://192-168-1-77.my.local-ip.co:13337") is (false, true),
+        Assert(lan.Manager.RenderStreamLanOffer("https://192-168-1-77.my.local-ip.co:13337") is (false, true, false),
             "on, no net module, a certificate naming this page's host: tls only");
-        Assert(lan.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false),
-            "the same certificate does not name an IP page: no tls for it");
-        Assert(lan.Manager.RenderStreamLanOffer(null) is (false, false), "no Origin: nothing it could name");
-        var json = BrowserJson.Serialize(new BrowserRenderStreamLanDto(true, false));
-        Assert(json == "{\"webTransport\":true,\"tls\":false}", $"the wire shape: {json}");
+        Assert(lan.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, false),
+            "the same certificate does not name an IP page: no tls for it, and no plain ws (the hub refuses LAN plaintext)");
+        Assert(lan.Manager.RenderStreamLanOffer(null) is (false, false, false), "no Origin: nothing it could name");
+        var plain = new Harness(configured: true, lan: true);
+        plain.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, null, null);
+        Assert(plain.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, true),
+            "no certificate at all: plain ws for a plain-http LAN page (CAR9)");
+        var json = BrowserJson.Serialize(new BrowserRenderStreamLanDto(true, false, true));
+        Assert(json == "{\"webTransport\":true,\"tls\":false,\"ws\":true}", $"the wire shape: {json}");
     }
 
     private static void TheTokenIsNeverLogged()

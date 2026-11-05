@@ -2329,11 +2329,12 @@ public sealed partial class HeadlessClientManager : IDisposable
 
     /// <summary>
     /// What a streaming seat launched now would offer the page at <paramref name="pageOrigin"/> (CAR7b): WebTransport,
-    /// and wss with a host certificate that names that page's host; null while the host setting is off or no capture
-    /// is configured. The host's certificates are re-read at most once a minute (it can prepare HTTPS while it runs).
-    /// Plain values, not the DTO: the hot-reload assembly compiles its own copy of the browser DTOs.
+    /// wss with a host certificate that names that page's host, and plain ws (CAR9), which the seat serves to LAN pages
+    /// only when the host has no certificate (with one the capture refuses LAN plaintext); null while the host setting
+    /// is off or no capture is configured. The host's certificates are re-read at most once a minute (it can prepare
+    /// HTTPS while it runs). Plain values, not the DTO: the hot-reload assembly compiles its own copy of the browser DTOs.
     /// </summary>
-    public (bool WebTransport, bool Tls)? RenderStreamLanOffer(string? pageOrigin)
+    public (bool WebTransport, bool Tls, bool Ws)? RenderStreamLanOffer(string? pageOrigin)
     {
         if (_streamingConfig is not { Lan: true } config) return null;
         var now = Environment.TickCount64;
@@ -2345,7 +2346,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
 
         var host = Uri.TryCreate(pageOrigin, UriKind.Absolute, out var page) ? page.Host : null;
-        return (config.NetModule is not null, host is not null && StreamingSeatLan.Covers(cached.Context.Tls, host));
+        return (config.NetModule is not null, host is not null && StreamingSeatLan.Covers(cached.Context.Tls, host),
+            cached.Context.Tls is null);
     }
 
     /// <summary>The host's LAN context for a streaming launch (tests replace it); null means gather it from this machine.</summary>

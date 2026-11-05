@@ -214,7 +214,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     ["needs-proxy", () => {
       mirrorSettings.renderStreamUrl = null;
       renderStreamContext.pageLoopback = false;
-      renderStreamContext.lanOffer = { webTransport: true, tls: false };
+      renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
       renderStreamContext.page = { https: true, secureContext: true, webTransport: false };
     }, "This page can't run the host's new-renderer stream. Open the host's HTTPS link in Chrome or Edge, or the mirror "
       + "on the host computer."],

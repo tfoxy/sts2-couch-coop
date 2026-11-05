@@ -78,6 +78,10 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 // a canvas whose WebGL context nobody has lost yet.
 const canvasGeneration = ref(0);
 const phase = ref<Phase>("connecting");
+// Which carrier the open connection uses (`client.stats().carrier`, read when the session arrives): the stage's
+// `data-stream-carrier`, so QA reads the carrier from the DOM instead of from CDP network events. Null while not
+// streaming.
+const carrier = ref<RenderStreamStats["carrier"]>(null);
 let client: RenderStreamClient | null = null;
 // INP2: the input channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
 // fresh client gets a fresh capture on the fresh canvas).
@@ -133,6 +137,7 @@ function commitConfirm(): void {
 
 function onStatus(status: RenderStreamStatus): void {
   emit("status", status);
+  carrier.value = status.kind === "streaming" ? client?.stats().carrier ?? null : null;
   switch (status.kind) {
     case "connecting":
       phase.value = "connecting";
@@ -221,6 +226,7 @@ function mountClient(): void {
       endpoint: props.endpoint,
       extensions: built.extensions,
       creditWindow: 2,
+      carrier: mirrorSettings.renderStreamCarrier,
       onStatus
     });
   } catch (error) {
@@ -249,6 +255,7 @@ function disposeClient(): void {
   streamInput = null;
   confirmController.value = null;
   mountedExtensionsKey = null;
+  carrier.value = null;
   const current = client;
   client = null;
   if (current) {
@@ -333,7 +340,14 @@ function bumpLayout(): void {
   layoutTick.value += 1;
 }
 
+// QA seam (CAR9): `window.__renderStreamStats()` reads the mounted stage's client counters (applies/s, carrier, …) on
+// a real page, where the component's own `stats()` is out of reach. Installed while mounted; removed only if it is
+// still this stage's.
+type StatsSeam = { __renderStreamStats?: () => Readonly<RenderStreamStats> };
+const statsSeam = (): Readonly<RenderStreamStats> => readStats();
+
 onMounted(() => {
+  if (typeof window !== "undefined") (window as unknown as StatsSeam).__renderStreamStats = statsSeam;
   document.addEventListener("visibilitychange", onVisibilityChange);
   window.addEventListener("resize", bumpLayout);
   window.addEventListener("orientationchange", bumpLayout);
@@ -350,6 +364,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (typeof window !== "undefined" && (window as unknown as StatsSeam).__renderStreamStats === statsSeam) {
+    delete (window as unknown as StatsSeam).__renderStreamStats;
+  }
   document.removeEventListener("visibilitychange", onVisibilityChange);
   window.removeEventListener("resize", bumpLayout);
   window.removeEventListener("orientationchange", bumpLayout);
@@ -361,10 +378,13 @@ onBeforeUnmount(() => {
   disposeClient();
 });
 
+/** The client's cheap counters (applies/s, credit RTT, heap, carrier); zeros while no client is mounted. */
+function readStats(): Readonly<RenderStreamStats> {
+  return client?.stats() ?? { applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0, carrier: null };
+}
+
 defineExpose({
-  /** The client's cheap counters (applies/s, credit RTT, heap); zeros while no client is mounted. */
-  stats: (): Readonly<RenderStreamStats> =>
-    client?.stats() ?? { applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0 },
+  stats: readStats,
   phase
 });
 </script>
@@ -376,6 +396,7 @@ defineExpose({
     :class="{ 'render-stream-frame-safe-area': mirrorSettings.safeAreaPaddingEnabled }"
     data-testid="render-stream-stage"
     :data-stream-phase="phase"
+    :data-stream-carrier="carrier ?? undefined"
   >
     <div class="render-stream-box" :style="boxStyle">
       <canvas

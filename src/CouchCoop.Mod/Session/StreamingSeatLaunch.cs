@@ -280,7 +280,8 @@ internal static class StreamingSeatLaunch
     /// <summary>
     /// The page origins the hub accepts: this host's own loopback page (both spellings a player can type), plus
     /// the dev extras. A LAN or HTTPS page is deliberately absent: it could not reach a loopback hub, so the seat
-    /// withholds the descriptor from it and the page shows "needs-proxy".
+    /// withholds the descriptor from it and the page shows "lan-off". The host's LAN setting adds them
+    /// (<see cref="StreamingSeatLan.PageOrigins"/>).
     /// </summary>
     internal static IReadOnlyList<string> AllowedOrigins(int hostBrowserPort, string? extraOrigins)
     {
