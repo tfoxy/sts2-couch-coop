@@ -6,7 +6,10 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-gsw_root="${COUCHCOOP_GSW_ROOT:-$(cd "$repo_root/.." && pwd)/godot-scene-web}"
+gsw_root="${COUCHCOOP_GSW_ROOT:-$repo_root/../godot-scene-web}"
+# Physical path: from a worktree the default goes through the .worktrees/godot-scene-web symlink, and cargo keys its
+# units on the path it is handed, so the same crates built via both paths poison one shared target dir.
+gsw_root="$(cd "$gsw_root" 2>/dev/null && pwd -P || printf '%s' "$gsw_root")"
 build_script="$gsw_root/packages/render-stream-client/scripts/build-web.sh"
 if [[ ! -f "$build_script" ]]; then
   echo "render-stream client source missing: $build_script (set COUCHCOOP_GSW_ROOT to the GSW checkout)" >&2

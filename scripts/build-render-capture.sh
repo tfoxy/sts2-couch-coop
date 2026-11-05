@@ -23,7 +23,10 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/render-capture-stamp.sh
 source "$repo_root/scripts/lib/render-capture-stamp.sh"
-gsw_root="${COUCHCOOP_GSW_ROOT:-$(cd "$repo_root/.." && pwd)/godot-scene-web}"
+gsw_root="${COUCHCOOP_GSW_ROOT:-$repo_root/../godot-scene-web}"
+# Physical path: from a worktree the default goes through the .worktrees/godot-scene-web symlink, and cargo keys its
+# units on the path it is handed, so the same crates built via both paths poison one shared target dir.
+gsw_root="$(cd "$gsw_root" 2>/dev/null && pwd -P || printf '%s' "$gsw_root")"
 capture_src="$gsw_root/experiments/render-stream/capture"
 net_build="$gsw_root/experiments/render-stream/scripts/build-rs-net.sh"
 out="${COUCHCOOP_RENDER_CAPTURE_OUT:-$repo_root/.sts2/render-capture}"
