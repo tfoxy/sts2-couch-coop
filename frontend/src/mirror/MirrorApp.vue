@@ -24,6 +24,7 @@ import MirrorView from "@/mirror/MirrorView.vue";
 import {
   currentJoinRendererRequest,
   streamSeatAspect,
+  parseLanOffer,
   parseSeatRestart,
   renderStreamAvailability,
   renderStreamContext,
@@ -966,8 +967,9 @@ const joinMode = computed(() =>
 //
 // While the render-stream draws (`runtimeRenderer === "stream"`, renderStreamAvailability.ts) this app shows
 // RenderStreamStage instead of MirrorView: the node-geometry scene is not watched (its producer idles), MirrorView
-// is unmounted (so no input, keyboard or gamepad capture exists — the stream is VIEW ONLY), and the `/ws` socket
-// keeps carrying the session, settings and audio. The two renderers are never both live.
+// is unmounted (so its keyboard and gamepad capture does not exist; taps and clicks reach the game through the stage's
+// own input channel, INP2), and the `/ws` socket keeps carrying the session, settings and audio. The two renderers are
+// never both live.
 const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
 // Loaded on first use: a viewer who never switches the beta on never downloads the client.
 const RenderStreamStage = defineAsyncComponent(() => import("@/mirror/RenderStreamStage.vue"));
@@ -1029,6 +1031,8 @@ watch(
   () => [hostSession.value, joined.value, seatViewSession.value] as const,
   ([session, isJoined, seatSession]) => {
     if (session === null) return;
+    // CAR7b: the host's LAN offer, on every host session while its setting is on (absent means off).
+    renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan);
     const restart = parseSeatRestart(session.rendererSeat);
     if (restart !== null) {
       renderStreamContext.seatRestart = restart;

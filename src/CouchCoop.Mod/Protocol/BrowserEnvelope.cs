@@ -87,7 +87,18 @@ public sealed record BrowserEnvelope(
     // "Use new renderer (Beta)" turned on mid-session (MIR-4): what the HOST did with this viewer's request to restart
     // their seat as the streaming seat. Only the host's own connection for a bound seat carries it, and only while
     // there is something to say (Session/HeadlessClientManager.StreamingRestart.cs); null (omitted) otherwise.
-    BrowserRendererSeatDto? RendererSeat = null);
+    BrowserRendererSeatDto? RendererSeat = null,
+    // "Stream the new renderer over the LAN" (CAR7b): on the HOST's connections only, while the host setting is on and a
+    // capture is configured, what its streaming seat would offer a LAN page, so the page can tell "off on this host"
+    // from "this page cannot use it" before it joins. Null (omitted) when the setting is off.
+    BrowserRenderStreamLanDto? RenderStreamLan = null);
+
+// The `renderStreamLan` wire shape: { "webTransport": true, "tls": true } (camelCased by BrowserJson). `webTransport`:
+// the seat serves WebTransport (any secure-context page can use it). `tls`: the seat serves wss with a certificate of
+// this host's (Direct-IP HTTPS or the secure origin) that names THIS page's host. With a certificate the seat refuses
+// plain ws from the LAN, so `tls: false` on a host that has one (for another host name) leaves a plain-http page no
+// carrier; the page cannot tell those apart and may try, and then sees "not streaming".
+public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls);
 
 // The `rendererSeat` wire shape: { "state": "restarting" | "pending" | "refused" | "failed", "reason": "<code>",
 // "detail": "<English evidence>" } (camelCased by BrowserJson; reason and detail omitted when null).

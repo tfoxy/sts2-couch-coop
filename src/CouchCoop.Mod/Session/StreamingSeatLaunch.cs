@@ -133,8 +133,16 @@ internal static class StreamingSeatLaunch
     /// </summary>
     /// <param name="NetModule">The net module beside the capture (<see cref="NetModuleFileName"/>), or null: the seat then
     /// serves WebSocket only.</param>
+    /// <param name="Lan">The host's <see cref="StreamingSeatLan.EnvironmentVariable"/>: the hub also serves its LAN pages.</param>
     internal sealed record Config(
-        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null);
+        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null,
+        bool Lan = false);
+
+    /// <summary>
+    /// A LAN launch (<see cref="StreamingSeatLan"/>): the hub on every interface, and wss through this PEM pair when the
+    /// host has a certificate for its LAN pages (both null without one).
+    /// </summary>
+    internal sealed record LanLaunch(string? TlsCertificate = null, string? TlsKey = null);
 
     /// <summary>
     /// The operator's <see cref="MaxPresentationWidthEnvironmentVariable"/>: unset or not an integer is the default
@@ -246,7 +254,8 @@ internal static class StreamingSeatLaunch
 
         var maxWidth = ParseMaxPresentationWidth(
             System.Environment.GetEnvironmentVariable(MaxPresentationWidthEnvironmentVariable), out var warning);
-        return result with { Config = config with { MaxPresentationWidth = maxWidth }, Warning = warning };
+        var lan = StreamingSeatLan.IsEnabled(System.Environment.GetEnvironmentVariable(StreamingSeatLan.EnvironmentVariable));
+        return result with { Config = config with { MaxPresentationWidth = maxWidth, Lan = lan }, Warning = warning };
     }
 
     /// <summary>
@@ -302,14 +311,19 @@ internal static class StreamingSeatLaunch
     /// The seat's presentation width (<see cref="PresentationWidth"/>); the height is always
     /// <see cref="PresentationHeight"/>.
     /// </param>
+    /// <param name="lan">
+    /// Null: the hub listens on loopback only (the default). Set: it listens on every interface under
+    /// <c>GRC_LIVE_EXPOSE=lan</c> (token auth and the origin list are already there), with wss through the pair when
+    /// one is given. The caller has put the LAN page origins into <paramref name="allowedOrigins"/>.
+    /// </param>
     internal static IReadOnlyDictionary<string, string> Environment(
         Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins,
-        int presentationWidth = PresentationBaseWidth)
+        int presentationWidth = PresentationBaseWidth, LanLaunch? lan = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(allowedOrigins);
         ArgumentOutOfRangeException.ThrowIfLessThan(presentationWidth, PresentationBaseWidth);
-        var hub = $"127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)}";
+        var hub = $"{(lan is null ? "127.0.0.1" : "0.0.0.0")}:{hubPort.ToString(CultureInfo.InvariantCulture)}";
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [StreamingSeatRole.EnvironmentVariable] = "1",
@@ -356,6 +370,18 @@ internal static class StreamingSeatLaunch
             // UDP, the same number as the WebSocket port (TCP and UDP port spaces are separate): one port per seat.
             environment["GRC_LIVE_WT_LISTEN"] = hub;
             environment["GRC_LIVE_WT_CERT"] = "self";
+        }
+
+        if (lan is not null)
+        {
+            // godot-scene-web's opt-in LAN exposure (carrier-design.md D10): with token auth and a non-empty origin
+            // list, both of which every streaming seat already has.
+            environment["GRC_LIVE_EXPOSE"] = "lan";
+            if (lan.TlsCertificate is { } certificate && lan.TlsKey is { } key)
+            {
+                environment["GRC_LIVE_TLS_CERT"] = certificate;
+                environment["GRC_LIVE_TLS_KEY"] = key;
+            }
         }
 
         return environment;

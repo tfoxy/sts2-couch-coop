@@ -1916,13 +1916,24 @@ public sealed class CouchCoopWebSocketConnection
                 ? envelope with { RenderStream = descriptor }
                 : WithRendererSeat(envelope);
 
-    // On the HOST, the session of a viewer whose seat has a renderer request in hand carries what became of it (MIR-4).
+    // On the HOST, the session of a viewer whose seat has a renderer request in hand carries what became of it (MIR-4),
+    // and every host session carries the LAN streaming offer while that host setting is on (CAR7b).
     private BrowserEnvelope WithRendererSeat(BrowserEnvelope envelope)
-        => string.Equals(envelope.Type, "session", StringComparison.Ordinal)
-            && _session is { } session
-            && _headlessManager?.SeatRendererStateFor(session.Id) is { } seat
-                ? envelope with { RendererSeat = new BrowserRendererSeatDto(seat.State, seat.Reason, seat.Detail) }
-                : envelope;
+    {
+        if (!string.Equals(envelope.Type, "session", StringComparison.Ordinal) || _headlessManager is not { } manager)
+        {
+            return envelope;
+        }
+
+        if (manager.RenderStreamLanOffer(_requestOrigin) is { } offer)
+        {
+            envelope = envelope with { RenderStreamLan = new BrowserRenderStreamLanDto(offer.WebTransport, offer.Tls) };
+        }
+
+        return _session is { } session && manager.SeatRendererStateFor(session.Id) is { } seat
+            ? envelope with { RendererSeat = new BrowserRendererSeatDto(seat.State, seat.Reason, seat.Detail) }
+            : envelope;
+    }
 
     private Task SendResultAsync(BrowserActionResultEnvelope envelope)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));

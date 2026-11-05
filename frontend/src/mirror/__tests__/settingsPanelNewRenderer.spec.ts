@@ -85,7 +85,7 @@ afterEach(() => {
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     renderStreamProtocol: 12, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
   Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null,
-    seatJoined: false, seatRestart: null });
+    seatJoined: false, seatRestart: null, lanOffer: null, page: undefined });
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
@@ -208,8 +208,16 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     }, "This dev build's new renderer is out of date. On the host, run scripts/build-local-mod.sh to rebuild it."],
     ["no-webgl2", () => { renderStreamContext.webgl2 = false; }, "This browser can't run the new renderer."],
     ["host-view", () => { renderStreamContext.directView = true; }, "Not available when watching the host's own game."],
-    ["needs-proxy", () => { mirrorSettings.renderStreamUrl = null; renderStreamContext.pageLoopback = false; },
-      "Open the mirror on the host computer to try the new renderer."],
+    ["lan-off", () => { mirrorSettings.renderStreamUrl = null; renderStreamContext.pageLoopback = false; },
+      "Streaming the new renderer to other devices is off on this host. The host can turn it on with "
+      + "COUCHCOOP_RENDER_STREAM_LAN=1; until then, open the mirror on the host computer."],
+    ["needs-proxy", () => {
+      mirrorSettings.renderStreamUrl = null;
+      renderStreamContext.pageLoopback = false;
+      renderStreamContext.lanOffer = { webTransport: true, tls: false };
+      renderStreamContext.page = { https: true, secureContext: true, webTransport: false };
+    }, "This page can't run the host's new-renderer stream. Open the host's HTTPS link in Chrome or Edge, or the mirror "
+      + "on the host computer."],
     ["not-streaming", () => { mirrorSettings.renderStreamUrl = null; },
       "This player's seat isn't streaming. It applies when the seat next starts."]
   ])("shows the %s reason and disables the checkbox", async (_name, arrange, text) => {

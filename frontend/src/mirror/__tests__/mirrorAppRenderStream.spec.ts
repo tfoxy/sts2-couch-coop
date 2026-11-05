@@ -151,7 +151,8 @@ afterEach(() => {
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     stretchEnabled: true });
   Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
-    coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false, seatRestart: null });
+    coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false, seatRestart: null,
+    lanOffer: null, page: undefined });
   globalThis.localStorage?.clear();
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
 });
@@ -458,6 +459,27 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     mirrorSettings.renderer = "stream";
     await settle();
     expect(host.ofType("set-renderer")).toHaveLength(0);
+  });
+
+  it("on a LAN page, reads the host's LAN offer and asks for the stream only while the host offers it (CAR7b)", async () => {
+    const { host } = await joinNormalSeat();
+    renderStreamContext.pageLoopback = false;
+    renderStreamContext.page = { https: true, secureContext: true, webTransport: true };
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(renderStreamAvailability.value.reason).toBe("lan-off");
+    expect(host.ofType("set-renderer")).toHaveLength(0);
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    host.emit(sessionMessage({ renderStreamLan: { webTransport: true, tls: true } }));
+    await settle();
+    expect(renderStreamContext.lanOffer).toEqual({ webTransport: true, tls: true });
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("set-renderer").at(-1)).toMatchObject({ renderer: "stream" });
+    host.emit(sessionMessage());
+    await settle();
+    expect(renderStreamContext.lanOffer).toBeNull();
   });
 
   it("switches to the stream when the restarted seat's descriptor arrives, and a pre-join session keeps the wait", async () => {

@@ -24,6 +24,10 @@ import {
   resolveRuntimeRenderer,
   sessionRenderStreamEndpoint,
   coreBuildCause,
+  endpointCarrierUsable,
+  lanCarrierUsable,
+  pageRunsClient,
+  parseLanOffer,
   stopRenderStream,
   streamSeatAspect,
   syncRuntimeRenderer,
@@ -46,7 +50,7 @@ function memoryStorage(initial: Record<string, unknown> = {}): MirrorSettingsSto
 
 afterEach(() => {
   Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
-    coreProblem: undefined, webgl2: undefined, pageLoopback: undefined });
+    coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, lanOffer: null, page: undefined });
 });
 
 describe("mirrorSettings — the renderer keys", () => {
@@ -181,7 +185,9 @@ describe("renderStreamAvailability", () => {
     expect(reason({ coreLoadFailed: true })).toBe("core-build");
     expect(reason({ webgl2: false, directView: true })).toBe("no-webgl2");
     expect(reason({ directView: true })).toBe("host-view");
-    expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("needs-proxy");
+    expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("lan-off");
+    expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: { webTransport: false, tls: false },
+      page: { https: true, secureContext: true, webTransport: true } })).toBe("needs-proxy");
     expect(reason({ qaEndpoint: null })).toBe("not-streaming");
     expect(reason({})).toBeNull();
   });
@@ -194,7 +200,7 @@ describe("renderStreamAvailability", () => {
     expect(withRestart("refused")).toBe("seat-restart-refused");
     expect(withRestart("failed")).toBe("seat-restart-failed");
     // Everything that outranks not-streaming outranks the restart too, and the seat's descriptor wins over a stale one.
-    expect(withRestart("restarting", { pageLoopback: false })).toBe("needs-proxy");
+    expect(withRestart("restarting", { pageLoopback: false })).toBe("lan-off");
     expect(withRestart("restarting", { directView: true })).toBe("host-view");
     const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
       token: "a".repeat(64), protocol: 12 });
@@ -263,6 +269,90 @@ describe("renderStreamAvailability", () => {
     expect(coreBuildCause("stale", true)).toBe("stale");
     expect(coreBuildCause("unverified", false)).toBe("unverified");
     expect(coreBuildCause(null, true)).toBe("load-failed");
+  });
+
+  // CAR7b: which LAN page can use which carrier. A page is (https?, secure context?, WebTransport?); the host offers
+  // WebTransport (net module) and wss (a host certificate) or, without a certificate, plain ws.
+  describe("the LAN carrier matrix", () => {
+    const pages = {
+      httpsChrome: { https: true, secureContext: true, webTransport: true },
+      httpsNoWt: { https: true, secureContext: true, webTransport: false },
+      httpLan: { https: false, secureContext: false, webTransport: true }
+    } as const;
+    const offers = {
+      wtTls: { webTransport: true, tls: true },
+      wtPlain: { webTransport: true, tls: false },
+      tlsOnly: { webTransport: false, tls: true },
+      plainOnly: { webTransport: false, tls: false }
+    } as const;
+    // [page, offer, usable]
+    const matrix: [keyof typeof pages, keyof typeof offers, boolean][] = [
+      ["httpsChrome", "wtTls", true], ["httpsChrome", "wtPlain", true], ["httpsChrome", "tlsOnly", true],
+      ["httpsChrome", "plainOnly", false],
+      ["httpsNoWt", "wtTls", true], ["httpsNoWt", "wtPlain", false], ["httpsNoWt", "tlsOnly", true],
+      ["httpsNoWt", "plainOnly", false],
+      ["httpLan", "wtTls", true], ["httpLan", "wtPlain", true], ["httpLan", "tlsOnly", true], ["httpLan", "plainOnly", true]
+    ];
+    it.each(matrix)("a %s page with a %s offer: a usable carrier=%s", (page, offer, usable) => {
+      expect(lanCarrierUsable(offers[offer], pages[page])).toBe(usable);
+      // A plain-http LAN page has carriers but cannot run the client (no crypto.subtle outside a secure context).
+      const runs = usable && pageRunsClient(pages[page]);
+      const at = computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: offers[offer], page: pages[page] });
+      expect(at.reason).toBe(runs ? "not-streaming" : "needs-proxy");
+      expect(joinRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
+        pageLoopback: false, qaEndpoint: null, lanOffer: offers[offer], page: pages[page] })).toBe(runs ? "stream" : undefined);
+    });
+
+    it("never runs the client on a page that is not a secure context", () => {
+      expect(pageRunsClient(pages.httpLan)).toBe(false);
+      expect(pageRunsClient(pages.httpsChrome)).toBe(true);
+      const ws = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
+        resourceBase: "http://192.168.1.77:13366", token: "a".repeat(64), protocol: 13 })!;
+      expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, sessionEndpoint: ws, page: pages.httpLan }))
+        .toMatchObject({ available: false, reason: "needs-proxy" });
+      // The host's loopback http page IS a secure context.
+      expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: ws })).toMatchObject({ available: true });
+    });
+
+    it("says lan-off, not needs-proxy, when the host's setting is off, and asks for no streaming seat", () => {
+      for (const page of Object.values(pages)) {
+        expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: null, page }).reason).toBe("lan-off");
+        expect(joinRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
+          pageLoopback: false, qaEndpoint: null, lanOffer: null, page })).toBeUndefined();
+      }
+    });
+
+    it("judges a seat's descriptor by what this page can open", () => {
+      const token = "a".repeat(64);
+      const wt = { url: "https://192.168.1.77:13366/render-stream", certificateHashes: ["c".repeat(64)] };
+      const plainWithWt = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
+        resourceBase: "https://192.168.1.77:13366", token, protocol: 13, webTransport: wt })!;
+      const wss = sessionRenderStreamEndpoint({ url: "wss://192.168.1.77:13366/render-stream",
+        resourceBase: "https://192.168.1.77:13366", token, protocol: 13 })!;
+      const ws = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
+        resourceBase: "http://192.168.1.77:13366", token, protocol: 13 })!;
+      expect(endpointCarrierUsable(plainWithWt, pages.httpsChrome)).toBe(true);
+      expect(endpointCarrierUsable(plainWithWt, pages.httpsNoWt)).toBe(false);
+      expect(endpointCarrierUsable(wss, pages.httpsNoWt)).toBe(true);
+      expect(endpointCarrierUsable(wss, pages.httpLan)).toBe(true);
+      expect(endpointCarrierUsable(ws, pages.httpLan)).toBe(true);
+      expect(endpointCarrierUsable(ws, pages.httpsChrome)).toBe(false);
+      expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, sessionEndpoint: plainWithWt,
+        page: pages.httpsNoWt })).toMatchObject({ available: false, reason: "needs-proxy" });
+      expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, sessionEndpoint: plainWithWt,
+        page: pages.httpsChrome })).toMatchObject({ available: true, source: "session" });
+      // The host's own loopback page keeps working exactly as before (ws on loopback).
+      const loop = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
+        resourceBase: "http://127.0.0.1:13366", token, protocol: 13 })!;
+      expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: loop })).toMatchObject({ available: true });
+    });
+
+    it("parses the host session's offer, refusing what it does not understand", () => {
+      expect(parseLanOffer({ webTransport: true, tls: false })).toEqual({ webTransport: true, tls: false });
+      expect(parseLanOffer(null)).toBeNull();
+      expect(parseLanOffer({ webTransport: "yes", tls: false })).toBeNull();
+      expect(parseLanOffer({ tls: true })).toBeNull();
+    });
   });
 
   it("asks the host for a streaming seat only when the viewer chose it and this page can draw it", () => {

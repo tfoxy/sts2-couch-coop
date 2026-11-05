@@ -544,7 +544,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         if (streaming.Config is { } config)
         {
             CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.Calibration} "
-                + $"maxWidth={config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)}");
+                + $"maxWidth={config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
+                + $"carriers={(config.NetModule is null ? "ws" : "ws,wt")} lan={(config.Lan ? "on" : "off")}");
         }
         else if (streaming.Refusal is { } refusal)
         {
@@ -2280,7 +2281,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         string? evidence = null;
         if (_streamingConfig is null) refusal = "no capture is configured";
         else if (hostUserDir is null) refusal = "the host user dir is unresolved";
-        else if (SeatPortAvailability.TestBindRefusal(hubPort, System.Net.IPAddress.Loopback) is { } bindError)
+        else if (SeatPortAvailability.TestBindRefusal(
+                     hubPort, _streamingConfig.Lan ? System.Net.IPAddress.Any : System.Net.IPAddress.Loopback) is { } bindError)
         {
             refusal = $"render-stream hub port {hubPort.ToString(CultureInfo.InvariantCulture)} is in use ({bindError})";
         }
@@ -2310,14 +2312,83 @@ public sealed partial class HeadlessClientManager : IDisposable
         var hostPort = _controlPort?.Invoke() ?? 0;
         var origins = StreamingSeatLaunch.AllowedOrigins(
             hostPort, Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable));
+        var (lan, lanTls) = PrepareStreamingSeatLanLocked(evidence, hostPort, ref origins);
         var aspect = _streamingAspect.TryGetValue(slot, out var requested) ? requested : (double?)null;
         var width = StreamingSeatPresentationWidthLocked(slot);
-        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, width));
-        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=127.0.0.1:{hubPort.ToString(CultureInfo.InvariantCulture)} "
+        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, width, lan));
+        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub={(lan is null ? "127.0.0.1" : "0.0.0.0")}:{hubPort.ToString(CultureInfo.InvariantCulture)} "
+            + $"lan={(lan is null ? "off" : "on")} tls={lanTls} "
             + $"presentation={width.ToString(CultureInfo.InvariantCulture)}x{StreamingSeatLaunch.PresentationHeight.ToString(CultureInfo.InvariantCulture)} aspect={(aspect is double a ? a.ToString("0.####", CultureInfo.InvariantCulture) : "none")} "
             + $"cap={_streamingConfig!.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
             + $"carriers={(_streamingConfig.NetModule is null ? "ws" : "ws,wt")} "
             + $"origins={string.Join(',', origins)} evidence={evidence}");
+    }
+
+    private sealed record LanOfferCache(long At, StreamingSeatLan.Context Context);
+    private LanOfferCache? _lanOffer;
+
+    /// <summary>
+    /// What a streaming seat launched now would offer the page at <paramref name="pageOrigin"/> (CAR7b): WebTransport,
+    /// and wss with a host certificate that names that page's host; null while the host setting is off or no capture
+    /// is configured. The host's certificates are re-read at most once a minute (it can prepare HTTPS while it runs).
+    /// Plain values, not the DTO: the hot-reload assembly compiles its own copy of the browser DTOs.
+    /// </summary>
+    public (bool WebTransport, bool Tls)? RenderStreamLanOffer(string? pageOrigin)
+    {
+        if (_streamingConfig is not { Lan: true } config) return null;
+        var now = Environment.TickCount64;
+        var cached = Volatile.Read(ref _lanOffer);
+        if (cached is null || now - cached.At >= 60_000)
+        {
+            cached = new LanOfferCache(now, StreamingSeatLanContext?.Invoke() ?? StreamingSeatLan.Gather());
+            Volatile.Write(ref _lanOffer, cached);
+        }
+
+        var host = Uri.TryCreate(pageOrigin, UriKind.Absolute, out var page) ? page.Host : null;
+        return (config.NetModule is not null, host is not null && StreamingSeatLan.Covers(cached.Context.Tls, host));
+    }
+
+    /// <summary>The host's LAN context for a streaming launch (tests replace it); null means gather it from this machine.</summary>
+    internal Func<StreamingSeatLan.Context>? StreamingSeatLanContext { get; set; }
+
+    /// <summary>
+    /// "Stream the new renderer over the LAN" (<see cref="StreamingSeatLan"/>): with the host setting on, add the host's
+    /// LAN page origins and write its certificate's PEM pair into the seat's private evidence directory. With it off,
+    /// remove any pair a previous launch left. Returns the LAN launch (null when off) and the certificate kind for the
+    /// log; never the key.
+    /// </summary>
+    internal (StreamingSeatLaunch.LanLaunch? Lan, string Tls) PrepareStreamingSeatLanLocked(
+        string evidence, int hostPort, ref IReadOnlyList<string> origins)
+    {
+        try
+        {
+            StreamingSeatLan.DeletePair(evidence);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            CouchCoopLog.Stderr($"render-stream lan: stale certificate not removed ({exception.GetType().Name})");
+        }
+
+        if (_streamingConfig is not { Lan: true }) return (null, "none");
+        var context = StreamingSeatLanContext?.Invoke() ?? StreamingSeatLan.Gather(CouchCoopLog.Stderr);
+        var merged = new List<string>(origins);
+        foreach (var origin in StreamingSeatLan.PageOrigins(context, hostPort))
+        {
+            if (!merged.Contains(origin, StringComparer.Ordinal)) merged.Add(origin);
+        }
+
+        origins = merged;
+        if (context.Tls is not { } pair) return (new StreamingSeatLaunch.LanLaunch(), "none");
+        try
+        {
+            var (certificate, key) = StreamingSeatLan.WritePair(evidence, pair);
+            return (new StreamingSeatLaunch.LanLaunch(certificate, key), pair.Kind);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            CouchCoopLog.Stderr($"render-stream lan: certificate not written ({exception.GetType().Name}); serving without wss");
+            return (new StreamingSeatLaunch.LanLaunch(), "none");
+        }
     }
 
     /// <summary>

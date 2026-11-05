@@ -215,6 +215,10 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // viewer's request to restart their seat as the streaming seat. Absent when there is nothing to say. Parsed where
   // it is used (renderStreamAvailability's parseSeatRestart).
   rendererSeat?: unknown;
+  // "Stream the new renderer over the LAN" (CAR7b): on the HOST's connection only, while that host setting is on,
+  // what its streaming seat offers a LAN page ({ webTransport, tls }). Absent when the setting is off. Parsed where it
+  // is used (renderStreamAvailability's parseLanOffer).
+  renderStreamLan?: unknown;
   // Current hosts always accept an absolute scroll offset (`set-scroll-offset`).
   scrollAction: true;
 }
@@ -589,6 +593,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       renderStream: value.renderStream !== null && typeof value.renderStream === "object"
         ? value.renderStream as BrowserRenderStreamDescriptor : null,
       rendererSeat: value.rendererSeat !== null && typeof value.rendererSeat === "object" ? value.rendererSeat : null,
+      renderStreamLan: value.renderStreamLan !== null && typeof value.renderStreamLan === "object" ? value.renderStreamLan : null,
       scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };
   }

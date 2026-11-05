@@ -7,7 +7,12 @@
 //                  is `renderStreamCoreCause` (a release always carries a verified core, so there only the load fails)
 //   no-webgl2      this browser gives no WebGL2 context
 //   host-view      watching the host's own game (`directView`), which never streams
-//   needs-proxy    no descriptor, and this page's origin is not one a loopback stream can serve (LAN / HTTPS)
+//   lan-off        a page that is not the host's loopback page, on a host whose "Stream the new renderer over the LAN"
+//                  setting is off (the host session carries no `renderStreamLan` offer)
+//   needs-proxy    this page cannot run the stream: it is not a secure context (a plain-http LAN page; the client's
+//                  core loader needs `crypto.subtle`, `pageRunsClient`), or no carrier the seat offers can work on it
+//                  (`lanCarrierUsable` / `endpointCarrierUsable`: an https page cannot use plain ws, WebTransport
+//                  needs the API)
 //   not-streaming  joined, but this seat has no descriptor; it applies when the seat next starts
 //   seat-restarting / seat-restart-pending / seat-restart-refused / seat-restart-failed
 //                  in place of not-streaming, what the host did with this viewer's mid-session request to restart
@@ -37,7 +42,8 @@ import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/r
  * freed); a visible tab then reconnects as a fresh join. */
 export const RENDER_STREAM_HIDDEN_DISPOSE_MS = 60_000;
 
-export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "needs-proxy" | "not-streaming"
+export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "lan-off" | "needs-proxy"
+  | "not-streaming"
   | "seat-restarting" | "seat-restart-pending" | "seat-restart-refused" | "seat-restart-failed";
 
 /** The host session's `rendererSeat`: what became of this viewer's request to restart their seat as the streaming
@@ -69,6 +75,57 @@ export function parseSeatRestart(raw: unknown): RenderStreamSeatRestart | null {
 }
 export type RenderStreamEndpointSource = "qa-override" | "session";
 
+/** The host session's `renderStreamLan` (CAR7b): what its streaming seat offers a LAN page. Absent: the setting is off. */
+export interface RenderStreamLanOffer {
+  /** The seat serves WebTransport (self-signed, pinned by hash: any secure-context page). */
+  webTransport: boolean;
+  /** The seat serves wss with a host certificate, and then refuses plain ws from the LAN; false: plain ws. */
+  tls: boolean;
+}
+
+/** The `renderStreamLan` field of a host `session`, or null when absent or not understood. */
+export function parseLanOffer(raw: unknown): RenderStreamLanOffer | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const value = raw as { webTransport?: unknown; tls?: unknown };
+  if (typeof value.webTransport !== "boolean" || typeof value.tls !== "boolean") return null;
+  return { webTransport: value.webTransport, tls: value.tls };
+}
+
+/** What this page can open: the facts the carrier matrix needs. */
+export interface RenderStreamPageFacts {
+  /** An https page: it cannot open plain ws (mixed content); an http page can open both ws and wss. */
+  https: boolean;
+  /** `isSecureContext`: https, or http on loopback. WebTransport needs it. */
+  secureContext: boolean;
+  /** `globalThis.WebTransport` exists. */
+  webTransport: boolean;
+}
+
+/**
+ * Whether a LAN offer has a carrier this page can use: WebTransport on a secure-context page with WebTransport; wss
+ * whenever the seat has a certificate (an http page may open wss; whether the device trusts that certificate is not
+ * knowable here); plain ws only from an http page, and only when the seat has no certificate (with one it refuses
+ * plaintext from the LAN).
+ */
+export function lanCarrierUsable(offer: RenderStreamLanOffer, page: RenderStreamPageFacts): boolean {
+  return (offer.webTransport && page.secureContext && page.webTransport) || offer.tls || !page.https;
+}
+
+/**
+ * Whether the client can run on this page at all: only in a secure context (https, or http on loopback). The
+ * render-stream client verifies its core with `crypto.subtle`, which a plain-http LAN page does not have, so the core
+ * fails to load there whatever the carrier (godot-scene-web's loader; reported upstream).
+ */
+export function pageRunsClient(page: RenderStreamPageFacts): boolean {
+  return page.secureContext;
+}
+
+/** The same question for a descriptor the seat sent: its WebTransport member, or its socket url's scheme. */
+export function endpointCarrierUsable(endpoint: RenderStreamEndpoint, page: RenderStreamPageFacts): boolean {
+  if (endpoint.webTransport && page.secureContext && page.webTransport) return true;
+  return /^wss:/i.test(endpoint.url) || !page.https;
+}
+
 export interface RenderStreamAvailabilityInputs {
   coreProblem: RenderStreamCoreProblem | null;
   /** The core was found but failed to load this session (a runtime `core-load-failed`). */
@@ -79,8 +136,12 @@ export interface RenderStreamAvailabilityInputs {
   qaEndpoint: RenderStreamEndpoint | null;
   /** The descriptor in this viewer's own seat `session` envelope (MIR-3). */
   sessionEndpoint: RenderStreamEndpoint | null;
-  /** Whether this page is on a loopback http origin, the only origin a host-side loopback hub can serve today. */
+  /** Whether this page is on a loopback http origin, which a streaming seat always serves. */
   pageLoopback: boolean;
+  /** The host's LAN offer (CAR7b), null while its setting is off. Defaults to null. */
+  lanOffer?: RenderStreamLanOffer | null;
+  /** What this page can open. Defaults to a loopback http page's facts. */
+  page?: RenderStreamPageFacts;
   /** What the host did with a mid-session request to restart this viewer's seat as the streaming seat (MIR-4). */
   seatRestart?: RenderStreamSeatRestart | null;
 }
@@ -88,6 +149,9 @@ export interface RenderStreamAvailabilityInputs {
 export type RenderStreamAvailability =
   | { available: true; reason: null; endpoint: RenderStreamEndpoint; source: RenderStreamEndpointSource }
   | { available: false; reason: RenderStreamUnavailableReason; endpoint: null; source: null };
+
+/** A loopback http page: a secure context; WebTransport assumed present (the descriptor decides). */
+const LOOPBACK_PAGE: RenderStreamPageFacts = { https: false, secureContext: true, webTransport: true };
 
 const unavailable = (reason: RenderStreamUnavailableReason): RenderStreamAvailability =>
   ({ available: false, reason, endpoint: null, source: null });
@@ -97,8 +161,17 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
   if (!inputs.webgl2) return unavailable("no-webgl2");
   if (inputs.directView) return unavailable("host-view");
   if (inputs.qaEndpoint) return { available: true, reason: null, endpoint: inputs.qaEndpoint, source: "qa-override" };
-  if (inputs.sessionEndpoint) return { available: true, reason: null, endpoint: inputs.sessionEndpoint, source: "session" };
-  if (!inputs.pageLoopback) return unavailable("needs-proxy");
+  // A loopback http page is a secure context by definition, whatever a probe (or jsdom) reports.
+  const page = inputs.pageLoopback ? { ...(inputs.page ?? LOOPBACK_PAGE), secureContext: true } : inputs.page ?? LOOPBACK_PAGE;
+  if (inputs.sessionEndpoint) {
+    return pageRunsClient(page) && endpointCarrierUsable(inputs.sessionEndpoint, page)
+      ? { available: true, reason: null, endpoint: inputs.sessionEndpoint, source: "session" }
+      : unavailable("needs-proxy");
+  }
+  if (!inputs.pageLoopback) {
+    if (!inputs.lanOffer) return unavailable("lan-off");
+    if (!pageRunsClient(page) || !lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
+  }
   return unavailable(inputs.seatRestart ? SEAT_RESTART_REASONS[inputs.seatRestart.state] : "not-streaming");
 }
 
@@ -153,6 +226,16 @@ export function probeWebgl2(): boolean {
   return webgl2Memo;
 }
 
+/** This page's carrier facts, read from the browser. */
+export function probePageFacts(): RenderStreamPageFacts {
+  if (typeof window === "undefined") return LOOPBACK_PAGE;
+  return {
+    https: window.location.protocol === "https:",
+    secureContext: window.isSecureContext === true,
+    webTransport: typeof (globalThis as { WebTransport?: unknown }).WebTransport === "function"
+  };
+}
+
 export function isLoopbackHttpPage(location: Pick<Location, "protocol" | "hostname"> | null =
   typeof window === "undefined" ? null : window.location): boolean {
   if (!location || location.protocol !== "http:") return false;
@@ -176,7 +259,11 @@ export const renderStreamContext = reactive({
   /** This viewer holds a seat of its own (joined, not the host's view): a restart can be asked for it. */
   seatJoined: false,
   /** The host session's `rendererSeat` (MirrorApp writes it). */
-  seatRestart: null as RenderStreamSeatRestart | null
+  seatRestart: null as RenderStreamSeatRestart | null,
+  /** The host session's `renderStreamLan` (MirrorApp writes it): null while the host's LAN setting is off. */
+  lanOffer: null as RenderStreamLanOffer | null,
+  /** This page's carrier facts; read from the browser when left `undefined` (specs pin them). */
+  page: undefined as RenderStreamPageFacts | undefined
 });
 
 /** Why the reason is `core-build`: the build's problem with the core, or a load that failed this session. */
@@ -200,7 +287,9 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
   qaEndpoint: qaRenderStreamEndpoint(mirrorSettings),
   sessionEndpoint: renderStreamContext.sessionEndpoint,
   pageLoopback: renderStreamContext.pageLoopback ?? isLoopbackHttpPage(),
-  seatRestart: renderStreamContext.seatRestart
+  seatRestart: renderStreamContext.seatRestart,
+  lanOffer: renderStreamContext.lanOffer,
+  page: renderStreamContext.page ?? probePageFacts()
 }));
 
 /** `canRequestStreamingSeat` for this page, now. */
@@ -209,16 +298,20 @@ export const streamingSeatRequestable = computed(() =>
 
 /**
  * What a join asks the host for: `"stream"` (launch this viewer's seat as the streaming seat) when the viewer chose
- * the new renderer and THIS page could draw it — the core is here, WebGL2 works and the page is on a loopback http
- * origin a host-side hub can serve. Otherwise nothing, so a seat never pays for a stream nobody can watch. A QA
- * endpoint brings its own hub and asks for nothing either.
+ * the new renderer and THIS page could draw it — the core is here, WebGL2 works, and the page is the host's loopback
+ * http page or a LAN page with a usable carrier in the host's LAN offer (CAR7b). Otherwise nothing, so a seat never
+ * pays for a stream nobody can watch. A QA endpoint brings its own hub and asks for nothing either.
  */
 export function joinRendererRequest(
-  inputs: Pick<RenderStreamAvailabilityInputs, "coreProblem" | "coreLoadFailed" | "webgl2" | "pageLoopback" | "qaEndpoint">
+  inputs: Pick<RenderStreamAvailabilityInputs, "coreProblem" | "coreLoadFailed" | "webgl2" | "pageLoopback" | "qaEndpoint"
+    | "lanOffer" | "page">
     & { renderer: MirrorSettings["renderer"] }
 ): "stream" | undefined {
+  const page = inputs.page ?? LOOPBACK_PAGE;
+  const reachable = inputs.pageLoopback
+    || (inputs.lanOffer != null && pageRunsClient(page) && lanCarrierUsable(inputs.lanOffer, page));
   return inputs.renderer === "stream" && inputs.coreProblem === null && !inputs.coreLoadFailed && inputs.webgl2
-    && inputs.pageLoopback && inputs.qaEndpoint === null ? "stream" : undefined;
+    && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
 }
 
 /** `joinRendererRequest` for this page, now. */
@@ -229,7 +322,9 @@ export function currentJoinRendererRequest(settings: MirrorSettings = mirrorSett
     coreLoadFailed: renderStreamContext.coreLoadFailed,
     webgl2: renderStreamContext.webgl2 ?? probeWebgl2(),
     pageLoopback: renderStreamContext.pageLoopback ?? isLoopbackHttpPage(),
-    qaEndpoint: qaRenderStreamEndpoint(settings)
+    qaEndpoint: qaRenderStreamEndpoint(settings),
+    lanOffer: renderStreamContext.lanOffer,
+    page: renderStreamContext.page ?? probePageFacts()
   });
 }
 
