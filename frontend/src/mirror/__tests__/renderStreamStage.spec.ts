@@ -418,6 +418,47 @@ describe("RenderStreamStage", () => {
     expect(clients[0].setEndpoint).toHaveBeenCalledWith(next);
   });
 
+  // C2: the pointer channel (streamInput.ts) sends through `props.sendInput` read live, so a new access generation's
+  // sender gets the pointer too. It used to be handed over by value, which pinned the first generation's sender.
+  describe("pointer", () => {
+    const mouse = (canvas: Element, type: string, x: number, y: number, buttons: number) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons });
+      Object.defineProperty(event, "pointerType", { value: "mouse" });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      canvas.dispatchEvent(event);
+    };
+
+    it("survives an access-generation change: the new sender gets it, a press held from before is retired silently", async () => {
+      const oldSend: MirrorInputMessage[] = [];
+      const newSend: MirrorInputMessage[] = [];
+      mountStage({ sendInput: (m: MirrorInputMessage) => oldSend.push(m), accessGeneration: 1 });
+      clients[0].clientToGame = vi.fn((x: number, y: number) => ({ point: { x: x * 2, y: y * 2 }, item: null, drawn: { x, y } }));
+      const canvas = wrapper!.get('[data-testid="render-stream-canvas"]').element;
+      mouse(canvas, "pointerdown", 10, 20, 1);
+      mouse(canvas, "pointerup", 10, 20, 0);
+      expect(oldSend).toEqual([
+        { kind: "click", button: "left", pressed: true, coordX: 20, coordY: 40 },
+        { kind: "click", button: "left", pressed: false, coordX: 20, coordY: 40 }
+      ]);
+      mouse(canvas, "pointerdown", 30, 40, 1); // still held when the generation changes
+
+      await wrapper!.setProps({ accessGeneration: 2, sendInput: (m: MirrorInputMessage) => newSend.push(m) });
+      expect(oldSend).toHaveLength(3); // retired without a release into the old generation
+      expect(newSend).toEqual([]);
+      mouse(canvas, "pointerup", 30, 40, 0); // the fresh channel never saw that press: nothing is owed
+      expect(newSend).toEqual([]);
+
+      mouse(canvas, "pointerdown", 50, 60, 1);
+      mouse(canvas, "pointerup", 50, 60, 0);
+      expect(newSend).toEqual([
+        { kind: "click", button: "left", pressed: true, coordX: 100, coordY: 120 },
+        { kind: "click", button: "left", pressed: false, coordX: 100, coordY: 120 }
+      ]);
+      expect(oldSend).toHaveLength(3);
+      expect(clients).toHaveLength(1); // the client itself is untouched
+    });
+  });
+
   // C1: the keyboard and gamepad ride the stream path too, through the same GSW captures + adapter as MirrorView
   // (keyPadInput.ts), created and disposed with the client.
   describe("keyboard and gamepad", () => {

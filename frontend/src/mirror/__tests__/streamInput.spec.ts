@@ -682,3 +682,105 @@ describe("createStreamInput — held-card lift follows raiseHeldCard live", () =
     stage.dispatchEvent(touch("pointerup", { clientX: 200, clientY: 300 }));
   });
 });
+
+// C2 — the channel runs on godot-scene-web's pointer capture (mode "mouse"). These pin what that adds to the
+// pre-C2 contract above: chords as edges, buttons and wheel axes couch has no token for, the browser's own menu
+// events, the capture's release-on-blur, and couch never sending GSW's default long-press right click.
+describe("createStreamInput — on the GSW pointer capture", () => {
+  const mouse = (type: string, x: number, y: number, button: number, buttons: number) => {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button, buttons });
+    Object.defineProperty(event, "pointerType", { value: "mouse" });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    return event;
+  };
+
+  it("a second button during a hold is its own press and release edge (a chord arrives as a move)", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }) });
+    stage.dispatchEvent(mouse("pointerdown", 10, 10, 0, 1));
+    stage.dispatchEvent(mouse("pointermove", 10, 10, 2, 3)); // right joins the held left
+    stage.dispatchEvent(mouse("pointermove", 10, 10, 2, 1)); // right lets go
+    stage.dispatchEvent(mouse("pointerup", 10, 10, 0, 0));
+    expect(sent).toEqual([
+      { kind: "click", button: "left", pressed: true, coordX: 10, coordY: 10 },
+      { kind: "click", button: "right", pressed: true, coordX: 10, coordY: 10 },
+      { kind: "click", button: "right", pressed: false, coordX: 10, coordY: 10 },
+      { kind: "click", button: "left", pressed: false, coordX: 10, coordY: 10 }
+    ]);
+  });
+
+  it("a mouse right click is its edge pair only: its contextmenu (button 2) is no second click", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }) });
+    stage.dispatchEvent(mouse("pointerdown", 40, 50, 2, 2));
+    const menu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 50, button: 2 });
+    stage.dispatchEvent(menu);
+    stage.dispatchEvent(mouse("pointerup", 40, 50, 2, 0));
+    expect(menu.defaultPrevented).toBe(true);
+    expect(sent).toEqual([
+      { kind: "click", button: "right", pressed: true, coordX: 40, coordY: 50 },
+      { kind: "click", button: "right", pressed: false, coordX: 40, coordY: 50 }
+    ]);
+  });
+
+  it("back/forward buttons and a horizontal wheel have no couch token and send nothing", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }) });
+    const up = mouse("pointerup", 10, 10, 3, 0);
+    stage.dispatchEvent(mouse("pointerdown", 10, 10, 3, 8));
+    stage.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true); // no history navigation either
+    stage.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 10, clientY: 10, deltaX: 120 }));
+    expect(sent).toEqual([]);
+  });
+
+  it("a window blur releases a held mouse press at its last point", () => {
+    makeInput({ map: (x, y) => ({ x: x * 2, y: y * 2, item: null }) });
+    stage.dispatchEvent(mouse("pointerdown", 10, 10, 0, 1));
+    window.dispatchEvent(new Event("blur"));
+    expect(sent).toEqual([
+      { kind: "click", button: "left", pressed: true, coordX: 20, coordY: 20 },
+      { kind: "click", button: "left", pressed: false, coordX: 20, coordY: 20 }
+    ]);
+    stage.dispatchEvent(mouse("pointerup", 10, 10, 0, 0)); // nothing left to release
+    expect(sent).toHaveLength(2);
+  });
+
+  it("a long hold on a card that is not in the hand is still a tap on lift, never a right click", () => {
+    vi.useFakeTimers();
+    try {
+      const held = heldController(() => false);
+      makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller, tapToFocus: () => false });
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+      vi.advanceTimersByTime(1000);
+      expect(sent).toEqual([]);
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+      expect(sent).toEqual([
+        { kind: "hover", coordX: 640, coordY: 360 },
+        { kind: "click", button: "left", coordX: 640, coordY: 360 }
+      ]);
+      expect(held.setHeld).not.toHaveBeenCalledWith(7, expect.anything(), "peek");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a peek that then travels is a drag that lifts the card, and its release clears the lift", () => {
+    vi.useFakeTimers();
+    try {
+      const held = heldController((item) => item === 7);
+      makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller });
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 900 }));
+      vi.advanceTimersByTime(100);
+      expect(held.setHeld).toHaveBeenLastCalledWith(7, 900, "peek");
+      stage.dispatchEvent(touch("pointermove", { clientX: 640, clientY: 500 }));
+      vi.advanceTimersToNextFrame(); // fake timers own requestAnimationFrame here
+      expect(held.setHeld).toHaveBeenLastCalledWith(7, 500, "drag");
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 500 }));
+      expect(sent.filter((m) => m.kind === "click")).toEqual([
+        { kind: "click", button: "left", pressed: true, coordX: 640, coordY: 900 },
+        { kind: "click", button: "left", pressed: false, coordX: 640, coordY: 500 }
+      ]);
+      expect(held.setHeld).toHaveBeenLastCalledWith(null, 0, "drag");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

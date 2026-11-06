@@ -24,8 +24,9 @@
 //     new list — the modules' `wants` ride the hello, so an attached client cannot gain or drop one in place.
 //
 // VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
-// the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message; and
-// the keyboard and gamepad (keyPadInput.ts: godot-scene-web's captures behind couch's adapter), on the same socket.
+// the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message
+// (streamInput.ts: godot-scene-web's pointer capture behind couch's adapter); and the keyboard and gamepad
+// (keyPadInput.ts: the same package's captures behind couch's adapter), on the same socket.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import {
@@ -46,6 +47,7 @@ import { createKeyPadInput, type KeyPadInput } from "@/mirror/keyPadInput";
 import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 import type { ConfirmTapController } from "@/stream-ext/confirmTap";
+import type { HeldCardController } from "@/stream-ext/heldCard";
 
 const props = withDefaults(defineProps<{
   endpoint: RenderStreamEndpoint;
@@ -56,7 +58,8 @@ const props = withDefaults(defineProps<{
   sendInput?: (message: MirrorInputMessage) => void;
   /**
    * The host-access generation the input belongs to (MirrorApp's `hostAccess.generation`). A new one retires the
-   * keyboard and gamepad captures silently and starts fresh ones that ignore a pad control still held from before.
+   * pointer, keyboard and gamepad captures silently and starts fresh ones that ignore a button, finger or pad
+   * control still held from before.
    */
   accessGeneration?: number;
   hiddenDisposeMs?: number;
@@ -93,9 +96,13 @@ const phase = ref<Phase>("connecting");
 // streaming.
 const carrier = ref<RenderStreamStats["carrier"]>(null);
 let client: RenderStreamClient | null = null;
-// INP2: the input channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
-// fresh client gets a fresh capture on the fresh canvas).
+// INP2: the pointer channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
+// fresh client gets a fresh capture on the fresh canvas), and recreated on a new access generation like the pair
+// below. `streamInputEpoch` retires a replaced channel's sends the same way `keyPadEpoch` does.
 let streamInput: StreamInput | null = null;
+let streamInputEpoch = 0;
+// The mounted client's held-card and confirm-tap controllers, which a recreated pointer channel drives again.
+let inputModules: { heldCard: HeldCardController | null; confirmTap: ConfirmTapController | null } | null = null;
 // The keyboard and gamepad, created and disposed with the client like `streamInput` (unmount, the hidden dispose, an
 // extension remount), and recreated on a new access generation. `keyPadEpoch` retires a replaced pair's sends: its
 // releases on dispose belong to the old generation, which the host has already let go of.
@@ -256,22 +263,41 @@ function mountClient(): void {
     stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
+  inputModules = { heldCard: built.heldCard, confirmTap: built.confirmTap };
   if (props.sendInput) {
-    streamInput = createStreamInput({
-      stage: canvas,
-      getClient: () => client,
-      send: props.sendInput,
-      tapToFocus: () => mirrorSettings.tapToFocus,
-      heldCard: built.heldCard ?? undefined,
-      raiseHeldCard: () => mirrorSettings.raiseHeldCard,
-      unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
-      confirmTap: built.confirmTap ?? undefined,
-      confirmTapEnabled: () => mirrorSettings.confirmTap
-    });
+    attachStreamInput();
     attachKeyPad(false);
   }
   phase.value = "connecting";
   client.connect();
+}
+
+// Send is `props.sendInput` read live (MirrorApp's per-generation sender, which drops anything while
+// `hostAccess.allowed` is false), behind this channel's epoch: handing the prop over by value pinned the first
+// generation's sender, so after any access-generation change every pointer event was dropped.
+function attachStreamInput(): void {
+  const canvas = canvasEl.value;
+  if (!props.sendInput || canvas === null || client === null) return;
+  const epoch = streamInputEpoch;
+  streamInput = createStreamInput({
+    stage: canvas,
+    getClient: () => client,
+    send: (message) => {
+      if (epoch === streamInputEpoch) props.sendInput?.(message);
+    },
+    tapToFocus: () => mirrorSettings.tapToFocus,
+    heldCard: inputModules?.heldCard ?? undefined,
+    raiseHeldCard: () => mirrorSettings.raiseHeldCard,
+    unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
+    confirmTap: inputModules?.confirmTap ?? undefined,
+    confirmTapEnabled: () => mirrorSettings.confirmTap
+  });
+}
+
+function detachStreamInput(silent: boolean): void {
+  if (silent) streamInputEpoch += 1;
+  streamInput?.dispose();
+  streamInput = null;
 }
 
 // Send is `props.sendInput` read live (MirrorApp's per-generation sender, which drops anything while
@@ -297,9 +323,9 @@ function detachKeyPad(silent: boolean): void {
 }
 
 function disposeClient(): void {
-  streamInput?.dispose();
-  streamInput = null;
+  detachStreamInput(false);
   detachKeyPad(false);
+  inputModules = null;
   confirmController.value = null;
   mountedExtensionsKey = null;
   carrier.value = null;
@@ -355,13 +381,18 @@ watch(
   () => keyPadInput?.refresh()
 );
 
-// A new access generation (the host lost access and got it back): the pair from before is retired without a word,
-// and the fresh one ignores a pad control the player is still holding until it is released, so a press made before
-// the resume never lands in the resumed game.
+// A new access generation (the host lost access and got it back): the pointer channel and the pair from before are
+// retired without a word, and the fresh ones ignore a mouse button, finger or pad control the player is still holding
+// until it is released, so a press made before the resume never lands in the resumed game.
 watch(() => props.accessGeneration, () => {
-  if (keyPadInput === null) return;
-  detachKeyPad(true);
-  attachKeyPad(true);
+  if (streamInput !== null) {
+    detachStreamInput(true);
+    attachStreamInput();
+  }
+  if (keyPadInput !== null) {
+    detachKeyPad(true);
+    attachKeyPad(true);
+  }
 });
 
 // A later descriptor (a seat restarted with a new port or token) reconnects in place. While an `unauthorized` refresh
