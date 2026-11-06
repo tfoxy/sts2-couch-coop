@@ -15,9 +15,8 @@ import { playZoneThreshold, RICH_TEXT_EFFECTS_ATTRIBUTE } from "@spirectl/presen
 import { createAdaptiveController, type AdaptiveController } from "@/mirror/adaptiveQuality";
 import { createEagerScroll, type EagerScroll } from "@/mirror/eagerScroll";
 import { noteMirrorFrame, registerPressureSource } from "@/mirror/framePressure";
-import { createGamepadCapture, type GamepadCapture } from "@/mirror/gamepadCapture";
 import { createInputCapture, type InputCapture } from "@/mirror/inputCapture";
-import { createKeyboardCapture, type KeyboardCapture } from "@/mirror/keyboardCapture";
+import { createKeyPadInput, type KeyPadInput } from "@/mirror/keyPadInput";
 import { lastPressModality, onPressModalityChange } from "@/inputModality";
 import {
   createRewardFocusCoordinator,
@@ -196,13 +195,11 @@ const canvasUnderlayRequired = computed(
     rendererRef.value.setStaticBackgroundSource === undefined
 );
 let inputCapture: InputCapture | null = null;
-// The BROWSER GAMEPAD capture (gamepadCapture.ts) — created beside inputCapture and under the same gate, so a
-// receive-only mirror (no `sendInput`) never polls a pad, and inert on any browser without the secure-context-only
-// Gamepad API. It shares nothing with inputCapture but the send path.
-let gamepadCapture: GamepadCapture | null = null;
-// The BROWSER KEYBOARD capture (keyboardCapture.ts) — the third upstream source, created under the same gate as
-// the other two. Window-level key events, no stage and no coordinate.
-let keyboardCapture: KeyboardCapture | null = null;
+// The BROWSER KEYBOARD and GAMEPAD captures (keyPadInput.ts: godot-scene-web's captures behind couch's adapter) —
+// created beside inputCapture and under the same gate, so a receive-only mirror (no `sendInput`) never listens for a
+// key or polls a pad. The pad half is inert on any browser without the secure-context-only Gamepad API. They share
+// nothing with inputCapture but the send path, and RenderStreamStage creates the same pair.
+let keyPadInput: KeyPadInput | null = null;
 let rewardFocusCoordinator: RewardFocusCoordinator | null = null;
 let unsubscribePressModality: (() => void) | null = null;
 // R10 WS-E — the eager-scroll engine. Created alongside inputCapture (it needs the renderer AND the send path),
@@ -646,10 +643,8 @@ function detachInput(silent = false): void {
   rewardFocusCoordinator = null;
   inputCapture?.dispose();
   inputCapture = null;
-  gamepadCapture?.dispose();
-  gamepadCapture = null;
-  keyboardCapture?.dispose();
-  keyboardCapture = null;
+  keyPadInput?.dispose();
+  keyPadInput = null;
   eagerScroll?.dispose();
   eagerScroll = null;
   delete (window as unknown as Record<string, unknown>).__mirrorRewardFocus;
@@ -736,19 +731,17 @@ function attachInput(): void {
       // stage answers from its draw list, where there are no elements to walk.
       renderer
     );
-    // BROWSER GAMEPAD. No stage, no renderer, no coordinate — a pad token is not a place — so it takes only the
-    // send path and the live setting. Construction is safe everywhere: without the Gamepad API (every plain-HTTP
-    // origin) it attaches nothing and polls nothing.
-    gamepadCapture = createGamepadCapture({
+    // BROWSER KEYBOARD + GAMEPAD. No renderer, no coordinate — a key or a pad token names no place on the stage,
+    // and the GAME maps it onto its own input — so they take only the send path and the live settings.
+    // Construction is safe everywhere: without the Gamepad API (every plain-HTTP origin) the pad half attaches
+    // nothing and polls nothing. Recreated after an access resume (inputEpoch > 0): a pad control still held
+    // from before is ignored until released.
+    keyPadInput = createKeyPadInput({
       send: (message) => sendInput(message),
-      enabled: () => mirrorSettings.gamepad,
-      neutralizeHeldOnStart: inputEpoch > 0
-    });
-    // BROWSER KEYBOARD. Same deal: the send path and the live setting, nothing else — a key names no place on
-    // the stage, and the GAME maps it onto its own shortcut.
-    keyboardCapture = createKeyboardCapture({
-      send: (message) => sendInput(message),
-      enabled: () => mirrorSettings.keyboard
+      keyboard: () => mirrorSettings.keyboard,
+      gamepad: () => mirrorSettings.gamepad,
+      neutralizeHeldOnStart: inputEpoch > 0,
+      stage: stage.value
     });
     rewardFocusCoordinator = createRewardFocusCoordinator({
       modality: lastPressModality,
@@ -1255,19 +1248,12 @@ watch(
   }
 );
 
-// BROWSER GAMEPAD: the capture reads the setting live per poll, so turning it OFF is picked up on the next frame
-// (and releases anything held). Turning it back ON needs the nudge — a parked capture has no frame in which to
-// notice — which is all this watch is for.
+// BROWSER KEYBOARD + GAMEPAD: both captures read their setting live (per keystroke, per poll), so turning one OFF
+// stops it sending on its own. The watch lets go of anything held at the moment of the flip, and restarts a parked
+// pad poll when the setting comes back ON (a parked capture has no frame in which to notice).
 watch(
-  () => mirrorSettings.gamepad,
-  () => gamepadCapture?.refresh()
-);
-
-// BROWSER KEYBOARD: the capture reads the setting live per keystroke, so turning it OFF needs no watch to stop it
-// sending — this is here to let go of anything held at the moment of the flip.
-watch(
-  () => mirrorSettings.keyboard,
-  () => keyboardCapture?.refresh()
+  () => [mirrorSettings.keyboard, mirrorSettings.gamepad] as const,
+  () => keyPadInput?.refresh()
 );
 
 // Start the adaptive render-quality controller when eligible (pure auto mode + effects on + a runtime exists).

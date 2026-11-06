@@ -297,6 +297,12 @@ export default defineConfig({
       // it imports `@godot-scene-web/effects/{shaders,particles}`, aliased below. Its wasm is NOT aliased — it is
       // served by URL (renderStreamClientAssets).
       "@godot-scene-web/render-stream-client": gsw("render-stream-client/src/index.ts"),
+      // The keyboard and gamepad captures behind couch's adapter (mirror/keyPadInput.ts). Subpaths above the bare
+      // entry: Vite matches `find` or `find + "/"` prefixes, so the bare alias would otherwise swallow them.
+      "@godot-scene-web/input/keyboard": gsw("input/src/keyboard.ts"),
+      "@godot-scene-web/input/gamepad": gsw("input/src/gamepad.ts"),
+      "@godot-scene-web/input/pointer": gsw("input/src/pointer.ts"),
+      "@godot-scene-web/input": gsw("input/src/index.ts"),
       "@godot-scene-web/canvas/glyphs": gsw("canvas/src/glyph-pass-hbgpu.ts"),
       "@godot-scene-web/canvas/rust-prototype": gsw("canvas/src/rust-prototype-scene.ts"),
       "@godot-scene-web/canvas/msdf-generator": gsw("canvas/src/msdf-generator.ts"),

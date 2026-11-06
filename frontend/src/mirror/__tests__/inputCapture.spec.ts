@@ -757,10 +757,11 @@ describe("createInputCapture — misc", () => {
     expect(sent.filter((m) => m.kind === "click")).toHaveLength(2);
   });
 
-  // The keyboard is no longer this module's: it has its own upstream source (keyboardCapture.ts, specced in
-  // keyboardCapture.spec.ts). A pointer capture must therefore be deaf to keys — including the ones it used to
-  // claim — so a page with both captures up can never send a keystroke twice.
-  it("sends nothing for a key press (the keyboard is keyboardCapture's)", () => {
+  // The keyboard is no longer this module's: it has its own upstream source (keyPadInput.ts — godot-scene-web's
+  // keyboard capture behind couch's adapter, specced in keyPadKeyboard.spec.ts). A pointer capture must therefore
+  // be deaf to keys — including the ones it used to claim — so a page with both captures up can never send a
+  // keystroke twice.
+  it("sends nothing for a key press (the keyboard is keyPadInput's)", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE", shiftKey: true, bubbles: true }));
     window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyE", bubbles: true }));
     expect(sent.filter((m) => m.kind === "key")).toHaveLength(0);

@@ -101,7 +101,7 @@
   "settings.stageFailure": "Canvas non è riuscito a visualizzare questa schermata. {reason}",
   "settings.help.stage": "Scegli come questo dispositivo visualizza il gioco. Canvas imposta la qualità visiva su Molto bassa, disattiva gli effetti e usa sfondi e immagini dei personaggi statici; il metodo di rendering del testo si sceglie separatamente. DOM mantiene le impostazioni salvate.",
   "settings.newRenderer": "Usa il nuovo renderer (beta)",
-  "settings.help.newRenderer": "Disegna la partita di questo giocatore con il nuovo renderer, che mostra esattamente ciò che disegna il gioco. Beta: tocchi e clic arrivano al gioco, tastiera e controller non ancora. Le impostazioni non ancora supportate sono disattivate.",
+  "settings.help.newRenderer": "Disegna la partita di questo giocatore con il nuovo renderer, che mostra esattamente ciò che disegna il gioco. Beta: tocchi, clic, tastiera e controller arrivano al gioco. Le impostazioni non ancora supportate sono disattivate.",
   "settings.help.stageStream": "«Rendering» sceglie come il vecchio renderer disegna il gioco, quindi non si applica mentre il nuovo renderer è attivo.",
   "settings.newRendererCoreMissing": "Questa build di sviluppo non include il nuovo renderer. Sull'host, esegui scripts/build-local-mod.sh per compilarlo.",
   "settings.newRendererCoreStale": "Il nuovo renderer di questa build di sviluppo non è aggiornato. Sull'host, esegui scripts/build-local-mod.sh per ricompilarlo.",

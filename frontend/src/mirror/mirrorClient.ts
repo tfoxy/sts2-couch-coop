@@ -52,7 +52,7 @@ let nextWarmTraceClientId = 0;
 // comma-separated `modifiers`, `pressed`: down/up, omitted = a tap). Mirrors the host's BrowserInputRequestEnvelope
 // (which still ALSO accepts `elementId`/offset for the spirectl CLI — the mirror client just never sends them).
 export interface MirrorInputMessage {
-  // `pad` is the BROWSER GAMEPAD leg (gamepadCapture.ts): a device-neutral controller token in `input` plus the
+  // `pad` is the BROWSER GAMEPAD leg (keyPadInput.ts): a device-neutral controller token in `input` plus the
   // `pressed` edge, and nothing else — no coordinate, because a pad press is not a place on the stage. The host
   // names the game's own abstract controller input from the token, so the seat enters native controller mode.
   kind: "hover" | "click" | "key" | "pad";
@@ -61,7 +61,7 @@ export interface MirrorInputMessage {
   coordY?: number;
   key?: string;
   modifiers?: string;
-  // The `pad` kind's token (`faceSouth`, `dpadUp`, `leftTrigger`, `stickLeft`, … — see gamepadCapture's PadToken).
+  // The `pad` kind's token (`faceSouth`, `dpadUp`, `leftTrigger`, `stickLeft`, … — see keyPadInput's PadToken).
   // OPTIONAL, and set by nothing but that kind, so every pointer/keyboard message serialises byte-identically to
   // the pre-gamepad wire. C# twin: BrowserInputRequestEnvelope.Input.
   input?: string;

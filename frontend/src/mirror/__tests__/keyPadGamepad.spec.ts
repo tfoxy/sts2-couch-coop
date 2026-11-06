@@ -1,28 +1,32 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { JoyAxis, JoyButton } from "@godot-scene-web/input";
+import type { GamepadSnapshot } from "@godot-scene-web/input/gamepad";
+
 import {
-  createGamepadCapture,
-  padMappingAccepted,
-  padTokensFrom,
+  createCouchGamepadCapture,
+  createCouchInputSink,
   PAD_TOKENS,
-  type GamepadCapture,
-  type PadSnapshot,
+  type CouchGamepadCapture,
   type PadToken
-} from "@/mirror/gamepadCapture";
+} from "@/mirror/keyPadInput";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 
-// BROWSER GAMEPAD CAPTURE. The host half of this feature is built in parallel and there is no end-to-end leg to run
-// against, so these specs ARE the proof of the client's half of the contract:
+// BROWSER GAMEPAD — godot-scene-web's gamepad capture behind couch's adapter (keyPadInput.ts). GSW owns the poll,
+// the standard mapping and neutralize-on-start, and tests them itself; these specs pin couch's half of the contract,
+// end to end through the real GSW capture:
 //
 //   * only EDGES reach the wire — one message down, one up, nothing while a control is held;
-//   * the standard mapping is read as the plan's token table says, and the two unmapped buttons stay unmapped;
-//   * analogue travel (triggers, stick axes) crosses a deadzone WITH HYSTERESIS, so a control resting on the
-//     threshold cannot chatter a message per frame;
-//   * a stick deflection carries its d-pad twin on the same edge;
+//   * the standard mapping lands on the host's token table, and the two unmapped buttons stay unmapped;
+//   * analogue travel (triggers, stick axes) crosses a threshold WITH HYSTERESIS (`latched`), so a control resting
+//     on it cannot chatter a message per frame;
+//   * a stick deflection is held as its stick token AND its d-pad twin, and only the twin reaches the wire;
 //   * the poll only exists while there is something to read, and lets go of everything on the way out.
 //
 // Everything is driven through injected seams (a fake `getGamepads`, a fake frame clock, stub event targets), so
 // nothing here depends on jsdom growing a Gamepad API.
+
+type PadSnapshot = GamepadSnapshot;
 
 // ---- fakes ---------------------------------------------------------------------------------------------------
 
@@ -42,17 +46,19 @@ function pad(overrides: Partial<PadSnapshot> = {}): PadSnapshot {
 }
 
 interface FakeEvents {
-  addEventListener(type: string, listener: () => void): void;
-  removeEventListener(type: string, listener: () => void): void;
+  addEventListener(type: string, listener: Listener): void;
+  removeEventListener(type: string, listener: Listener): void;
   fire(type: string): void;
   listeners(type: string): number;
 }
 
+type Listener = (event: { type: string }) => void;
+
 function fakeEvents(): FakeEvents {
-  const handlers = new Map<string, Set<() => void>>();
+  const handlers = new Map<string, Set<Listener>>();
   return {
     addEventListener(type, listener) {
-      const set = handlers.get(type) ?? new Set<() => void>();
+      const set = handlers.get(type) ?? new Set<Listener>();
       set.add(listener);
       handlers.set(type, set);
     },
@@ -60,7 +66,7 @@ function fakeEvents(): FakeEvents {
       handlers.get(type)?.delete(listener);
     },
     fire(type) {
-      for (const listener of [...(handlers.get(type) ?? [])]) listener();
+      for (const listener of [...(handlers.get(type) ?? [])]) listener({ type });
     },
     listeners(type) {
       return handlers.get(type)?.size ?? 0;
@@ -69,7 +75,7 @@ function fakeEvents(): FakeEvents {
 }
 
 interface Harness {
-  capture: GamepadCapture;
+  capture: CouchGamepadCapture;
   sent: MirrorInputMessage[];
   /** What the fake `navigator.getGamepads()` answers. Mutate between frames. */
   pads: Array<PadSnapshot | null>;
@@ -87,8 +93,9 @@ interface Harness {
 
 function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean; neutralizeHeldOnStart?: boolean } = {}): Harness {
   const sent: MirrorInputMessage[] = [];
-  let queue: Array<{ handle: number; callback: () => void }> = [];
+  let queue: Array<{ handle: number; callback: (time: number) => void }> = [];
   let nextHandle = 1;
+  let now = 0;
   const events = fakeEvents();
   const visibility = fakeEvents();
   const state = {
@@ -96,7 +103,7 @@ function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean; neu
     enabled: true,
     visibilityState: "visible"
   };
-  const capture = createGamepadCapture({
+  const capture = createCouchGamepadCapture({
     send: (message) => sent.push(message),
     enabled: () => state.enabled,
     neutralizeHeldOnStart: options.neutralizeHeldOnStart,
@@ -144,7 +151,8 @@ function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean; neu
     frame() {
       const turn = queue;
       queue = [];
-      for (const entry of turn) entry.callback();
+      now += 1000 / 60;
+      for (const entry of turn) entry.callback(now);
     },
     frames(count) {
       for (let i = 0; i < count; i += 1) this.frame();
@@ -159,11 +167,20 @@ function harness(options: { pads?: Array<PadSnapshot | null>; api?: boolean; neu
   };
 }
 
-// ---- the pure frame read -------------------------------------------------------------------------------------
+// ---- the token table ------------------------------------------------------------------------------------------
 
-describe("padTokensFrom", () => {
-  const none = new Set<PadToken>();
+/** The tokens one frame of `pads` holds, read from a fresh capture's sink (stick directions included). */
+function heldBy(pads: PadSnapshot[]): PadToken[] {
+  const rig = harness({ pads: [pad()] });
+  rig.frame();
+  rig.pads = pads;
+  rig.frame();
+  const held = rig.capture.sink.padHeld();
+  rig.capture.dispose();
+  return held;
+}
 
+describe("the pad token table", () => {
   it("maps every standard button index to the token the host names", () => {
     const cases: Array<[number, PadToken]> = [
       [0, "faceSouth"],
@@ -183,68 +200,98 @@ describe("padTokensFrom", () => {
       [15, "dpadRight"]
     ];
     for (const [index, token] of cases) {
-      const held = padTokensFrom([pad({ buttons: buttons({ [index]: true }) })], none);
-      expect([...held], `button ${index}`).toEqual([token]);
+      expect(heldBy([pad({ buttons: buttons({ [index]: true }) })]), `button ${index}`).toEqual([token]);
     }
   });
 
   it("ignores the right stick press (11), the guide button (16) and the right stick axes", () => {
-    expect(padTokensFrom([pad({ buttons: buttons({ 11: true, 16: true }) })], none).size).toBe(0);
-    expect(padTokensFrom([pad({ axes: [0, 0, -1, 1] })], none).size).toBe(0);
+    expect(heldBy([pad({ buttons: buttons({ 11: true, 16: true }) })])).toEqual([]);
+    expect(heldBy([pad({ axes: [0, 0, -1, 1] })])).toEqual([]);
   });
 
-  it("emits BOTH the stick token and its d-pad twin for one deflection", () => {
-    expect([...padTokensFrom([pad({ axes: [-1, 0] })], none)].sort()).toEqual(["dpadLeft", "stickLeft"]);
-    expect([...padTokensFrom([pad({ axes: [0, 1] })], none)].sort()).toEqual(["dpadDown", "stickDown"]);
+  it("holds BOTH the stick token and its d-pad twin for one deflection", () => {
+    expect(heldBy([pad({ axes: [-1, 0] })]).sort()).toEqual(["dpadLeft", "stickLeft"]);
+    expect(heldBy([pad({ axes: [0, 1] })]).sort()).toEqual(["dpadDown", "stickDown"]);
   });
 
   it("holds a stick between the two thresholds at whatever it already was (hysteresis)", () => {
-    const resting = new Set<PadToken>(["stickLeft"]);
+    const out: MirrorInputMessage[] = [];
+    const sink = createCouchInputSink((m) => out.push(m));
+    const motion = (value: number) => sink.push({ event: "joypad_motion", axis: JoyAxis.LEFT_X, axis_value: value });
     // 0.45 deflection: not enough to PRESS from rest, not little enough to RELEASE once held.
-    expect(padTokensFrom([pad({ axes: [-0.45, 0] })], none).size).toBe(0);
-    expect([...padTokensFrom([pad({ axes: [-0.45, 0] })], resting)].sort()).toEqual(["dpadLeft", "stickLeft"]);
-    expect(padTokensFrom([pad({ axes: [-0.3, 0] })], resting).size).toBe(0);
+    motion(-0.45);
+    expect(sink.padHeld()).toEqual([]);
+    motion(-0.8);
+    motion(-0.45);
+    expect(sink.padHeld()).toEqual(["dpadLeft", "stickLeft"]);
+    motion(-0.3);
+    expect(sink.padHeld()).toEqual([]);
   });
 
   it("gates a trigger on its ANALOGUE travel, not on the half-travel `pressed` flag", () => {
     // `pressed` is already true at 0.5 (see `button`), but the press bar is 0.55 — a trigger resting at its bite
     // point must not chatter.
-    expect(padTokensFrom([pad({ buttons: buttons({ 6: 0.5 }) })], none).size).toBe(0);
-    expect([...padTokensFrom([pad({ buttons: buttons({ 6: 0.6 }) })], none)]).toEqual(["leftTrigger"]);
-    const held = new Set<PadToken>(["leftTrigger"]);
-    expect([...padTokensFrom([pad({ buttons: buttons({ 6: 0.4 }) })], held)]).toEqual(["leftTrigger"]);
-    expect(padTokensFrom([pad({ buttons: buttons({ 6: 0.3 }) })], held).size).toBe(0);
+    expect(heldBy([pad({ buttons: buttons({ 6: 0.5 }) })])).toEqual([]);
+    expect(heldBy([pad({ buttons: buttons({ 6: 0.6 }) })])).toEqual(["leftTrigger"]);
+    const out: MirrorInputMessage[] = [];
+    const sink = createCouchInputSink((m) => out.push(m));
+    const trigger = (value: number) =>
+      sink.push({ event: "joypad_motion", axis: JoyAxis.TRIGGER_LEFT, axis_value: value });
+    trigger(0.6);
+    trigger(0.4);
+    expect(sink.padHeld()).toEqual(["leftTrigger"]);
+    trigger(0.3);
+    expect(sink.padHeld()).toEqual([]);
   });
 
   it("reads a button reported as a bare number, or as `pressed` with no value", () => {
-    expect([...padTokensFrom([pad({ buttons: [1] })], none)]).toEqual(["faceSouth"]);
-    expect([...padTokensFrom([pad({ buttons: [{ pressed: true }] })], none)]).toEqual(["faceSouth"]);
-    expect(padTokensFrom([pad({ buttons: [0] })], none).size).toBe(0);
+    expect(heldBy([pad({ buttons: [1] })])).toEqual(["faceSouth"]);
+    expect(heldBy([pad({ buttons: [{ pressed: true }] })])).toEqual(["faceSouth"]);
+    expect(heldBy([pad({ buttons: [0] })])).toEqual([]);
   });
 
   it("skips a disconnected pad, a null entry, and any mapping whose indices mean something else", () => {
-    expect(padTokensFrom([null], none).size).toBe(0);
-    expect(padTokensFrom([pad({ connected: false, buttons: buttons({ 0: true }) })], none).size).toBe(0);
-    expect(padTokensFrom([pad({ mapping: "xr-standard", buttons: buttons({ 0: true }) })], none).size).toBe(0);
+    expect(heldBy([null as unknown as PadSnapshot])).toEqual([]);
+    expect(heldBy([pad({ connected: false, buttons: buttons({ 0: true }) })])).toEqual([]);
+    expect(heldBy([pad({ mapping: "xr-standard", buttons: buttons({ 0: true }) })])).toEqual([]);
     // An unidentified pad (empty mapping) is still read — that is what a Linux browser reports for pads it does
-    // not recognise, which is exactly the Deck case.
-    expect([...padTokensFrom([pad({ mapping: "", buttons: buttons({ 0: true }) })], none)]).toEqual(["faceSouth"]);
-    expect(padMappingAccepted("standard")).toBe(true);
-    expect(padMappingAccepted("xr-standard")).toBe(false);
+    // not recognise, which is exactly the Deck case (`nonStandard: "as-standard"`).
+    expect(heldBy([pad({ mapping: "", buttons: buttons({ 0: true }) })])).toEqual(["faceSouth"]);
   });
 
   it("folds two pads into one logical pad (one viewer, one seat)", () => {
-    const held = padTokensFrom(
-      [pad({ buttons: buttons({ 0: true }) }), pad({ buttons: buttons({ 0: true, 9: true }) })],
-      none
-    );
-    expect([...held].sort()).toEqual(["faceSouth", "start"]);
+    const held = heldBy([pad({ buttons: buttons({ 0: true }) }), pad({ buttons: buttons({ 0: true, 9: true }) })]);
+    expect(held.sort()).toEqual(["faceSouth", "start"]);
+  });
+
+  it("does not re-fire a held button when a second pad pressing it appears", () => {
+    const rig = harness({ pads: [pad({ buttons: buttons({ 0: true }) })] });
+    rig.frame();
+    expect(rig.take()).toEqual(["faceSouth:down"]);
+    rig.pads = [pad({ buttons: buttons({ 0: true }) }), pad({ buttons: buttons({ 0: true }) })];
+    rig.frames(2);
+    expect(rig.take()).toEqual([]);
+    rig.capture.dispose();
+  });
+
+  it("turns GSW joypad records into couch tokens and ignores what the host cannot name", () => {
+    const out: MirrorInputMessage[] = [];
+    const sink = createCouchInputSink((m) => out.push(m));
+    sink.push({ event: "joypad_button", button_index: JoyButton.A, pressed: true });
+    sink.push({ event: "joypad_button", button_index: JoyButton.GUIDE, pressed: true });
+    sink.push({ event: "joypad_button", button_index: JoyButton.RIGHT_STICK, pressed: true });
+    sink.push({ event: "joypad_motion", axis: JoyAxis.RIGHT_X, axis_value: 1 });
+    sink.push({ event: "joypad_button", button_index: JoyButton.A, pressed: false });
+    expect(out).toEqual([
+      { kind: "pad", input: "faceSouth", pressed: true },
+      { kind: "pad", input: "faceSouth", pressed: false }
+    ]);
   });
 });
 
 // ---- the live capture ----------------------------------------------------------------------------------------
 
-describe("createGamepadCapture", () => {
+describe("couch gamepad capture (GSW gamepad → couch pad tokens)", () => {
   let rig: Harness;
 
   beforeEach(() => {

@@ -101,7 +101,7 @@
   "settings.stageFailure": "Le Canvas n’a pas pu afficher cette vue. {reason}",
   "settings.help.stage": "Choisissez comment cet appareil affiche le jeu. Canvas fixe la qualité visuelle sur Très faible, désactive les effets et utilise des arrière-plans et des illustrations de personnages statiques ; le rendu du texte se choisit séparément. DOM conserve vos réglages enregistrés.",
   "settings.newRenderer": "Utiliser le nouveau moteur de rendu (bêta)",
-  "settings.help.newRenderer": "Affiche la partie de ce joueur avec le nouveau moteur de rendu, qui montre exactement ce que dessine le jeu. Bêta : les touchers et les clics atteignent le jeu, mais pas encore le clavier ni la manette. Les réglages qu'il ne prend pas encore en charge sont grisés.",
+  "settings.help.newRenderer": "Affiche la partie de ce joueur avec le nouveau moteur de rendu, qui montre exactement ce que dessine le jeu. Bêta : les touchers, les clics, le clavier et la manette atteignent tous le jeu. Les réglages qu'il ne prend pas encore en charge sont grisés.",
   "settings.help.stageStream": "« Rendu » choisit comment l'ancien moteur de rendu dessine le jeu ; il ne s'applique donc pas tant que le nouveau est activé.",
   "settings.newRendererCoreMissing": "Cette version de développement ne contient pas le nouveau moteur de rendu. Sur l'hôte, lancez scripts/build-local-mod.sh pour le compiler.",
   "settings.newRendererCoreStale": "Le nouveau moteur de rendu de cette version de développement est obsolète. Sur l'hôte, lancez scripts/build-local-mod.sh pour le recompiler.",

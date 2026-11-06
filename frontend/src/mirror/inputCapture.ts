@@ -1,5 +1,5 @@
 // Captures POINTER input over the mirror stage and forwards it upstream (single controller). The keyboard is its
-// own upstream source now (keyboardCapture.ts) — it shares nothing with this file but the send path. Input is
+// own upstream source now (keyPadInput.ts) — it shares nothing with this file but the send path. Input is
 // COORDINATE-ONLY on the wire: every event resolves to a GAME design-space coordinate (1920x1080) and the game
 // hit-tests it natively — robust, because the game's own input honors `mouse_filter`, and no element addressing is
 // needed since the mirror lays the tree out to match.

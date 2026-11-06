@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
-  createKeyboardCapture,
+  createCouchKeyboardCapture,
+  createCouchInputSink,
   isForwardableCode,
   modifierString,
-  type KeyboardCapture
-} from "@/mirror/keyboardCapture";
+  type CouchKeyboardCapture
+} from "@/mirror/keyPadInput";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 
-// BROWSER KEYBOARD CAPTURE. What these specs pin, in the order the module's header argues it:
+// BROWSER KEYBOARD — godot-scene-web's keyboard capture behind couch's adapter (keyPadInput.ts). GSW owns the
+// capture and tests its own policy; these specs pin what couch's wire must still look like, end to end through the
+// real GSW capture:
 //
 //   * only EDGES reach the wire — one message down, one up, nothing while a key is held (auto-repeat is dropped);
 //   * the code filter refuses what the host's key map cannot name, so a stray key costs no error round trip;
@@ -19,8 +22,8 @@ import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 //   * every way the page can lose the keyup — blur, hidden tab, pagehide, the setting going off, dispose —
 //     releases what is held.
 //
-// Driven through injected seams (stub event targets, an injected `activeElement`) so nothing depends on jsdom's
-// focus behaviour.
+// Driven through injected seams (stub event targets, an injected `activeElement`, no layout map) so nothing depends
+// on jsdom's focus behaviour.
 
 // ---- fakes ---------------------------------------------------------------------------------------------------
 
@@ -45,8 +48,11 @@ function fakeEvents(): FakeEvents {
     },
     fire(type, event = {}) {
       let defaultPrevented = false;
+      const code = event.code ?? "";
       const payload = {
-        code: "",
+        type,
+        code,
+        key: keyFor(code, event.shiftKey === true),
         repeat: false,
         ctrlKey: false,
         shiftKey: false,
@@ -68,6 +74,19 @@ function fakeEvents(): FakeEvents {
   };
 }
 
+/** The `key` a US layout reports for `code` — enough for the GSW key map to build a record. */
+function keyFor(code: string, shift: boolean): string {
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) return shift ? letter[1] : letter[1].toLowerCase();
+  const digit = /^(?:Digit|Numpad)([0-9])$/.exec(code);
+  if (digit) return shift && code.startsWith("Digit") ? ")!@#$%^&*("[Number(digit[1])] : digit[1];
+  if (code === "Space") return " ";
+  if (code === "NumpadEnter") return "Enter";
+  if (code === "Minus") return shift ? "_" : "-";
+  if (code === "Equal") return shift ? "+" : "=";
+  return code.replace(/(Left|Right)$/, "") || "Unidentified";
+}
+
 /** An element stub for the focus guards — only the members the guards read. */
 function element(tagName: string, attrs: Record<string, string> = {}, contentEditable = false): Element {
   return {
@@ -79,13 +98,13 @@ function element(tagName: string, attrs: Record<string, string> = {}, contentEdi
   } as unknown as Element;
 }
 
-describe("keyboardCapture", () => {
+describe("couch keyboard capture (GSW keyboard → couch key tokens)", () => {
   let sent: MirrorInputMessage[];
   let events: FakeEvents;
   let visibility: FakeEvents;
   let focused: Element | null;
   let enabled: boolean;
-  let capture: KeyboardCapture;
+  let capture: CouchKeyboardCapture;
 
   beforeEach(() => {
     sent = [];
@@ -94,12 +113,14 @@ describe("keyboardCapture", () => {
     visibility.visibilityState = "visible";
     focused = null;
     enabled = true;
-    capture = createKeyboardCapture({
+    capture = createCouchKeyboardCapture({
       send: (message) => sent.push(message),
       enabled: () => enabled,
       events,
-      visibility: visibility as unknown as Parameters<typeof createKeyboardCapture>[0]["visibility"],
-      activeElement: () => focused
+      visibility,
+      activeElement: () => focused,
+      keyboard: null,
+      platform: "Linux"
     });
   });
 
@@ -186,8 +207,19 @@ describe("keyboardCapture", () => {
   });
 
   it("builds the modifier list in the host's order", () => {
-    expect(modifierString({ ctrlKey: true, shiftKey: true, altKey: false, metaKey: true })).toBe("ctrl,shift,meta");
-    expect(modifierString({ ctrlKey: false, shiftKey: false, altKey: false, metaKey: false })).toBe("");
+    expect(modifierString({ ctrl_pressed: true, shift_pressed: true, alt_pressed: false, meta_pressed: true }))
+      .toBe("ctrl,shift,meta");
+    expect(modifierString({})).toBe("");
+  });
+
+  it("turns a GSW key record into couch's token, and drops what couch's host does not take", () => {
+    const out: MirrorInputMessage[] = [];
+    const sink = createCouchInputSink((m) => out.push(m));
+    sink.push({ event: "key", physical_keycode: 69, keycode: 69, pressed: true, alt_pressed: true, code: "KeyE" });
+    sink.push({ event: "key", physical_keycode: 69, keycode: 69, pressed: true, echo: true, code: "KeyE" });
+    sink.push({ event: "key", physical_keycode: 69, keycode: 69, pressed: false });
+    sink.push({ event: "mouse_button", button_index: 1, pressed: true, position: [0, 0] });
+    expect(out).toEqual([{ kind: "key", key: "KeyE", modifiers: "alt", pressed: true }]);
   });
 
   // ---- focus guards ----------------------------------------------------------------------------------------
@@ -312,7 +344,12 @@ describe("keyboardCapture", () => {
 
   it("is inert without an event source", () => {
     const messages: MirrorInputMessage[] = [];
-    const inert = createKeyboardCapture({ send: (m) => messages.push(m), events: null, visibility: null });
+    const inert = createCouchKeyboardCapture({
+      send: (m) => messages.push(m),
+      events: null,
+      visibility: null,
+      keyboard: null
+    });
     inert.refresh();
     inert.dispose();
     expect(messages).toHaveLength(0);

@@ -13,7 +13,7 @@ import {
 // The GAMEPAD advisory: one dismissible line telling a player holding a controller why their pad does nothing on
 // this join, and what to do about it (rejoin from the host's secure / web-link QR row). The Gamepad API is
 // secure-context only, so on the default plain-HTTP LAN origin the browser cannot even see the pad — see
-// joinModel's `shouldShowGamepadAdvisory` for the decision and mirror/gamepadCapture.ts for what it unlocks.
+// joinModel's `shouldShowGamepadAdvisory` for the decision and mirror/keyPadInput.ts for what it unlocks.
 //
 // ADVISORY, NEVER A GATE — the sibling rule from BrowserAdvisory.vue, for the same reason: the "is a pad plausibly
 // present" signal cannot be a feature test on an origin that hides the feature, so it is partly a UA sniff, and the

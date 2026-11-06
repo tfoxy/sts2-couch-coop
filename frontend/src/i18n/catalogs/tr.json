@@ -101,7 +101,7 @@
   "settings.stageFailure": "Canvas bu görünümü oluşturamadı. {reason}",
   "settings.help.stage": "Bu cihazın oyunu nasıl çizeceğini seç. Canvas görsel kaliteyi Çok düşüğe sabitler, efektleri kapatır ve statik arka plan ile karakter görselleri kullanır; metin işleme yöntemi ayrı seçilir. DOM kaydettiğin ayarları korur.",
   "settings.newRenderer": "Yeni işleyiciyi kullan (Beta)",
-  "settings.help.newRenderer": "Bu oyuncunun oyununu, oyunun çizdiğini birebir gösteren yeni işleyiciyle çizer. Beta: dokunuşlar ve tıklamalar oyuna ulaşır, klavye ve oyun kumandası henüz ulaşmaz. Henüz desteklemediği ayarlar gri görünür.",
+  "settings.help.newRenderer": "Bu oyuncunun oyununu, oyunun çizdiğini birebir gösteren yeni işleyiciyle çizer. Beta: dokunuşlar, tıklamalar, klavye ve oyun kumandası oyuna ulaşır. Henüz desteklemediği ayarlar gri görünür.",
   "settings.help.stageStream": "\"Görüntüleme\", eski işleyicinin oyunu nasıl çizdiğini seçer; bu yüzden yeni işleyici açıkken geçerli değildir.",
   "settings.newRendererCoreMissing": "Bu geliştirme derlemesinde yeni işleyici yok. Derlemek için sunucuda scripts/build-local-mod.sh komutunu çalıştırın.",
   "settings.newRendererCoreStale": "Bu geliştirme derlemesindeki yeni işleyici güncel değil. Yeniden derlemek için sunucuda scripts/build-local-mod.sh komutunu çalıştırın.",

@@ -417,4 +417,121 @@ describe("RenderStreamStage", () => {
     await wrapper!.setProps({ endpoint: next });
     expect(clients[0].setEndpoint).toHaveBeenCalledWith(next);
   });
+
+  // C1: the keyboard and gamepad ride the stream path too, through the same GSW captures + adapter as MirrorView
+  // (keyPadInput.ts), created and disposed with the client.
+  describe("keyboard and gamepad", () => {
+    type PadFrame = { connected: boolean; mapping: string; buttons: number[]; axes: number[] };
+    let pads: PadFrame[] = [];
+    const padWith = (down: number[] = []): PadFrame => ({
+      connected: true, mapping: "standard", axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, (_unused, i) => (down.includes(i) ? 1 : 0))
+    });
+    const key = (type: string, code: string) =>
+      window.dispatchEvent(new KeyboardEvent(type, { code, key: code.replace(/^Key/, "").toLowerCase() }));
+    const keys = (sent: MirrorInputMessage[]) =>
+      sent.filter((m) => m.kind === "key").map((m) => `${m.key}:${m.pressed ? "down" : "up"}`);
+    const padEdges = (sent: MirrorInputMessage[]) =>
+      sent.filter((m) => m.kind === "pad").map((m) => `${m.input}:${m.pressed ? "down" : "up"}`);
+
+    beforeEach(() => {
+      pads = [];
+      mirrorSettings.keyboard = true;
+      mirrorSettings.gamepad = true;
+      Object.defineProperty(navigator, "getGamepads", { configurable: true, value: () => pads });
+    });
+
+    afterEach(() => {
+      delete (navigator as unknown as { getGamepads?: unknown }).getGamepads;
+    });
+
+    it("forwards key edges to sendInput, and stays deaf on a view-only stage", () => {
+      const sent: MirrorInputMessage[] = [];
+      mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
+      key("keydown", "KeyE");
+      key("keydown", "ShiftLeft"); // not a code the host's key map names
+      key("keyup", "KeyE");
+      expect(sent).toEqual([
+        { kind: "key", key: "KeyE", pressed: true },
+        { kind: "key", key: "KeyE", pressed: false }
+      ]);
+      wrapper!.unmount();
+      wrapper = null;
+
+      mountStage();
+      expect(() => key("keydown", "KeyE")).not.toThrow();
+    });
+
+    it("releases a held key on unmount, on the hidden tab, and on an extension remount", async () => {
+      vi.useFakeTimers();
+      const sent: MirrorInputMessage[] = [];
+      mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
+      key("keydown", "KeyA");
+      setVisibility("hidden");
+      expect(keys(sent)).toEqual(["KeyA:down", "KeyA:up"]);
+      await vi.advanceTimersByTimeAsync(60_000); // the hidden dispose
+      setVisibility("visible");
+      await nextTick();
+      expect(clients).toHaveLength(2);
+      sent.length = 0;
+
+      key("keydown", "KeyD");
+      mirrorSettings.confirmTap = true; // a module toggle remounts the client, and the captures with it
+      await nextTick();
+      await nextTick();
+      expect(clients).toHaveLength(3);
+      expect(keys(sent)).toEqual(["KeyD:down", "KeyD:up"]);
+      key("keyup", "KeyD"); // the new capture never latched it: no second release
+      key("keydown", "KeyW");
+      expect(keys(sent)).toEqual(["KeyD:down", "KeyD:up", "KeyW:down"]);
+
+      wrapper!.unmount();
+      wrapper = null;
+      expect(keys(sent)).toEqual(["KeyD:down", "KeyD:up", "KeyW:down", "KeyW:up"]);
+      key("keydown", "KeyE");
+      expect(sent).toHaveLength(4);
+    });
+
+    it("releases what is held when a setting goes off, and listens again when it comes back", async () => {
+      const sent: MirrorInputMessage[] = [];
+      mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
+      key("keydown", "KeyE");
+      mirrorSettings.keyboard = false;
+      await nextTick();
+      expect(keys(sent)).toEqual(["KeyE:down", "KeyE:up"]);
+      key("keydown", "KeyE");
+      expect(sent).toHaveLength(2);
+      mirrorSettings.keyboard = true;
+      await nextTick();
+      key("keydown", "KeyE");
+      expect(keys(sent)).toEqual(["KeyE:down", "KeyE:up", "KeyE:down"]);
+    });
+
+    it("sends pad edges, and a new access generation retires the pair silently and neutralizes a held pad", async () => {
+      vi.useFakeTimers();
+      const oldSend: MirrorInputMessage[] = [];
+      const newSend: MirrorInputMessage[] = [];
+      pads = [padWith()];
+      mountStage({ sendInput: (m: MirrorInputMessage) => oldSend.push(m), accessGeneration: 1 });
+      await vi.advanceTimersByTimeAsync(50);
+      pads = [padWith([0])];
+      await vi.advanceTimersByTimeAsync(50);
+      key("keydown", "KeyA");
+      expect(padEdges(oldSend)).toEqual(["faceSouth:down"]);
+      expect(keys(oldSend)).toEqual(["KeyA:down"]);
+
+      await wrapper!.setProps({ accessGeneration: 2, sendInput: (m: MirrorInputMessage) => newSend.push(m) });
+      await vi.advanceTimersByTimeAsync(50);
+      // Retired without a word (no release edges into either generation), and the button still held from before
+      // the resume is not pressed into the resumed game.
+      expect(oldSend).toHaveLength(2);
+      expect(newSend).toEqual([]);
+      pads = [padWith()];
+      await vi.advanceTimersByTimeAsync(50);
+      pads = [padWith([0])];
+      await vi.advanceTimersByTimeAsync(50);
+      expect(padEdges(newSend)).toEqual(["faceSouth:down"]);
+      expect(clients).toHaveLength(1); // the client itself is untouched
+    });
+  });
 });

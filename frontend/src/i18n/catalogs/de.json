@@ -101,7 +101,7 @@
   "settings.stageFailure": "Canvas konnte diese Ansicht nicht darstellen. {reason}",
   "settings.help.stage": "Wähle, wie dieses Gerät das Spiel zeichnet. Canvas nutzt die feste Bildqualität Sehr niedrig, schaltet Effekte aus und verwendet statische Hintergründe und Charaktergrafiken; die Textdarstellung lässt sich getrennt wählen. DOM behält deine gespeicherten Einstellungen bei.",
   "settings.newRenderer": "Neuen Renderer verwenden (Beta)",
-  "settings.help.newRenderer": "Zeichnet das Spiel dieses Spielers mit dem neuen Renderer, der genau das zeigt, was das Spiel zeichnet. Beta: Tippen und Klicken erreichen das Spiel, Tastatur und Gamepad noch nicht. Einstellungen, die er noch nicht unterstützt, sind ausgegraut.",
+  "settings.help.newRenderer": "Zeichnet das Spiel dieses Spielers mit dem neuen Renderer, der genau das zeigt, was das Spiel zeichnet. Beta: Tippen, Klicken, Tastatur und Gamepad erreichen das Spiel. Einstellungen, die er noch nicht unterstützt, sind ausgegraut.",
   "settings.help.stageStream": "„Darstellung“ legt fest, wie der alte Renderer das Spiel zeichnet, und gilt daher nicht, solange der neue Renderer aktiv ist.",
   "settings.newRendererCoreMissing": "Dieser Entwicklungs-Build enthält den neuen Renderer nicht. Führe auf dem Host scripts/build-local-mod.sh aus, um ihn zu bauen.",
   "settings.newRendererCoreStale": "Der neue Renderer in diesem Entwicklungs-Build ist veraltet. Führe auf dem Host scripts/build-local-mod.sh aus, um ihn neu zu bauen.",

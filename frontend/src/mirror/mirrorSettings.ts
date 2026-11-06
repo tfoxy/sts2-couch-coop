@@ -293,14 +293,14 @@ export interface MirrorSettings {
   // Purely client-side on BOTH stage backends — nothing is sent to the game, and the DOM hit boxes / the
   // canvas `mGame` never move (only the view-scale INPUT registry, which is empty with the switch off).
   uiScaling: boolean;
-  // CLIENT input (browser-only) — the BROWSER GAMEPAD capture (gamepadCapture.ts). On, a pad attached to this
+  // CLIENT input (browser-only) — the BROWSER GAMEPAD capture (keyPadInput.ts). On, a pad attached to this
   // device replays its controller inputs into this viewer's seat and the seat enters the game's native controller
   // mode. Default ON everywhere: a pad the browser can see is a pad the player meant to use, and on the plain-HTTP
   // LAN origin there is no pad to see at all (the API is secure-context only), so the default costs nothing there.
   // `?gamepad=off` is the lever for the one case that wants it off — a pad that is driving something else. Read
   // live by the capture, so a flip lands on the next frame.
   gamepad: boolean;
-  // CLIENT input (browser-only) — the BROWSER KEYBOARD capture (keyboardCapture.ts). On, a key pressed on this
+  // CLIENT input (browser-only) — the BROWSER KEYBOARD capture (keyPadInput.ts). On, a key pressed on this
   // device is replayed into this viewer's seat as a real key and the GAME maps it onto its own shortcut, rebinds
   // included. Default ON everywhere: a viewer typing over a game they are driving means the key to go to the game,
   // and a device with no keyboard produces no key events to forward, so the default costs nothing on a phone.

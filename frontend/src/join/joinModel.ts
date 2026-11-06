@@ -567,7 +567,7 @@ export function shouldShowBrowserAdvisory(env: BrowserAdvisoryEnv): boolean {
 //
 // THE PROBLEM THIS EXISTS FOR. `navigator.getGamepads` is SECURE-CONTEXT ONLY: on the mod's default plain-HTTP LAN
 // join the method is simply absent (Firefox removes it outright), no `gamepadconnected` ever fires, and the whole
-// browser-gamepad path (mirror/gamepadCapture.ts) is inert. To a player holding a controller that is
+// browser-gamepad path (mirror/keyPadInput.ts) is inert. To a player holding a controller that is
 // indistinguishable from a broken feature — nothing happens, and nothing says why. The host already serves two
 // origins where it DOES work (the TLS listener and the web-link origin), both offered as their own QR row, so the
 // fix is one line of advice: rejoin from the secure link.

@@ -970,9 +970,9 @@ const joinMode = computed(() =>
 //
 // While the render-stream draws (`runtimeRenderer === "stream"`, renderStreamAvailability.ts) this app shows
 // RenderStreamStage instead of MirrorView: the node-geometry scene is not watched (its producer idles), MirrorView
-// is unmounted (so its keyboard and gamepad capture does not exist; taps and clicks reach the game through the stage's
-// own input channel, INP2), and the `/ws` socket keeps carrying the session, settings and audio. The two renderers are
-// never both live.
+// is unmounted (its pointer capture with it; taps and clicks reach the game through the stage's own input channel,
+// INP2, and keys and pads through the stage's own keyPadInput pair, C1), and the `/ws` socket keeps carrying the
+// session, settings, input and audio. The two renderers are never both live.
 const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
 // Loaded on first use: a viewer who never switches the beta on never downloads the client. A chunk that fails or
 // stalls (a flaky phone on the LAN) would leave nothing drawn and no `failed` ever emitted, so the load falls back
@@ -1770,14 +1770,16 @@ onBeforeUnmount(() => {
       <MirrorHandRaiseButton />
     </MirrorView>
     <!-- "Use new renderer (Beta)": the game's own draw calls through the render-stream client. With the INP2 input
-         channel, pointer input maps through INP1 and rides the same seat socket as MirrorView's inputCapture; the
-         gear/fullscreen pair still uses the fixed browser-space chrome (no scaled DOM stage hosts it). A stop falls
-         back to MirrorView above for the session. -->
+         channel, pointer input maps through INP1 and rides the same seat socket as MirrorView's inputCapture, and so do
+         the keyboard and gamepad (keyPadInput.ts, the same pair MirrorView creates). The gear/fullscreen pair still
+         uses the fixed browser-space chrome (no scaled DOM stage hosts it). A stop falls back to MirrorView above for
+         the session. -->
     <RenderStreamStage
       v-else-if="showStream && renderStreamEndpoint && renderStreamCore"
       :endpoint="renderStreamEndpoint"
       :core="renderStreamCore"
       :send-input="viewControls.sendInput"
+      :access-generation="hostAccess?.generation"
       @failed="onRenderStreamFailed"
       @first-frame="onStreamFirstFrame"
       @refresh-endpoint="onRenderStreamRefresh"

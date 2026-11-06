@@ -24,7 +24,8 @@
 //     new list — the modules' `wants` ride the hello, so an attached client cannot gain or drop one in place.
 //
 // VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
-// the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message.
+// the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message; and
+// the keyboard and gamepad (keyPadInput.ts: godot-scene-web's captures behind couch's adapter), on the same socket.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import {
@@ -41,6 +42,7 @@ import { translate as t } from "@/i18n";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
+import { createKeyPadInput, type KeyPadInput } from "@/mirror/keyPadInput";
 import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 import type { ConfirmTapController } from "@/stream-ext/confirmTap";
@@ -52,12 +54,18 @@ const props = withDefaults(defineProps<{
   createClient?: (options: RenderStreamClientOptions) => RenderStreamClient;
   /** The upstream input sender (the seat socket's `input` message); absent ⇒ the stage stays view-only. */
   sendInput?: (message: MirrorInputMessage) => void;
+  /**
+   * The host-access generation the input belongs to (MirrorApp's `hostAccess.generation`). A new one retires the
+   * keyboard and gamepad captures silently and starts fresh ones that ignore a pad control still held from before.
+   */
+  accessGeneration?: number;
   hiddenDisposeMs?: number;
   /** How long an `unauthorized` stream waits for the seat's current descriptor before it stops. */
   refreshTimeoutMs?: number;
 }>(), {
   createClient: undefined,
   sendInput: undefined,
+  accessGeneration: undefined,
   hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
   refreshTimeoutMs: 10_000
 });
@@ -88,6 +96,11 @@ let client: RenderStreamClient | null = null;
 // INP2: the input channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
 // fresh client gets a fresh capture on the fresh canvas).
 let streamInput: StreamInput | null = null;
+// The keyboard and gamepad, created and disposed with the client like `streamInput` (unmount, the hidden dispose, an
+// extension remount), and recreated on a new access generation. `keyPadEpoch` retires a replaced pair's sends: its
+// releases on dispose belong to the old generation, which the host has already let go of.
+let keyPadInput: KeyPadInput | null = null;
+let keyPadEpoch = 0;
 // CONFIRM TAP: the live module controller (recreated per client mount), whose reactive `state` drives the button.
 const confirmController = shallowRef<ConfirmTapController | null>(null);
 // Bumped when the canvas's CSS box moves or resizes (a resize, a rotation, the safe-area preference), so the confirm
@@ -255,14 +268,38 @@ function mountClient(): void {
       confirmTap: built.confirmTap ?? undefined,
       confirmTapEnabled: () => mirrorSettings.confirmTap
     });
+    attachKeyPad(false);
   }
   phase.value = "connecting";
   client.connect();
 }
 
+// Send is `props.sendInput` read live (MirrorApp's per-generation sender, which drops anything while
+// `hostAccess.allowed` is false), behind this pair's epoch.
+function attachKeyPad(neutralizeHeldOnStart: boolean): void {
+  if (!props.sendInput) return;
+  const epoch = keyPadEpoch;
+  keyPadInput = createKeyPadInput({
+    send: (message) => {
+      if (epoch === keyPadEpoch) props.sendInput?.(message);
+    },
+    keyboard: () => mirrorSettings.keyboard,
+    gamepad: () => mirrorSettings.gamepad,
+    neutralizeHeldOnStart,
+    stage: canvasEl.value
+  });
+}
+
+function detachKeyPad(silent: boolean): void {
+  if (silent) keyPadEpoch += 1;
+  keyPadInput?.dispose();
+  keyPadInput = null;
+}
+
 function disposeClient(): void {
   streamInput?.dispose();
   streamInput = null;
+  detachKeyPad(false);
   confirmController.value = null;
   mountedExtensionsKey = null;
   carrier.value = null;
@@ -310,6 +347,22 @@ function remountIfStale(): void {
 }
 
 watch(extensionsKey, remountIfStale);
+
+// KEYBOARD + GAMEPAD settings: both captures read them live, so OFF already stops sending; the refresh releases what
+// is held at the flip and restarts a parked pad poll when the setting comes back ON.
+watch(
+  () => [mirrorSettings.keyboard, mirrorSettings.gamepad] as const,
+  () => keyPadInput?.refresh()
+);
+
+// A new access generation (the host lost access and got it back): the pair from before is retired without a word,
+// and the fresh one ignores a pad control the player is still holding until it is released, so a press made before
+// the resume never lands in the resumed game.
+watch(() => props.accessGeneration, () => {
+  if (keyPadInput === null) return;
+  detachKeyPad(true);
+  attachKeyPad(true);
+});
 
 // A later descriptor (a seat restarted with a new port or token) reconnects in place. While an `unauthorized` refresh
 // is pending, the next descriptor is its answer: a different one reconnects (the failed client starts a fresh
