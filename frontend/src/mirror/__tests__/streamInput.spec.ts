@@ -538,11 +538,65 @@ describe("createStreamInput — moves are mapped once per frame", () => {
         return { x, y, item: null };
       }
     });
+    // C4a: GSW maps at its own flush now (M1), and the capture's very FIRST frame also maps its first sample once
+    // (the first `relative` needs a base: docs/input.md "When `map` is called"). Every later frame maps one point.
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 0, clientY: 10 }));
+    flushFrames();
+    calls.length = 0;
+    sent.length = 0;
     for (let i = 1; i <= 5; i++) stage.dispatchEvent(pointerEvent("pointermove", { clientX: i * 10, clientY: 10 }));
     expect(calls).toEqual([]);
     flushFrames();
     expect(calls).toEqual([[50, 10]]);
     expect(sent).toEqual([{ kind: "hover", coordX: 50, coordY: 10 }]);
+  });
+
+  it("a gesture hook reads the item GSW just mapped at an edge: one clientToGame per touch-down", () => {
+    const calls: Array<[number, number]> = [];
+    const held = heldController((item) => item === 7);
+    makeInput({
+      map: (x, y) => {
+        calls.push([x, y]);
+        return { x, y, item: 7 };
+      },
+      heldCard: held.controller
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 300, clientY: 900 }));
+    expect(calls).toEqual([[300, 900]]); // GSW's own map of the down point; the touch-down hook reused it
+  });
+
+  it("no mapped answer outlives its event: a later press at the same point reads the picture again", () => {
+    let item: number | null = 7;
+    const items: Array<number | null> = [];
+    const confirm = confirmController(null);
+    const classify = vi.fn((hit: number) => {
+      items.push(hit);
+      return null;
+    });
+    makeInput({
+      map: (x, y) => ({ x, y, item }),
+      tapToFocus: () => false,
+      confirmTap: { ...confirm.controller, classify },
+      confirmTapEnabled: () => true
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 300, clientY: 300 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 300, clientY: 300 }));
+    item = 8; // the picture changed under a still finger
+    stage.dispatchEvent(touch("pointerdown", { clientX: 300, clientY: 300 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 300, clientY: 300 }));
+    expect(items).toEqual([7, 8]);
+  });
+
+  it("a touch drag's lift hook runs once per frame with the frame's newest point (M1's per-record drag-move)", () => {
+    const held = heldController((item) => item === 7);
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), heldCard: held.controller });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 900 }));
+    stage.dispatchEvent(touch("pointermove", { clientX: 640, clientY: 880 })); // past the slop: the drag starts
+    flushFrames();
+    held.setHeld.mockClear();
+    for (const y of [860, 840, 820]) stage.dispatchEvent(touch("pointermove", { clientX: 640, clientY: y }));
+    flushFrames();
+    expect(held.setHeld.mock.calls).toEqual([[7, 820, "drag"]]);
   });
 
   it("a stray finger's motion during a drag never moves the cursor", () => {

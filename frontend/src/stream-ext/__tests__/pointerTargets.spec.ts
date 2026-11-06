@@ -44,14 +44,16 @@ function query(parents: Record<number, number | null>, metas: Record<number, Ite
 
 function session(groups: string[] = [...POINTER_TARGET_GROUPS]) {
   const mouseFilter = vi.fn<(id: number, filter: "stop" | "pass" | "ignore" | null) => void>();
+  const pickOrder = vi.fn<(order: "drawn" | "tree") => void>();
   const s: ExtensionSession = {
     sessionId: "s",
     streamId: "t",
     itemMeta: { fields: ["scene", "path"], groups, metaKeys: [] },
     requestRedraw: () => {},
-    mouseFilter
+    mouseFilter,
+    pickOrder
   };
-  return Object.assign(s, { mouseFilter });
+  return Object.assign(s, { mouseFilter, pickOrder });
 }
 
 const full = (items: ItemMeta[]): ItemMetaBatch => ({ form: "full", items });
@@ -114,6 +116,14 @@ describe("pointerTargets — the hit test's mouse filters", () => {
     expect(s.mouseFilter.mock.calls.sort()).toEqual([[37, null], [40, null]]);
     module.extension.onItemsRemoved!(Uint32Array.from([38]));
     expect(module.filteredCount).toBe(0);
+  });
+
+  it("keeps the client's draw order: ready-time filters are too stale for Godot's tree order (C4a)", () => {
+    const module = createPointerTargetModule();
+    const s = session();
+    module.extension.onSession!(s);
+    module.extension.onItemMeta!(full([meta(37, []), meta(38, [RS_GROUP_POINTER_INPUT])]));
+    expect(s.pickOrder).not.toHaveBeenCalled();
   });
 
   it("states nothing when the seat did not grant the input group", () => {

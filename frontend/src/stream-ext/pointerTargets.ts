@@ -122,6 +122,11 @@ export function createPointerTargetModule(): PointerTargetModule {
       session = s;
       granted = s.itemMeta?.groups.includes(RS_GROUP_POINTER_INPUT) === true;
       stated.clear();
+      // Draw order on purpose, not Godot's tree order (`s.pickOrder("tree")`, godot-scene-web ID2): the filters
+      // here are read once, when a node is ready, and tree order also answers undrawn and transparent Controls. So a
+      // Control the game turns IGNORE later (the run's full-screen OverlayBackstop: STOP when ready, IGNORE and
+      // alpha 0 once no overlay is open) would answer EVERY point. Measured live (C4a): every combat hover named it.
+      // Tree order waits for filters the host keeps live (godot-scene-web Identity v2, couch row C4b).
     },
     onItemMeta: (batch) => {
       if (!granted) return;

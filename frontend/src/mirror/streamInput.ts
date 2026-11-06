@@ -17,12 +17,12 @@
 //     edge → a press/release; a press+release pair GSW makes for a tap (or for couch's own `click()`) → ONE full
 //     click; a wheel step → one `wheel-up`/`wheel-down` (its factor is dropped: one tick per wheel event, as before);
 //     horizontal wheel and X1/X2 have no couch token and are dropped.
-//   * THE STAGE GSW listens on is a thin proxy over the canvas that (a) coalesces pointermoves to the newest per
-//     pointer per animation frame, so INP1's `clientToGame` (a hit test) runs once per frame, not per event — every
-//     other pointer event first delivers the pending moves, and GSW's own motion frame is drained inside the same
-//     frame; and (b) repairs `buttons` on script-made events (a pointerdown always holds its own button, a pointerup
-//     never does, an untrusted move that reports no buttons keeps the held ones), which a trusted event already
-//     satisfies.
+//   * THE STAGE GSW listens on is a thin proxy over the canvas that repairs `buttons` on script-made events (a
+//     pointerdown always holds its own button, a pointerup never does, an untrusted move that reports no buttons
+//     keeps the held ones), which a trusted event already satisfies. Moves need no help: GSW buffers them raw and
+//     calls `map` once per motion record at its frame flush (godot-scene-web docs/input.md "When `map` is called"),
+//     so INP1's `clientToGame` (a hit test) runs once per frame, not per event, and an edge still maps at its own
+//     event.
 //   * COUCH'S STS2 GESTURES are GSW `intercept` hooks (docs/input.md "Mouse mode" recipes in ../godot-scene-web):
 //       - TAP TO FOCUS (`tapToFocus`, live): a tap on a drawn item not yet armed only hovers it (swallowed); a re-tap
 //         of the armed item past TAP_ARM_DEBOUNCE_MS commits (a sooner one is a finger bounce, swallowed); a tap on
@@ -52,7 +52,6 @@ import {
   type PointerTargetResolver,
   type PointerCapture,
   type PointerEventLike,
-  type PointerEventTargetLike,
   type PointerGesture,
   type PointerGestureDecision,
   type PointerStageLike
@@ -179,16 +178,32 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   let disposed = false;
 
   // ── mapping ──────────────────────────────────────────────────────────────────────────────────────────────────
-  // One `clientToGame` answer is remembered for the rest of the turn (an event, a frame, a commit), so a gesture
-  // hook asking for the item under a point GSW just mapped costs no second hit test.
+  // Inside one stage event (a press, a release, a touch's down or up, a commit) GSW maps the event's point and a
+  // gesture hook then asks for the item under that same point: the answer is remembered for the rest of that event,
+  // so the hook costs no second hit test. Nothing is remembered across events or at GSW's frame flush (a frame maps
+  // each point once), so no answer outlives the picture it was read from.
+  let turnDepth = 0;
   let memo: { client: StreamInputClient | null; x: number; y: number; game: StreamGamePoint | null } | null = null;
 
   function lookup(clientX: number, clientY: number): StreamGamePoint | null {
     const client = getClient();
+    if (turnDepth === 0) return client?.clientToGame(clientX, clientY) ?? null;
     if (memo !== null && memo.client === client && memo.x === clientX && memo.y === clientY) return memo.game;
     const game = client?.clientToGame(clientX, clientY) ?? null;
     memo = { client, x: clientX, y: clientY, game };
     return game;
+  }
+
+  /** Run one event's work with the mapping memo scoped to it. */
+  function turn(work: () => void): void {
+    if (turnDepth === 0) memo = null;
+    turnDepth += 1;
+    try {
+      work();
+    } finally {
+      turnDepth -= 1;
+      if (turnDepth === 0) memo = null;
+    }
   }
 
   function itemAt(clientX: number, clientY: number): number | null {
@@ -284,57 +299,12 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     }
   }
 
-  // ── the stage proxy: move coalescing + `buttons` repair ─────────────────────────────────────────────────────
+  // ── the stage proxy: `buttons` repair ───────────────────────────────────────────────────────────────────────
 
-  /** Each pointer's `buttons` as last delivered (mouse/pen), for the untrusted-move repair and the chord test. */
+  /** Each pointer's `buttons` as last delivered (mouse/pen), for the untrusted-move repair. */
   const deliveredButtons = new Map<number, number>();
   /** Touch pointers down on the stage (a contextmenu while one is down is the browser's long-press menu). */
   const touchesDown = new Set<number>();
-  /** The newest undelivered pointermove per pointer, and the listener it is for. */
-  const pendingMoves = new Map<number, { event: PointerEventLike; listener: Listener }>();
-  /** GSW's own frame callbacks (its motion coalescing), drained inside couch's frame. */
-  const gswFrames = new Map<number, (time: number) => void>();
-  let gswFrameHandle = 0;
-  let frameHandle: number | null = null;
-  let inFrame = false;
-
-  function requestFrame(): void {
-    if (frameHandle !== null || inFrame || disposed) return;
-    frameHandle = requestAnimationFrame(runFrame);
-  }
-
-  function runFrame(time: number): void {
-    frameHandle = null;
-    inFrame = true;
-    try {
-      deliverPendingMoves();
-      while (gswFrames.size > 0) {
-        const callbacks = [...gswFrames.values()];
-        gswFrames.clear();
-        for (const callback of callbacks) callback(time);
-      }
-    } finally {
-      inFrame = false;
-      memo = null;
-    }
-  }
-
-  function deliverPendingMoves(): void {
-    if (pendingMoves.size === 0) return;
-    const moves = [...pendingMoves.values()];
-    pendingMoves.clear();
-    for (const { event, listener } of moves) listener(event);
-  }
-
-  /** Run one turn of input: pending moves first (so order holds), then `work`; the mapping memo ends with it. */
-  function turn(work: () => void): void {
-    try {
-      deliverPendingMoves();
-      work();
-    } finally {
-      memo = null;
-    }
-  }
 
   function repairedButtons(event: PointerEvent): number {
     let buttons = typeof event.buttons === "number" ? event.buttons : 0;
@@ -383,31 +353,6 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   }
 
   function wrap(type: string, listener: Listener): Listener {
-    if (type === "pointermove") {
-      return (raw) => {
-        if (disposed) return;
-        const event = view(raw as PointerEvent);
-        const chord =
-          event.pointerType !== "touch" && event.buttons !== (deliveredButtons.get(event.pointerId) ?? 0);
-        if (chord) {
-          // A button edge riding a move (a chord): deliver it now, after whatever was pending.
-          pendingMoves.delete(event.pointerId);
-          turn(() => {
-            noteDelivered(event);
-            listener(event);
-          });
-          return;
-        }
-        pendingMoves.set(event.pointerId, {
-          event,
-          listener: (e) => {
-            noteDelivered(e as PointerEventLike);
-            listener(e);
-          }
-        });
-        requestFrame();
-      };
-    }
     if (type.startsWith("pointer") || type === "lostpointercapture") {
       return (raw) => {
         if (disposed) return;
@@ -446,30 +391,6 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     removeAttribute: (name) => stage.removeAttribute(name),
     style: stage.style
   };
-
-  // The window copy GSW keeps (a pointerup or cancel the stage missed, blur, pagehide) delivers pending moves first.
-  const windowWrapped = new Map<string, Map<Listener, Listener>>();
-  const windowProxy: PointerEventTargetLike | null =
-    typeof window === "undefined"
-      ? null
-      : {
-          addEventListener(type, listener) {
-            const wrapped: Listener = (raw) => {
-              if (disposed) return;
-              turn(() => listener(raw));
-            };
-            let byType = windowWrapped.get(type);
-            if (byType === undefined) windowWrapped.set(type, (byType = new Map()));
-            byType.set(listener, wrapped);
-            window.addEventListener(type, wrapped as EventListener);
-          },
-          removeEventListener(type, listener) {
-            const wrapped = windowWrapped.get(type)?.get(listener);
-            if (wrapped === undefined) return;
-            windowWrapped.get(type)?.delete(listener);
-            window.removeEventListener(type, wrapped as EventListener);
-          }
-        };
 
   // ── gestures ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -582,7 +503,8 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
         dismissConfirm();
         return "send";
       case "drag-move": {
-        // HELD-CARD LIFT: a dragged hand card follows the finger above the fingertip.
+        // HELD-CARD LIFT: a dragged hand card follows the finger above the fingertip. GSW asks once per coalesced
+        // motion record (its frame flush), with that record's newest point: the lift needs no earlier one.
         const state = touch;
         if (state !== null && state.handCard !== null && raiseHeldCard() !== false) {
           heldCard?.setHeld(state.handCard, at[1], "drag");
@@ -654,17 +576,7 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
       intercept,
       onGesture
     },
-    events: windowProxy,
-    now: clock,
-    requestAnimationFrame: (callback) => {
-      gswFrameHandle += 1;
-      gswFrames.set(gswFrameHandle, callback);
-      requestFrame();
-      return gswFrameHandle;
-    },
-    cancelAnimationFrame: (handle) => {
-      gswFrames.delete(handle);
-    }
+    now: clock
   });
 
   // RIGHT CLICK from a `contextmenu` no pointer made (the keyboard's menu key). A mouse right button already went
@@ -703,13 +615,9 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
       if (disposed) return;
       // GSW releases whatever is held (at the last point, `canceled`) before it lets go of the listeners: the seat
       // outlives this channel and would otherwise keep the button down.
-      pendingMoves.clear();
       capture.dispose();
       disposed = true;
       stage.removeEventListener("contextmenu", onContextMenu);
-      if (frameHandle !== null) cancelAnimationFrame(frameHandle);
-      frameHandle = null;
-      gswFrames.clear();
       memo = null;
       touch = null;
       clearArmed();
