@@ -5,6 +5,7 @@ import {
   createStreamInput,
   type StreamInput,
   type StreamInputClient,
+  type StreamInputOptions,
   type StreamGamePoint
 } from "@/mirror/streamInput";
 import type { ConfirmTapController } from "@/stream-ext/confirmTap";
@@ -72,6 +73,7 @@ function makeInput(options: {
   unfocusOnRelease?: () => boolean;
   confirmTap?: ConfirmTapController;
   confirmTapEnabled?: () => boolean;
+  resolveTarget?: StreamInputOptions["resolveTarget"];
 } = {}): void {
   const map = options.map ?? ((x, y) => ({ x, y, item: null }));
   let client: StreamInputClient | null = stubClient(map);
@@ -85,7 +87,8 @@ function makeInput(options: {
     raiseHeldCard: options.raiseHeldCard,
     unfocusOnRelease: options.unfocusOnRelease,
     confirmTap: options.confirmTap,
-    confirmTapEnabled: options.confirmTapEnabled
+    confirmTapEnabled: options.confirmTapEnabled,
+    ...(options.resolveTarget ? { resolveTarget: options.resolveTarget } : {})
   });
   void client;
 }
@@ -782,5 +785,94 @@ describe("createStreamInput — on the GSW pointer capture", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("createStreamInput — pointer targets (C3)", () => {
+  const SCENE = "res://scenes/event.tscn";
+  /** Option buttons 100 px wide side by side at x 0..99 (item 1), 100..199 (item 2); nothing past 200. */
+  const resolveTarget: NonNullable<StreamInputOptions["resolveTarget"]> = (clientX, clientY) => {
+    if (clientX >= 200) return null;
+    const item = clientX < 100 ? 1 : 2;
+    return {
+      key: item,
+      identity: { item, scene: SCENE, path: `Options/Option${item}` },
+      local: { x: clientX - (item - 1) * 100, y: clientY },
+      frame: 9
+    };
+  };
+  const mouse = (type: string, x: number, y: number, buttons: number) => {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons });
+    Object.defineProperty(event, "pointerType", { value: "mouse" });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    return event;
+  };
+  const target = (n: number, x: number, y: number) => ({
+    targetScene: SCENE,
+    targetPath: `Options/Option${n}`,
+    localX: x,
+    localY: y
+  });
+
+  it("a hover and a mouse click carry the node they were on and the point in it", () => {
+    makeInput({ map: (x, y) => ({ x: x * 2, y: y * 2, item: null }), resolveTarget });
+    stage.dispatchEvent(mouse("pointermove", 150, 30, 0));
+    flushFrames();
+    stage.dispatchEvent(mouse("pointerdown", 150, 30, 1));
+    stage.dispatchEvent(mouse("pointerup", 40, 30, 0));
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 300, coordY: 60, ...target(2, 50, 30) },
+      { kind: "click", button: "left", pressed: true, coordX: 300, coordY: 60, ...target(2, 50, 30) },
+      { kind: "click", button: "left", pressed: false, coordX: 80, coordY: 60, ...target(1, 40, 30) }
+    ]);
+  });
+
+  it("over no node the message is coordinate-only, byte-identical to before", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }), resolveTarget });
+    stage.dispatchEvent(mouse("pointermove", 500, 30, 0));
+    flushFrames();
+    expect(sent).toEqual([{ kind: "hover", coordX: 500, coordY: 30 }]);
+  });
+
+  it("a node the seat cannot find (no scene or path) is no target", () => {
+    makeInput({
+      map: (x, y) => ({ x, y, item: null }),
+      resolveTarget: () => ({ key: 5, identity: { item: 5 }, local: { x: 1, y: 2 } })
+    });
+    stage.dispatchEvent(mouse("pointermove", 10, 10, 0));
+    flushFrames();
+    expect(sent).toEqual([{ kind: "hover", coordX: 10, coordY: 10 }]);
+  });
+
+  it("a touch tap's one full click carries the node the finger went down on", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), tapToFocus: () => false, resolveTarget });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 60, clientY: 20 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 60, clientY: 20 }));
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 60, coordY: 20, ...target(1, 60, 20) },
+      { kind: "click", button: "left", coordX: 60, coordY: 20, ...target(1, 60, 20) }
+    ]);
+  });
+
+  it("a wheel tick carries the node under the wheel", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: null }), resolveTarget });
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: 120, clientY: 10, deltaY: -100 });
+    stage.dispatchEvent(wheel);
+    expect(sent).toEqual([{ kind: "click", button: "wheel-up", coordX: 120, coordY: 10, ...target(2, 20, 10) }]);
+  });
+
+  it("the confirm commit carries the widget the focus tap was on", () => {
+    const confirm = confirmController({ id: 2, kind: "shop" });
+    makeInput({
+      map: (x, y) => ({ x, y, item: 2 }),
+      confirmTap: confirm.controller,
+      confirmTapEnabled: () => true,
+      resolveTarget
+    });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 150, clientY: 40 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 150, clientY: 40 }));
+    sent.length = 0;
+    capture.commitConfirm();
+    expect(sent).toEqual([{ kind: "click", button: "left", coordX: 150, coordY: 40, ...target(2, 50, 40) }]);
   });
 });

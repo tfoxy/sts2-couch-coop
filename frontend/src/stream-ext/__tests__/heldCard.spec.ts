@@ -148,7 +148,7 @@ describe("heldCard — identity + override", () => {
     const query = fakeQuery({ 12: 11, 11: 10, 10: 9, 9: null });
     const overrides = new FakeOverrides();
     let redraws = 0;
-    extension.onSession!({ sessionId: "s", streamId: "t", itemMeta: null, requestRedraw: () => { redraws++; } });
+    extension.onSession!({ sessionId: "s", streamId: "t", itemMeta: null, requestRedraw: () => { redraws++; }, mouseFilter: () => {} });
     extension.onItemMeta!(batch([meta(10, [RS_GROUP_HAND_HOLDER])]));
     extension.beforeDraw!(frame(1, overrides, query));
 

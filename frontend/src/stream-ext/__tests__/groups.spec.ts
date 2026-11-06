@@ -27,13 +27,19 @@ describe("stream-ext group names", () => {
         .filter(([name]) => name.startsWith(PREFIX))
         .map(([name, value]) => [name.slice(PREFIX.length).toLowerCase(), value])
     );
-    expect(Object.keys(fixture)).toHaveLength(14);
+    expect(Object.keys(fixture)).toHaveLength(15);
     expect(exported).toEqual(fixture);
   });
 
   it("every module's group list names only table groups", () => {
     const names = new Set(Object.values(fixture));
-    for (const list of [groups.RAISE_GROUPS, groups.VIEW_SCALE_GROUPS, groups.HELD_CARD_GROUPS, groups.CONFIRM_TAP_GROUPS]) {
+    for (const list of [
+      groups.RAISE_GROUPS,
+      groups.VIEW_SCALE_GROUPS,
+      groups.HELD_CARD_GROUPS,
+      groups.CONFIRM_TAP_GROUPS,
+      groups.POINTER_TARGET_GROUPS
+    ]) {
       for (const g of list) expect(names.has(g)).toBe(true);
     }
   });

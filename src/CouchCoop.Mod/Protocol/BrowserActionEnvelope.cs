@@ -91,7 +91,16 @@ public sealed record BrowserInputRequestEnvelope(
     // one that drifts.
     //
     // Absent on every non-pad message, so the wire stays byte-identical for every existing client.
-    string? Input = null)
+    string? Input = null,
+    // POINTER TARGET (GSW input plan row C3; hover/click only, all four or none). The node the viewer pointed at, as
+    // the render stream DREW it: `TargetScene` is the instance scene and `TargetPath` the node's path inside that
+    // instance (render-stream `item_meta` scene/path), `LocalX`/`LocalY` the point in the node's own coordinates.
+    // The host keeps the coordinate when it still lands on that node and otherwise moves it onto the node
+    // (PointerTargetPlacement, `retarget: "when-missed"`). Absent: the coordinate path, byte-identical to before.
+    string? TargetScene = null,
+    string? TargetPath = null,
+    double? LocalX = null,
+    double? LocalY = null)
 {
     // Stamped at receipt. A peer cannot revive input admitted before host access was revoked.
     [System.Text.Json.Serialization.JsonIgnore]

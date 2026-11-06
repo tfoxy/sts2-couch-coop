@@ -10,12 +10,18 @@
 //
 // Two of the modules are not view-only: the held-card lift and the confirm button are driven by the input channel,
 // so `buildStreamExtensions` also returns their controllers for RenderStreamStage to hand to `createStreamInput`.
+//
+// An INTERACTIVE page (one that sends input) also always runs the pointer-target module (C3): the Godot mouse
+// filters the hit test picks by, and the identity climb its input names targets with. It is not a
+// viewer setting: every gesture and coordinate depends on it. A receive-only page leaves it out (its list, and so
+// its hello, are exactly the modules the viewer enabled).
 
 import type { RenderStreamExtension } from "@godot-scene-web/render-stream-client";
 
 import type { MirrorSettings } from "@/mirror/mirrorSettings";
 import { createConfirmTapExtension, type ConfirmTapController } from "@/stream-ext/confirmTap";
 import { createHeldCardExtension, type HeldCardController } from "@/stream-ext/heldCard";
+import { createPointerTargetModule, type PointerTargetModule } from "@/stream-ext/pointerTargets";
 import { createRaisedHandExtension } from "@/stream-ext/raisedHand";
 import { createViewScaleExtension } from "@/stream-ext/viewScale";
 
@@ -23,6 +29,8 @@ export interface StreamExtensionsOptions {
   readonly settings: MirrorSettings;
   /** The seat's presentation width (the view-scale clamp's design width). */
   readonly presentationWidth: number;
+  /** The page sends input: run the pointer-target module (C3). */
+  readonly interactive?: boolean;
 }
 
 /** The extension list plus the input-side controllers of the modules the input channel drives. */
@@ -30,6 +38,8 @@ export interface StreamExtensions {
   readonly extensions: readonly RenderStreamExtension[];
   readonly heldCard: HeldCardController | null;
   readonly confirmTap: ConfirmTapController | null;
+  /** The pointer-target module (interactive pages only). */
+  readonly pointerTargets: PointerTargetModule | null;
 }
 
 /** The extensions this page runs, or [] when the viewer has no module on. */
@@ -51,5 +61,10 @@ export function buildStreamExtensions(options: StreamExtensionsOptions): StreamE
     extensions.push(confirm.extension);
     confirmTap = confirm.controller;
   }
-  return { extensions, heldCard, confirmTap };
+  let pointerTargets: PointerTargetModule | null = null;
+  if (options.interactive === true) {
+    pointerTargets = createPointerTargetModule();
+    extensions.push(pointerTargets.extension);
+  }
+  return { extensions, heldCard, confirmTap, pointerTargets };
 }

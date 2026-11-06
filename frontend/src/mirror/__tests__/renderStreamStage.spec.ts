@@ -409,6 +409,16 @@ describe("RenderStreamStage", () => {
     await nextTick();
     expect((button().element as HTMLElement).style.left).toBe("150px");
     expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]); // the tap only focused
+
+    // C3: the click a browser synthesizes after that tap lands on the button that just appeared under the finger. It
+    // started on the canvas, so it commits nothing; a press on the button itself does.
+    await button().trigger("click");
+    expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
+    expect(button().exists()).toBe(true);
+    await button().trigger("pointerdown");
+    await button().trigger("pointerup");
+    await button().trigger("click");
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 640, coordY: 360 });
   });
 
   it("hands a changed descriptor to the client", async () => {

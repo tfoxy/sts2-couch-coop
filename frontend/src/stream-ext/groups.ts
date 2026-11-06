@@ -19,6 +19,9 @@ export const RS_GROUP_TREASURE_RELIC = "couchcoop_rs_treasure_relic";
 export const RS_GROUP_EVENT_OPTION = "couchcoop_rs_event_option";
 export const RS_GROUP_SHOP_ITEM = "couchcoop_rs_shop_item";
 export const RS_GROUP_REST_SITE = "couchcoop_rs_rest_site";
+// POINTER TARGETS (GSW input plan row C3): every Control that takes pointer input (mouse_filter STOP or PASS), so
+// the client's hit test can pick as Godot's GUI does.
+export const RS_GROUP_POINTER_INPUT = "couchcoop_rs_pointer_input";
 
 /** The groups the raised-hand module reads. */
 export const RAISE_GROUPS = [
@@ -43,6 +46,20 @@ export const VIEW_SCALE_GROUPS = [
 export const HELD_CARD_GROUPS = [
   RS_GROUP_HAND_HOLDER,
   RS_GROUP_TARGETING_ARROW
+] as const;
+
+/**
+ * The groups the pointer-target module reads: the input tag, plus every role its identity climb stops at
+ * (a hand card's holder, and each confirm-eligible widget).
+ */
+export const POINTER_TARGET_GROUPS = [
+  RS_GROUP_POINTER_INPUT,
+  RS_GROUP_HAND_HOLDER,
+  RS_GROUP_CARD_REWARD_CARD,
+  RS_GROUP_TREASURE_RELIC,
+  RS_GROUP_EVENT_OPTION,
+  RS_GROUP_SHOP_ITEM,
+  RS_GROUP_REST_SITE
 ] as const;
 
 /** The groups the confirm-tap module reads. */

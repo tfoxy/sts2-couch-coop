@@ -841,6 +841,13 @@ internal static class RenderStreamPairingTests
                 $"a merchant inventory item ({shop}) is tagged a shop item");
         }
         Assert(groups(F("Else", "NCard")).Count == 0, "an ordinary widget is not confirm-tagged");
+        // C3: a Control that takes pointer input (STOP or PASS) gets the pointer-input tag (once ready); IGNORE does not.
+        Assert(RenderStreamItemTagger.TakesPointerInput(Godot.Control.MouseFilterEnum.Stop)
+               && RenderStreamItemTagger.TakesPointerInput(Godot.Control.MouseFilterEnum.Pass)
+               && !RenderStreamItemTagger.TakesPointerInput(Godot.Control.MouseFilterEnum.Ignore),
+            "STOP and PASS take pointer input, IGNORE does not");
+        Assert(!groups(F("GameTransitionRect", "NTransition")).Contains(RenderStreamItemTagger.PointerInputGroup),
+            "the role decision never adds the pointer-input tag (it waits for the node's ready)");
     }
 
     // TWO-SIDED LOCKSTEP (C# side): the tagger's `<Role>Group` consts equal tests/fixtures/render-stream/item-groups.json,
@@ -859,7 +866,7 @@ internal static class RenderStreamPairingTests
             .Where(field => field.IsLiteral && field.FieldType == typeof(string) && field.Name.EndsWith("Group", StringComparison.Ordinal))
             .ToDictionary(field => RoleKey(field.Name[..^"Group".Length]), field => (string)field.GetRawConstantValue()!);
 
-        Assert(table.Count == 14, $"the shared table lists the 14 groups (got {table.Count})");
+        Assert(table.Count == 15, $"the shared table lists the 15 groups (got {table.Count})");
         Assert(consts.Count == table.Count && consts.All(entry => table.TryGetValue(entry.Key, out var name) && name == entry.Value),
             "the tagger's group consts equal the shared table: "
             + string.Join(", ", consts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={entry.Value}")));

@@ -202,6 +202,13 @@ if (args is [StreamingSeatRoleTests.Verb, ..])
     return;
 }
 
+// `-- pointer-targets`: the C3 pointer-target placement alone (pure).
+if (args is [PointerTargetPlacementTests.Verb, ..])
+{
+    PointerTargetPlacementTests.Run();
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- render-stream-pairing` runs the new renderer's host half ALONE:
 // the streaming seat's launch environment, one streaming seat per host, and the seat's descriptor (pure), then the
 // descriptor over a real seat socket relayed through the seat pipe (a child process that IS the streaming seat).
@@ -899,6 +906,8 @@ await ConnectionControlTests.RunAsync();
 await ConnectionControlRouteTests.RunAsync();
     await HeadlessConnectionLifecycleTests.RunAsync();
 InputMappingTests.Run();
+// C3: the host's `when-missed` placement of pointer messages that name a target.
+PointerTargetPlacementTests.Run();
 // …and the gamepad half of the same translation (`kind: "pad"`): token + edge onto spirectl's controller-input
 // action, and — the assertions that matter — nothing else. A pad press addresses no point on screen, so a
 // coordinate leaking onto one would be a silently different action.

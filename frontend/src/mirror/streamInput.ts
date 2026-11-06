@@ -37,12 +37,19 @@
 //     Releases (`drag-end`) and `touch-end` are observe-only (GSW decision D6): no hook can keep a press held.
 //   * RIGHT CLICK: the mouse's right button is an edge pair like any other. A `contextmenu` that no pointer made
 //     (the keyboard's menu key) stays what it was before: one full right click at the mapped point.
+//   * POINTER TARGETS (C3, with `resolveTarget`): GSW's capture runs `targets: "all"`, resolving the node under each
+//     press, release, wheel event and coalesced motion frame (stream-ext/pointerTargets.ts: couch's identity climb
+//     over godot-scene-web's render-stream resolver). The sink keeps GSW's `target` declarations (handle → scene +
+//     path) and stamps the named node and the point in it (`targetScene`, `targetPath`, `localX`, `localY`) on the
+//     hover/click it sends; the seat keeps the coordinate when it still lands on that node and otherwise moves the
+//     event onto it. A full click carries its press's target. No resolver, or no node: the message is unchanged.
 //
 // Self-contained per the mirror decoupling rule: `@/mirror/*`, `@/stream-ext/*` and the GSW input package.
 
 import { MouseButton, type InputRecord, type InputSink, type InputVec2 } from "@godot-scene-web/input";
 import {
   createPointerCapture,
+  type PointerTargetResolver,
   type PointerCapture,
   type PointerEventLike,
   type PointerEventTargetLike,
@@ -88,6 +95,11 @@ export interface StreamInputOptions {
   confirmTap?: ConfirmTapController;
   /** CONFIRM TAP switch (read live). */
   confirmTapEnabled?: () => boolean;
+  /**
+   * POINTER TARGETS (C3): which node a client point is on (godot-scene-web's `pointerTargetResolver` with couch's
+   * climb, over the live client). Given, hover/click messages carry that node; absent, they are coordinate-only.
+   */
+  resolveTarget?: (clientX: number, clientY: number) => ReturnType<PointerTargetResolver>;
 }
 
 export interface StreamInput {
@@ -159,8 +171,10 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   // TAP TO FOCUS: the item armed by the first tap (and when), so a re-tap commits and a different item re-arms.
   let armedItem: number | null = null;
   let armedAtMs = 0;
-  // CONFIRM TAP: the game coordinate the focus hover went to, replayed by the commit.
+  // CONFIRM TAP: the game coordinate the focus hover went to (and the client point it came from), replayed by the
+  // commit.
   let confirmCoord: InputVec2 | null = null;
+  let confirmClient: InputVec2 | null = null;
   let touch: TouchState | null = null;
   let disposed = false;
 
@@ -185,44 +199,69 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   // Inside a click scope (GSW's default tap records, couch's own `click()` calls) a press and the release that
   // follows it are ONE full click; everywhere else a press and a release are separate edges.
   let clickScope = 0;
-  let scopedPress: { button: CouchButton; at: InputVec2 } | null = null;
+  let scopedPress: { button: CouchButton; at: InputVec2; target: TargetStamp | null } | null = null;
 
   function coord(position: InputVec2): { coordX: number; coordY: number } {
     return { coordX: position[0], coordY: position[1] };
   }
 
+  // POINTER TARGETS: GSW's declarations (handle → scene + path), and the stamp a targeted record carries.
+  type TargetStamp = { targetScene: string; targetPath: string; localX: number; localY: number };
+  const declared = new Map<number, { scene: string; path: string } | null>();
+
+  function stampOf(record: { target?: number; local?: InputVec2 }): TargetStamp | null {
+    const handle = record.target;
+    if (handle === undefined || handle === 0 || record.local === undefined) return null;
+    const node = declared.get(handle);
+    if (!node) return null;
+    return { targetScene: node.scene, targetPath: node.path, localX: record.local[0], localY: record.local[1] };
+  }
+
   const sink: InputSink = {
     push(record: InputRecord): void {
+      if (record.event === "target") {
+        // A node identity the seat can find needs both halves (an item-only or path-only one names nothing there).
+        declared.set(
+          record.handle,
+          record.scene !== undefined && record.path !== undefined ? { scene: record.scene, path: record.path } : null
+        );
+        return;
+      }
       if (record.event === "mouse_motion") {
-        send({ kind: "hover", ...coord(record.position) });
+        send({ kind: "hover", ...coord(record.position), ...stampOf(record) });
         return;
       }
       if (record.event !== "mouse_button") return;
+      const target = stampOf(record);
       const button = record.button_index;
       const name = couchButton(button);
       if (button >= MouseButton.WHEEL_UP && button <= MouseButton.WHEEL_RIGHT) {
         // A wheel step is a press+release pair; couch's tick is one message, on the press.
-        if (record.pressed && name !== null) send({ kind: "click", button: name, ...coord(record.position) });
+        if (record.pressed && name !== null) {
+          send({ kind: "click", button: name, ...coord(record.position), ...target });
+        }
         return;
       }
       if (record.pressed) {
         if (clickScope > 0) {
           flushScopedPress();
-          if (name !== null) scopedPress = { button: name, at: record.position };
+          if (name !== null) scopedPress = { button: name, at: record.position, target };
           return;
         }
         // Any real press on the picture dismisses a confirm button an earlier tap raised.
         dismissConfirm();
-        if (name !== null) send({ kind: "click", button: name, pressed: true, ...coord(record.position) });
+        if (name !== null) send({ kind: "click", button: name, pressed: true, ...coord(record.position), ...target });
         return;
       }
       if (name === null) return;
       if (scopedPress !== null && scopedPress.button === name) {
+        // One full click: the press's point and target (the seat presses and releases there).
+        const press = scopedPress;
         scopedPress = null;
-        send({ kind: "click", button: name, ...coord(record.position) });
+        send({ kind: "click", button: name, ...coord(record.position), ...press.target });
         return;
       }
-      send({ kind: "click", button: name, pressed: false, ...coord(record.position) });
+      send({ kind: "click", button: name, pressed: false, ...coord(record.position), ...target });
     }
   };
 
@@ -230,7 +269,9 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   function flushScopedPress(): void {
     const press = scopedPress;
     scopedPress = null;
-    if (press !== null) send({ kind: "click", button: press.button, pressed: true, ...coord(press.at) });
+    if (press !== null) {
+      send({ kind: "click", button: press.button, pressed: true, ...coord(press.at), ...press.target });
+    }
   }
 
   function inClickScope(work: () => void): void {
@@ -440,6 +481,7 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   function dismissConfirm(): void {
     if (confirmCoord !== null) {
       confirmCoord = null;
+      confirmClient = null;
       confirmTap?.hide();
     }
   }
@@ -464,7 +506,8 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     const cx = r.left + r.width / 2;
     const cy = r.top + r.height / 2;
     const centre = lookup(cx, cy);
-    if (centre !== null) hover([centre.point.x, centre.point.y], cx, cy);
+    // No client point: this hover names no node (it is there to point at nothing, so the focus drops).
+    if (centre !== null) capture.hover([centre.point.x, centre.point.y]);
   }
 
   function interceptTap(gesture: PointerGesture, at: InputVec2): PointerGestureDecision {
@@ -480,6 +523,7 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
       const hit = confirmTap.classify(item ?? -1);
       if (hit !== null) {
         confirmCoord = [at[0], at[1]];
+        confirmClient = [gesture.clientX, gesture.clientY];
         confirmTap.show(hit.id, hit.kind);
         hover(at, gesture.clientX, gesture.clientY);
         clearArmed();
@@ -599,6 +643,9 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     mode: "mouse",
     map: (clientX, clientY) => lookup(clientX, clientY)?.point ?? null,
     sink,
+    ...(options.resolveTarget !== undefined
+      ? { targets: "all" as const, resolveTarget: options.resolveTarget }
+      : {}),
     gestures: {
       touchSlop: TOUCH_SLOP_PX,
       longPressMs: heldCard !== undefined ? PEEK_MS : 0,
@@ -638,10 +685,17 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
 
   function commitConfirm(): void {
     const at = confirmCoord;
+    const client = confirmClient;
     if (at === null || disposed) return;
     confirmCoord = null;
+    confirmClient = null;
     confirmTap?.hide();
-    turn(() => inClickScope(() => capture.click(MouseButton.LEFT, at)));
+    // The client point names the widget the focus tap was on, so the commit reaches it even if it moved since.
+    turn(() =>
+      inClickScope(() =>
+        client === null ? capture.click(MouseButton.LEFT, at) : capture.click(MouseButton.LEFT, at, client)
+      )
+    );
   }
 
   return {

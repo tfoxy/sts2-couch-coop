@@ -35,7 +35,13 @@ public sealed record InputMessage(
     string? Key = null,
     string? Modifiers = null,
     bool? Pressed = null,
-    int? Count = null)
+    int? Count = null,
+    // C3 pointer target (hover/click): the node the viewer pointed at (render-stream item_meta scene + path) and the
+    // point in it. Omitted (null) when the viewer named none.
+    string? TargetScene = null,
+    string? TargetPath = null,
+    double? LocalX = null,
+    double? LocalY = null)
 {
     public string Type => "input";
 }

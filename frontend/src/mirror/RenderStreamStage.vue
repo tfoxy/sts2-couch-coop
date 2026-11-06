@@ -48,6 +48,7 @@ import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 import type { ConfirmTapController } from "@/stream-ext/confirmTap";
 import type { HeldCardController } from "@/stream-ext/heldCard";
+import type { PointerTargetModule } from "@/stream-ext/pointerTargets";
 
 const props = withDefaults(defineProps<{
   endpoint: RenderStreamEndpoint;
@@ -102,7 +103,11 @@ let client: RenderStreamClient | null = null;
 let streamInput: StreamInput | null = null;
 let streamInputEpoch = 0;
 // The mounted client's held-card and confirm-tap controllers, which a recreated pointer channel drives again.
-let inputModules: { heldCard: HeldCardController | null; confirmTap: ConfirmTapController | null } | null = null;
+let inputModules: {
+  heldCard: HeldCardController | null;
+  confirmTap: ConfirmTapController | null;
+  pointerTargets: PointerTargetModule | null;
+} | null = null;
 // The keyboard and gamepad, created and disposed with the client like `streamInput` (unmount, the hidden dispose, an
 // extension remount), and recreated on a new access generation. `keyPadEpoch` retires a replaced pair's sends: its
 // releases on dispose belong to the old generation, which the host has already let go of.
@@ -155,8 +160,19 @@ const confirmAnchor = computed(() => {
   return client.presentationToCss(rect);
 });
 
+// The button commits only a press that STARTED on it. It appears under the finger that focused the widget, so the
+// click a browser synthesizes after that touch tap lands on it; acting on that click spent the reward on the focus
+// tap itself (C3's live leg: the event option was taken, never confirmed).
+let confirmPressed = false;
+
+function pressConfirm(): void {
+  confirmPressed = true;
+}
+
 function commitConfirm(): void {
-  streamInput?.commitConfirm();
+  const pressed = confirmPressed;
+  confirmPressed = false;
+  if (pressed) streamInput?.commitConfirm();
 }
 
 function onStatus(status: RenderStreamStatus): void {
@@ -238,7 +254,8 @@ function extensionsKey(): string {
     mirrorSettings.uiScaling,
     mirrorSettings.raiseHeldCard,
     mirrorSettings.confirmTap,
-    presentation.value[0]
+    presentation.value[0],
+    props.sendInput !== undefined
   ].join("|");
 }
 
@@ -246,7 +263,11 @@ function mountClient(): void {
   const canvas = canvasEl.value;
   if (!canvas || client || stopped) return;
   mountedExtensionsKey = extensionsKey();
-  const built = buildStreamExtensions({ settings: mirrorSettings, presentationWidth: presentation.value[0] });
+  const built = buildStreamExtensions({
+    settings: mirrorSettings,
+    presentationWidth: presentation.value[0],
+    interactive: props.sendInput !== undefined
+  });
   confirmController.value = built.confirmTap;
   const create = props.createClient ?? createRenderStreamClient;
   try {
@@ -263,13 +284,21 @@ function mountClient(): void {
     stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
-  inputModules = { heldCard: built.heldCard, confirmTap: built.confirmTap };
+  inputModules = { heldCard: built.heldCard, confirmTap: built.confirmTap, pointerTargets: built.pointerTargets };
   if (props.sendInput) {
     attachStreamInput();
     attachKeyPad(false);
   }
   phase.value = "connecting";
   client.connect();
+}
+
+// C3: the node under a client point, resolved over whichever client is live (the module keeps one resolver per
+// client); null before a client, on a bar, or over nothing with an identity.
+function targetResolver(module: PointerTargetModule): (clientX: number, clientY: number) => ReturnType<
+  NonNullable<ReturnType<PointerTargetModule["resolverFor"]>>
+> {
+  return (clientX, clientY) => module.resolverFor(client)?.(clientX, clientY) ?? null;
 }
 
 // Send is `props.sendInput` read live (MirrorApp's per-generation sender, which drops anything while
@@ -290,7 +319,10 @@ function attachStreamInput(): void {
     raiseHeldCard: () => mirrorSettings.raiseHeldCard,
     unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
     confirmTap: inputModules?.confirmTap ?? undefined,
-    confirmTapEnabled: () => mirrorSettings.confirmTap
+    confirmTapEnabled: () => mirrorSettings.confirmTap,
+    ...(inputModules?.pointerTargets
+      ? { resolveTarget: targetResolver(inputModules.pointerTargets) }
+      : {})
   });
 }
 
@@ -513,7 +545,7 @@ defineExpose({
         height: `${confirmAnchor.h}px`
       }"
       data-testid="render-stream-confirm-button"
-      @pointerdown.stop
+      @pointerdown.stop="pressConfirm"
       @pointerup.stop
       @click.stop="commitConfirm"
     >{{ t('a11y.confirm') }}</button>

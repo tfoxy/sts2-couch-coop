@@ -17,7 +17,16 @@ namespace CouchCoop.Mod.Protocol;
 public sealed class BrowserInputExecutor(ISemanticActionSource actions)
 {
     private static readonly RateLimitedDiagnosticLog FailureLog = new(CouchCoopLog.Stderr);
+    private static readonly RateLimitedDiagnosticLog TargetLog = new(CouchCoopLog.Stderr, TimeSpan.FromSeconds(10));
     private readonly ISemanticActionSource _actions = actions ?? throw new ArgumentNullException(nameof(actions));
+    // C3: this connection's pointer-target placement (and its press binding). Built on the first pointer message.
+    private PointerTargetPlacement? _placement;
+    private readonly Func<IPointerTargetFinder> _finder = () => new GodotPointerTargetFinder();
+
+    internal BrowserInputExecutor(ISemanticActionSource actions, Func<IPointerTargetFinder> finder) : this(actions)
+    {
+        _finder = finder;
+    }
 
     public BrowserActionResultEnvelope? Execute(BrowserInputRequestEnvelope request)
     {
@@ -35,8 +44,8 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
         {
             action = request.Kind switch
             {
-                BrowserInputKinds.Hover => BuildPointer(requestId, SemanticActionKind.HoverElement, request),
-                BrowserInputKinds.Click => BuildPointer(requestId, SemanticActionKind.MouseClick, request),
+                BrowserInputKinds.Hover => BuildPointer(requestId, SemanticActionKind.HoverElement, PlaceTarget(request)),
+                BrowserInputKinds.Click => BuildPointer(requestId, SemanticActionKind.MouseClick, PlaceTarget(request)),
                 BrowserInputKinds.Key => BuildKey(requestId, request),
                 BrowserInputKinds.Pad => BuildPad(requestId, request),
                 _ => null
@@ -68,6 +77,36 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
         if (result.Success) return null;
         FailureLog.Write("input-failed", $"input failed: {BrowserJson.Serialize(result)}");
         return Error(requestId, BrowserActionErrorCodes.InternalFailure, "The game could not apply the input.");
+    }
+
+    // C3: a hover/click that names a pointer target (or arrives while a press is bound to one) goes where the
+    // placement puts it; anything else is returned as is. Runs on the game thread (the connection's drain invokes
+    // Execute there), which the placement's node reads need. An element-addressed request is never touched.
+    internal BrowserInputRequestEnvelope PlaceTarget(BrowserInputRequestEnvelope request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.ElementId) || request.CoordX is not { } x || request.CoordY is not { } y
+            || !double.IsFinite(x) || !double.IsFinite(y))
+        {
+            return request;
+        }
+
+        var target = PointerTargetRef.From(request);
+        if (target is null && _placement is null)
+        {
+            return request; // the old coordinate path: nothing named, nothing ever bound
+        }
+
+        _placement ??= new PointerTargetPlacement(_finder());
+        var pressed = request.Kind == BrowserInputKinds.Click ? request.Pressed : null;
+        var placed = _placement.Place(new Godot.Vector2((float)x, (float)y), target, pressed, request.Button);
+        if (target is not null)
+        {
+            TargetLog.Write("pointer-target", $"[pointer-target] {_placement.Stats}");
+        }
+
+        return placed.X == (float)x && placed.Y == (float)y
+            ? request
+            : request with { CoordX = placed.X, CoordY = placed.Y };
     }
 
     // Element id is authoritative — when present, leave the coordinate null so spirectl resolves the live rect.

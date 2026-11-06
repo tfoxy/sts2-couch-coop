@@ -13,5 +13,6 @@
   "treasure_relic": "couchcoop_rs_treasure_relic",
   "event_option": "couchcoop_rs_event_option",
   "shop_item": "couchcoop_rs_shop_item",
-  "rest_site": "couchcoop_rs_rest_site"
+  "rest_site": "couchcoop_rs_rest_site",
+  "pointer_input": "couchcoop_rs_pointer_input"
 }
