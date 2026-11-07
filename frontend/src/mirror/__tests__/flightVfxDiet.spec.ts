@@ -33,7 +33,7 @@ const xf = (tx: number, ty: number) => ({
 
 const box = { position: { x: 0, y: 0 }, size: { x: 100, y: 140 } };
 
-// R13: which node is FLYING depends on the kind — a spawned VFX silhouette for a shuffle, the real played card for
+// Which node is FLYING depends on the kind — a spawned VFX silhouette for a shuffle, the real played card for
 // a discard. Everything below it (the comet, the sparkle garnish) is the same subtree either way, which is the
 // point: the diet keys on how many flights are in the air and never on what is flying.
 type FlightKind = "shuffle" | "discard";

@@ -5,7 +5,7 @@ using Godot;
 using DecorFreeze = CouchCoop.Mod.Session.CouchCoopHeadlessVisualSuspender.DecorFreeze;
 
 // Regression guard for the decorative freeze in CouchCoopHeadlessVisualSuspender — the root-cause test for the
-// "energy orb / its number disappears mid-combat" bug (round 8, item 6).
+// "energy orb / its number disappears mid-combat" bug.
 //
 // The bug: the freeze used ProcessMode=Disabled on every decorative animator. In Godot 4.5.1 a Tween defaults to
 // TWEEN_PAUSE_BOUND and `Tween::can_process()` returns `bound_node->can_process()`, while `Node::_can_process()`

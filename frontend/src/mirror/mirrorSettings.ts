@@ -340,7 +340,7 @@ export interface MirrorSettings {
   reproRecorder: boolean;
   // CLIENT ui (browser-only) — the on-screen latency readout (LatencyOverlay). Seeded from the `?latency` harness
   // param so the checkbox reads truthfully on load. NOTE the render gate is `?latency` OR this: the harness path
-  // (scripts/measure-latency.mjs + window.__mirrorLatency) can never be switched off by a stray tap in the panel.
+  // (external measurement tooling via window.__mirrorLatency) can never be switched off by a stray tap in the panel.
   latencyOverlay: boolean;
   // CLIENT audio (browser-only) — opt in to this seat's game sounds. No URL override by design.
   audio: boolean;
@@ -732,7 +732,7 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // The new renderer (Beta) — forced rows
 // ---------------------------------------------------------------------------------------------------------
 //
-// THE ONE TABLE of what the render-stream does not support yet (handoff-mirror-new-renderer.md §3 Q4). While
+// THE ONE TABLE of what the render-stream does not support yet. While
 // `runtimeRenderer === "stream"` each row here is disabled in the panel and SHOWS the value below, which may differ
 // from the old renderer's default; its setter refuses. Nothing is ever written: un-checking the beta (or a stream
 // failing back to the old renderer) shows every row as the viewer left it. When a feature lands, its row leaves

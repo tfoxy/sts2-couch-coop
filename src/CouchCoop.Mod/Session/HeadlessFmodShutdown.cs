@@ -34,7 +34,7 @@ namespace CouchCoop.Mod.Session;
 /// was false the moment a third-party mod was installed. A MOD's own audio helper is on nobody's list, and a
 /// well-written one resolves the singleton per call behind exactly the guards that all still pass after
 /// <c>shutdown()</c> — <c>has_singleton</c> true, <c>is_instance_valid</c> true — because <c>shutdown()</c>
-/// frees the NATIVE system while leaving the GODOT object registered and alive. Measured, 2026-09-16: with
+/// frees the NATIVE system while leaving the GODOT object registered and alive. Observed: with
 /// Downfall installed, a viewer tapping a modded character in the browser mirror killed the seat with a native
 /// SIGSEGV inside <c>libGodotFmod…so</c> (faults at +0x50 / +0x90), nothing in <c>godot.log</c>, no managed
 /// exception for the mod's own try/catch to catch. The hole is the DOORWAY, not the caller list, so
@@ -45,7 +45,7 @@ namespace CouchCoop.Mod.Session;
 /// THE MUTE PATCH HAS A SECOND HOLE, AND IT IS IN VANILLA CODE. A Harmony prefix rewrites a method's own body,
 /// never a copy the JIT already inlined into a caller. When a mod that initializes BEFORE CouchCoop patches some
 /// method, that method's replacement is JIT-compiled right then, and its small callees — a vanilla audio forward
-/// among them — can be inlined into it, frozen un-muted before our prefix exists. Measured 2026-09-22 on a
+/// among them — can be inlined into it, frozen un-muted before our prefix exists. Observed on a
 /// Windows seat whose mod order put CouchCoop last: at the Neow event such a copy called the audio manager's
 /// <c>Proxy</c> GDScript, which had bound the FMOD singleton at compile time (so the name stub never reached
 /// it), and the seat died with a native access violation inside the FMOD library. So <see cref="Teardown"/>

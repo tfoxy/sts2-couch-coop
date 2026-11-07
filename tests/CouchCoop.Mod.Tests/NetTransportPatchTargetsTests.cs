@@ -4,7 +4,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Saves;
 using MegaCrit.Sts2.Core.Saves.Runs;
 
-// Regression guard for the networking/hosting patches (WS-1). Every game member the mod binds to in order to host
+// Regression guard for the networking/hosting patches. Every game member the mod binds to in order to host
 // normally — the two NetHostGameService entry points, the private _netHost field and the private Platform setter it
 // rewrites, the CommandLineHelper overrides that drive a CLI-free headless seat, the client-side HostNetId seam and
 // the saved-run host hook — must still resolve against the installed STS2 assemblies. If a game update renames or

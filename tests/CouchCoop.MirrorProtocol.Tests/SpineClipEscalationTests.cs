@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-7 (#14): the shared "should a single-frame clip be re-requested?" rule the native client applies in
+// The shared "should a single-frame clip be re-requested?" rule the native client applies in
 // SpineAttachment.OnClipArrived (the web twin runs the identical inline guard in mirrorRenderer.ts). The load-bearing
 // case is the new one: a host-DEGRADED clip must NOT escalate — that would re-ask for the expensive bake, once per
 // spine node, exactly when the host declined the work because the machine was oversubscribed.

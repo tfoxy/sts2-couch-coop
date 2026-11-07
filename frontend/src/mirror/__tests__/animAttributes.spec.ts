@@ -118,7 +118,7 @@ describe("nodeAnimBinding", () => {
   // couch-coop-owned surface. vue-tsc type-checks against the ambient shim (which already carries kind/delayMs/loop).
 });
 
-// R10-B2 — the four loops the R13 producer folds out of the wire on top of the map pulse. The producer names the
+// The four loops the producer folds out of the wire on top of the map pulse. The producer names the
 // loop; the CLIENT owns the keyframes. Every number below is pinned to its single source in the bridge-mod
 // (`Sts2TopBarFold` / `Sts2ProceedGlow`), so a drift between producer and client cannot go unnoticed.
 describe("pinnedLoopBinding — the top-bar + proceed tokens", () => {

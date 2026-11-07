@@ -9,15 +9,13 @@ import { WAKE_PING_TIMEOUT_MS } from "@/mirror/mirrorClient";
 
 // HOLDING A SEAT THE DEVICE CANNOT REACH — and the rejection that already has copy.
 //
-// THE MEASURED DEFECT (2026-09-16, real moto g31, `iptables -I INPUT -s <phone> -p tcp --dport 13347:13417 -j
-// DROP`). A phone whose join COMPLETES and which then cannot reach its seat port made the host kill and relaunch
-// that seat every ~43 seconds, for ever: **32 full game-process launches from one phone** before the leg was
-// stopped. The whole chain is in this file's subject — the browser's. The seat socket never opened, which ran the
-// full `handleActiveClientDrop` teardown, whose `reconnectToHost` closes EVERY client including the HOST socket;
-// the server Release()s on that close and kills the seat; the auto-rejoin then bought a fresh 20-60 s cold spawn
-// onto a port the device still could not reach. The teardown also cleared `seatNotice` each time, which is why the
-// phone's own diagnosis first appeared at 63.8 s and then flickered on the respawn period instead of standing
-// still at ~20 s.
+// THE DEFECT (seen on a real phone whose seat port a host firewall rule dropped). A phone whose join COMPLETES and
+// which then cannot reach its seat port made the host kill and relaunch that seat on a fixed period, for ever. The
+// whole chain is in this file's subject — the browser's. The seat socket never opened, which ran the full
+// `handleActiveClientDrop` teardown, whose `reconnectToHost` closes EVERY client including the HOST socket; the
+// server Release()s on that close and kills the seat; the auto-rejoin then bought a fresh cold spawn onto a port the
+// device still could not reach. The teardown also cleared `seatNotice` each time, so the phone's own diagnosis
+// flickered on the respawn period instead of standing still.
 //
 // The distinguishing fact is that this socket NEVER REACHED `connected`. A seat socket that opened and later died
 // really is a view that was lost — the host has probably gone — and it keeps the teardown. Both are pinned here,
@@ -448,8 +446,8 @@ describe("MirrorApp join rejection copy", () => {
   });
 
   // The host's fifth named cause, and the broadest: the lobby has no couch transport at all, because the port
-  // it needs was taken when the host started hosting. Measured Sep-22 2026 — an orphaned game process owned
-  // that port and every join died in 141 ms under `spawn-failed`, i.e. "please try again", for a condition
+  // it needs was taken when the host started hosting. Observed once — an orphaned game process owned
+  // that port and every join died within a fraction of a second under `spawn-failed`, i.e. "please try again", for a condition
   // that no retry on this device can change. It reuses the port-conflict copy because that copy is already
   // word-for-word correct here, in all 14 languages.
   it("tells a couch-deaf lobby apart from a view that merely failed to start", async () => {

@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-EFFECTS-NATIVE unit coverage for the PURE gdshader "Static" rewrite (ShaderStaticRewrite). Freezing an effect
+// Unit coverage for the PURE gdshader "Static" rewrite (ShaderStaticRewrite). Freezing an effect
 // on the native client swaps the live built-in TIME for a client-pinned `couch_static_time` uniform; this suite
 // pins the word-boundary rule (whole-word TIME only), the uniform injection point, and the no-TIME "skip" signal.
 // All shader bodies are SYNTHETIC (hand-written) — no game content committed.

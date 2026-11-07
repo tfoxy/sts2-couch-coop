@@ -81,7 +81,7 @@ public sealed record SecureCertificateBundle(
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Verified live on 2026-08-15</b> before being wired in, because a provider in this family is dead
+/// <b>Verified live</b> before being wired in, because a provider in this family is dead
 /// as often as it is alive:
 /// DNS <c>192-168-1-5.my.local-ip.co</c> → <c>192.168.1.5</c>;
 /// leaf <c>CN=*.my.local-ip.co</c> (SAN <c>*.my.local-ip.co</c>, <c>my.local-ip.co</c>) issued by

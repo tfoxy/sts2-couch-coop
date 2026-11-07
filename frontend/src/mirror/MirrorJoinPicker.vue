@@ -23,7 +23,7 @@ import {
 // decides watch-host vs spawn vs reject. The join chrome (classes in the global styles.css, testids) lives
 // outside this component so the native JoinPanel and the e2e suite address the same shapes.
 //
-// ROSTER EMPHASIS (2026-08-01 user report — the visual language was inverted; native twin: JoinPanel.cs):
+// ROSTER EMPHASIS (the visual language was once inverted; native twin: JoinPanel.cs):
 //   * the HOST row is plain and says only "<name> [Host]". The old "Watch host" affordance described the wrong
 //     thing — picking the host HANDLES the host player (the host machine drives it), it is not a spectator mode.
 //   * the highlight goes to the rows a viewer is meant to CLAIM: ready seats with no controller attached.
@@ -93,7 +93,7 @@ const titleText = computed(() =>
 const showNameField = computed(() => props.mode === "picker-with-name");
 const showPicker = computed(() => props.mode === "picker-with-name" || props.mode === "picker");
 
-// R19 WP-2 copy rules — all three decided in joinModel, so the component stays a renderer.
+// Copy rules — all three decided in joinModel, so the component stays a renderer.
 //   * the kicker + <h1> are DROPPED on a steady picker (the game's own screen name told the player nothing about
 //     which control to use, and on a landscape phone with the keyboard up it pushed the form off screen). Every
 //     lifecycle word — "Connecting…", "Reconnecting…", "Joining…", "Loading…" — and the idle status fallbacks
@@ -330,7 +330,7 @@ function submitJoin(name: string = joinName.value, playerId?: string): void {
   text-transform: uppercase;
 }
 
-/* R20 — the same "nothing above me" rule the name form gets (styles.css `.join-form:first-child`). On a picker with
+/* The same "nothing above me" rule the name form gets (styles.css `.join-form:first-child`). On a picker with
    no title, no name form and no message, THIS paragraph leads the panel and its top margin was dead space over the
    panel's own padding. It keeps the gap whenever something really does precede it — a message paragraph, or the name
    form on a `picker-with-name` — because then it is not the first child. `margin: 0` on all four sides deliberately:

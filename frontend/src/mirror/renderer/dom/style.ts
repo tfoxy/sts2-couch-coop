@@ -115,7 +115,7 @@ function isInteractiveRectCandidate(n: MirrorNode): boolean {
   return (n.mouseFilter === 0 || n.mouseFilter === 1) && n.transform != null && n.localRect != null && !isHitTestExcluded(n);
 }
 
-// R10-PERF4 WS-2 — EFFECTS-DIRTY bits (see consumeEffectsDirty). `data-godot-shader*` / `data-godot-particle*`
+// EFFECTS-DIRTY bits (see consumeEffectsDirty). `data-godot-shader*` / `data-godot-particle*`
 // are exactly the markers gsw's two runtimes select on (`[data-godot-shader-webgl]` /
 // `[data-godot-particle-runtime]`) and the attributes their reconcile re-reads per node, so an ACTUAL change to
 // one is the only thing that can make their next reconcile see something new.
@@ -204,7 +204,7 @@ function sameWalkCtx(a: WalkCtx, b: WalkCtx): boolean {
     a.containerChildVertical === b.containerChildVertical &&
     a.inCardRewardScreen === b.inCardRewardScreen &&
     a.contentScope === b.contentScope &&
-    // R10-PERF4 WS-3 (item 3): the REVEAL seam. Refusing to reuse the cached childCtx object across an
+    // The REVEAL seam. Refusing to reuse the cached childCtx object across an
     // ancestor-hidden flip is what makes every descendant re-visit and build its deferred sub-layers.
     a.ancestorHidden === b.ancestorHidden
   );

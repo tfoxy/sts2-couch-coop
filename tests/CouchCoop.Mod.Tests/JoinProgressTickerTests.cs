@@ -7,7 +7,7 @@ namespace CouchCoop.Mod.Tests;
 
 // The join-progress stream: what the browser is shown while a join is still being resolved.
 //
-// The defect it answers (measured live 2026-09-15): for the whole 75s seat-spawn deadline the phone showed a bare
+// The defect it answers (seen live): for the whole 75s seat-spawn deadline the phone showed a bare
 // "Joining…" spinner — and a SUCCESSFUL join showed the identical screen for its first 10-15s. A legitimate cold
 // spawn takes 20-60s, so "slow" and "dead" were indistinguishable and players closed the tab.
 //

@@ -11,7 +11,7 @@ const traceGlobal = globalThis as typeof globalThis & {
   __benchWarmAckTrace?: (event: WarmAckTraceEvent) => void
 };
 
-// WS-B STREAM GATE (web client half). The host must send nothing to a viewer sitting on the join picker, and the
+// STREAM GATE (web client half). The host must send nothing to a viewer sitting on the join picker, and the
 // client must neither ASK for it nor apply anything that slips through. The gate's INITIAL value rides the connect
 // query (`watch=0`) because only that can suppress the host's connect-time keyframe; later flips ride a
 // `{type:"watch",on}` control message. C#/native twin: MirrorSocket + ConnectionCoordinator.
@@ -179,7 +179,7 @@ describe("buildMirrorWebSocketUrl", () => {
     );
   });
 
-  // R14 trail drive: the declaration rides the connect URL so the first flight after connect is already correct.
+  // Trail drive: the declaration rides the connect URL so the first flight after connect is already correct.
   it("sets `trailDrive=1` when the viewer drives the trail root", () => {
     const on = buildMirrorWebSocketUrl({ href: "http://host:13337/", protocol: "http:" }, true, false, true);
     expect(new URL(on).searchParams.get("trailDrive")).toBe("1");
@@ -201,7 +201,7 @@ describe("buildHeadlessMirrorWebSocketUrl", () => {
     expect(new URL(on).port).toBe("13347");
   });
 
-  // R14: the redirected producer receives the declaration on its own socket.
+  // The redirected producer receives the declaration on its own socket.
   it("carries canonical trailDrive values onto the redirected socket", () => {
     const location = { href: "http://host:13337/", protocol: "http:" };
     expect(new URL(buildHeadlessMirrorWebSocketUrl(13347, location, true, true)).searchParams.get("trailDrive"))
@@ -301,7 +301,7 @@ describe("stream gate", () => {
     expect(client.watching).toBe(false);
   });
 
-  // R11 WS-M — the mirror's one SEMANTIC-action send (a map-point tap → `select-map-node`). No viewer id (the
+  // The mirror's one SEMANTIC-action send (a map-point tap → `select-map-node`). No viewer id (the
   // host reads the acting seat off the connection).
   it("sends a semantic action envelope with a per-connection request id", async () => {
     const { client, socket } = connect();
@@ -356,7 +356,7 @@ describe("stream gate", () => {
 // batch of applied deltas, including bursts delivered by the host's 500ms self-heal. An empty-batch ack
 // just re-grants credit — which is what a per-RENDERED-FRAME ack did, because a
 // render is also scheduled by texture sizes resolving, atlas bakes completing, and the spread/spine/occlusion/
-// static-bg watchers (~0.32ms per send on a Moto G86, and the first two fire constantly in combat).
+// static-bg watchers (a measurable per-send cost on a mid-range phone, and the first two fire constantly in combat).
 describe("scene-ack flow control", () => {
   // A non-keyframe delta, i.e. the thing the host actually spends its credit on.
   const update = {

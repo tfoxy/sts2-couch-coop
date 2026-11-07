@@ -13,7 +13,7 @@ import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState }
 
 // THE ANIMATED RICH TEXT, from the wire to the elements the CSS keys on.
 //
-// The game's own wavy / shaky / bouncing bbcode tags reach the browser verbatim — a census of `.sts2/bench/`
+// The game's own wavy / shaky / bouncing bbcode tags reach the browser verbatim — a census of recorded sessions
 // finds [jitter] all over combat and [sine] all over events — and the mirror used to render every one of them
 // flat, because @spirectl/presentation declared them as style descriptors with an empty css block. They are
 // effect descriptors now, which is what makes godot-scene-web split their content into the per-character spans

@@ -4,7 +4,7 @@
 # WHAT IS BEING DEPLOYED, and why it is so small: everything under frontend/pages-dist is a ~5KB bootstrap
 # plus icons. No application code, no game assets, no protocol knowledge. The client itself is served by
 # the mod on the player's own PC and fetched over the LAN, which is what makes version skew impossible —
-# see docs/agents/local-network-access.md.
+# see docs/local-network-access.md.
 #
 # So this is very nearly a deploy-ONCE artifact. It needs republishing when the bootstrap's own UX or the
 # boot contract changes, not on every release of the mod.

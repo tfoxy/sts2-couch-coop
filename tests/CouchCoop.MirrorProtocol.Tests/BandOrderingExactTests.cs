@@ -6,7 +6,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-BGBAKE round 3 — the ORDERING-EXACTNESS enforcing suite for PlanBandFlatten (the user's second requirement:
+// The ORDERING-EXACTNESS enforcing suite for PlanBandFlatten (the user's second requirement:
 // "the optimized bg looks exactly the same as the unoptimized one"). Round 2's one-quad collapse re-leveled ~40
 // mid-band interlopers ABOVE the whole baked background (trees floated over the dock, the ally HP bar was covered by
 // a stale orange bar). Round 3 makes the induced draw order of a band plan order-ISOMORPHIC to the raw band paint
@@ -40,8 +40,8 @@ internal static class BandOrderingExactTests
 
     private static void SegmentedSplitIsOrderingExact()
     {
-        // s8 | P0 | m6 | P1 | t4 → 3 regions. The design's canonical no-hoist scene: round 2 baked s∪m∪t into ONE quad
-        // BELOW P0/P1 (occlusion destroyed); round 3 keeps each run its own quad at its own slot z, particles between.
+        // s8 | P0 | m6 | P1 | t4 → 3 regions. The design's canonical no-hoist scene: the earlier collapse baked s∪m∪t into ONE quad
+        // BELOW P0/P1 (occlusion destroyed); the exact plan keeps each run its own quad at its own slot z, particles between.
         var h = new Harness();
         h.AddGroup("root", null);
         h.AddBandStatics("s", 8);
@@ -60,7 +60,7 @@ internal static class BandOrderingExactTests
 
     private static void NoHoistAcrossInterloper()
     {
-        // The explicit anti-round-2 assertion: a mid-band run's members must land in their OWN region (drawn ABOVE the
+        // The explicit anti-collapse assertion: a mid-band run's members must land in their OWN region (drawn ABOVE the
         // interloper below them), never hoisted into region 0 under the whole particle stack.
         var h = new Harness();
         h.AddGroup("root", null);

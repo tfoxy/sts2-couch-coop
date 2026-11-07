@@ -227,7 +227,7 @@ export function handNodes(count: number): NodeSpec[] {
     // …AND THE PART THAT CLAIMS THE FIELD FOR ITSELF, which is the population the two nodes above cannot stand in
     // for. Every card part written before this one is a Control (`mouseFilter` set), and a Control under a
     // zero-size holder takes the RIDE branch: its shift is its holder's corrected claim, handed down. That made
-    // this fixture structurally unable to reproduce the Aug-29 defect — a whole tweened subtree drawn through a
+    // this fixture structurally unable to reproduce the original defect — a whole tweened subtree drawn through a
     // FROZEN claim — because nothing in it ever claimed anything.
     //
     // A recording of the real hand has both: a census over 546 nodes found 430 riders, 72 pass-through groups and

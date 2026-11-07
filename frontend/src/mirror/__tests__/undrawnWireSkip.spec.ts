@@ -41,8 +41,7 @@ type SceneOptions = { pulse?: boolean; ghost?: boolean; floater?: boolean; wide?
 
 /**
  * `eyeSlot` is a bare `Node2D` — a bone-follower transform aggregator that paints nothing itself. `eyeFire` is its
- * only child and starts invisible: the EyeSlot/EyeFire shape the idle-combat recording is built on
- * (`docs/agents/handoff-wire-shaped-renderer.md` §1).
+ * only child and starts invisible: the EyeSlot/EyeFire shape the idle-combat recording is built on.
  */
 function sceneNodes(options: SceneOptions = {}): Array<Record<string, unknown>> {
   return [

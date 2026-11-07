@@ -38,7 +38,7 @@ public sealed record SessionPlayerOption(
     string SeatStatus = MirrorSeatStatuses.Ready,
     // Human-readable WHY for a non-ready seat; null when SeatStatus is Ready.
     string? SeatStatusReason = null,
-    // R19 WP-2 — the character model id this seat is playing (produce side: BrowserPlayerOption.CharacterId).
+    // The character model id this seat is playing (produce side: BrowserPlayerOption.CharacterId).
     // The web picker renders it as the seat's icon; the native client does not draw one yet, so this is parsed
     // purely to keep the two sides' shape in lockstep. A blank string normalizes to null, so "no character" has
     // exactly one spelling on both sides of the wire.

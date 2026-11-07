@@ -148,7 +148,7 @@ internal static class ShaderResourceParserTests
         Check.That(!ShaderResourceParser.IsImagePath("res://x.gdshader"), "gdshader is not an image");
     }
 
-    // R6 P6-F1 — TryGetSubResourceShaderCode: the shader text of ONE named `[sub_resource type="Shader"]`.
+    // TryGetSubResourceShaderCode: the shader text of ONE named `[sub_resource type="Shader"]`.
     //
     // This is a different question from `Parse`, and the difference is the point. `Parse` answers what a MATERIAL
     // uses, so it follows the `[resource]` section's own `shader = SubResource(...)` reference and ignores every

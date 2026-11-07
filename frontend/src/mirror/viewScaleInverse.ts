@@ -1,4 +1,4 @@
-// FIX 3 (R7) — Web input view-scale inverse: the TS twin of native ViewScaleInput.Remap (+ the round-5
+// FIX 3 — Web input view-scale inverse: the TS twin of native ViewScaleInput.Remap (+ the
 // ViewScaleInputRegistry neighbour exemption). This is the PURE consumer half.
 //
 // THE BUG it fixes. The web input path is coordinate-only and view-scale BLIND. inputCapture resolves a hover/tap to
@@ -6,7 +6,7 @@
 // enlarged the item with a CSS transform. So a hover over the ENLARGED "halo" resolves to the halo's game point —
 // for an ancient-event option (bottomCenter pivot ⇒ grows UP, plus the dialogue lift) that point sits in the
 // gap/dialogue ABOVE the option's true rect, so the game hit-tests nothing and the option never focuses. Native has
-// had the coordinate inverse since round 5 (InputRouter.ToDesign → ViewScaler.InverseRemap): for a point inside an
+// had the coordinate inverse for some time (InputRouter.ToDesign → ViewScaler.InverseRemap): for a point inside an
 // enlarged item's ScaledBox (and not on an un-scaled neighbour overlay) map it back to the item's TRUE (un-scaled)
 // game coordinate so the hit-test lands. Points outside every ScaledBox are returned unchanged.
 //
@@ -162,7 +162,7 @@ function isExempt(s: ViewScaleInputStamp, x: number, y: number): boolean {
 // ViewScaleInput.Remap). Iterates topmost-first (paint order, topmost LAST); the first stamp whose ScaledBox
 // contains the point wins: EXEMPT → identity (belongs to an un-scaled neighbour), else the centre-pivot inverse.
 // Identity when no stamp contains the point (byte-identical to the no-view-scale path). `gateEnabled=false` disables
-// the exemption (every contained point remaps — the pre-round-5 behaviour).
+// the exemption (every contained point remaps — the earlier behaviour).
 //
 // `raw` is the pointer's WIDENED-DESIGN position (pre-map, pre-near-miss). When supplied AND the stamp carries a
 // `renderedBox`, a stamp may only claim the point if the RAW pointer was inside the stamp's ON-STAGE box — the

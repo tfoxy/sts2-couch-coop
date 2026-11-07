@@ -6,9 +6,9 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R5 (WS-A) truth table for the PURE view-scale input-gate registry construction (ViewScaleInputRegistry.Build) and
+// truth table for the PURE view-scale input-gate registry construction (ViewScaleInputRegistry.Build) and
 // its four neighbour-exclusion rules. The regression the whole file guards: a scaled GROUP's full-viewport ANCESTORS
-// (NGame / RootSceneContainer / … / NRewardsScreen) must NOT be collected as neighbours — the pre-R5 walk only went UP
+// (NGame / RootSceneContainer / … / NRewardsScreen) must NOT be collected as neighbours — the earlier walk only went UP
 // so they were, and IsExempt then exempted EVERY interior tap → the group's inverse never fired → "taps land as if the
 // container was never scaled" (the card-reward Skip / side-card mis-tap).
 internal static class ViewScaleInputRegistryTests
@@ -28,13 +28,13 @@ internal static class ViewScaleInputRegistryTests
         NestedRewardCardsUseComposedChannels();
     }
 
-    // R10 WS-F — EFFECTIVE VISIBILITY. A SCREEN is hidden by clearing the flag on its ROOT; every descendant keeps
+    // EFFECTIVE VISIBILITY. A SCREEN is hidden by clearing the flag on its ROOT; every descendant keeps
     // Visible=true, and the stamp INDEX deliberately still stamps such a node (an invisible node draws nothing, and
     // dropping the stamp is what made the reappear frame render at scale 1 — see
     // ViewScaleStampIndexTests.StampSurvivesTransientInvisible). This registry is the opposite case: it draws nothing
     // and is consulted for EVERY pointer, so an invisible stamp silently claims coordinates. A closed map screen
     // behind a combat room kept remapping pointers that crossed the MapLegend's 1.2 band — measured on the web twin
-    // as a 66.7 design-px cursor jump at 1920x1080 and 67.6 at 2520x1080 (scripts/probe-targeting-drag-jump.mjs).
+    // as a cursor jump of roughly 67 design px at both 1920x1080 and 2520x1080.
     // Web twin: the ancestorChainHidden gate in mirrorRenderer.buildViewScaleInputStamps + its
     // "effective visibility" describe in frontend/src/mirror/__tests__/viewScaleInputRegistry.spec.ts.
     private static void HiddenAncestorStampIsNotPublished()
@@ -131,7 +131,7 @@ internal static class ViewScaleInputRegistryTests
     }
 
     // Z-rule (GROUP only): a small sibling painted BELOW the group root (earlier in OrderedIds) is invisible under the
-    // group → dropped. Paired with OverlayAboveGroupIsNeighbor over the SAME scene. WEB LOCKSTEP (R9/WS-A): the same
+    // group → dropped. Paired with OverlayAboveGroupIsNeighbor over the SAME scene. WEB LOCKSTEP: the same
     // underlay/overlay/floor/map-legend truth table runs against the web builder in
     // frontend/src/mirror/__tests__/viewScaleInputRegistry.spec.ts — change one, change both.
     private static void UnderlayBelowGroupIsNotNeighbor()
@@ -153,7 +153,7 @@ internal static class ViewScaleInputRegistryTests
     }
 
     // For an ITEM stamp (not a group), a sibling in the halo band survives the filter when it paints ABOVE the item
-    // (it is not an ancestor, does not enclose the item, and is not a stage band), so its tap stays exempt. R19 WP-6d
+    // (it is not an ancestor, does not enclose the item, and is not a stage band), so its tap stays exempt. A later change
     // gave item stamps a paint floor of their OWN index, so the same sibling painted BELOW the item is now DROPPED —
     // an item's halo is the pixels it paints OVER, and a rect it paints over cannot be what the finger is on. Both
     // legs are asserted here.
@@ -175,7 +175,7 @@ internal static class ViewScaleInputRegistryTests
         Check.That(ContainsBox(Neighbors(Build(aState, aT, aSp, new[] { Item() }, Set("item"))), siblingBox),
             "[registry] an item's halo sibling painted ABOVE the item survives the filter");
 
-        // (b) painted BELOW the item → dropped by the R19 item paint floor (WP-6d: the dead "Show upgrade" tickbox).
+        // (b) painted BELOW the item → dropped by the item paint floor (the dead "Show upgrade" tickbox).
         var (bState, bT, bSp) = Scene(
             Ctrl("root", null, 0, 0, W, H, mouseFilter: 2),
             Ctrl("sibling", "root", 210, 140, 50, 20),               // right halo band, painted first (below the item)

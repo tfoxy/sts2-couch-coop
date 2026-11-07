@@ -61,7 +61,7 @@ export interface BrowserPlayerOption {
   seatStatus: MirrorSeatStatus;
   // Human-readable WHY for a non-ready seat, rendered on the disabled row. null when seatStatus is "ready".
   seatStatusReason: string | null;
-  // R19 WP-2 — the character this seat is playing, as the model id the host already publishes elsewhere
+  // The character this seat is playing, as the model id the host already publishes elsewhere
   // (BrowserLobbyPlayerDto.characterId). The mirror picker renders it as the `/models/characters/<id>/icon`
   // PNG left of the name, which is how a player tells four "Player 100x" rows apart in a save lobby. null on a
   // lobby seat nobody has picked a character for, or on any seat the host cannot resolve one
@@ -225,7 +225,7 @@ export interface BrowserStaticBackgroundDescriptor {
   url: string;
 }
 
-// The `renderStream` descriptor (handoff-mirror-new-renderer.md §3 Q2).
+// The `renderStream` descriptor.
 export interface BrowserRenderStreamDescriptor {
   /** ws(s) URL of the hub's `/render-stream`, absolute or page-relative. */
   url: string;

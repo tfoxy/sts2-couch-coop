@@ -83,8 +83,8 @@ describe("visibleUvWindow", () => {
   });
 });
 
-// The widescreen bg-gap fix (Aug-12): `viewportWidth` widens the clip box to the spread stage (1920·F). The
-// UNDERDOCKS numbers below are the on-device evidence from .sts2/artifacts/regression-aug12/bggap-evidence.json,
+// The widescreen bg-gap fix: `viewportWidth` widens the clip box to the spread stage (1920·F). The
+// UNDERDOCKS numbers below are on-device evidence,
 // reconstructed exactly: stage F = 2520/1920 (MIRROR_MAX_DESIGN_WIDTH cap), bg localRect 2764.8×1296, SHIFTED
 // global [0.85,0,0,0.85,36.88,29.19] (data-spread-dx 232 ⇒ unshifted tx −195.12). Every 1-dp CSS rect in the
 // capture (canvas x 33.3 / right 523.2, node right 644.7, y 7.6) reproduces from these inputs at stage scale

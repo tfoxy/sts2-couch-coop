@@ -3,9 +3,9 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R6 (WS-SMALL) HEADLESS live-data verification of the combat-event options coverage — no Godot, no display, no live
+// HEADLESS live-data verification of the combat-event options coverage — no Godot, no display, no live
 // lock. Point COUCHCOOP_MIRROR_EVENT_PROBE_NDJSON at a recorded mirror stream that visits a COMBAT event screen
-// (e.g. .sts2/bench/audit-event.ndjson), and this replays every scene-delta into a MirrorState, then resolves
+// (a recorded event session), and this replays every scene-delta into a MirrorState, then resolves
 // ViewScale.ResolveFor(id, state) for every node and CHECKS that:
 //   * combat_event_layout.tscn is a view-scale ROOT file (else AnyViewScaleScenePresent would early-out the whole pass);
 //   * the combat layout's OptionsContainer (any node whose scene root is combat_event_layout.tscn and whose relPath

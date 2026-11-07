@@ -37,12 +37,12 @@ public sealed class CouchCoopSpineClipProvider(
     public const string SpineClipSizePolicy = "codec=webp&fps=15&q=85";
 
     // The still tail every MINTED still key carries. `still=1` is the producer's own selector (Sts2AssetExtract's
-    // key parser only accepts 1/true/on/yes); `sf` is an OPAQUE discriminator (same trick as WS-6's `mat`) that the
+    // key parser only accepts 1/true/on/yes); `sf` is an OPAQUE discriminator (same trick as `mat`) that the
     // producer ignores and the disk cache keys on — it versions the STILL-FRAME POLICY, so bumping it invalidates
     // stills alone and leaves every cached full clip valid. sf=1 = "mid frame, last frame for die/defeat" (#14).
     public const string StillSelector = "&still=1&sf=1";
 
-    // R10 PAUSED-STILL TIME. The still-frame policy above only GUESSES where a clip rests (mid frame, or the last
+    // PAUSED-STILL TIME. The still-frame policy above only GUESSES where a clip rests (mid frame, or the last
     // frame for a die/defeat). A track the GAME has explicitly PAUSED needs no guess — its frozen track time IS the
     // pose — and the guess is visibly wrong there: the treasure chest's sole clip is named "animation" (the lid
     // opening) and the room freezes it at t=0 for a CLOSED chest, so the mid-clip still rendered a half-open lid on
@@ -57,7 +57,7 @@ public sealed class CouchCoopSpineClipProvider(
 
     /// <summary>
     /// The quantized `&amp;t=` seconds string for a paused still, or null when there is nothing to pin (no value,
-    /// negative, NaN/infinite, or out of range) — in which case the key keeps its byte-identical pre-R10 form.
+    /// negative, NaN/infinite, or out of range) — in which case the key keeps its byte-identical earlier form.
     /// </summary>
     public static string? FormatStillTime(double? seconds)
     {
@@ -88,7 +88,7 @@ public sealed class CouchCoopSpineClipProvider(
     // spine:// key minted by the route, so two requests for the same clip coalesce.
     private static readonly ConcurrentDictionary<string, Lazy<Task<CouchCoopSpineClipResult>>> InFlight = new(StringComparer.Ordinal);
 
-    // Selector order (WS-spine wire contract, FIXED): node → anim → skin → mat → skel → policy → retry. Each
+    // Selector order (spine wire contract, FIXED): node → anim → skin → mat → skel → policy → retry. Each
     // optional selector is appended only when present. `skin`
     // folds the runtime skin into the clip identity (#3); `mat` folds the SHADER MATERIAL the bake applies to a
     // standalone-skeleton render (#8 — the boss map point's channel-remap mask, re-tinted per act + travel state,
@@ -104,9 +104,9 @@ public sealed class CouchCoopSpineClipProvider(
         string? skel = null,
         bool retry = false,
         string? mat = null,
-        // R10: the PAUSED track time a still should sample (see FormatStillTime / StillSelector). Rides the still
+        // The PAUSED track time a still should sample (see FormatStillTime / StillSelector). Rides the still
         // tail, so it is present only on a still key AND only when the client actually pinned a time — every other
-        // key (including every animated clip) is byte-identical to the pre-R10 form.
+        // key (including every animated clip) is byte-identical to the earlier form.
         double? stillTimeSeconds = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sceneResPath);

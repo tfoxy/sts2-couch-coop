@@ -197,7 +197,7 @@ describe("emitTextQuad", () => {
     expect([...emit(rec, box(), negative).pushed[0].m]).toEqual(unsnapped);
   });
 
-  // --- THE EXACT 1:1 BLIT (round 10) -------------------------------------------------------------------------
+  // --- THE EXACT 1:1 BLIT -------------------------------------------------------------------------
   //
   // Round 9 shipped the snap above and called the sharpness fixed on the strength of a draw-list measurement,
   // and the reporter could still see the blur. The size was never 1:1: `texW = ceil(ink.w * rasterScale)` is a
@@ -439,7 +439,7 @@ describe("the builder's text-quad seam", () => {
   // "Card descriptions overflow onto the neighbouring card" reads like a missing clip, and the round's plan
   // carried "honour clip_contents for text quads" as a fix. It is not one: the walk opens a node's clip scope
   // BEFORE that node's own paint, so a label's quad is already inside its own clip — and a RichTextLabel is
-  // deliberately never clipped on EITHER backend (R20's readability transform is meant to spill). These two pin
+  // deliberately never clipped on EITHER backend (the readability transform is meant to spill). These two pin
   // both halves so the non-fix stays a non-fix, and so the next reader does not re-derive it from the report.
 
   it("draws a clipping label's quad INSIDE its own clip scope", () => {

@@ -117,14 +117,14 @@ function msdfGeneratorAssets(): Plugin {
 }
 
 
-// R12 DEV ONLY — the host-rendered static combat background (`/bg/<id>.png`). Without an entry for it a dev server
+// DEV ONLY — the host-rendered static combat background (`/bg/<id>.png`). Without an entry for it a dev server
 // (and therefore the CDP replay bench, which drives one) falls through to the SPA's index.html: the decode rejects,
 // StaticBackground.vue leaves the scenery blank, so the session cannot establish visual parity. With a live game
 // up, `/bg` proxies to
 // the real producer like `/res`; with no game up, point COUCHCOOP_DEV_BG_FIXTURE at a directory of PNGs instead.
 //
-// ARTIFACT POLICY: a `/bg/` PNG is official STS2 art. Fixtures live OUTSIDE the repo tree (`.sts2/` is gitignored,
-// e.g. `.sts2/bench/bg/`), exactly like the bench recordings — never add one to the repo.
+// ARTIFACT POLICY: a `/bg/` PNG is official STS2 art. Fixtures live OUTSIDE the repo tree (`.sts2/` is gitignored),
+// exactly like the recordings — never add one to the repo.
 const devBgFixtureDir = process.env.COUCHCOOP_DEV_BG_FIXTURE
   ? resolve(process.env.COUCHCOOP_DEV_BG_FIXTURE)
   : null;

@@ -7,7 +7,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-BGBAKE round 3 — the RECORDING-DRIVEN residency probe. It replays the canonical combat recording delta-by-delta
+// The RECORDING-DRIVEN residency probe. It replays the canonical combat recording delta-by-delta
 // through the SAME pure classes the Godot controller drives — StaticBakePlanner.ObserveDrain/ObserveFrame +
 // BandResidencyMachine.EvaluateStructure/EvaluateCulprits — modelling a minimal StaticBake.OnDrained controller
 // (arm → per-drain structure verdict → per-region watch scan → culprit verdict), and asserts the residency property
@@ -23,7 +23,7 @@ namespace CouchCoop.MirrorProtocol.Tests;
 //       KeyframeDrop / structural Teardown), the re-plan signature is unchanged, and no new bench strikes are learned
 //       (zero re-learning).
 //
-// Path-presence-gated: default `.sts2/bench/combat-2026-07-15T16-40-09-999Z.ndjson` (rel. to the repo root),
+// Path-presence-gated: reads a recorded combat stream from the gitignored `.sts2/` directory (rel. to the repo root),
 // overridable via COUCHCOOP_BGBAKE_RESIDENCY_NDJSON. If the file is absent the probe prints ONE skip line and passes
 // (nothing is committed under .sts2/). Follows StaticBakePlanProbe's recording-read pattern.
 internal static class BandResidencyReplayProbe

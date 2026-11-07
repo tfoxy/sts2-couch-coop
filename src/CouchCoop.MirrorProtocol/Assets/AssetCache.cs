@@ -1,4 +1,4 @@
-// Pure, game-free/Godot-free helpers for the WS-U disk asset cache (M3). These live in the shared MirrorProtocol
+// Pure, game-free/Godot-free helpers for the disk asset cache. These live in the shared MirrorProtocol
 // layer so BOTH sides consume them: the SERVER composes an assetCacheToken (BrowserStateEnvelopeFactory) and the
 // native Godot CLIENT keys its on-disk cache by the sha of each asset url + the token namespace (AssetDiskCache).
 // Kept 100% pure (no IO, no Godot) so they are Exe-testable in tests/CouchCoop.MirrorProtocol.Tests.
@@ -102,7 +102,7 @@ public static class AssetCachePaths
 }
 
 // Shared percentile math (linear interpolation between the two nearest ranks — identical to the algorithm AppShell
-// used inline for frameMs). Reused by WS-U (asset-cache diagnostics) and WS-W (walk timings), and de-duplicates the
+// used inline for frameMs). Reused by the asset-cache diagnostics and the walk timings, and de-duplicates the
 // old AppShell.Percentile. General on purpose: any number of quantiles, order-independent input.
 public static class Percentiles
 {

@@ -14,11 +14,11 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// THE RENDERER'S ARMED-WORK SUPPLIER — the host half of the Aug-19 encode-stall fix.
+// THE RENDERER'S ARMED-WORK SUPPLIER — the host half of the encode-stall fix.
 //
 // THE DEFECT, restated as what these specs must catch. gsw's static-surface encode asks the mirror "are you
-// busy?" before spending a `toBlob`, and on a phone that call is a synchronous GPU→CPU readback. The Aug-19
-// Moto G86 trace caught two of them at 285 ms and 1,163 ms — and the answer the mirror gave was derived purely
+// busy?" before spending a `toBlob`, and on a phone that call is a synchronous GPU→CPU readback. A trace
+// on a mid-range Android phone caught two of them at hundreds of ms to over a second — and the answer the mirror gave was derived purely
 // from FRAME RECENCY, i.e. from frames the mirror had produced. A 1,163 ms task suppresses those frames. So the
 // signal reported QUIET during the two recovery gaps (362 ms and 674 ms with no frames at all) — the jam
 // manufacturing its own idle reading, at exactly the moment another readback was the worst possible thing to

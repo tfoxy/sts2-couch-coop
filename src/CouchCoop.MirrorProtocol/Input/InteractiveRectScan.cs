@@ -3,14 +3,14 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// M2 WS-O foundation, then FROZEN. Verbatim port of mirrorRenderer.ts `forEachInteractiveRect` L1038-1065 — the
+// Foundation, then FROZEN. Verbatim port of mirrorRenderer.ts `forEachInteractiveRect` L1038-1065 — the
 // current frame's visible MOUSE-VISIBLE (mouse_filter Stop=0 OR Pass=1) Control boxes, in paint order (back-to-front,
 // so the LAST containing candidate is the topmost painter), each with its TRUE game-space global (composed down the
 // parent chain, == the web `liftEndpointToGlobal`), its node-local box, and its cumulative spread shift/rendered
 // width from the <see cref="SpreadIndex"/>. Pass matters: tooltip-only elements (relics, Gold/HP counters, potions)
 // are Pass — hover-reactive but not pressable — and must offend the near-miss pass like any button.
 //
-// SHARED (frozen) by WS-P's hitTestShift (remote-cursor anchoring) and WS-Q's near-miss pass (pushOutOfNearMiss).
+// SHARED (frozen) by hitTestShift (remote-cursor anchoring) and the near-miss pass (pushOutOfNearMiss).
 // Because the native client hit-tests the retained MirrorState + GlobalTransformIndex (no DOM), the scan walks the
 // scene tree directly instead of `document.elementsFromPoint`.
 public static class InteractiveRectScan
@@ -88,7 +88,7 @@ public static class InteractiveRectScan
 
     /// <summary>
     /// Collect the eligible interactive rects into a list (paint order preserved, topmost LAST) — the public provider
-    /// WS-Q's near-miss pass consumes. Prefer <see cref="ForEach"/> in a hot z-scan that short-circuits.
+    /// the near-miss pass consumes. Prefer <see cref="ForEach"/> in a hot z-scan that short-circuits.
     /// </summary>
     public static List<InteractiveRect> Collect(MirrorState state, GlobalTransformIndex transforms, SpreadIndex spread)
     {

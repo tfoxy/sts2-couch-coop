@@ -9,7 +9,7 @@ import type { BrowserJoinProgress } from "@/protocol/browserEnvelope";
 
 // A slow join must stop looking like a dead one.
 //
-// Measured live 2026-09-15: for the whole 75s seat-spawn deadline the phone showed a bare "Joining…" spinner —
+// Seen live: for the whole 75s seat-spawn deadline the phone showed a bare "Joining…" spinner —
 // and a SUCCESSFUL join showed the identical screen for its first 10-15s. A legitimate cold spawn takes 20-60s,
 // so patience is sometimes the right answer and the player had no way to tell which case they were in. Most
 // closed the tab, which is why the field report is "it hangs".

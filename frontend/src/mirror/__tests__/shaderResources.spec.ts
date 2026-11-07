@@ -79,7 +79,7 @@ function policiesOf(): { shader: StaticSurfacePolicy; particle: StaticSurfacePol
 }
 
 /** Both families' `encode` blocks, keyed by family. Most levers must reach BOTH — the two fleets are the same
- *  kind of surface and every measurement behind those numbers covered both — but R17's three do not, so the
+ *  kind of surface and every measurement behind those numbers covered both — but the three retained-still fields do not, so the
  *  keys are needed to say which. */
 function encodesByFamily(): { shader: Record<string, unknown>; particle: Record<string, unknown> } {
   const { shader, particle } = policiesOf();
@@ -94,7 +94,7 @@ function encodes(): Array<Record<string, unknown>> {
   return Object.values(encodesByFamily());
 }
 
-// R17's three particle-side encode fields, listed once so a "the shader family is untouched" assertion cannot
+// The three particle-side encode fields, listed once so a "the shader family is untouched" assertion cannot
 // drift away from the list of things that could have touched it.
 const PARTICLE_ONLY_ENCODE_FIELDS = ["stillCacheBytes", "primeUnseenKeys"] as const;
 
@@ -113,18 +113,18 @@ describe("static-surface image swap policy", () => {
       expect(policy.onInvalidate).toBe("retry");
       // rc5's 736ms main-thread park: 72 encodes kicked at once. Small-first lands the fleet of tiny particle
       // canvases early and leaves the ~4821×2156 shader monsters for their own late slices.
-      // WS-5 (Aug-18 phone perf round): `deferHead: true` opts into gsw's deferred-head behavior so the
+      // `deferHead: true` opts into gsw's deferred-head behavior so the
       // encode that made a surface eligible never runs inline on THAT caller's stack. `slice`/`intervalMs`
       // deliberately stay put — see shaderResources.ts for why a throughput cut is not the fix here.
-      // Aug-19: `busy` adds the WHEN that `deferHead` could not — a 1ms timer still fires inside a draw
-      // burst. The rest of the block is the second Aug-19 trace's answer to the fact that `slice` bounds
+      // `busy` adds the WHEN that `deferHead` could not — a 1ms timer still fires inside a draw
+      // burst. The rest of the block is a later trace's answer to the fact that `slice` bounds
       // THROUGHPUT and not the main-thread PARK (285ms + 1163ms tasks, 97% self-time in native toBlob):
       // one readback per task a display frame apart, a pinned deferral bound, gsw's own slow-readback
       // backoff, and parked stills so a re-freeze of an unpainted surface pays no readback at all.
       // No `maxDim`: the clamp is fidelity-affecting and ships OFF (see its own suite below).
-      // R17: `stillCacheBytes` is the ONE field the two families do not share, and it is on the particle side
+      // `stillCacheBytes` is the ONE field the two families do not share, and it is on the particle side
       // only — the shader fleet's frames are the room-sized ones and the still pool is shared, so retaining
-      // shader keys would pin megabytes and evict the particle entries R17 exists to keep.
+      // shader keys would pin megabytes and evict the particle entries the retained-still block exists to keep.
       expect(policy.encode).toEqual({
         slice: 4,
         intervalMs: 120,
@@ -224,7 +224,7 @@ describe("static-surface image swap policy", () => {
 
   });
 
-  // ---- R17: THE PARTICLE-ONLY RETAINED-STILL BLOCK ----------------------------------------------------------
+  // ---- THE PARTICLE-ONLY RETAINED-STILL BLOCK ----------------------------------------------------------
   //
   // Three levers, and the first thing all three suites pin is the SAME thing: what the shader family gets. The
   // deferral apparatus above was tuned against ~4821×2156 shader readbacks, `card_ripple` churns its content key
@@ -244,7 +244,7 @@ describe("static-surface image swap policy", () => {
 
   // ---- gsw's retained KEYED still pool ---------------------------------------------------------------------
   //
-  // The R17 addition serves card flights and the STATIC effect-mode particle fleet: it
+  // The retained-still addition serves card flights and the STATIC effect-mode particle fleet: it
   // serves the STATIC effect-mode particle fleet, which is the tier a phone viewer actually ships with. A
   // retained entry is claimable by KEY, so its bytes serve every surface that ever reaches that frame rather
   // than the one surface that parked it.

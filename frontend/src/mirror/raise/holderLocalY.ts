@@ -18,7 +18,7 @@
 // lift channel eases TO. `holderPaintedLocalY` answers where it IS, which is the value that channel has to ease
 // FROM; the whole difference between them is the resting-fan guess, and why a guess is admissible in one and not
 // the other is written on the second. Keeping both here is what stops the "current pose" read from re-growing as a
-// private leg in the backend that needs it (2026-09-19: the DOM did, and drew cards past their own resting pose).
+// private leg in the backend that needs it (the DOM did, and drew cards past their own resting pose).
 // BOTH backends ask the second question now, at the same moment and each through its own binding of these same
 // legs: the DOM as it arms a transform ease (`handController.noteTransformArmPose`) and the canvas immediately
 // before it does (`canvas/handRaise.canvasPaintedLocalY` → `interactionRuntime.noteTransformArmPose`). One read,

@@ -64,13 +64,13 @@ interface WalkCtx {
   // pre-widen width is full-frame background ART that re-centers (the fullCanvas convention) instead of stranding
   // left (see the BOX CHILD branch).
   containerChildVertical: boolean;
-  // R4-round4: true once an ancestor is the card-reward selection screen root (leaf === CARD_REWARD_SCREEN_LEAF). While
+  // True once an ancestor is the card-reward selection screen root (leaf === CARD_REWARD_SCREEN_LEAF). While
   // set, an NCard descendant is a REWARD card → the view-scale pre-filter gives it the per-card 1.15 stamp (grid_card_
   // holder.tscn / card.tscn are reused by the deck dialog, so ancestry — not scene file — scopes the bump). Structural
   // (node-type based), so it never changes per-drain for a stable tree (unlike pinnedAncestor); the cached childCtx
   // carries it and the recurse-only fast path needs no refresh.
   inCardRewardScreen: boolean;
-  // R10-B3 element adoption: the ADOPT-KEY PREFIX inherited from the nearest ancestor that opened a content scope.
+  // Element adoption: the ADOPT-KEY PREFIX inherited from the nearest ancestor that opened a content scope.
   // A node carrying a `contentKey` (the producer's stable identity for the CARD CONTENT a pooled shell currently
   // shows) opens the scope with that key; each descendant extends it with its own NAME (`nc:strike#3/CardContainer/
   // TitleLabel`), giving every element under a pooled card a stable identity that survives the shell being freed
@@ -118,7 +118,7 @@ interface RenderRecord {
   id: string;
   el: HTMLElement | null;
   lastNode: MirrorNode | null;
-  // R10-B3: this node's ADOPT KEY (see WalkCtx.contentScope) — the content-stable identity a condemned record is
+  // This node's ADOPT KEY (see WalkCtx.contentScope) — the content-stable identity a condemned record is
   // matched by when a pooled shell is re-instantiated. Null for every node outside a content scope.
   adoptKey: string | null;
   // Cached inherited context (for skip-clean). `haveCtx` guards the first application. `cInv` is the PARENT
@@ -148,20 +148,20 @@ interface RenderRecord {
   cRideDx: number;
   cContainerChildAlign: number | null;
   cContainerChildVertical: boolean;
-  // R10-PERF6 WS-P1: the inherited `parentWidth`. Cached for `ctxAffineOnlyChanged` ONLY — `ctxUnchanged`
+  // The inherited `parentWidth`. Cached for `ctxAffineOnlyChanged` ONLY — `ctxUnchanged`
   // deliberately keeps its historical field set (adding a field there would change which subtrees skip-clean,
-  // i.e. the baseline this round is measured against). The ancestor-affine fast path must not inherit that gap:
+  // i.e. the baseline behaviour). The ancestor-affine fast path must not inherit that gap:
   // `parentWidth` feeds the full-canvas / preview / box-child claims inside `computeSpread`, so a walk where it
   // moved is NOT an affine-only walk and takes the full visit.
   cParentWidth: number;
-  // R10-B3: the inherited content scope (see WalkCtx.contentScope), cached like every other inherited field so a
+  // The inherited content scope (see WalkCtx.contentScope), cached like every other inherited field so a
   // scope change alone re-walks the subtree.
   cContentScope: string | null;
-  // R10-PERF4 WS-3 (item 3): the inherited ancestor-hidden flag (see WalkCtx.ancestorHidden), cached like every
+  // The inherited ancestor-hidden flag (see WalkCtx.ancestorHidden), cached like every
   // other inherited field so a reveal alone re-walks the subtree and un-defers its sub-layers.
   cAncestorHidden: boolean;
   spreadDx: number;
-  // WS-C: which squeeze-field formula produced `spreadDx` (see SpreadOut.fieldMode) — 0 none / 1 origin /
+  // Which squeeze-field formula produced `spreadDx` (see SpreadOut.fieldMode) — 0 none / 1 origin /
   // 2 centre. What lets the tween seam re-evaluate the field at an ENDPOINT instead of re-using the shift the walk
   // derived from the node's (frozen, pre-tween) pose. Always 0 while the stage isn't widened.
   spreadFieldMode: number;
@@ -180,30 +180,30 @@ interface RenderRecord {
   // Count of THIS node's DOM-producing children that draw BEHIND its own paint (show_behind_parent). They occupy
   // the FIRST child slots of this element, before the sub-layers; the rest of the children draw after.
   behindCount: number;
-  // R10-PERF5 WS-1 DORMANCY: this record is a MARKER for an effectively-hidden node the walk declined to build
+  // DORMANCY: this record is a MARKER for an effectively-hidden node the walk declined to build
   // (no element, no child recursion — see the dormancy branch in `visit`). Everything the record carries is still
   // current (lastNode, cached ctx, spreadDx/spreadW); only the DOM is absent. Cleared the moment the node is
   // revealed and `createEl` runs, which is also what makes the reveal countable (`revealBuilds`).
   dormant: boolean;
-  // R10-PERF5 WS-3 HATCHERY: this element was born in the DARK — created by an idle hatch drain while the node was
+  // HATCHERY: this element was born in the DARK — created by an idle hatch drain while the node was
   // still effectively hidden. CSS animations don't run under `display:none`, so nothing this element declared was
   // ever anchorable (`getAnimations()` returns an empty list there) and its decorative loop would start from phase 0
   // whenever the subtree is finally shown. Cleared on the hidden→visible flip, which is where `visit` re-queues the
   // phase anchor (see the reveal re-anchor). Never set by a walk: a walk only builds what is about to be seen.
   builtWhileHidden: boolean;
-  // WS-C occlusion gating (applyOcclusionPass owns both). `occluded` = this node is a TIER-1 gated subtree ROOT, so
+  // Occlusion gating (applyOcclusionPass owns both). `occluded` = this node is a TIER-1 gated subtree ROOT, so
   // its element is paint-suppressed via `display:none` — folded into `visit`'s display write alongside `hidden` so
   // a re-style during the walk can't un-hide it. `occlusionSuspended` = the gsw EFFECTS_SUSPENDED_ATTR
   // is currently stamped on its element (either tier). Both are RENDER-ONLY: no node data is touched, and every
   // input-side structure (interactive rects, view-scale stamps, the pointer map) is derived from the `nodes` map.
   occluded: boolean;
   occlusionSuspended: boolean;
-  // STAGE-A static background: the gsw EFFECTS_SUSPENDED_ATTR is currently stamped on this element BECAUSE it is a
+  // Static background: the gsw EFFECTS_SUSPENDED_ATTR is currently stamped on this element BECAUSE it is a
   // `staticBg`-suppressed root (see `applyRecordSuppression`). Held separately from `occlusionSuspended` because the
   // two gates are independent owners of the same attribute — gsw reads PRESENCE, not value, so either one
   // disengaging must not strip a stamp the other still wants (`syncEffectsSuspendAttr` recomputes from both).
   staticBgSuspended: boolean;
-  // R10-PERF6 WS-P2 STAGGERED REVEAL: the display this node's OWN state asks for, ignoring any reveal hold —
+  // STAGGERED REVEAL: the display this node's OWN state asks for, ignoring any reveal hold —
   // `true` = `display:none` was written for it (hidden / occlusion-gated). It is what makes a
   // reveal detectable (the false←true edge, on a node whose ancestors are visible) and what the release drain
   // consults before un-hiding a held root, so a node the game hid while it was held stays hidden.
@@ -235,7 +235,7 @@ interface RenderRecord {
   // while the parent el keeps the baked global matrix. Null for non-animated nodes.
   animSelf: HTMLElement | null;
   animSelfStyle: Map<string, string>;
-  // R10-B2: animSelf WRAPS the node's paint sub-layers (they become its DOM children) instead of standing beside
+  // animSelf WRAPS the node's paint sub-layers (they become its DOM children) instead of standing beside
   // them. Needed by a pinned ROTATION/GLOW loop: the paint of an atlas-sprite node is a <canvas> sub-layer, a
   // SIBLING of animSelf, so an animation on animSelf alone would move an empty box. Set by syncPinnedLoop (which
   // runs BEFORE the paint pass on the same walk, so the nesting lands the frame the token arrives) and honoured by
@@ -258,7 +258,7 @@ interface RenderRecord {
   // one-time apply so re-visits never restart the loop.
   flameBinding: PresentationAnimationBinding | null;
   shaderSelfFlamed: boolean;
-  // WS-E pinned-loop replay: the signature of the `pinnedLoopAnim` animation currently running on THIS element
+  // Pinned-loop replay: the signature of the `pinnedLoopAnim` animation currently running on THIS element
   // (`"<token>|<pivotX>|<pivotY>"`), or null when none. Unlike the path-keyed folds above, membership is DYNAMIC
   // (the producer flips it as the travelable set changes) so the pass runs every re-style — the signature is what
   // keeps it idempotent, i.e. what stops a re-style from RESTARTING the sine mid-sweep (a visible jerk).
@@ -297,7 +297,7 @@ interface RenderRecord {
   intentKey: string | null;
   intentStartMs: number;
   intentShownFrame: number;
-  // R10-B1 compositor path: instead of the per-frame blit above, the glyph's frames are baked
+  // Compositor path: instead of the per-frame blit above, the glyph's frames are baked
   // ONCE into `intentStrip` (a canvas of N cells) which a CSS `translate` + `steps(N)` animation cycles behind
   // `intentView`, a one-cell `overflow:hidden` viewport standing exactly where the single-frame `atlasCanvas`
   // stood. `intentStripKey` is the built identity (frames + cell box → a change rebuilds + re-phases);
@@ -358,25 +358,25 @@ interface RenderRecord {
   // True while a tick has already skipped ONE repaint for this trail (see tickTrails): the next tick paints
   // whatever the window says, so the ribbon can never lag its point list by more than a single loop wake.
   trailRepaintDeferred: boolean;
-  // R11 A0b — the gradient's endpoints are SPLIT into two signatures. `x1,y1` is the ribbon's TAIL, which only
+  // The gradient's endpoints are SPLIT into two signatures. `x1,y1` is the ribbon's TAIL, which only
   // moves when the oldest point expires (a few times a second); `x2,y2` is the HEAD, which moves on every sample.
   // One combined signature therefore rewrote all four attributes whenever either end moved — two provably
   // redundant writes per stroke per paint, ~120/frame at 30 cards.
   trailGradTailSig: string;
   trailGradHeadSig: string;
   trailStopSigs: string[];
-  // R11 A0a — the band paths' `fill-opacity` used to be `band.alpha × profile.baseAlpha`: a pure function of the
+  // The band paths' `fill-opacity` used to be `band.alpha × profile.baseAlpha`: a pure function of the
   // authored PROFILE, with nothing in it that a repaint can change. It used to be written alongside every `d`,
   // i.e. 3 writes per stroke per paint (~180/frame at 30 cards) of a value the element already had. It is now
   // written on STATE CHANGE only, and this tag (see trailBandOpacityTag) is what makes an unchanged state a
-  // no-op: when the paths are built, when a pooled element is adopted for the other profile, and — R14b — when
+  // no-op: when the paths are built, when a pooled element is adopted for the other profile, and — when
   // the mass diet arms or lifts, since a collapsed stack carries compensated alphas rather than authored ones.
   trailBandOpacitySig: string | null;
-  // R11 A1 — how many band paths currently carry a `d`. The mass diet builds fewer bands than the profile
+  // How many band paths currently carry a `d`. The mass diet builds fewer bands than the profile
   // authors, so the paths beyond that have to be blanked when it arms and re-written when it lifts — and the
   // widest band's `d` alone (the usual update key) cannot see either edge on a frame where the head did not move.
   trailBandsPainted: number;
-  // R16 — this stroke's CURRENT contribution to the standing-surface sum, in design px² (0 = nothing painted).
+  // This stroke's CURRENT contribution to the standing-surface sum, in design px² (0 = nothing painted).
   // Held per record because the sum is maintained as a delta: the gauge must know what this stroke was covering
   // before it can price what it covers now (see noteTrailStandingArea).
   trailStandingBboxArea: number;
@@ -399,7 +399,7 @@ interface RenderRecord {
   spineLayer: HTMLElement | null;
   spineImg: HTMLImageElement | null;
   spineImgUrl: string | null;
-  // Aug-25 SPINE SUBTREE PAINT CULL: whether `mirror-spine-promoted` is currently on this record's ELEMENT. The
+  // SPINE SUBTREE PAINT CULL: whether `mirror-spine-promoted` is currently on this record's ELEMENT. The
   // cache field that makes the promotion pass a no-op for an unchanged verdict (the file's usual key-compare
   // idiom) and the bookkeeping that keeps `spinePromotedNodes` honest. See applySpinePromotionPass.
   spinePromoted: boolean;
@@ -490,7 +490,7 @@ interface RenderRecord {
   geoclipState: GeoclipRecordState | null;
   geoclipDisabled: boolean;
   npSlices: HTMLElement[];
-  // R10-B3: per-slice mirror of what is actually on each span (parallel to npSlices), so a re-style writes only
+  // Per-slice mirror of what is actually on each span (parallel to npSlices), so a re-style writes only
   // the declarations that really moved. Rebuilt with the spans whenever the slice COUNT changes.
   npSliceStyles: Map<string, string>[];
   rangeFill: HTMLElement | null;
@@ -528,11 +528,11 @@ interface RenderRecord {
   // drawing this endpoint, so that pass must not fall back to the retained pre-arm streamed pose. Cleared before
   // returning to the event loop; a real catch-up deliberately leaves this null and uses its streamed pose instead.
   tweenTransformSettleEndG6: Affine | null;
-  // WS-SHOP (round 6): the LIFTED GLOBAL (game 1920-space Affine) currently owned by this transform channel. An arm
+  // The LIFTED GLOBAL (game 1920-space Affine) currently owned by this transform channel. An arm
   // stores its endpoint; a deferred prime stores its declared start for the one frame before that arm runs. Consumers
   // (the view-scale and readable-hand passes) must never observe the preceding channel's endpoint in that gap.
   tweenTransformEndG6: Affine | null;
-  // R10-B1 deraster scale gate: the element's 2×2 linear components as they were BEFORE the transform channel was
+  // Deraster scale gate: the element's 2×2 linear components as they were BEFORE the transform channel was
   // armed (null = unknown / not armed). The settle compares them with the settled ones to decide whether the
   // will-change re-raster is needed at all — see derasterNeededOnSettle.
   tweenPreArmLinear: [number, number, number, number] | null;
@@ -566,13 +566,13 @@ interface RenderRecord {
   tweenSelfOpacityUntil: number;
   tweenSelfOpacityTransition: string | null;
   tweenGroup: string | null;
-  // Hide-latch (WS-WEB Feature 2): a `performance.now` epoch (0 = not latched). Set when a fade settles this node's
+  // Hide-latch: a `performance.now` epoch (0 = not latched). Set when a fade settles this node's
   // opacity to ≤ AlphaEps; while it's in the future, the reconcile CLAMPS an incoming resting-alpha restore to 0
   // (killing the producer's 1-frame pre-hide reappear flash). `hideLatchRestingSig` is the captured resting ELEMENT
   // opacity the restore is matched against (null unless a hide-fade is armed).
   hideLatchedUntil: number;
   hideLatchRestingSig: number | null;
-  // WS-REST held-restore clock (0 = not clamping a resting value yet): the `performance.now` epoch of the FIRST held
+  // Held-restore clock (0 = not clamping a resting value yet): the `performance.now` epoch of the FIRST held
   // resting-valued restore. When ≥ HIDE_LATCH_HELD_RESTORE_MS old with no further write, the animation loop releases the
   // latch and re-applies `hideLatchStreamedOpacity` (the streamed opacity the clamp overwrote with "0") — so a
   // hint-less refocus re-show un-sticks even when NO further delta touches the node (the rest-site defect).
@@ -584,7 +584,7 @@ interface RenderRecord {
   gDesign: Affine | null;
 }
 
-// WS-3: one card currently being replayed locally — a shuffle sweep or (R13) a played card on its way to the
+// One card currently being replayed locally — a shuffle sweep or a played card on its way to the
 // discard, told apart by `hint.kind` alone (see cardFlight.ts and applyCardFlights). Holds the
 // declarative hint, the mutable integrator state, and the records the pose is written to — resolved ONCE at arm
 // time and re-validated per tick against the id, so a teardown + re-add in between can never write into a stale

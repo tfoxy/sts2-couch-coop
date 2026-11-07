@@ -64,7 +64,7 @@ public sealed partial class HeadlessClientManager
     /// WHY THIS IS NOT <see cref="SeatSilentAfterJoinCode"/>. That code's copy tells the operator their player's
     /// game "stopped responding" and its detail names another installed mod as the usual reason. Both are
     /// reasonable for a seat that went quiet and cannot be reached — and both are FALSE for a seat that is
-    /// answering HTTP on its own port while it says nothing to us. Measured in the field 2026-09-18: a seat that
+    /// answering HTTP on its own port while it says nothing to us. Seen in the field: a seat that
     /// had joined the host's lobby, bound its port and was still idling normally 74 seconds later, reported to
     /// the player as a startup timeout. Nothing in that seat stopped, and nothing in it needed disabling.
     /// </para>
@@ -678,7 +678,7 @@ public sealed partial class HeadlessClientManager
     /// </summary>
     /// <remarks>
     /// <para>
-    /// WHY. Measured in the field 2026-09-18: a seat that had joined the lobby, bound its port and was idling
+    /// WHY. Seen in the field: a seat that had joined the lobby, bound its port and was idling
     /// healthily, whose every status POST to this host was being filtered by something on that computer. The
     /// host could then name the fault but not survive it. The seat writes the same status into its own Godot
     /// user dir once its POST has failed (<see cref="SeatStatusFile"/>), and this is where the host picks it up

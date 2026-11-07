@@ -160,7 +160,7 @@ internal static class CardLayerPlannerTests
             "one AncestorClip reject (partial containment)");
     }
 
-    // WS-COLUMN: at F≠1 a horizontally-stretched ScrollContainer renders WIDER than its streamed rect. A card near the
+    // At F≠1 a horizontally-stretched ScrollContainer renders WIDER than its streamed rect. A card near the
     // widened right edge is contained only when the clip-contains test uses the anchor-WIDENED width (spreadWidthOf).
     // With the un-widened width the same card falsely fails Contains → AncestorClip (the deck-dialog last-column bug).
     private static void WidenedClipWidthHonored()

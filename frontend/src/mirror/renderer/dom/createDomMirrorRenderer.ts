@@ -134,11 +134,11 @@ function createMirrorRenderer(
   }
   let trails!: CardTrailController;
   /**
-   * THE COMET'S PHASE (R5 T-DR5) — `window.__mirrorTrailProbe()`, the DOM half.
+   * THE COMET'S PHASE — `window.__mirrorTrailProbe()`, the DOM half.
    *
    * A trail is a DECAYING record of motion: every point dies 800 ms after it was laid down, so two clients
    * stopped at "the same" recorded millisecond are not showing the same picture unless their histories are also
-   * the same AGE. Nothing on either arm published an age, and the round-4 crop comparison duly put a canvas
+   * the same AGE. Nothing on either arm published an age, and an earlier crop comparison duly put a canvas
    * ribbon at one phase of its decay beside a DOM ribbon at another and reported the difference as fidelity.
    *
    * The canvas backend installs the same name from the same pure function (`cardTrail.trailPhaseProbe`), so the
@@ -215,7 +215,7 @@ function createMirrorRenderer(
   // initialization-order placeholder can observe it before this assignment.
   let reconcileController!: ReconcileController;
 
-  // ---- R10-PERF4 WS-2: effects-dirty bookkeeping (see consumeEffectsDirty) ---------------------------------
+  // ---- effects-dirty bookkeeping (see consumeEffectsDirty) ---------------------------------
   //
   // Set by EVERY site that can change what gsw's runtime selectors would find (or what their per-node reconcile
   // would re-read): the effect-marker attribute writes in applyAttrs, the shaderSelf / particleSelf sub-layer
@@ -573,7 +573,7 @@ function createMirrorRenderer(
     () => cardFlights.activeCount > 0 || trails.active.size > 0 || tweens.activeCount > 0
   );
 
-  // --- the animation loop (WS-B: DEADLINE-SCHEDULED) ---------------------------------------------------------
+  // --- the animation loop (DEADLINE-SCHEDULED) ---------------------------------------------------------
   //
   // One renderer-owned loop drives all three time-driven animators (spine clip advance, enemy-intent glyph
   // cycling, declarative-tween expiry). It used to be a free-running rAF chain that re-entered at 60Hz and ran
@@ -697,7 +697,7 @@ function createMirrorRenderer(
     }
   });
 
-  // R10-B1 SCALE GATE: is a deraster actually needed for this record's settled transform tween? The will-change
+  // SCALE GATE: is a deraster actually needed for this record's settled transform tween? The will-change
   // toggle exists to re-raster an element whose RASTERIZATION SCALE changed under it (a card zoom leaves the text
   // rasterized at the start scale — the blurry-text fix), and it costs a second Layerize+Commit echo per settle
   // group. A TRANSLATION-ONLY tween cannot change that scale, so comparing the element's 2×2 linear components
@@ -729,7 +729,7 @@ function createMirrorRenderer(
   // for a path-keyed binding (orb spin / flame quad), and GROWN ON DEMAND by syncPinnedLoop when a producer-pinned
   // rotation/glow token arrives on a node that has none. Never appended here: updateSubLayers owns its slot among
   // the sub-layers.
-  // ---- WS-E / R10-B2 pinned-loop replay ---------------------------------------------------------------------
+  // ---- pinned-loop replay ---------------------------------------------------------------------
   //
   // Replay a game animator the PRODUCER pinned to rest (`node.pinnedLoopAnim`), on the browser's own clock. The
   // producer folds these because they are per-frame sine sweeps that keep an otherwise-idle screen streaming; it
@@ -738,7 +738,7 @@ function createMirrorRenderer(
   // it shows which screen the top bar has open; the proceed glow is what draws the eye to the only button.
   //
   // FIVE tokens, TWO routings (see animAttributes for the vocabulary and the producer constants):
-  //   * `mapPointPulse` → `pivotPulse`, applied to the node's OWN element. Unchanged since WS-E; the reasoning
+  //   * `mapPointPulse` → `pivotPulse`, applied to the node's OWN element. Unchanged since introduction; the reasoning
   //     below is specific to it.
   //   * `topBarDeckRock` / `topBarMapRock` / `topBarSpin` / `proceedGlow` → `rock` / `rotate` / `glowPulse`,
   //     applied to the record's animSelf CHILD:
@@ -751,13 +751,13 @@ function createMirrorRenderer(
   //     The node's PAINT moves inside that child (see `animSelfWrapsPaint` / updateSubLayers) — for an atlas
   //     sprite the paint is a <canvas> sub-layer, so without the nesting the loop would animate an empty box.
   //     THE ELEMENT ITSELF IS NEVER TOUCHED by these three, which is the point: the producer un-folded only the
-  //     rotation/alpha and keeps streaming position + scale live, and that is exactly what fixed the WS-D
+  //     rotation/alpha and keeps streaming position + scale live, and that is exactly what fixed the earlier
   //     mispositioning bug (a pre-layout transform frozen forever). A client-side write to the element's
   //     transform would reintroduce it.
   //
   // Why the pulse composes `scale:` + `translate:` (individual transform properties) instead of touching
   // `transform:` — the invariants this pass is written against:
-  //   * WS-A geometry epoch: `record.style` is the reconciler's style cache and `"transform"` is the key every
+  //   * geometry epoch: `record.style` is the reconciler's style cache and `"transform"` is the key every
   //     epoch-cached structure (interactive rects, the view-scale/tip stamps) is derived from. Writing an
   //     animation through it would bump the epoch on EVERY walk and defeat the O(delta) reconcile. So the two
   //     properties are set DIRECTLY on the element — applyStyleMap never sees them, never removes them, and never
@@ -911,7 +911,7 @@ function createMirrorRenderer(
     return affineMul(target.cParentGlobal ?? IDENTITY_AFFINE, g);
   }
 
-  // WS-C — THE ENDPOINT'S OWN SPREAD SHIFT. A node that claims its place on the wide-screen squeeze field shifts by
+  // THE ENDPOINT'S OWN SPREAD SHIFT. A node that claims its place on the wide-screen squeeze field shifts by
   // a function of its own rendered X, so the shift belonging to a tween ENDPOINT is the field evaluated THERE, not
   // the one the walk derived from the node's current pose (which the producer then freezes for the hint's whole
   // window). Every other node keeps `record.spreadDx` verbatim: a rider, an
@@ -961,7 +961,7 @@ function createMirrorRenderer(
       // still resolves its endpoint through the placement branch.
       transformOverride: gShifted
     };
-    // R11 C1: the placement-only seam (see `?flightPlacementSeam`). `nodePlacementTransform` returns null for
+    // The placement-only seam (see `?flightPlacementSeam`). `nodePlacementTransform` returns null for
     // exactly the nodes `nodeStyle` emits no transform for — a rect-only / boxless one — so the null branch is the
     // same branch, not a new failure mode.
     mirrorWalkStats.flightPlacementSeamHits++;
@@ -991,7 +991,7 @@ function createMirrorRenderer(
       // + particle runtime under it, frozen (never reset) and out of their rAF loops.
       el.setAttribute(EFFECTS_SUSPENDED_ATTR, want);
     }
-    markEffectsDirty(); // WS-2: BOTH runtimes re-evaluate suspension only inside their reconcile
+    markEffectsDirty(); // BOTH runtimes re-evaluate suspension only inside their reconcile
   }
 
   function setUiScaling(enabled: boolean): void {
@@ -1037,7 +1037,7 @@ function createMirrorRenderer(
       return;
     }
     const hidden = rec.lastNode != null && !rec.lastNode.visible;
-    // R10-PERF6 WS-P2: this pass does NOT stage a reveal, deliberately. It was tried (the occlusion gate can be
+    // This pass does NOT stage a reveal, deliberately. It was tried (the occlusion gate can be
     // the last writer to un-hide a screen) and measured to change nothing — `visit`'s edge already fires for
     // every reveal the bench can produce, including the cold-map one — so the second staging site was dropped
     // rather than shipped as a duplicate path that no test could distinguish.
@@ -1062,7 +1062,7 @@ function createMirrorRenderer(
     reconcileController.reconcile(state, options);
   }
 
-  // R10-PERF3 WS-4: accept renderer-originated dirt from the texture cache (a natural size just landed for a url
+  // Accept renderer-originated dirt from the texture cache (a natural size just landed for a url
   // these nodes styled provisionally against). Deliberately dumb — no `records` membership filter here, because a
   // record can appear or vanish between this call and the walk that consumes it; markDirty does the one filter that
   // matters (against the walk's OWN node map) and an id that survives nothing is simply never injected.
@@ -1213,7 +1213,7 @@ function createMirrorRenderer(
     handController.dispose();
     scaleController.dispose();
     occlusionRuntime.dispose();
-    // R12: a disposed renderer holds nothing (MirrorView remounts with a fresh one, which re-derives the hold from
+    // A disposed renderer holds nothing (MirrorView remounts with a fresh one, which re-derives the hold from
     // the wire on its first walk); leaving stale ids here would only mis-report the gauge.
     staticBgRuntime.dispose();
     reconcileController.beginDispose();
@@ -1240,7 +1240,7 @@ function createMirrorRenderer(
     // the live stage's probe and report "no hand" for a hand that is on screen.
     installHandPoseProbe(null, handPoseOwner);
     installLandingLogProbe(null, handPoseOwner);
-    // Aug-25: the record sweep above already retired every promotion through removeEl (so the gauge is back at 0
+    // The record sweep above already retired every promotion through removeEl (so the gauge is back at 0
     // by arithmetic) — this is the belt for a record that never reached the sweep, and it must run AFTER it.
     spineTimeline.dispose();
     mirrorWalkStats.spinePromotedNodes = 0;
@@ -1299,7 +1299,7 @@ function createMirrorRenderer(
     viewScaleInputStamps: () => scaleController.inputStamps(),
     endTurnBoxAt,
     eagerScrollTargets,
-    // M0 INPUT SEAMS. The three probes are the module-level DOM walks above, handed out unchanged — this backend's
+    // INPUT SEAMS. The three probes are the module-level DOM walks above, handed out unchanged — this backend's
     // answer to "what did you draw here" IS the element stack it drew. The two eager-scroll seams are closures,
     // because they address a node by id through the retained records.
     touchStackAt: domTouchStackAt,

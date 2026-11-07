@@ -216,7 +216,7 @@ describe("nodeStyle clip_contents", () => {
 // ANCESTOR of a node THIS repo enlarges: viewScale.ts scales ContentContainer/Content/OptionsContainer (1000 wide
 // at design x 460…1460) by 1.2 about its bottom-centre (pivot x 960) → 360…1560, i.e. 20px past the clipper on each
 // side, and further while an option is focused. The vertical clip hides the parked options while the dialogue
-// plays and must survive. Geometry measured from .sts2/bench/audit-mprun.ndjson.
+// plays and must survive. Geometry measured from a recorded ancient-event stream.
 describe("nodeStyle one-axis clip", () => {
   const clipper = (over: Partial<MirrorNode> = {}) =>
     mkNode({
@@ -516,7 +516,7 @@ describe("nodeStyle degenerate plain nine-patch (event_button middle fill)", () 
   });
 });
 
-// R19 6c — the three width-BLIND reads on a nine-patch node. The element is laid out at `renderWidthOverride` on a
+// The three width-BLIND reads on a nine-patch node. The element is laid out at `renderWidthOverride` on a
 // widened stage (nodeStyle's own `style.width`), so every read that asks "how wide is this element on screen" has to
 // use that, not the streamed 1920-space localRect.
 describe("nodeStyle nine-patch reads the RENDERED width (R19 6c)", () => {
@@ -719,7 +719,7 @@ describe("nodeStyle WebGL shader base paint", () => {
     );
   });
 
-  // R10-B2: the inverse of the placement above — a node-local point (an authored `pivot_offset`) expressed in the
+  // The inverse of the placement above — a node-local point (an authored `pivot_offset`) expressed in the
   // ELEMENT's own coordinate space, which is what a `transform-origin` on that element (or on a self-layer child
   // filling it) is measured in. A pinned rotation loop rotates the paint about this point.
   it("elementLocalPoint maps a node-local pivot into a LEAF atlas node's region-px space", () => {
@@ -894,7 +894,7 @@ describe("textStyle outline", () => {
     expect(style.webkitTextStroke).toBeUndefined();
   });
 
-  // WS-TEXT v4: the streamed base px is exposed as --godot-font-px so generated declarations can re-derive the scaled
+  // The streamed base px is exposed as --godot-font-px so generated declarations can re-derive the scaled
   // size and cap it (End Turn). The primary font-size calc is unchanged (purely additive).
   it("exposes the streamed base px as --godot-font-px for per-label font-size caps", () => {
     const style = textStyle(textNode({ fontSizePx: 30 }));

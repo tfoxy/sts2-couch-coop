@@ -29,7 +29,7 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorNode, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-B3 pure-work memos + reflow batching.
+// Pure-work memos + reflow batching.
 //
 // The mirror's content-pure work was keyed on OBJECT IDENTITY, which busts on any field change — and a card play
 // replaces every node object under the hand at once. These specs pin the CONTENT-keyed layer (L2): a rebuilt but

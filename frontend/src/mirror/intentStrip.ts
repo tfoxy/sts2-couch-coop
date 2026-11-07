@@ -1,4 +1,4 @@
-// COMPOSITOR-DRIVEN enemy-intent glyph cycling (R10-B1).
+// COMPOSITOR-DRIVEN enemy-intent glyph cycling.
 //
 // The headless client freezes the enemy-intent glyph, so the browser replays its per-frame texture swap. The original
 // mechanism blitted the current atlas frame onto the glyph's <canvas> from the renderer's deadline tick (see
@@ -31,7 +31,7 @@
 //     viewport (the viewport carries any placement transform).
 //
 // The keyframes are MIRROR-owned (injected here, not by @spirectl/presentation) but deliberately carry the
-// `spirectl-` name prefix: scripts/assert-idle-compositing.mjs asserts `compositeFailed == 0` for every
+// `spirectl-` name prefix: the idle-compositing gate asserts `compositeFailed == 0` for every
 // `spirectl-*` animation it sees, so the prefix keeps this family inside the frozen gate's scope forever.
 
 import type { MirrorIntentFrames } from "@/mirror/sceneTree";

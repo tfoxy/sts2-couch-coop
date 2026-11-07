@@ -4,15 +4,15 @@ namespace CouchCoop.MirrorProtocol.Input;
 
 // The native, coordinate-only gesture engine — a 1:1 behavioural port of frontend/src/mirror/inputCapture.ts.
 // It turns pre-mapped design-space (1920x1080) pointer/touch/wheel/key events into upstream InputMessages, held-
-// card lift signals, peeks, taps, and two-finger cancels. WS-M's InputRouter builds a GestureOptions +
-// GestureCallbacks and feeds this engine; WS-L (this file) owns the state machine.
+// card lift signals, peeks, taps, and two-finger cancels. The InputRouter builds a GestureOptions +
+// GestureCallbacks and feeds this engine; this file owns the state machine.
 //
 // COORDINATE SEAM (M2). Every x/y arrives in DESIGN space (the InputRouter has already inverted the letterbox). The
 // single indirection where a WIDENED (>16:9) stage re-resolves (and freezes) the coordinate is the GestureCallbacks
 // resolver family — <see cref="GestureCallbacks.ResolveFresh"/> / ResolvePress / ResolveFrozen / ResolveHover /
 // ClearFreeze, each named after the inputCapture.ts function it ports (resolveSent / freezeAt / frozenCoord /
 // hoverCoord / clearFreeze). On 16:9 the resolvers are IDENTITY, so coordinates already sit in design == game space
-// and the whole seam is a pass-through (WS-Q wires the real resolvers). `_frozen` tracks that a press has frozen the
+// and the whole seam is a pass-through (the input router wires the real resolvers). `_frozen` tracks that a press has frozen the
 // field affine, so the coalesced hover flush replays the frozen coord during a held gesture (inputCapture flushHover
 // L412) instead of re-resolving under the finger.
 //
@@ -20,10 +20,10 @@ namespace CouchCoop.MirrorProtocol.Input;
 //   * NO WALL CLOCK / TIMERS. `nowMs` is passed in on every event; the long-press PEEK is a DEADLINE evaluated in
 //     <see cref="PumpFrame"/> (which also flushes the coalesced hover), never a timer.
 //   * KEYBOARD FILTERING (event.repeat / editable-field focus) and per-message requestId sequencing live UPSTREAM
-//     in WS-M (the DOM event layer / the connection), exactly as the web splits inputCapture from mirrorClient.
+//     in the input router (the DOM event layer / the connection), exactly as the web splits inputCapture from mirrorClient.
 public sealed class GestureMachine
 {
-    // Placeholder id on every emitted InputMessage; WS-M's Send (ConnectionCoordinator.SendInput) stamps the real
+    // Placeholder id on every emitted InputMessage; the router's Send (ConnectionCoordinator.SendInput) stamps the real
     // per-message requestId — mirroring how mirrorClient.sendInput wraps the payload with `input:${inputSequence}`.
     // The engine deliberately owns no sequence state (inputCapture never touches requestId either).
     private const string InputRequestId = "";
@@ -59,7 +59,7 @@ public sealed class GestureMachine
     // inputCapture.ts `heldFromProbe`.
     private bool _heldFromProbe;
     private string? _armedRootId;     // a widget focused by a prior tap (re-tap commits)
-    // R16: the nowMs at which _armedRootId was last (re)armed — a re-tap of the SAME widget within
+    // The nowMs at which _armedRootId was last (re)armed — a re-tap of the SAME widget within
     // _options.TapArmDebounceMs of THIS timestamp is treated as an accidental double-tap (see the commit branch of
     // OnTouchUp). Only meaningful alongside a non-null _armedRootId. Web twin: inputCapture.ts `armedAtMs`.
     private double _armedAtMs;
@@ -136,14 +136,14 @@ public sealed class GestureMachine
     public void Wheel(bool up, double x, double y, double nowMs)
     {
         // One Godot wheel-button tick per event (full press+release, no held mask). Zero-delta filtering lives in
-        // WS-M's DOM layer — a wheel that reaches here is a real tick.
+        // the DOM layer — a wheel that reaches here is a real tick.
         SendFullClick(up ? "wheel-up" : "wheel-down", _cb.ResolveFresh(x, y));
     }
 
     public void Key(string code, string modifiersCsv)
     {
         // The engine forwards the browser KeyboardEvent.code + the pre-joined modifiers csv. Empty csv ⇒ omit the
-        // field (null), matching the web's `modifiers || undefined`. Repeat / editable-focus filtering is WS-M's.
+        // field (null), matching the web's `modifiers || undefined`. Repeat / editable-focus filtering is the router's.
         _cb.Send(new InputMessage(
             InputRequestId,
             "key",
@@ -303,7 +303,7 @@ public sealed class GestureMachine
         //     already-armed card (re-touching a focused card is a grab, not a peek). Fires at PeekMs (100ms).
         //   * NON-hand card (#13) → a right-click, decoupled from raiseHeldCard (it fires whether or not the lift is
         //     on), gated only on the LongpressRclick switch. Never for the already-armed card either (a re-tap
-        //     commits). R1: fires at the LONGER LongPressMs (500ms) — its own threshold, separate from the hand-card
+        //     commits). Fires at the LONGER LongPressMs (500ms) — its own threshold, separate from the hand-card
         //     peek — so an ordinary lingering reward/shop tap can't accidentally register as a long-press.
         if (!pointer.Ignore
             && !dragActive
@@ -546,7 +546,7 @@ public sealed class GestureMachine
 
         if (top == _armedRootId)
         {
-            // R16: a re-tap of the armed widget within TapArmDebounceMs (200ms) of the ARM is an accidental
+            // A re-tap of the armed widget within TapArmDebounceMs (200ms) of the ARM is an accidental
             // double-tap (finger bounce) — swallow it: no click, stay armed (armedAtMs is NOT reset, so it keeps
             // measuring from the ORIGINAL arm, not this swallowed tap).
             if (nowMs - _armedAtMs < _options.TapArmDebounceMs)
@@ -768,7 +768,7 @@ public sealed class GestureMachine
     // downstream InputCoalescer only coalesces a hover into a PRECEDING trailing hover — it never drops or reorders a
     // click, so a hover enqueued after a click keeps click→hover order and cannot suppress the click.
     //
-    // R13: park at the RESOLVED screen CENTER, not directly below the button (the old (CenterX, MaxY + 24) point) —
+    // Park at the RESOLVED screen CENTER, not directly below the button (the old (CenterX, MaxY + 24) point) —
     // a below-button park still sat close enough to the button's box that its long-press HoverTip could re-arm and
     // linger after the turn ends. Screen center reuses the SAME pattern as the peek-release un-focus (:486
     // precedent): the RAW design center (DesignWidth/2, 540) routed through ResolveFresh so a

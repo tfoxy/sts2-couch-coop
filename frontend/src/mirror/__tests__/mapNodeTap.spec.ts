@@ -7,7 +7,7 @@ import { createMapNodeTapRouter, type MirrorActionMessage } from "@/mirror/mapNo
 import { mapPointElementIdAt } from "@/mirror/mirrorRenderer";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 
-// R11 WS-M — tapping a map node on the mirror must TRAVEL. A coordinate click on a map point is ignored by the
+// Tapping a map node on the mirror must TRAVEL. A coordinate click on a map point is ignored by the
 // game, so a tap is routed as the `select-map-node` semantic action (a per-seat vote) addressed by the point's
 // streamed scene-node id. These specs pin the three decisions the client owns: WHICH element a tap resolves to,
 // WHEN the action is suppressed by an armed drawing tool, and that a routed touch tap emits no

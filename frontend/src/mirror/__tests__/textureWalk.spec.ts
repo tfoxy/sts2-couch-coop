@@ -21,7 +21,7 @@ import {
   setTextureStyleNode
 } from "@/mirror/textureCache";
 
-// R10-PERF3 WS-4 — TARGETED texture-size re-styles. A texture's natural size arrives asynchronously, and two style
+// TARGETED texture-size re-styles. A texture's natural size arrives asynchronously, and two style
 // paths (nodeStyles: the nine-patch-over-atlas slicer and the plain NinePatchRect degenerate-margin fallback) style
 // PROVISIONALLY until it does. Forcing a scene-wide `forceTextures` walk per resolved load was the remaining source
 // of full walks on a card play — a texture storm of several urls, each landing on its own frame, each ~105-156ms on

@@ -4,7 +4,7 @@ namespace CouchCoop.Mod.Protocol;
 
 /// <summary>
 /// The streaming seat's half of the pairing: the <c>renderStream</c> descriptor its own <c>session</c> envelope
-/// carries, so this seat's viewer can open the hub (handoff-mirror-new-renderer.md §3 Q2).
+/// carries, so this seat's viewer can open the hub.
 /// </summary>
 /// <remarks>
 /// <para>

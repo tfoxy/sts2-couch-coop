@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// M2 WS-Q (widened input). The stateful port of frontend/src/mirror/inputCapture.ts's coordinate resolve family
+// Widened input. The stateful port of frontend/src/mirror/inputCapture.ts's coordinate resolve family
 // (resolveSent L281-309 / designCoord L313-316 / fieldAffineCoord L322-335 / frozenCoord L339-342 /
 // memoizedHoverCoord L348-358 / hoverCoord L367-377 / freezeAt L392-396 / clearFreeze L399-401). The InputRouter
 // builds ONE of these from the live store and wires its five methods to the frozen <see cref="GestureCallbacks"/>
@@ -20,7 +20,7 @@ namespace CouchCoop.MirrorProtocol.Input;
 //
 // On a 16:9 stage (designWidth == 1920) the map short-circuits to identity, the memo/near-miss branches are gated off
 // (`designWidth > 1920`), and the frozen affine replays `1·x + 0` — so all five methods return the incoming design
-// coord VERBATIM (the byte-identical no-op WS-Q's F=1 gate proves). Constructed from delegates so the InputRouter
+// coord VERBATIM (the byte-identical no-op the F=1 gate proves). Constructed from delegates so the InputRouter
 // injects the live store/rects/width/clock while unit tests inject fakes.
 public sealed class PointerResolver
 {
@@ -42,7 +42,7 @@ public sealed class PointerResolver
     private PointerField.FieldAffine? _frozenAffine;
     private HoverProbe? _hoverProbe;
 
-    // R19 6a — was the press point SQUEEZE-resolved (no specific painter under it)? Frozen alongside the affine,
+    // Was the press point SQUEEZE-resolved (no specific painter under it)? Frozen alongside the affine,
     // because the affine alone cannot say: a press on a proportional CARD freezes the whole-world squeeze field too
     // (so the world spreads under the finger) and there the squeeze IS the right answer. Only an UNANCHORED press
     // needs its replayed frames rendered-box gated. Twin of the web inputCapture.frozenSqueezed.
@@ -72,12 +72,12 @@ public sealed class PointerResolver
     {
         var (coordX, coordY, affine, squeezed) = ResolveSent(x, y);
         _frozenAffine = affine;
-        _frozenSqueezed = squeezed; // R19 6a: the press decided "unanchored"; every replayed frame inherits it.
+        _frozenSqueezed = squeezed; // The press decided "unanchored"; every replayed frame inherits it.
         return new ResolvedCoord(coordX, coordY);
     }
 
     /// <summary>
-    /// frozenCoord: replay the frozen press-time affine with pure math — no probe, no near-miss WALK. R19 6a: an
+    /// frozenCoord: replay the frozen press-time affine with pure math — no probe, no near-miss WALK. An
     /// UNANCHORED press (its coordinate came from the uniform squeeze) still gets the single-step rendered-box gate,
     /// or the whole drag replays into the game rect of a widget it is beside (the wide-screen map-legend drag).
     /// </summary>

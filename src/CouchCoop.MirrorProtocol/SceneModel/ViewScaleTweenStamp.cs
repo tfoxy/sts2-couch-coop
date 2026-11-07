@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// WS-SHOP (round 6) — pure geometry + predicate for ENDPOINT-based view-scale stamping across a transform-tween
+// Pure geometry + predicate for ENDPOINT-based view-scale stamping across a transform-tween
 // TRANSITION (the shop open slide, and any group that enters from off-stage under a client-replayed transform tween).
 //
 // Why this is needed: the per-drain view-scale index measures each group's box from its STREAMED (wire) transform,
@@ -12,8 +12,8 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 // render at scale 1 for the whole slide, popping to 1.2 at settle. Measuring the box with its transform OVERRIDDEN by
 // the tween ENDPOINT stamps it where it will SETTLE, so TweenReplayer folds the scale into both slide endpoints (via
 // MirrorNodeView.FoldForTween) and the whole slide renders scaled.
-// R8 (WS-2): consumed by the pure ViewScaleStampIndex.Build (the stateful ViewScaler pass this was written for is
-// gone); the geometry + the P4 endpoint-also-off-stage guard are unchanged.
+// Consumed by the pure ViewScaleStampIndex.Build (the stateful ViewScaler pass this was written for is
+// gone); the geometry + the endpoint-also-off-stage guard are unchanged.
 //
 // This module is Godot-free + env-free so it is Exe-testable. It does two things:
     //   * <see cref="EndpointGlobal"/> — compose the endpoint global affine from the hint's endpoint local transform

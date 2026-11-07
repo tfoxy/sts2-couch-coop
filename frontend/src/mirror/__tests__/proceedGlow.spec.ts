@@ -19,7 +19,7 @@ beforeAll(() => {
 afterAll(() => {
 });
 
-// R10-B2 — the proceed button's additive glow (bridge-mod Sts2ProceedGlow). Its own alpha sweeps 0.75 → 0.25 →
+// The proceed button's additive glow (bridge-mod Sts2ProceedGlow). Its own alpha sweeps 0.75 → 0.25 →
 // 0.75 on two 0.5s LINEAR legs, FOREVER, on every screen that shows Proceed: the sole churner on a treasure room's
 // wire (60.1 deltas/s) and 91% of a card-reward screen's.
 //
@@ -28,7 +28,7 @@ afterAll(() => {
 // `opacity` carries. The replay therefore MULTIPLIES it: the animSelf child (which wraps the node's paint) sweeps
 // opacity 1 ↔ 0.25/0.75, and 0.75 × [1 … 1/3] is exactly the 0.75 ↔ 0.25 sweep against whatever RGB is live.
 //
-// Fixture numbers come off a recorded wire (.sts2/bench/r8-treasure-open.ndjson): `Image/Outline`, a leaf
+// Fixture numbers come off a recorded wire: `Image/Outline`, a leaf
 // TextureRect painting a 391×188 atlas region additively, behind its parent. Its `selfModulate` alpha is shown
 // here as the producer would pin it (#ffcc00bf = 191/255, the 8-bit encoding of 0.75).
 const PINNED_SELF_MODULATE = "#ffcc00bf";

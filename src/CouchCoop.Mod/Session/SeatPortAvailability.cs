@@ -77,7 +77,7 @@ internal static class SeatPortAvailability
     /// </summary>
     /// <remarks>
     /// <para>
-    /// MEASURED Sep-17 2026, and this is why the constant exists. A closed loopback port is refused by the
+    /// MEASURED, and this is why the constant exists. A closed loopback port is refused by the
     /// kernel in MICROSECONDS on Linux — five samples, 0.02-0.09 ms — and that is where 250 ms came from. On
     /// Windows 11 (build 26200) the same refusal takes just over TWO SECONDS: five samples, 2008-2034 ms, with
     /// an open port still accepting in 0 ms. The old budget sat between the two, so on Windows a refusal was

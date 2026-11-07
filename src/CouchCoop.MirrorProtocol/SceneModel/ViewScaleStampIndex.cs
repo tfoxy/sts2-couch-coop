@@ -4,7 +4,7 @@ using CouchCoop.MirrorProtocol.Input;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// R8 (WS-2) — the PURE per-drain view-scale stamp index. This replaces the whole stateful native ViewScaler
+// The PURE per-drain view-scale stamp index. This replaces the whole stateful native ViewScaler
 // machinery (LastStamped / ThisStamped / LastApplied / the reset loop / TryCarryGroupStamp / ViewScaleGroupCarry /
 // the tween-settle backstop) with ONE function of THIS DRAIN'S WIRE STATE:
 //
@@ -14,8 +14,8 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 // through a setter, and remembered what it had stamped so it could UN-stamp on the next drain. Every per-drain gate
 // it grew (tween-owned transform, tween-owned ancestor, not-yet-visible, a momentarily null measure, a clip reject,
 // a missing/recycled view) therefore had TWO possible outcomes — "defer" or "drop to scale 1" — and any gate that
-// dropped produced a visible snap-back on an otherwise idle screen. Round-4 (TWEENHOLD), round-6 (settle backstop)
-// and round-7 (GROUPCARRY) each patched ONE of those gates with a carry; the class survived because the carry set
+// dropped produced a visible snap-back on an otherwise idle screen. A tween hold, a settle backstop
+// and a group carry each patched ONE of those gates with a carry; the class survived because the carry set
 // and the drop set were maintained by hand.
 //
 // The structural cure is to remove the *choice*: there is no remembered stamp to drop, and no separate "apply" pass
@@ -111,14 +111,14 @@ public static class ViewScaleStampIndex
                 continue;
             }
 
-            // NOTE (R10 WS-F): a stamp is deliberately NOT gated on visibility here — an invisible node draws
+            // NOTE: a stamp is deliberately NOT gated on visibility here — an invisible node draws
             // nothing, so stamping it is free, and dropping it is what made the reappear frame render at scale 1
             // (StampSurvivesTransientInvisible). The coordinate-only INPUT registry is where an invisible stamp does
             // harm (it silently claims pointers), so the EffectivelyVisible gate lives in ViewScaleInputRegistry.Build.
 
             // MEASURE. A GROUP scales about its OWN (anchor-widened) box so a focused/enlarged child can never move
             // it; a per-ITEM entry uses its own paint box, falling back to the union of its paint-bearing subtree.
-            // R8: a GROUP whose own rect is momentarily degenerate now ALSO falls back to the union instead of
+            // A GROUP whose own rect is momentarily degenerate now ALSO falls back to the union instead of
             // dropping the stamp — a degenerate box cannot be "immune to a child" anyway, and dropping it is exactly
             // the transient that the old code needed ViewScaleGroupCarry to paper over.
             DesignAabb? measured = res.IsGroup
@@ -135,7 +135,7 @@ public static class ViewScaleStampIndex
                 continue; // nothing measurable this drain — no stamp (and nothing stale to leave behind)
             }
 
-            // WS6 EFFECTIVE box (extends the round-6 endpoint stamp from "only when the streamed box is parked" to
+            // EFFECTIVE box (extends the endpoint stamp from "only when the streamed box is parked" to
             // "whenever a transform tween owns this GROUP"). While a tween owns the node the consumer folds the
             // tween's ENDPOINT as the node's transform, so the stamp composed onto it must be measured there too.
             // Measuring the streamed box instead mixes two different positions; the shop CLOSE slide is the visible
@@ -343,7 +343,7 @@ public static class ViewScaleStampIndex
     // works in: it adds the node's parent-relative SpreadOffset to the local origin and THEN scales about this pivot,
     // and the node's rendered design position is parentWireGlobal·(local + spreadOffset) + (parentDx, 0).
     //
-    // The parent's *rendered* Godot global is deliberately NOT used (that is what the pre-R8 code did): it bakes in
+    // The parent's *rendered* Godot global is deliberately NOT used (that is what the earlier code did): it bakes in
     // any ancestor's own cosmetic fold, so mapping a design-space (wire) point through it is not the same point, and
     // a bake clone's throwaway parent chain would produce a different answer than the live view. Web's
     // `shiftedParentGlobal` does the same thing, which is why nested stamps (group ∘ card) compose identically on

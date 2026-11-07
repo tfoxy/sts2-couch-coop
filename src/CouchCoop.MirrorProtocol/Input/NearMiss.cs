@@ -6,8 +6,8 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// M2 WS-Q (widened input). Near-literal port of frontend/src/mirror/pointerMap.ts `pushOutOfNearMiss` L159-202
-// (+ its `pointInRectGame` L133-141 and `gameXExtent` L144-150 primitives). The HIT-CONSISTENCY pass: the visual
+// Widened input. Near-literal port of frontend/src/mirror/pointerMap.ts `pushOutOfNearMiss`
+// (+ its `pointInRectGame` and `gameXExtent` primitives). The HIT-CONSISTENCY pass: the visual
 // anchor map's inverse can place a pointer that sits in EMPTY stage space (just left/right of a +dx-shifted button)
 // INSIDE that button's GAME rect, so the game would hover/click a control the user is visually NOT over. This pushes
 // the resolved game X OUT of any such near-missed interactive rect toward the pointer's side, iterating in the SAME
@@ -32,7 +32,7 @@ public static class NearMiss
     private const double StageBandFraction = 0.95;
 
     /// <summary>
-    /// R19 6a — the SQUEEZE RENDERED-BOX GATE: hold a coordinate the anchor map could not attribute to a specific
+    /// The SQUEEZE RENDERED-BOX GATE: hold a coordinate the anchor map could not attribute to a specific
     /// painter (the uniform-squeeze fallback, <see cref="PointerField.PointerMapping.Squeezed"/>) to ONE invariant —
     /// it may only resolve into an interactive rect whose RENDERED box contains the raw widened-design pointer —
     /// and eject it from that rect where it doesn't. Twin of the web pointerMap.pushOutOfSqueezeMiss.

@@ -189,7 +189,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     return needsOwnEl(node) || (kids != null && kids.length > 0);
   }
 
-  // R10-PERF5 WS-1: `producesEl` answers "would this node WANT an element" — under dormancy that is no longer the
+  // `producesEl` answers "would this node WANT an element" — under dormancy that is no longer the
   // same question as "will one exist". A dormant child produces nothing, and counting it would inflate its parent's
   // `behindCount`, which is the index the sub-layers slot at (`updateSubLayers`' `lead`, `applyChildOrder`) — the
   // parent's own paint would land one slot too late and render BEHIND a behind-child that isn't there. So the count
@@ -199,17 +199,17 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
   // Evaluated before the children are visited, so `records.get(cid)?.el` is last walk's state — which is exactly
   // right: an el that exists survives (dormancy never tears down), and a reveal (visible, not hidden-by-parent)
   // is counted because this same walk is about to build it.
-  // R10-PERF5 WS-3: inside a HATCH the answer flips back to `producesEl`. The hatchery's contract is that the whole
+  // Inside a HATCH the answer flips back to `producesEl`. The hatchery's contract is that the whole
   // subtree ends up built — a child it can't reach in this slice becomes a queued marker and is built by the next
   // one — so a hidden behind-child WILL have an element, and asking "does it have one *today*" would under-count
-  // exactly the case the WS-1 fix exists for: this node is being built BEFORE its children, so every one of them
+  // exactly the case this fix exists for: this node is being built BEFORE its children, so every one of them
   // still reads `el == null`, and its own paint would slot ahead of the behind-children about to appear. (An el-less
   // node still counts for nothing, and the transient over-count while a deferred child is outstanding is corrected
   // by the reorder that child's own build queues — see placeEl / reorderChangedParents.)
-  // R10-PERF5 WS-4: on a FULL walk the "does it have one today" fallback inverts — an effectively-hidden child with
+  // On a FULL walk the "does it have one today" fallback inverts — an effectively-hidden child with
   // an element is about to LOSE it (reclaim), and this parent's behindCount is computed before that child is
   // visited. Counting it would leave the parent's own paint one slot too late for the rest of the walk (the exact
-  // failure the WS-1 count fixed, in the opposite direction).
+  // failure the earlier count fixed, in the opposite direction).
   function childHasOrWillHaveEl(cid: string, c: MirrorNode, parentHidesChildren: boolean, structural: boolean): boolean {
     if (!producesEl(c, cid)) {
       return false;
@@ -217,7 +217,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     if (dormancy.isHatching()) {
       return true;
     }
-    // R12 STATIC-BG BUILD HOLD: a held child produces no element however visible it is, so it must not be counted.
+    // STATIC-BG BUILD HOLD: a held child produces no element however visible it is, so it must not be counted.
     // Reads the SET (last walk's answer) rather than re-asking the predicate, which keeps this O(1) and matches
     // this function's documented contract. Belt-and-braces in practice — a bg root is not `showBehindParent` — but
     // the failure it prevents (BgContainer's own paint slotting behind a child that isn't there) is silent.
@@ -249,7 +249,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     return true;
   }
 
-  // R10-PERF6 WS-P1 — the ADDITIONAL exclusions for the ANCESTOR-AFFINE fast path (on top of `fastPathEligible`,
+  // The ADDITIONAL exclusions for the ANCESTOR-AFFINE fast path (on top of `fastPathEligible`,
   // which it also requires). That path re-derives a node's PLACEMENT and nothing else, so every node kind whose
   // per-visit work is a function of its rendered global — or whose element carries renderer-owned state a restyle
   // re-asserts — must take the full visit instead:
@@ -282,7 +282,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     );
   }
 
-  // R10-PERF6 WS-P1 — the WIDE-SCREEN SPREAD CLASSIFICATION. The algebra itself is `@/mirror/spreadLayout`, a pure
+  // The WIDE-SCREEN SPREAD CLASSIFICATION. The algebra itself is `@/mirror/spreadLayout`, a pure
   // module shared with the canvas backend (see its header for the field, the branches, and why there is only one
   // copy). What stays here are the four bindings the walk owns and the module deliberately does not:
   //   * the live `spreadFactor` (MirrorView pushes it through setStretch, so it cannot be captured at module load);
@@ -347,7 +347,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     // ELEMENT via the nested DOM, so re-basing it against the streamed transform would decouple it (the
     // TopBar-slide bug). Treat the inherited-context change as benign then and skip, as long as the node itself
     // isn't independently dirty (a fresh upsert / a subtree change still forces a real re-walk).
-    // R10-PERF4 WS-3 (item 3) — hazard (a): the pin skip must NEVER swallow an ancestor-hidden FLIP. Its premise is
+    // Hazard (a): the pin skip must NEVER swallow an ancestor-hidden FLIP. Its premise is
     // that the only thing that changed is the pinned ancestor's streamed transform (benign, the nested DOM carries
     // this node along) — but a reveal changes what this node must BUILD, not merely where it sits. A tooltip/dialog
     // revealed while an ancestor happens to own a transform tween would otherwise keep its sub-layers deferred for
@@ -364,7 +364,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       (ctxSame || skipForPin) &&
       !subtreeDirty!.has(id)
     ) {
-      // R20 item 5 — PIN PAINT REPAIR. The pin is about to swallow an inherited TINT change,
+      // PIN PAINT REPAIR. The pin is about to swallow an inherited TINT change,
       // which is NOT the "benign streamed transform" its premise licenses — it is a frame of the ancestor's fade, and
       // swallowing it parks the whole subtree at a stale brightness for as long as the pin lasts (and, when the fade
       // ends inside the pin window, forever after: nothing dirties this subtree again). Fall through into a real
@@ -383,7 +383,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       }
     }
 
-    // R10-PERF3 WS-4: a texture THIS node styled provisionally against (nine-patch-over-atlas slices / the
+    // A texture THIS node styled provisionally against (nine-patch-over-atlas slices / the
     // degenerate-margin fallback — the only two natural-size readers, see nodeStyles) has just resolved its size.
     // The node object and its context are unchanged, so nothing else here would call it dirty: force its own
     // restyle and keep it off the recurse-only fast path. One null compare on every walk that has no such node.
@@ -469,17 +469,17 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     const sceneAblationHeld = sceneAblationDisposition === "hold";
     const hidden =
       !node.visible || (orphanRootIds !== null && orphanRootIds.has(id)) || staticBgHeld || sceneAblationHeld;
-    // R10-PERF4 WS-3 (item 3): this node renders inside a display:none subtree, so its PURE-PAINT sub-layers (atlas
+    // This node renders inside a display:none subtree, so its PURE-PAINT sub-layers (atlas
     // canvas / spine canvas / gsw markers) are deferred until a reveal. Note it keys off the ANCESTOR flag, not
     // `hidden`: a node hidden on its OWN already skips the whole paint block below.
     const deferHiddenLayers = ctx.ancestorHidden;
-    // R10-PERF5 WS-1 — THE DORMANCY BOUNDARY. This node is effectively hidden AND has no element
+    // THE DORMANCY BOUNDARY. This node is effectively hidden AND has no element
     // today, so nothing it would build could be seen: skip the build and the whole subtree below it. Evaluated here,
     // against the record state as it stands BEFORE the create/adopt block, because both halves depend on it —
     // adoption is declined for a dormant add (never spend a pooled card element on an invisible tree), and the
     // early return lands after the record's math is refreshed. `record` is the pre-adopt lookup: a node with no
     // record at all is dormant by the same rule (it has no element either).
-    // R10-PERF5 WS-4 — THE RECLAIM HALF. On a FULL walk the "has no element" clause is
+    // THE RECLAIM HALF. On a FULL walk the "has no element" clause is
     // dropped: an effectively-hidden node that DOES have one is dormant too, and the early return below tears the
     // element down first. Only on a full walk, because only a full walk owns the `visited` set + the post-walk
     // prune that destroys the records of the descendants this return orphans (see the switch block).
@@ -527,7 +527,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     const gNodeStretched: Affine =
       dx === 0 ? gNode : [gNode[0], gNode[1], gNode[2], gNode[3], gNode[4] + dx, gNode[5]];
 
-    // R10-PERF6 WS-P1 — THE ANCESTOR-AFFINE FAST PATH. This node's own object is unchanged and
+    // THE ANCESTOR-AFFINE FAST PATH. This node's own object is unchanged and
     // every inherited field except the parent MATRICES is unchanged (ctxAffineOnlyChanged): it is riding an ancestor
     // that moved. A map scroll is exactly this — ONE wire upsert on the scroll container, ~4k descendants whose only
     // difference is where they sit — and on the pre-round walk every one of them re-ran nodeStyle + the shader/
@@ -600,7 +600,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       item.clipAxisOutsetX = clipAxisOutsetFor(id, node, computeSceneInfo);
       const placement = nodePlacementTransform(item);
       if (placement !== null && record.style.get("transform") !== placement.transform) {
-        cardFlights.noteNodeStreamed(id, record); // R12 WS-B — twin of the paint block's call
+        cardFlights.noteNodeStreamed(id, record); // Twin of the paint block's call
         setStyleProp(el, "transform", placement.transform);
         record.style.set("transform", placement.transform);
         // Same invalidation the slow path's applyStyleMap return value drives: the base transform moved (and any
@@ -714,7 +714,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       // A node with no record is either genuinely new OR a pooled shell the game just re-instantiated under a
       // fresh Godot instance id. Try to claim the condemned record its predecessor left standing this walk — the
       // element (and every gsw shader binding keyed by it) then survives the recycle untouched.
-      // R10-PERF5 WS-1: a DORMANT add never adopts. The pool holds real, styled elements (a card's whole subtree);
+      // A DORMANT add never adopts. The pool holds real, styled elements (a card's whole subtree);
       // spending one on a subtree nobody can see would both waste it — the visible re-add that actually wanted it
       // gets nothing — and hand the invisible tree an element, which is precisely what dormancy exists to avoid.
       // A card that moves into a closed deck dialog therefore builds fresh on reveal: a missed reuse, never a bug.
@@ -739,7 +739,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     record.spreadFieldMode = spreadFieldMode;
     record.spreadW = renderWidthOverride;
 
-    // R10-PERF5 WS-1 — THE DORMANCY EARLY RETURN. Everything above is bookkeeping the record must keep current even
+    // THE DORMANCY EARLY RETURN. Everything above is bookkeeping the record must keep current even
     // while invisible (lastNode, the cached ctx incl. `cAncestorHidden`, the wide-screen spreadDx/spreadW, the
     // geometry-epoch comparisons); everything BELOW touches or creates DOM. So stop here: no createEl, no styling,
     // no sub-layers, and no recursion — the descendants of a dormant root get no records at all.
@@ -751,14 +751,14 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     //     `ancestorHidden`, which `ctxUnchanged` compares), so the skip gate cannot swallow it; the predicate then
     //     reads false and the createEl cascade below builds the whole subtree in one walk.
     //   • On a FULL walk `visited` was already stamped above, so the post-walk prune keeps the marker.
-    //   • R10-PERF5 WS-3 — THE HATCHERY OVERRIDE. During an idle drain the boundary is crossed deliberately: this
+    //   • THE HATCHERY OVERRIDE. During an idle drain the boundary is crossed deliberately: this
     //     subtree is pre-built now, at idle, so the reveal that needs it doesn't have to build it. The popped ENTRY
     //     always builds (`id === hatchEntryId`) so a drain always makes progress — even with a 0ms budget, which
     //     degenerates to exactly one node per drain; everything DEEPER builds only while the budget holds, and the
     //     first child past the deadline goes back to being a marker (and therefore back into the queue) so the next
     //     drain resumes the DFS from precisely there. Nothing it builds can be seen: the entry is effectively hidden,
     //     so every descendant inherits `ancestorHidden` and the whole subtree sits under a `display:none`.
-    //   • R10-PERF5 WS-4 — THE RECLAIM. `reclaim` means this node arrived at the boundary WITH an element (only
+    //   • THE RECLAIM. `reclaim` means this node arrived at the boundary WITH an element (only
     //     possible on a full walk). Tear it down here, at the boundary, so the record demotes to an ordinary marker
     //     and everything below behaves exactly as if it had never been built: the DOM goes in ONE detach (the
     //     element carries its whole subtree with it), and the descendants' RECORDS — never visited, so never in
@@ -787,7 +787,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         record.lastCtxRef = ctx;
         mirrorWalkStats.reclaimedRoots++;
       }
-      // R12 STATIC-BG BUILD HOLD. A HELD root must never enter the idle hatchery's queue: the hatchery pre-builds
+      // STATIC-BG BUILD HOLD. A HELD root must never enter the idle hatchery's queue: the hatchery pre-builds
       // dormant markers, which for this one means the ~27MB of bg canvases the hold exists to not build — a
       // regression that would only ever show up on a real phone, at idle, long after any bench had finished.
       dormancy.setDormant(record, true, /* queue */ !staticBgHeld && !sceneAblationHeld);
@@ -818,11 +818,11 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       record.lastCtxRef = ctx;
     }
     if (needsEl && !record.el) {
-      // R10-PERF5 WS-1: this record was a dormant MARKER and is now building — a reveal. Counted here (rather than
+      // This record was a dormant MARKER and is now building — a reveal. Counted here (rather than
       // at the visible flip) because this is the build the reveal actually costs, and because a marker can also be
       // revealed by an ANCESTOR's flip, which never touches this node's own wire data. `stampIdentityAttrs` runs
       // inside createEl, so the node re-acquires its identity/touch attributes on the same walk.
-      // R10-PERF5 WS-3: a HATCH build is not a reveal and must never be counted as one — it happens at idle, under a
+      // A HATCH build is not a reveal and must never be counted as one — it happens at idle, under a
       // `display:none` ancestor, for a user who hasn't asked for anything. `revealBuildMs` is "how long was the frame
       // that opened the map"; charging idle pre-builds to it would erase the very number the hatchery exists to keep
       // flat. So the two live in separate series (`hatchedBuilds` / `hatchMs`), and `revealBuiltThisWalk` — the flag
@@ -838,7 +838,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       }
       createEl(record, id, node, gNodeStretched, sceneAblationStructural);
       ports.noteSceneAblationElementCreated(id, sceneAblationStructural);
-      // R10-PERF5 WS-3: born in the dark (always true under `hatching` — the entry is effectively hidden and every
+      // Born in the dark (always true under `hatching` — the entry is effectively hidden and every
       // descendant inherits it), so any decorative animation createEl just declared has nothing to anchor yet. The
       // hidden→visible flip below re-queues it.
       if (dormancy.isHatching() && (hidden || ctx.ancestorHidden)) {
@@ -852,7 +852,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     } else if (!needsEl && record.el) {
       removeEl(record);
     } else if (record.dormant) {
-      // R10-PERF5 WS-3: an ELEMENT-LESS node (no box, no paint, no children) that got past the boundary — hatched,
+      // An ELEMENT-LESS node (no box, no paint, no children) that got past the boundary — hatched,
       // or revealed by a walk. It produces no DOM by NATURE, not by deferral, so it is not a subtree anyone is still
       // waiting to have built: clear the marker (and with it the queue entry) or the `dormantRoots` gauge would never
       // reach zero on a fully hatched scene, and the hatchery would re-pop the same id every drain forever.
@@ -872,7 +872,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       // free unless a tooltip is currently on screen.
       scaleController.cacheTipChild(record, gNodeStretched);
 
-      // #19 / WS-G2 track view-scale items. WHICH nodes resolve to an entry — the cheap root-file / node-name
+      // The walk tracks view-scale items. WHICH nodes resolve to an entry — the cheap root-file / node-name
       // pre-filter, the leaf-detected card-reward + treasure-relic branches, and the shadowing hazard baked into
       // the order of the two — is `viewScaleLayout.resolveViewScaleForNode`, shared with the canvas walk. What is
       // left here is this backend's own BOOKKEEPING: the registered-id map that drives the per-drain pass, its
@@ -941,10 +941,10 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
     const pureContainer = !needsOwn && hasChildren;
 
     if (record.el) {
-      // WS-C: `record.occluded` (a TIER-1 gated subtree root — set by applyOcclusionPass at the END of the walk) is
+      // `record.occluded` (a TIER-1 gated subtree root — set by applyOcclusionPass at the END of the walk) is
       // folded in here so a covered root that re-styles mid-walk isn't un-hidden for a frame. The pass owns the
       // value; this write only has to agree with it.
-      // R10-PERF6 WS-P2 STAGGERED REVEAL. `paintSuppressed` is this node's OWN answer (the suppressors);
+      // STAGGERED REVEAL. `paintSuppressed` is this node's OWN answer (the suppressors);
       // the reveal hold is layered on top of it and owned by the release drain. A false←true edge on a node whose
       // ancestors are visible IS the reveal, and it is the only moment with everything the partition needs: the
       // node id, a live child index, and a walk that is about to style the subtree anyway.
@@ -969,7 +969,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       }
       // Count DOM-producing behind-parent children up front — the sub-layers slot right after them (see
       // updateSubLayers / reconcileOrder). Kept current even on a dirty-descendant (clean-self) pass.
-      // R10-PERF5 WS-1: `childHasOrWillHaveEl` rather than `producesEl` — a DORMANT behind-child contributes no
+      // `childHasOrWillHaveEl` rather than `producesEl` — a DORMANT behind-child contributes no
       // element, so counting it would push this node's sub-layers one slot too far and mis-order its own paint.
       let behindCount = 0;
       if (kids) {
@@ -983,7 +983,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
       }
       record.behindCount = behindCount;
 
-      // R10-PERF5 WS-3 — RE-ANCHOR ON REVEAL. A CSS animation does not exist under `display:none`: the element the
+      // RE-ANCHOR ON REVEAL. A CSS animation does not exist under `display:none`: the element the
       // hatchery built in the dark declared its keyframes, but `getAnimations()` had nothing to return, so the phase
       // anchor createEl queued was a no-op and the loop would start from zero (all in lockstep, every enemy intent
       // bobbing as one) the moment the subtree is shown. This is the hidden→visible flip, and the only place with
@@ -1006,7 +1006,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         }
       }
 
-      // WS-E / R10-B2: start/stop/re-anchor a producer-pinned loop animation for this node. Runs OUTSIDE the
+      // Start/stop/re-anchor a producer-pinned loop animation for this node. Runs OUTSIDE the
       // `!hidden && !cull && selfDirty` style block so a node hidden while looping (or shown while not) still
       // settles correctly, and gated on a live token OR a running one so a clean re-visit costs one field compare.
       // Cheap: `pinnedLoopAnim` is null for every node but a travelable map point, an open screen's top-bar icon
@@ -1050,7 +1050,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         markEffectsDirtyBits(applyAttrs(record.el, EMPTY_ATTRS, record.attrs));
       } else if (!hidden && selfDirty) {
         mirrorWalkStats.styledNodes++;
-        // R10-PERF4 WS-4 (item 2) — BLEND CENSUS. A `mix-blend-mode` element forces the compositor to promote
+        // BLEND CENSUS. A `mix-blend-mode` element forces the compositor to promote
         // everything painting above it, so a blend that is effectively INVISIBLE (alpha ~0) is pure layer tax. The
         // settle census only sees the final frame; these counters answer "how many exist at once MID-PLAY". Two
         // module calls per styled BLEND node (nothing at all for the ~99% that carry none), tracked against the
@@ -1061,12 +1061,12 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         } else if (hasBlendNodes()) {
           forgetBlendNode(id); // a node can lose its blend mode between emissions
         }
-        // R10-PERF3 WS-4: scope every `naturalSize` MISS made while styling this node (nodeStyle's degenerate
+        // Scope every `naturalSize` MISS made while styling this node (nodeStyle's degenerate
         // nine-patch check + updateSubLayers' atlas 9-slice) to this node id, so the load that resolves the size
         // can re-style exactly this node instead of the whole scene. Cleared at the end of the block — the two
         // module calls are the entire per-styled-node cost, and nothing in between can return or throw past them.
         setTextureStyleNode(id);
-        cardFlights.noteNodeStreamed(id, record); // R12 WS-B — the degraded path, named (twin of the fast path's call)
+        cardFlights.noteNodeStreamed(id, record); // The degraded path, named (twin of the fast path's call)
         record.attrNodeType = applyCachedAttr(record.el, "data-node-type", node.nodeType, record.attrNodeType);
         const shader = nodeShaderAttributes(node, nodes);
         // Shared VFX ownership is ribbon-only; particle markers and their static gsw surfaces stay untouched.
@@ -1079,7 +1079,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         // The one-field override avoids cloning the node on the normal hot path.
         const substitute = node.transform != null ? gNodeStretched : null;
         const styleNode = node;
-        // R16 `noblend`: the STROKE hosts, which every other diet deliberately leaves blended — this is the one
+        // `noblend`: the STROKE hosts, which every other diet deliberately leaves blended — this is the one
         // that takes them, because on a phone each is its own compositor surface and that is the measured cost.
         // The id is banked as it is styled so the lift can restore exactly what the arm changed (see
         // refreshTrailSurfaceBlend); the leading flag test is the whole cost when the rung is not armed.
@@ -1097,12 +1097,12 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
           hasChildren,
           renderWidthOverride: renderWidthOverride || undefined,
           transformOverride: substitute,
-          // R11: the mass-flight VFX diet's `blend`/`particles` rungs stop the decorative branch of a flight-owned
+          // The mass-flight VFX diet's `blend`/`particles` rungs stop the decorative branch of a flight-owned
           // trail from being its own compositor surface. `hide` folds into `suppressed` below instead.
-          // R16: …and `noblend` does the same for the two strokes. Disjoint sets (see trailSurfaceBlendIds), so the
+          // …and `noblend` does the same for the two strokes. Disjoint sets (see trailSurfaceBlendIds), so the
           // `||` can never be two diets fighting over one element.
           suppressBlend: cardFlights.flightDietCovers(id) || surfaceNoblend,
-          // R20 one-axis clip (clipAxis.ts) — undefined for every node but a table-matched clipper, and the two
+          // One-axis clip (clipAxis.ts) — undefined for every node but a table-matched clipper, and the two
           // gates inside are the whole cost for the rest.
           clipAxisOutsetX: clipAxisOutsetFor(id, node, computeSceneInfo)
         };
@@ -1151,16 +1151,16 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
           attrs["data-godot-particle-runtime"] = "1";
           attrs["data-godot-particle-specs"] = particle.specsJson;
         }
-        // R10-PERF4 WS-3 (item 3): under a hidden ancestor, DON'T stamp the gsw shader/particle markers on a node
+        // Under a hidden ancestor, DON'T stamp the gsw shader/particle markers on a node
         // that carries none yet — they are exactly the selectors gsw's two runtimes query the stage for
         // (`[data-godot-shader-webgl]` / `[data-godot-particle-runtime]`), so deferring them keeps hundreds of
         // invisible nodes out of every gsw reconcile's querySelectorAll set as well as off the GPU. Gated on an
         // EMPTY attr cache so the "already stamped when the subtree went hidden" case still takes the normal path
         // (leaving the markers in place, and still able to update or remove them). On reveal the full restyle
-        // stamps them for the first time, and applyAttrs' return value dirties the runtimes through the WS-2 seam
+        // stamps them for the first time, and applyAttrs' return value dirties the runtimes through the effects-dirty seam
         // exactly as it does for a brand-new node.
         if (!deferHiddenLayers || record.attrs.size > 0) {
-          // WS-2: only an ACTUAL marker write dirties a runtime — a re-style that reproduces the same attribute
+          // Only an ACTUAL marker write dirties a runtime — a re-style that reproduces the same attribute
           // values reports nothing, which is what makes the gate hold on a volatile-only frame.
           markEffectsDirtyBits(applyAttrs(record.el, attrs, record.attrs));
         }
@@ -1173,7 +1173,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         // than inside updateSubLayers because this is the only scope that has the PARENT's global transform —
         // which is exactly the flying card's position, and therefore the trail's head (see cardTrail.ts).
         if (record.trailPaths.length > 0) {
-          // WS-F: the PARENT's own applied shift (`record.spreadDx` of the visit parent — the walk is top-down, so
+          // The PARENT's own applied shift (`record.spreadDx` of the visit parent — the walk is top-down, so
           // it was written this drain). NOT `ctx.parentDx`: a pass-through group hands its children the INHERITED
           // baseline rather than its own claim, so that field is not the parent's rendered displacement.
           const parentRec = node.parentId != null ? records.get(node.parentId) : undefined;
@@ -1212,7 +1212,7 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
           // cache so the placeholder's first frame paints, and records the page's natural size for the crop
           // (regionBackgroundStyle's atlasSize, delivered late via onTextureSizesResolved). One Image per
           // distinct url per session.
-          // Aug-19: the re-enable is now scoped to pages that CAN page-crop (the size gate — see the switch
+          // The re-enable is now scoped to pages that CAN page-crop (the size gate — see the switch
           // block), so a3d4ff2's original argument comes back for exactly the pages it was about: a card atlas's
           // sprite mounts a canvas, nothing paints its url, and warming it would buy a redundant ~37MB decode.
           // (Nine-patch-over-atlas isn't a paintsAtlasCanvas node, so it still warms for its size.)
@@ -1249,9 +1249,9 @@ export function createNodeWalker(ports: NodeWalkerPorts): NodeWalker {
         // If THIS node is a widened BoxContainer, its children ride its re-layout (see the BOX CHILD branch).
         containerChildAlign: childContainerAlign,
         containerChildVertical: childContainerVertical,
-        // R4-round4: descendants of the card-reward screen root are "in" it → an NCard among them is a reward card.
+        // Descendants of the card-reward screen root are "in" it → an NCard among them is a reward card.
         inCardRewardScreen: ctx.inCardRewardScreen || opensCardRewardScreen(leaf),
-        // R10-B3: this node's own adopt key becomes its children's scope prefix — so the chain extends only while
+        // This node's own adopt key becomes its children's scope prefix — so the chain extends only while
         // every link is nameable, and an auto-named node (adoptKey null) closes the scope for its whole subtree.
         contentScope: adoptKey,
         // A child renders inside a display:none subtree if this node or an ancestor is invisible.

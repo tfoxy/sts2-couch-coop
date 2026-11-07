@@ -921,7 +921,7 @@ public static class SceneDeltaReader
             AsTransform6(Get(r, "cancelTransform")));
     }
 
-    // WS-3 declarative card flight. STRICT on the geometry (a flight the client cannot integrate must be dropped
+    // Declarative card flight. STRICT on the geometry (a flight the client cannot integrate must be dropped
     // rather than half-applied — the producer has stopped streaming these nodes, so a bad replay freezes them):
     // every required point/basis must be present with the right arity and the integrator scalars must be usable.
     // Port of normalizeCardFlight in frontend/src/mirror/sceneTree.ts; the two must stay byte-identical in what

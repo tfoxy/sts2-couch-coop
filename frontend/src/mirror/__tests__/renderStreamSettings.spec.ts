@@ -34,7 +34,7 @@ import {
   type RenderStreamAvailabilityInputs
 } from "@/mirror/renderStreamAvailability";
 
-// MIR-2's unit checks (handoff-mirror-new-renderer.md §6): the `renderer` key persists and `runtimeRenderer` does
+// Unit checks: the `renderer` key persists and `runtimeRenderer` does
 // not, the URL overrides never write back, the server payload overlay applies, and availability's precedence.
 
 function memoryStorage(initial: Record<string, unknown> = {}): MirrorSettingsStorage & { raw(): Record<string, unknown> } {

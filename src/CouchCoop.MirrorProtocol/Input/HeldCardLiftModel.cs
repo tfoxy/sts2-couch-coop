@@ -1,7 +1,7 @@
 namespace CouchCoop.MirrorProtocol.Input;
 
 // Pure truth-table for the cosmetic touch-held-card LIFT — the native twin of mirrorRenderer.ts `applyHeldLift`,
-// which the browser client runs. WS-M holds ONE of these per gesture (a value type — zero per-frame allocation), calls
+// which the browser client runs. The gesture layer holds ONE of these per gesture (a value type — zero per-frame allocation), calls
 // <see cref="Reset"/> on a fresh grab (setHeldCard id-change) and <see cref="Update"/> on every finger move,
 // and applies <see cref="LiftPx"/> to the held node's CSS/scene translate.
 //
@@ -54,6 +54,6 @@ public struct HeldCardLiftModel
         return !_enteredPlayZone || above;
     }
 
-    /// <summary>The lift height (design px) for a mode — WS-M multiplies this into the translate when lifted.</summary>
+    /// <summary>The lift height (design px) for a mode — the gesture layer multiplies this into the translate when lifted.</summary>
     public static double LiftPx(HeldMode mode) => mode == HeldMode.Peek ? PeekLiftPx : DragLiftPx;
 }

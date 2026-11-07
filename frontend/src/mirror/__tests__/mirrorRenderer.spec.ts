@@ -129,7 +129,7 @@ describe("createMirrorRenderer", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
     // An event option (touch target) with a real content child + two oversized decorative overlays. A SECOND
-    // visible option keeps the R8 lone-option leg out of play (a lone option would Block instead of Target).
+    // visible option keeps the lone-option leg out of play (a lone option would Block instead of Target).
     full(
       state,
       [
@@ -232,8 +232,8 @@ describe("createMirrorRenderer", () => {
           { nodeType: "MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic.NTreasureRoomRelicHolder", name: "Holder" }
         ),
         rawNode("trArt", "treasureRelic", { name: "Art" }),
-        // R20 — the Card Removal Service coin, in the shape the wire streams it (see
-        // .sts2/bench/audit-shop-open.ndjson): an NMerchantCardRemoval root with the NClickableControl "Hitbox"
+        // The Card Removal Service coin, in the shape the wire streams it (from a recorded shop-open session):
+        // an NMerchantCardRemoval root with the NClickableControl "Hitbox"
         // child every other shop slot has. Neither leaf ends in "Button", so before the type was listed
         // computeTouchInfo returned null, BOTH attributes were stripped, and inputCapture's `if (!top)` guard fired
         // before the tapToFocus check — one tap was one full click, unlike every other item on the carpet.
@@ -414,7 +414,7 @@ describe("createMirrorRenderer", () => {
       expect(el?.getAttribute("data-touch-block")).not.toBeNull();
       expect(el?.getAttribute("data-touch-id")).toBeNull();
     }
-    // R21 — and WHICH block it is, which is the fact the eager-scroll claim could not previously ask for. The
+    // And WHICH block it is, which is the fact the eager-scroll claim could not previously ask for. The
     // track and its body are the bar's; the HANDLE is called out separately because a finger there is a deliberate
     // grab (it drags at once) while a finger on the track is not (it defers — see eagerScroll's BAR_TAP_SLOP_PX).
     expect(stage.querySelector('[data-node-id="bar"]')?.getAttribute("data-touch-block")).toBe("bar");
@@ -994,7 +994,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     expect(el(stage, "card")!.getAttribute("data-spread-mode")).toBeNull();
   });
 
-  // ---- WS-3 map DRAWING TOOLS (twin of the native SpreadWalkTests DrawingTools legs) ------------------------------
+  // ---- map DRAWING TOOLS (twin of the native SpreadWalkTests DrawingTools legs) ------------------------------
 
   // The map screen's draw/erase/clear palette: a small 0/0-anchored NinePatchRect whose anchor claim would be 0, so it
   // would stay a FIXED distance from the stage's LEFT edge while the map's own content (the full-canvas parchment tile
@@ -1041,7 +1041,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     // the palette claims 0.5 — exactly the ½Δ the full-canvas parchment tile re-centers on.
     expect(Number(el(stage, "DrawingTools")!.getAttribute("data-spread-dx"))).toBeCloseTo(DELTA / 2, 3);
     expect(Number(el(stage, "MapTile")!.getAttribute("data-spread-dx"))).toBeCloseTo(DELTA / 2, 3);
-    // BOTH WS-3 halves land on this one node: the ½Δ spread shift AND the 1.35 view-scale stamp about the SHIFTED
+    // BOTH halves land on this one node: the ½Δ spread shift AND the 1.35 view-scale stamp about the SHIFTED
     // centre (160+½Δ = 460) → left edge 460 + 1.35·(356−460) = 319.6, still far inside the 2520-wide stage.
     const toolsM = composedMatrixAll(el(stage, "DrawingTools")!, stage);
     expect(toolsM[0]).toBeCloseTo(1.35, 6);
@@ -1061,12 +1061,12 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     expect(composedMatrixAll(el(stage, "otherTools")!, stage)[0]).toBeCloseTo(1, 6);
   });
 
-  // ---- R19 6b MAIN-MENU FOCUS RIBBONS (twin of the native SpreadWalkTests MenuReticle legs) ---------------------
+  // ---- MAIN-MENU FOCUS RIBBONS (twin of the native SpreadWalkTests MenuReticle legs) ---------------------
 
   // The main menu's focus ribbons: two 40x40 0/0-anchored TextureRects, DIRECT children of the menu root, whose
   // origins the game rewrites each frame to flank the focused option in the 0.5/0.5 option column. Too small for the
   // fullCanvas seam, so the anchor algebra claims 0 for them and they strand ½Δ left of the option they mark.
-  // Shape from a live lobby recording (.sts2/bench/ws7-charselect-hostready.ndjson).
+  // Shape from a live lobby recording.
   function mainMenuTree(state: MirrorState): void {
     const nodes = [
       rawNode("MainMenu", null, {
@@ -1310,7 +1310,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
     // The tips live under a positional-claimer world sprite (a shift-claiming ancestor → non-zero ParentDx). The
-    // floater must ride ONLY the owner's Δ; the pre-R5 `parentDx + ownerDx` strands it far right.
+    // floater must ride ONLY the owner's Δ; the earlier `parentDx + ownerDx` strands it far right.
     const nodes = [
       rawNode("frame", null, { nodeType: "Control", transform: xform(0, 0), localRect: box(1920, 1080), anchorLeft: 0, anchorRight: 1 }),
       rawNode("owner", "frame", { nodeType: "Control", transform: xform(1700, 20), localRect: box(120, 60), anchorLeft: 1, anchorRight: 1 }),
@@ -1349,9 +1349,9 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     expect(composedMatrix(el(stage, "tooltip")!, stage)[4]).toBeCloseTo(1000 + cardDx, 3);
   });
 
-  // R8 (WS-1): the corner piles + the leaf-detected treasure relic actually reach the DOM with the right stamp.
-  // Vectors are the real design boxes (draw (15,985), discard (1826,985) — 16:37-10 combat recording; R9 adds the
-  // exhaust pile at (1830,800), measured from the 16:40-09 recording).
+  // The corner piles + the leaf-detected treasure relic actually reach the DOM with the right stamp.
+  // Vectors are the real design boxes (draw (15,985), discard (1826,985) — combat recording; a later recording adds the
+  // exhaust pile at (1830,800), measured from a second recording).
   it("R8/R9: the three combat piles render 1.25× pinned to their own screen edge", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
@@ -1369,7 +1369,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
         transform: xform(1826, 985),
         localRect: box(80, 80)
       }),
-      // R9: the mid-right exhaust pile — right-anchored but NOT in a corner, so it takes the middleRight EDGE pivot.
+      // The mid-right exhaust pile — right-anchored but NOT in a corner, so it takes the middleRight EDGE pivot.
       rawNode("exhaust", null, {
         nodeType: "MegaCrit.Sts2.Core.Nodes.Combat.NExhaustPileButton",
         sceneFilePath: "res://scenes/combat/exhaust_pile.tscn",
@@ -1398,7 +1398,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     expect(exhaustM[5]).toBeCloseTo(790, 6); // splays symmetrically about y=840: top 800 → 790 (NOT bottom-pinned)
   });
 
-  // R9 (WS-B): the deck dialog's "View Upgrades" toggle reaches the DOM with its (R10 WS-F) 1.35 bottom-left stamp. This is the
+  // The deck dialog's "View Upgrades" toggle reaches the DOM with its 1.35 bottom-left stamp. This is the
   // NAME pre-filter path end-to-end (VIEW_SCALE_CANDIDATE_NAMES → computeSceneInfo → the file-scoped entry): the node
   // has no sceneFilePath of its own, so a root-file-only pre-filter would silently never stamp it.
   it("R9/R10: the deck dialog's View Upgrades toggle renders 1.35× pinned to its bottom-left corner", () => {
@@ -1411,7 +1411,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
         transform: xform(0, 0),
         localRect: box(1920, 1080)
       }),
-      // (16,1012)-(212.5,1060) — measured from .sts2/bench/wscrisp-deckdialog.ndjson.
+      // (16,1012)-(212.5,1060) — measured from a recorded deck dialog.
       rawNode("ViewUpgrades", "DeckViewScreen", {
         nodeType: "MarginContainer",
         transform: xform(16, 1012),
@@ -1433,7 +1433,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
     full(state, nodes, nodes.map((n) => n.id as string));
     renderer.reconcile(state);
 
-    // R10 WS-F: the deck factor is its own constant now and moved 1.25 → 1.35 (VIEW_SCALE_VIEW_UPGRADES_DECK).
+    // The deck factor is its own constant now and moved 1.25 → 1.35 (VIEW_SCALE_VIEW_UPGRADES_DECK).
     const m = composedMatrixAll(el(stage, "ViewUpgrades")!, stage);
     expect(m[0]).toBeCloseTo(1.35, 6);
     expect(m[4]).toBeCloseTo(16, 6); // bottom-LEFT corner pinned: x unchanged
@@ -1448,7 +1448,7 @@ describe("wide-screen anchor re-layout (setStretch)", () => {
   it("WS6: the rewards PANEL renders 1.2× as one group and its rows ride that stamp (no per-row stamp)", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
-    // Geometry from .sts2/bench/audit-rewards.ndjson: RewardsScreen (root, rewards_screen.tscn) → Rewards (plain
+    // Geometry from a recorded rewards screen: RewardsScreen (root, rewards_screen.tscn) → Rewards (plain
     // child, 526×640 at (696,236)) → RewardContainerMask → RewardsContainer → NRewardButton rows (402×86).
     const nodes = [
       rawNode("RewardsScreen", null, { nodeType: "MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen", sceneFilePath: "res://scenes/screens/rewards_screen.tscn", transform: xform(0, 0), localRect: box(1920, 1080), anchorLeft: 0, anchorRight: 1 }),
@@ -2281,7 +2281,7 @@ describe("setHeldCard (touch card cosmetic lift)", () => {
     expect(tip.style.translate).toBe("0px");
   });
 
-  // R10-PERF4 WS-2 — idempotent lift writes. `setHeldCard` runs on EVERY finger move (~60/s) and `visit` re-asserts
+  // Idempotent lift writes. `setHeldCard` runs on EVERY finger move (~60/s) and `visit` re-asserts
   // the lift on every re-visit of the held card, so the lift path must cost nothing when the decision hasn't moved.
   it("arms NO lift frame while nothing has to move (no tooltip on screen)", () => {
     const { stage, renderer } = harness();
@@ -2350,7 +2350,7 @@ describe("isCardTouchTarget (touch peek gate)", () => {
     expect(renderer.isCardTouchTarget("card")).toBe(true);
     expect(renderer.isCardTouchTarget("other")).toBe(false);
     expect(renderer.isCardTouchTarget("nope")).toBe(false);
-    // R20: the card-removal coin arms on the first tap (TOUCH_TARGET_TYPES) but is deliberately NOT a card. This
+    // The card-removal coin arms on the first tap (TOUCH_TARGET_TYPES) but is deliberately NOT a card. This
     // predicate drives the non-hand long-press RIGHT-CLICK, which exists to open an item's DETAIL dialog; the
     // removal service has no detail view, so a right-click there is a no-op at best. Same separation NRewardButton
     // and NTreasureRoomRelicHolder already have. Native twin: TouchTargetScan.IsCard.

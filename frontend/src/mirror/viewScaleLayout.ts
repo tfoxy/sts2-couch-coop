@@ -24,8 +24,8 @@
 // walks already compute `nodeTypeLeaf(node.nodeType)` for their own reasons.
 //
 // NATIVE PRIOR ART, and the rule it comes with. The host's own twin is a pure per-drain `ViewScaleStampIndex`
-// built from scratch each time (see `docs/agents/architecture-map.md` — "R8 — do not re-introduce state here":
-// a stateful stamp index caused the event-option snap-back three rounds running). This module keeps that shape:
+// built from scratch each time (a stateful stamp index caused the event-option snap-back repeatedly, so do not
+// re-introduce state here). This module keeps that shape:
 // {@link ViewScaleStampIndex} is a per-build index, and nothing here remembers a previous one.
 
 import { affineMul, IDENTITY_AFFINE, nodeMatrix, type Affine } from "@/mirror/affine";
@@ -255,13 +255,13 @@ export function mapThroughViewScaleStamp(
 }
 
 /**
- * R6 (WS-TIP): forward-map a box through EVERY stamp that renders it — the node's OWN stamp AND every stamped
+ * Forward-map a box through EVERY stamp that renders it — the node's OWN stamp AND every stamped
  * ANCESTOR — composed innermost→outermost (group ∘ card), so a tip glued to an off-centre card inside a scaled
- * GROUP follows the group's displacement (twin of native `ViewScaler.MapThroughContainingStamps`). R5 shipped only
+ * GROUP follows the group's displacement (twin of native `ViewScaler.MapThroughContainingStamps`). The earlier version shipped only
  * the single topmost/exact stamp, which for the card-reward per-card 1.15 (Center + NoClamp ⇒ centre-fixed) gave a
  * ZERO follow.
  *
- * Selection is ANCESTRY-only — hierarchy-faithful, robust to nesting, and (unlike the R5 box-containment fallback)
+ * Selection is ANCESTRY-only — hierarchy-faithful, robust to nesting, and (unlike the box-containment fallback)
  * it never spuriously maps a non-scaled overlay whose centre merely lands inside a full-viewport group box.
  * Returns the composed box, or null when no stamp covers it at all (the caller's "no follow" answer).
  */
@@ -327,7 +327,7 @@ export interface ViewScaleRegistryEnv {
  *   3. not a full-stage BAND (≥95% of the design width);
  *   4. the Z-RULE — not painted BELOW the stamp's paint floor. A rect painted under the enlarged item is
  *      invisible under it, so it can never own a tap there; a legitimate overlay paints AFTER it. For a GROUP
- *      the floor is {@link groupPaintFloor}; for an ITEM (since R19) it is the item's own paint index. A rect
+ *      the floor is {@link groupPaintFloor}; for an ITEM it is the item's own paint index. A rect
  *      MISSING from the paint order is KEPT, exactly like native's `TryGetValue` arm.
  *
  * Native twin, kept in lockstep: `ViewScaleInputRegistry.Build` / `.DroppedByFilter` / `.GroupPaintFloor`.

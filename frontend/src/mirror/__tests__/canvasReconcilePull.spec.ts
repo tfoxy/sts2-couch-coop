@@ -1,4 +1,4 @@
-// R6 P6-A — THE RECONCILE PULL: collapsing the mirror's two rAF loops when they land in the same display frame.
+// THE RECONCILE PULL: collapsing the mirror's two rAF loops when they land in the same display frame.
 //
 // The defect this closes is a DOUBLE BUILD, not a wrong pixel. A delta arrives, `state.revision` moves, and
 // MirrorView books its coalesced walk; meanwhile a tween/comet/effect has the canvas backend's own animation

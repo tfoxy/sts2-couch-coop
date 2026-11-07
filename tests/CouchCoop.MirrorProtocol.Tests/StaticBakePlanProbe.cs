@@ -26,7 +26,7 @@ internal static class StaticBakePlanProbe
 {
     private const double DesignW = 1920.0;
 
-    // WS-BGBAKE Step-1 diagnostic (COUCHCOOP_STATICBAKE_PROBE_BANDDUMP=1): for a scene with a REAL z<0 bottom bucket,
+    // Step-1 diagnostic (COUCHCOOP_STATICBAKE_PROBE_BANDDUMP=1): for a scene with a REAL z<0 bottom bucket,
     // dump the band in PAINT order as compressed runs — `[static xN]` for each contiguous eligible run, one line per
     // live interloper (particle / spine / intent / un-cleared shader / dynamic / Sub-Mul bottomOnly, with blend + name)
     // — plus the current segmented-plan summary. Read-only; skips without the env.
@@ -153,7 +153,7 @@ internal static class StaticBakePlanProbe
         var allShaders = new HashSet<string>(
             state.Nodes.Values.Where(n => n.ShaderId is not null).Select(n => n.Id), StringComparer.Ordinal);
 
-        // Offline bottomOnly (WS-ADDBAKE): Sub/Mul plain painters only (b in {2,3}). Plain-Add painters (b==1) are now
+        // Offline bottomOnly: Sub/Mul plain painters only (b in {2,3}). Plain-Add painters (b==1) are now
         // ordinary bakeable members (alpha-preserving variant), so they are NOT bottom-only. Shader blend class is
         // unknown offline, so an Add-blend SHADER reads as Mix here (see the OFFLINE CAVEAT in the report).
         var bottomOnly = new HashSet<string>(StringComparer.Ordinal);

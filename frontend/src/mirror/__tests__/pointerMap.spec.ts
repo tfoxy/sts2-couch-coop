@@ -414,7 +414,7 @@ describe("near-miss vs a cosmetically RAISED surface", () => {
   });
 });
 
-// ---- the wide-stage HOVER BISTABILITY fix (r3/WS-N): the squeeze gate + directional hysteresis ----------------
+// ---- the wide-stage HOVER BISTABILITY fix: the squeeze gate + directional hysteresis ----------------
 
 describe("near-miss squeeze gate", () => {
   const stage = rect(0, 0, 960, 540);
@@ -488,7 +488,7 @@ describe("near-miss directional hysteresis", () => {
 
 });
 
-// ---- R19 6a: the SQUEEZE RENDERED-BOX GATE (the near-miss pass stays suppressed; this holds the ONE invariant) ----
+// ---- the SQUEEZE RENDERED-BOX GATE (the near-miss pass stays suppressed; this holds the ONE invariant) ----
 
 describe("squeeze rendered-box gate", () => {
   // The MEASURED map screen at 2520x1080 (.sts2/artifacts/diag-map-legend-2520.json). MapLegendItem is anchored

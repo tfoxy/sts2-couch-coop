@@ -116,7 +116,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const presentMode = rustPresentModeFromLocation("rust");
   const zeroCopyPixels = new URLSearchParams(window.location.search).get("rustZeroCopyPixels") === "1";
   // On unless `=0`: a GPU-backed ink canvas makes every Bitmap text miss a synchronous GPU readback queued behind the
-  // stage's own WebGL2 work (~14 ms each on the phone; a card play's ~9 labels cost a 293 ms frame). `=0` is the A/B.
+  // stage's own WebGL2 work (tens of ms each on a mobile GPU). `=0` is the A/B.
   const textInkReadFrequently = new URLSearchParams(window.location.search).get("rustTextInkReadFrequently") !== "0";
   const textInkCorpus = new URLSearchParams(window.location.search).get("rustTextInkCorpus") === "1";
   const textInkDiagnostics = new URLSearchParams(window.location.search).get("rustTextInkDiagnostics") === "1" || textInkCorpus;
@@ -259,7 +259,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const uploaded = new Set<string>();
   const uploadedPixels = new Map<string, ResourcePixels>();
   const pixelRevisions = new Map<string, number>();
-  // rustTextEvict: ~64-128 per the WP1 spec; the middle of that range gives label-toggle protection without
+  // rustTextEvict: ~64-128; the middle of that range gives label-toggle protection without
   // letting the Bitmap cache run far ahead of what one screen's worth of text actually needs.
   const TEXT_EVICTION_POOL_LIMIT = 96;
   const textEvictionTracker = createTextResourceEvictionTracker(TEXT_EVICTION_POOL_LIMIT);
@@ -425,7 +425,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   // A full admission re-emits every label, so it clears these.
   const committedTextCarriers = new Map<string, { record: PixiTextRecord; carrier: RustTextCarrier }>();
   let retainedPatchApplyMs = 0, sceneEncodeMs = 0, sceneDiffMs = 0, scenePatchApplyMs = 0;
-  // rustFast WP3 counters: style-string cache (`textPrepCache`) and prefetch-skip (`snapshotReuse`) hit counts.
+  // rustFast counters: style-string cache (`textPrepCache`) and prefetch-skip (`snapshotReuse`) hit counts.
   let styleCacheHits = 0, styleCacheMisses = 0, prefetchSkips = 0;
   const styleStringCache = new WeakMap<PixiTextRecord["style"], string>();
   let rustDrawCalls: number | null = null, rustBufferCreations: number | null = null, rustTextureCreations: number | null = null;
@@ -766,8 +766,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     onRasterization: () => { stats.textRasterizations++; }
   });
   // rustTextEvict: `encodeRustResourceUpdates` rejects a batch over 4096 entries; stay well under that even
-  // though a commit this round only ever overflows the pool by a handful of keys (closing a large,
-  // ~300-label screen is the realistic ceiling, around 200 — see the ledger row).
+  // though a commit only ever overflows the pool by a handful of keys (closing a large,
+  // ~300-label screen is the realistic ceiling, around 200).
   const RELEASE_BATCH_CHUNK_SIZE = 1024;
   /** rustTextEvict: release these Bitmap keys from every place they are resident — the JS cache, the
    *  executor's own upload bookkeeping, and the Rust GPU texture — via the same RSR2 `release` operation

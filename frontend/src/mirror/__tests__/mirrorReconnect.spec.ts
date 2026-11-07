@@ -19,7 +19,7 @@ import {
 } from "@/mirror/reconnectPolicy";
 import { HEADLESS_HOST_DISCONNECTED_REASON, type BrowserPlayerOption } from "@/protocol/browserEnvelope";
 
-// WS-8 (web half). A viewer's game view is served by a disposable HEADLESS instance; when that instance's own
+// Web half. A viewer's game view is served by a disposable HEADLESS instance; when that instance's own
 // connection to the host game dies for good it now EXITS, after a last-gasp `server-reload` carrying
 // HEADLESS_HOST_DISCONNECTED_REASON. The browser must NOT treat that as "the server is coming back, reload the
 // page" (the port is going away) — it falls back to the original host and reconnects with the same backoff ladder
@@ -227,7 +227,7 @@ describe("rejoin seat blocked (escalation rule b input)", () => {
   });
 });
 
-// R9 item 7 — the drop PHASE. Before this, every drop (including a 1s singleplayer blip) painted the full "the
+// The drop PHASE. Before this, every drop (including a 1s singleplayer blip) painted the full "the
 // host must reload the saved run" guidance, and nothing ever took it back down.
 describe("reconnect phase state machine", () => {
   const drop = (state: ReconnectState, hadView = true) => reconnectStateAfterDrop(state, hadView);
@@ -363,7 +363,7 @@ describe("MirrorApp drop drills", () => {
     await settle();
     latest().emit(sessionMessage());
     await settle();
-    // Steady picker: no heading at all and no spinner. (R19 WP-2 dropped the game's own screen name from a
+    // Steady picker: no heading at all and no spinner. (The game's own screen name was dropped from a
     // steady picker — the <h1> is now reserved for the lifecycle words asserted below.)
     expect(app.find("h1").exists()).toBe(false);
     expect(spinner().exists()).toBe(false);

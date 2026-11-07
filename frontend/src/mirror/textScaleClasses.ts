@@ -1,4 +1,4 @@
-// R10-PERF4 WS-3 (item 4) — resolved-class text scaling.
+// Resolved-class text scaling.
 //
 // PROBLEM: the prior stylesheet targeted each label by (`data-scene-file`, `data-scene-node-path`) — ~54 rules, most
 // of them SUFFIX (`$=`) or SUBSTRING (`*=`) attribute selectors. Those are the most expensive selector kind there

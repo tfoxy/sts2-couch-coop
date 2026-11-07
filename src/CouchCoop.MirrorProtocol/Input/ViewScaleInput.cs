@@ -3,11 +3,11 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// R2 (WS-G2) view-scale input REMAP GATE — the pure, Godot-free, Exe-testable core of ViewScaler.InverseRemap.
+// view-scale input REMAP GATE — the pure, Godot-free, Exe-testable core of ViewScaler.InverseRemap.
 //
 // Round-1 #19 displaced taps: EVERY point inside a scaled item's enlarged "halo" AABB was inverse-mapped toward the
 // item's centre, including taps aimed at a NON-scaled neighbour (the Skip button, the banner, an adjacent reward row)
-// whose screen area happens to fall inside that halo. R2's gate keeps the remap ONLY for a point that genuinely
+// whose screen area happens to fall inside that halo. This gate keeps the remap ONLY for a point that genuinely
 // belongs to the scaled item, and leaves a point that belongs to an un-scaled neighbour untouched (identity), so it
 // lands where the game draws it.
 //
@@ -17,7 +17,7 @@ namespace CouchCoop.MirrorProtocol.Input;
 // un-scaled OVERLAYS drawn ON TOP of the scaled item (a TopBar deck/gold/settings button over a scaled card-reward
 // group) plus, for an item stamp, a displaced sibling in the halo band. A neighbour is NEVER an ancestor / full-
 // viewport backdrop / anything painted under the item — those enclose the whole stamp, so exempting against them would
-// swallow every interior tap (the R5 bug the registry rules fix). A point in the ScaledBox is EXEMPT (→ identity,
+// swallow every interior tap (the bug the registry rules fix). A point in the ScaledBox is EXEMPT (→ identity,
 // belongs to a neighbour) iff some neighbour rect contains it AND (the stamp is a GROUP — its scaled interior children
 // are their own hit surfaces, so an overlay covering an interior point owns that tap — OR the point is OUTSIDE the
 // item's own OriginalBox, i.e. in the halo band, not on the item itself). Otherwise the point is on the item →

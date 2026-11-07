@@ -4,18 +4,18 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// R5 (WS-A) — the PURE construction of the view-scale input-gate registry, split out of ViewScaler so the neighbour
+// The PURE construction of the view-scale input-gate registry, split out of ViewScaler so the neighbour
 // selection is Godot-free and Exe-testable. ViewScaler now only MEASURES the stamps (needs the Godot views) and hands
 // the applied stamps here; the neighbour walk + the four exclusion rules live entirely on this MirrorProtocol side.
 //
-// WHAT A "NEIGHBOUR" IS (and why the round-2→round-4 collection was wrong). A stamp's inverse remap must fire for a
+// WHAT A "NEIGHBOUR" IS (and why collecting every overlapping rect was wrong). A stamp's inverse remap must fire for a
 // tap that belongs to the SCALED item and stay identity for a tap that belongs to some UN-SCALED thing sitting in the
 // scaled item's enlarged halo. ViewScaleInput.IsExempt makes a point identity when a "neighbour" rect contains it. So
 // a neighbour must be exactly an un-scaled surface DRAWN ON TOP of the scaled item — a non-descendant OVERLAY (the
 // TopBar deck/gold/settings buttons over a scaled card-reward group) or, for an item stamp, a displaced sibling in the
 // halo band. It must NEVER be an ANCESTOR, a full-viewport BACKDROP, or anything painted UNDER the item: those enclose
 // the whole stamp, so treating them as neighbours exempts EVERY interior tap → the stamp's inverse never fires → taps
-// land "as if the container was never scaled" (the R5 card-reward bug: the group root's ≥12 full-viewport ancestors —
+// land "as if the container was never scaled" (the card-reward bug: the group root's ≥12 full-viewport ancestors —
 // NGame / RootSceneContainer / NRun / … / NRewardsScreen — all overlapped the 1.10 NoClamp group ScaledBox and were
 // collected as neighbours because the old subtree walk only went UP).
 //
@@ -33,8 +33,8 @@ namespace CouchCoop.MirrorProtocol.Input;
 //                      index for a GROUP stamp, and the stamp NODE's own index for an ITEM stamp — see PaintFloor.
 //
 // WEB TWIN (keep in lockstep): frontend/src/mirror/mirrorRenderer.ts `buildViewScaleInputStamps` +
-// `groupPaintFloor` / `buildPaintOrderIndex`. It shipped with rules 1/2/3 only for two rounds, and the missing rule 4
-// WAS the round-9 map-legend input bug (the map screen paints over the room it was opened from, so that room's
+// `groupPaintFloor` / `buildPaintOrderIndex`. It once shipped with rules 1/2/3 only, and the missing rule 4
+// WAS the map-legend input bug (the map screen paints over the room it was opened from, so that room's
 // creature Hitbox / HpBarHitbox / Intent rects — interactive, narrow, painted ~2000 slots below the legend — survived
 // 1/2/3, overlapped the legend's 1.2x ScaledBox and exempted its whole interior). Mirrored truth tables live in
 // ViewScaleInputRegistryTests (here) and frontend/src/mirror/__tests__/viewScaleInputRegistry.spec.ts.
@@ -96,14 +96,14 @@ public static class ViewScaleInputRegistry
 
         foreach (var a in applied)
         {
-            // R10 WS-F — EFFECTIVE VISIBILITY. A SCREEN is hidden by clearing the flag on its ROOT, so every
+            // EFFECTIVE VISIBILITY. A SCREEN is hidden by clearing the flag on its ROOT, so every
             // descendant keeps Visible=true and the stamp INDEX (deliberately) still stamps it — a stamp on a node
             // nothing draws is free, and keeping it is what stops the reappear frame rendering at scale 1
             // (ViewScaleStampIndexTests.StampSurvivesTransientInvisible pins that). THIS registry is different: it is
             // coordinate-only and draws nothing, so an invisible stamp here silently CLAIMS pointers. A closed map
             // screen behind a combat room kept remapping every pointer whose game X crossed the MapLegend's 1.2 band
-            // or a 1.5 map point — measured on the web twin as a 66.7 design-px instantaneous cursor jump at
-            // 1920x1080 and 67.6 at 2520x1080 (scripts/probe-targeting-drag-jump.mjs). InteractiveRectScan already
+            // or a 1.5 map point — which showed up on the web twin as a tens-of-design-px instantaneous cursor jump
+            // when targeting. InteractiveRectScan already
             // drops ancestor-hidden rects, so this is the same predicate on the other half of the input path.
             // Web twin: the ancestorChainHidden gate in mirrorRenderer.buildViewScaleInputStamps.
             if (!EffectivelyVisible(state, a.Id))
@@ -145,7 +145,7 @@ public static class ViewScaleInputRegistry
         MirrorState state, IReadOnlyDictionary<string, int> orderIndex, Applied a, string rid, DesignAabb rbox,
         double designWidth, int paintFloor)
     {
-        // 1. Ancestor — the whole point of the R5 fix: a full-viewport ancestor is never a neighbour.
+        // 1. Ancestor — the whole point of the fix: a full-viewport ancestor is never a neighbour.
         if (IsStrictAncestor(state, rid, a.Id))
         {
             return true;
@@ -217,14 +217,14 @@ public static class ViewScaleInputRegistry
 
     // Rule 4's paint floor for one applied stamp.
     //   GROUP → GroupPaintFloor (the root's own index, with the non-contiguity fallback).
-    //   ITEM  → R19: the stamp NODE's OWN paint index. An item's halo is the pixels the enlarged item PAINTS OVER, so a
+    //   ITEM  → the stamp NODE's OWN paint index. An item's halo is the pixels the enlarged item PAINTS OVER, so a
     //     rect the item paints over cannot be what the finger is on — the same argument as the group rule, with the item
     //     itself as the floor. Without it the card dialog's "Show upgrade" tickbox was dead in its own halo: the deck
     //     grid's card-holder hitboxes sit UNDER the inspect popup, survive rules 1/2/3 (not ancestors, not enclosing its
     //     287x64 pre-scale box, not stage bands) and overlap its 1.4x ScaledBox, so every halo point was exempt ⇒
     //     identity ⇒ the coordinate stayed outside the tickbox and landed on the screen's full-stage backstop, whose
-    //     released handler closes the dialog. Measured on the web twin against .sts2/bench/r9-carddetail.ndjson: 13
-    //     neighbours claimed that halo and 0/34 in-halo hover samples reached the tickbox, at 2520x1080 AND 1920x1080
+    //     released handler closes the dialog. On the web twin several
+    //     neighbours claimed that halo and no in-halo hover sample reached the tickbox, at wide AND 16:9 stages
     //     (unlike the rest of this family, it is not a wide-stage bug). A legitimate overlay still paints AFTER the item
     //     and keeps its exemption.
     // int.MinValue ⇒ the rule can never fire (the stamp node isn't in the paint order at all).
@@ -414,14 +414,14 @@ public static class ViewScaleInputRegistry
         DesignAabb ScaledBox,
         DesignAabb OwnUnscaledBox);
 
-    // R6 (WS-TIP / item 6): forward-map `ownerBox` through EVERY view-scale stamp that renders it — the owner's OWN
+    // Forward-map `ownerBox` through EVERY view-scale stamp that renders it — the owner's OWN
     // stamp PLUS every stamped ANCESTOR — composed innermost→outermost (deepest first), i.e. group(card(box)). This
     // supersedes the old single-stamp `TryGetStampContaining` map: on the card-reward screen the exact-id map hit only
     // the per-card 1.15 stamp, which is Center+NoClamp ⇒ centre-fixed ⇒ follow delta 0, so an off-centre card's tip
     // NEVER followed the outer 1.10 GROUP that actually displaces the card by 0.10·(c−S). Composing both stamps folds
     // the group displacement in (and the correct 1.10·1.15 visual size for the side-clamp box). Selection is
     // ANCESTRY-only — the stamps that multiply into a node's screen transform are EXACTLY those applied to it or one of
-    // its ancestors — so it is hierarchy-faithful, robust to arbitrary nesting, and (unlike the R5 box-containment
+    // its ancestors — so it is hierarchy-faithful, robust to arbitrary nesting, and (unlike the earlier box-containment
     // fallback it replaces) never spuriously maps a NON-scaled overlay whose centre merely lands inside a full-viewport
     // group box (a TopBar relic tip on the reward/merchant screen). Returns false + `mapped == ownerBox` when no stamp
     // on the owner or an ancestor covers it.

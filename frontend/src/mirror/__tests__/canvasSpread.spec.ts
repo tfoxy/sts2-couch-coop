@@ -271,7 +271,7 @@ describe("canvas spread — the walk", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// R6 M2 — AN ANIMATED NODE CLAIMS THE FIELD WHERE IT IS DRAWN
+// AN ANIMATED NODE CLAIMS THE FIELD WHERE IT IS DRAWN
 // ---------------------------------------------------------------------------------------------------------------
 //
 // The walk measures the squeeze field at a node's TRUE pose. A `transformOverride` says where the client is drawing
@@ -362,7 +362,7 @@ describe("canvas spread — the DRAWN-pose field claim", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// A MOVED SUBTREE'S OWN CLAIMS — the Aug-29 defect
+// A MOVED SUBTREE'S OWN CLAIMS
 // ---------------------------------------------------------------------------------------------------------------
 //
 // The block above proves the case its round was written for: a node CARRYING a transform override re-claims the
@@ -702,9 +702,9 @@ describe("canvas readable-hand raise: the live tween endpoint", () => {
   });
 });
 
-// THE POOLED CHILD CONTEXT (R2 B2). The wide-screen branch used to allocate a fresh `SpreadCtx` per node, which
+// THE POOLED CHILD CONTEXT. The wide-screen branch used to allocate a fresh `SpreadCtx` per node, which
 // on a 2712x1220 phone is ~1500 short-lived objects per build and the walk's largest single contribution to the
-// 4.4 % the collector took on the Aug-28 combat trace. The pool is a stack indexed by walk DEPTH, and the only
+// 4.4 % the collector took on a recorded combat trace. The pool is a stack indexed by walk DEPTH, and the only
 // way that can be wrong is if a context outlives the child recursion it was built for — so this asserts the
 // shape a broken pool would break: siblings at DIFFERENT depths, whose contexts would alias if the stack ever
 // handed out the same slot twice, and a deep descendant that reads its ancestor's claim after a sibling subtree

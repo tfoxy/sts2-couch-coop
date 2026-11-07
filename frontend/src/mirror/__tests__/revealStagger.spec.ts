@@ -19,7 +19,7 @@ import {
 } from "@/mirror/atlasBaker";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF6 WS-P2 — MAP-OPEN PAINT DIET: the staggered reveal and atlas-region warm-up in the dark.
+// MAP-OPEN PAINT DIET: the staggered reveal and atlas-region warm-up in the dark.
 //
 // Both come out of the same measurement (the `perf5-map-open` fixture, real atlases served, headless Chromium):
 // the frame that opens the map is PAINT-bound — ~733 display-item paints plus the raster they schedule, the worst
@@ -385,7 +385,7 @@ describe("atlas region warm-up while hidden", () => {
     expect(__regionWaitersForTest(ATLAS, wireRegion)).toEqual(["Icon"]);
   });
 
-  // Aug-20 — the RELEASE path is the reason the page-settle waiter has to exist. `releaseRevealBatch` writes
+  // The RELEASE path is the reason the page-settle waiter has to exist. `releaseRevealBatch` writes
   // `display` and nothing else (a held subtree was already styled by the walk, so there is deliberately nothing to
   // recompute) — which means whatever placeholder the reveal walk chose is exactly what the player sees when the
   // hold lifts. A sprite that guessed "page" because its atlas had not decoded yet would therefore paint a whole

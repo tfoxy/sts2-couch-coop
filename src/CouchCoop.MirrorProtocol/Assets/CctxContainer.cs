@@ -7,7 +7,7 @@ namespace CouchCoop.MirrorProtocol.Assets;
 // GPU-native ASTC 4x4 once (see scripts/transcode-texture-cache.mjs + scripts/transcode-godot/transcode.gd) and
 // wraps the raw Godot Image bytes in this tiny fixed header; the phone client sniffs the magic, parses the header,
 // and hands the payload straight to Image.CreateFromData — NO codec decode, NO mipgen, NO GPU-side re-encode. ASTC
-// 4x4 is 8bpp vs RGBA8 32bpp, so the Mali texture unit (the measured bottleneck) fetches ~4x fewer bytes. NOTE the
+// 4x4 is 8bpp vs RGBA8 32bpp, so the mobile GPU's texture unit (the bottleneck) fetches ~4x fewer bytes. NOTE the
 // WIRE goes the other way: source blobs are entropy-coded PNG/WEBP, so a CCTX (raw ASTC + baked mips) is ~2x LARGER
 // on the wire — the trade is upload size for GPU fetch bandwidth + zero client decode/mipgen.
 //

@@ -2,9 +2,9 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-SHOP (round 6) HEADLESS live-data verification of the shop OPEN slide + the closed-shop non-regression — no Godot,
+// HEADLESS live-data verification of the shop OPEN slide + the closed-shop non-regression — no Godot,
 // no display, no live lock. Two env-gated legs (each skips SILENTLY when its var is unset, so a plain checkout stays
-// green; the audit .ndjson files live in the gitignored .sts2/bench):
+// green; the recordings live in the gitignored `.sts2/` directory):
 //
 //   * COUCHCOOP_MIRROR_SHOPOPEN_PROBE_NDJSON → a recorder-with-shop-CLOSED-then-OPENED capture. Asserts the shop rug
 //     SlotsContainer resolves the merchant GROUP (1.20), that a TRANSFORM tween hint slides it (an on-screen endpoint),

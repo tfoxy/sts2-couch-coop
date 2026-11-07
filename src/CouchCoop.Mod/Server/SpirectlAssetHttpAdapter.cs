@@ -6,7 +6,7 @@ namespace CouchCoop.Mod.Server;
 // Godot-native-first `/res` serving keeps resource bytes raw by default. The only alternate representation is
 // `Png`, the explicit raster request for resources a client needs to decode as an image.
 //
-// WS-PARTICLE: `Png` (`?format=png`) asks spirectl to RASTERIZE the resource. For an AtlasTexture `.tres` (the
+// `Png` (`?format=png`) asks spirectl to RASTERIZE the resource. For an AtlasTexture `.tres` (the
 // particle-texture case: intent_attack_3.tres etc.) spirectl's extraction falls through its structure-family
 // branch to ExtractTextureAsync → ExtractAtlasTextureAsync, returning the CROPPED REGION as PNG bytes — the same
 // resolver raster requests already use. Raw would return the `.tres` TEXT, which no image decoder can load (the
@@ -101,8 +101,8 @@ public sealed class SpirectlAssetHttpAdapter(ISpirectlAssetProvider assets, ICou
     // does (`--format png` for model:// queries). The res:// format selection is Godot-native-first: `raw`
     // (default) serves the game's own resource bytes — spirectl's "raw" keeps scenes as GodotSceneState JSON
     // and shaders as raw `.gdshader` text, and diverts only the AtlasTexture/Font/Material `.tres` DOCUMENTS to
-    // their raw bytes. `png` (WS-PARTICLE,
-    // `?format=png`) is the explicit raster ask: spirectl's extraction treats any non-structure format as a raster
+    // their raw bytes. `png`
+    // (`?format=png`) is the explicit raster ask: spirectl's extraction treats any non-structure format as a raster
     // encode, so an AtlasTexture `.tres` routes to the cropped-region PNG path (ExtractAtlasTextureAsync) instead
     // of its raw `[gd_resource]` text — the native client requests this for particle/sampler textures whose path
     // is not a decodable image (see RasterTextureUrl).

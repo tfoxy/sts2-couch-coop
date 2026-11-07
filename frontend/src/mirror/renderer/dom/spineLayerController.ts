@@ -264,7 +264,7 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
         record.subLayers[at] = next;
       }
     }
-    // Aug-25: condition (a) just changed for this node, so re-derive its paint-cull promotion NOW rather than
+    // Condition (a) just changed for this node, so re-derive its paint-cull promotion NOW rather than
     // leaving it to the end-of-walk pass — the gated still commits from a DECODE CALLBACK, with no walk behind it,
     // and on a settled screen the next walk may be a long way off (or never). Costs one querySelector per swap.
     ports.timeline().refreshPromotion(record);
@@ -330,7 +330,7 @@ export function createSpineLayerController(ports: SpineLayerControllerPorts): Sp
       return;
     }
 
-    // The layer starts as the CANVAS: whether the clip turns out to be a still (→ <img>, WS-4) isn't known until
+    // The layer starts as the CANVAS: whether the clip turns out to be a still (→ <img>) isn't known until
     // it lands, and the canvas is the mechanism that can paint either. applySpinePlacement swaps it if needed.
     if (!record.spineLayer) {
       const canvas = document.createElement("canvas");

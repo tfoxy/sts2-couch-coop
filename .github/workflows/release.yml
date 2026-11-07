@@ -20,6 +20,11 @@ jobs:
           path: sources/couchcoop
           fetch-depth: 0
 
+      # Refuse to release a tree that fails the public-tree policy (docs/commit-and-release.md).
+      - name: Check the public tree
+        working-directory: sources/couchcoop
+        run: python3 scripts/check-public-tree.py
+
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:

@@ -269,7 +269,7 @@ internal static class CacheRootPurgeTests
         Expect(CouchCoopCacheRoot.CompareVersionNames("v0.1.0", "public-beta") > 0, "…in both directions");
     }
 
-    // TEMPORARY — delete this case with SweepLegacyLayout (on or after 2026-10-13). Before caches were scoped at
+    // TEMPORARY — delete this case with SweepLegacyLayout (once the legacy layout is out of circulation). Before caches were scoped at
     // all they lived beside the new `cache` directory and are now unreachable; this reclaims them once.
     private static void LegacyLayoutIsSweptOnce()
     {

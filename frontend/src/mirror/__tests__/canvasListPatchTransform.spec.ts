@@ -545,7 +545,7 @@ describe("the surfaces a list comparison cannot see", () => {
   });
 });
 
-// --- 5b: THE SPREAD TERM (R21 B2) ---------------------------------------------------------------------------------
+// --- 5b: THE SPREAD TERM ---------------------------------------------------------------------------------
 //
 // The tier used to refuse `spreadFactor !== 1` outright, which cost every maximized desktop browser its idle frames
 // (a 1920x1080 window's content viewport is ~1878x954, aspect 1.97). The claim under test is the algebra that

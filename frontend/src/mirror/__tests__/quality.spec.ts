@@ -418,8 +418,8 @@ describe("shadersSeedOff / particlesSeedOff (the iOS seed)", () => {
   });
 });
 
-// The STATIC backing-store scales — the one scale that is a DEVICE answer rather than a panel one. Round-2 made
-// both a flat 1 and a Mali-G57 map screen went 6.5ms → 126ms StartDrawToSwapStart p50 (a frozen shader still
+// The STATIC backing-store scales — the one scale that is a DEVICE answer rather than a panel one. A flat 1 made
+// a weak phone's map screen present far slower (a frozen shader still
 // re-renders per scene-delta, so fill still scales with the backing store).
 describe("static effect scales", () => {
   it("a phone renders static shaders at ½ and static particles at ¼", () => {

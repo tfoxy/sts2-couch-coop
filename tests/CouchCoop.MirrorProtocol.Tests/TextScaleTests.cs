@@ -30,8 +30,8 @@ internal static class TextScaleTests
         NudgeEntriesRound5();
     }
 
-    // ROUND-5 RETUNE: the R15/round-4 per-entry vertical nudges (energy/star/pile counts + health-bar block, 2-4px UP)
-    // were never pixel-measured. The round-5 ink matrix (verify-text-align.sh over the 37-10 combat recording) measured
+    // RETUNE: the earlier per-entry vertical nudges (energy/star/pile counts + health-bar block, 2-4px UP)
+    // were never pixel-measured. An ink-position matrix over a recorded combat measured
     // those counts sitting ~8-10px ABOVE their box centre on the shipped build and ~0 with BOTH the growth-centering
     // and the nudge disabled — the compensation OVER-lifted a loose-box Center label Godot's Center already centres.
     // So every NudgeYPx retunes to the measured residual: 0. The overflow-aware growth-centering (PlacementLift) then
@@ -91,7 +91,7 @@ internal static class TextScaleTests
         Check.That(!intent.Wrap, "a non-wrapping label carries no Wrap flag → no line_spacing override");
     }
 
-    // R8 item 12: the native line_spacing constant is DERIVED from the resolved font's natural line box so both
+    // The native line_spacing constant is DERIVED from the resolved font's natural line box so both
     // clients land on the SAME pitch as the web's `line-height: calc(<ratio>em + <addend>px)`. The vectors are the
     // real End-Turn geometry: kreon_bold at the 34px cap has ascent 34 + descent 10 = 44px natural, the button box is
     // 162×72, and "End Turn 3" measures 161.7px wide — i.e. one line at EN, but "End Turn 10" (176px) wraps.
@@ -107,7 +107,7 @@ internal static class TextScaleTests
             $"native pitch {natural + ls} is within 1px of the web pitch {webPitch:0.##}");
 
         // Godot renders only as many lines as FIT: its loop breaks once total_h > ceil(boxH + line_spacing)
-        // (scene/gui/label.cpp get_layout_data). The pre-R8 flat +1 put two lines at 2×45 = 90 against a budget of 73,
+        // (scene/gui/label.cpp get_layout_data). The earlier flat +1 put two lines at 2×45 = 90 against a budget of 73,
         // so the SECOND line was silently dropped ("End Turn 10" → "End Turn"). The derived constant fits.
         Check.That((2 * (natural + 1)) > Math.Ceiling(boxH + 1),
             "pre-R8 flat +1 overflowed Godot's two-line budget (the dropped-second-line bug)");
@@ -125,7 +125,7 @@ internal static class TextScaleTests
         Check.Close((natural + ls) - ls, natural, "a single-line label's centred block height is independent of line_spacing");
     }
 
-    // ---- WS-TEXT round-4 (items 1 + 2) ----------------------------------------------------------------------------
+    // ---- Inline font-size runs and line spacing ----------------------------------------------------------------------------
 
     // Item 1: inline absolute [font_size=N] runs scale by the label's own factor so a multiattack intent's "xN"
     // multiplier scales coherently with the count. No-op at scale 1 (== the switch-off / no-bump path) and when there
@@ -215,7 +215,7 @@ internal static class TextScaleTests
             1.54, "end turn → end_turn_button.tscn :: Visuals/Label");
         Check.Close(TextScale.ScaleFor("res://scenes/combat/energy_counters/star_counter.tscn", "MarginContainer/CountLabel"),
             1.24, "star counter → star_counter.tscn :: MarginContainer/CountLabel");
-        // R9 (WS-B): the three pile counts dropped 1.24 → 1.16 because their buttons are ALSO view-scaled 1.25 (the
+        // The three pile counts dropped 1.24 → 1.16 because their buttons are ALSO view-scaled 1.25 (the
         // factors multiply). The star / energy / deck counters above keep 1.24 — they carry no view-scale stamp.
         Check.Close(TextScale.ScaleFor("res://scenes/combat/draw_pile.tscn", "CountContainer/Count"),
             1.16, "draw pile → draw_pile.tscn :: CountContainer/Count (R9: 1.24 → 1.16, the button is view-scaled 1.25)");
@@ -264,7 +264,7 @@ internal static class TextScaleTests
         Check.Close(TextScale.ScaleFor("res://scenes/combat/health_bar.tscn", "BlockContainer/BlockLabel"),
             1.42, "health bar BlockLabel suffix");
 
-        // Exhaust pile (already scene-scoped pre-audit) + proceed button. R9 (WS-B): 1.24 → 1.16 in lockstep with
+        // Exhaust pile (already scene-scoped pre-audit) + proceed button. 1.24 → 1.16 in lockstep with
         // draw/discard — all three pile buttons now carry a 1.25 view-scale stamp that multiplies with the text scale.
         Check.Close(TextScale.ScaleFor("res://scenes/combat/exhaust_pile.tscn", "CountContainer/Count"),
             1.16, "exhaust pile count (R9: 1.24 → 1.16)");
@@ -272,7 +272,7 @@ internal static class TextScaleTests
             1.08, "proceed button label");
     }
 
-    // WS-TXT: the card DescriptionLabel entry additionally carries the line-spacing metrics (wrapped line-height ratio
+    // The card DescriptionLabel entry additionally carries the line-spacing metrics (wrapped line-height ratio
     // + explicit-newline paragraph-extra em). MetricsFor exposes them; other labels resolve to none; the values equal
     // the public constants the mirrorTextScale.css --godot-rich-* properties are kept in lockstep with.
     private static void CardDescriptionCarriesLineSpacingMetrics()
@@ -284,7 +284,7 @@ internal static class TextScaleTests
         Check.That(desc.ParagraphExtra is not null, "card desc carries a paragraph-extra ratio");
         Check.Close(desc.ParagraphExtra!.Value, TextScale.CardDescParagraphExtra, "card desc paragraph-extra == const");
 
-        // WS-text round-4 (P5-c): the +1px line-height addend TextBuilder.ApplyRichLineSpacing adds on top of the
+        // The +1px line-height addend TextBuilder.ApplyRichLineSpacing adds on top of the
         // ratio target (the End-Turn `WrappedLabelLineSpacingPx` idiom, ported to wrapped rich text). Kept in
         // lockstep with mirrorTextScale.css's `--godot-rich-line-height: calc(0.88em + 1px)`.
         Check.Equal(TextScale.CardDescLineHeightAddendPx, 1, "card desc line-height +1px addend");

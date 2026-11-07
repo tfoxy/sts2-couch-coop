@@ -6,7 +6,7 @@
 //
 //   * the DRAW LIST itself (caller-owned; this module pushes into it and never creates one),
 //   * the OVERLAY RECORDS — the nodes a flat quad list cannot paint (text, WebGL shader surfaces, particle
-//     systems, Spine clips, card trails), handed to the Wave-2 DOM overlay. M2's `fxSource` gives the two gsw
+//     systems, Spine clips, card trails), handed to the DOM overlay. The `fxSource` gives the two gsw
 //     RUNTIME kinds a quad as well: the surface a runtime painted, uploaded as a texture and drawn at the node's
 //     own paint index. The classification does not move — the node is still an overlay node, it just also has
 //     pixels in the list — so the union oracle the offline gate asserts is untouched.
@@ -39,7 +39,7 @@
 // else, so `gGame` — what a tap sends — stays true 1920-space at every viewport. At `spreadFactor === 1` the whole
 // thing short-circuits to a frozen root context and never allocates.
 //
-// THE VIEW SCALE (M2) rides the same way, through `@/mirror/viewScaleLayout` — again the module the DOM walk uses.
+// THE VIEW SCALE rides the same way, through `@/mirror/viewScaleLayout` — again the module the DOM walk uses.
 // The DOM applies a stamp by PREPENDING a design-space matrix onto the item's element and letting CSS nesting
 // cascade it, so a descendant renders at `V_ancestors · mDesign_N · gStretched_child`: the accumulated stamp
 // product LEFT-multiplies the child's own spread-shifted global. A flat list has no nesting, so `vsIn` — that
@@ -62,7 +62,7 @@
 //       tier 2 — SUBTREE (a changed node's paint/clip/box): re-emit the commands inside that node's
 //                `[spanStart, spanEnd)` interval. The interval is exactly why `paintOrder` computes spans and
 //                asserts they are contiguous — a subtree is one splice, not a scatter.
-//       tier 3 — NUMERIC (a transform or a `modulate:a` tween, which probe P8 measured as the dominant hint kind):
+//       tier 3 — NUMERIC (a transform or a `modulate:a` tween, the dominant hint kinds):
 //                overwrite the affected commands' floats in place, with no re-walk at all. That needs a per-node
 //                command RANGE, which is what `NodeCommandRange` below records.
 //
@@ -202,7 +202,7 @@ export interface DrawListStats {
    */
   fxQuads: number;
   /**
-   * SPINE STILLS pushed as quads this build (M3 A2). Always 0 without
+   * SPINE STILLS pushed as quads this build. Always 0 without
    * {@link BuildDrawListOptions.spineBoxes}; the offline gate and most unit builds pass no source at all.
    *
    * SELECTIVE by design, so this is deliberately far below `overlayByKind.spine`: a still is quadded only when
@@ -212,7 +212,7 @@ export interface DrawListStats {
    */
   spineQuads: number;
   /**
-   * CARD-TRAIL QUADS pushed this build (M3 A4) — the cells of every live comet's ribbon, at the trail node's own
+   * CARD-TRAIL QUADS pushed this build — the cells of every live comet's ribbon, at the trail node's own
    * paint index. Always 0 without a {@link BuildDrawListOptions.trailSource}, and 0 on a screen with nothing
    * flying (a trail exists only while a card is moving).
    *
@@ -221,7 +221,7 @@ export interface DrawListStats {
    */
   trailQuads: number;
   /**
-   * TEXT QUADS pushed this build (M4). 0 without a `textSource`, and 0 for every label the path refused, paced or
+   * TEXT QUADS pushed this build. 0 without a `textSource`, and 0 for every label the path refused, paced or
    * could not raster — so this against `overlayCounts.text` is how many of a screen's labels the canvas owns.
    */
   textQuads: number;
@@ -245,7 +245,7 @@ export interface DrawListStats {
   glyphRuns: number;
   clips: number;
   maxClipDepth: number;
-  /** Distinct texture handles referenced (the batch-key floor probe P4 measured). */
+  /** Distinct texture handles referenced (the batch-key floor). */
   textures: number;
   hitEntries: number;
 }
@@ -290,7 +290,7 @@ export interface DrawListBuild {
   handRaiseChromeCommand: number;
   handRaiseAnchorId: string | null;
   /**
-   * The nodes this build drew an EFFECT QUAD for (M2). Empty without a {@link BuildDrawListOptions.fxSource}.
+   * The nodes this build drew an EFFECT QUAD for. Empty without a {@link BuildDrawListOptions.fxSource}.
    *
    * The overlay's input, and the reason it is a set rather than a count: a host whose surface is in the draw list
    * must stop compositing, while one without a quad must remain composited (unless covered) so an unavailable
@@ -304,14 +304,14 @@ export interface DrawListBuild {
    */
   stageOwnedNoopIds: ReadonlySet<string>;
   /**
-   * The nodes this build drew a SPINE QUAD for (M3 A2). Empty without {@link BuildDrawListOptions.spineBoxes}.
+   * The nodes this build drew a SPINE QUAD for. Empty without {@link BuildDrawListOptions.spineBoxes}.
    *
    * The overlay's input, and a set for the same reason `fxQuadIds` is: a creature the list painted must stop
    * compositing its `<img>`, and one it did NOT must keep it, or turning the flag on would lose a creature.
    */
   spineQuadIds: ReadonlySet<string>;
   /**
-   * The nodes this build drew a TRAIL RIBBON for (M3 A4). Empty without a
+   * The nodes this build drew a TRAIL RIBBON for. Empty without a
    * {@link BuildDrawListOptions.trailSource}.
    *
    * The paint dump's input, not the overlay's: a trail record is DROPPED by the overlay on both settings (there
@@ -321,7 +321,7 @@ export interface DrawListBuild {
    */
   trailQuadIds: ReadonlySet<string>;
   /**
-   * The nodes this build drew a TEXT QUAD for (M4). Empty without a {@link BuildDrawListOptions.textSource}.
+   * The nodes this build drew a TEXT QUAD for. Empty without a {@link BuildDrawListOptions.textSource}.
    *
    * The overlay's input, on `fxQuadIds`' rule rather than `trailQuadIds`': a label the list painted must stop
    * compositing its element, and one it did NOT — a refusal, a pacing, a face that has not loaded — must keep it,
@@ -333,19 +333,19 @@ export interface DrawListBuild {
   /** Exact executor commands emitted by stage-owned static Spine stills. */
   spineCommands: ReadonlySet<number>;
   /**
-   * The view-scale stamps this build applied, in paint order — a PURE PER-BUILD index (native's R8 rule: no
-   * cross-build stamp memory, which is what caused the event-option snap-back three rounds running).
+   * The view-scale stamps this build applied, in paint order — a PURE PER-BUILD index (native's rule: no
+   * cross-build stamp memory, which is what caused the event-option snap-back).
    *
    * Empty whenever the walk ran with no `viewScaleEnv` or with readability scaling disabled. `canvasRenderer` folds it into
    * the GAME-space input registry the pointer inverse consumes.
    */
   viewScaleStamps: ViewScaleStampIndex;
   /**
-   * The paint order of the LAST stage-spanning opaque fill this build drew, or -1 when it drew none (R2).
+   * The paint order of the LAST stage-spanning opaque fill this build drew, or -1 when it drew none.
    *
    * THE FACT AN OVERLAY NEEDS ABOUT DEPTH THAT IT CANNOT SEE. Every overlay element paints above the whole
    * canvas, so when the game opens a full-screen dialog — a deck view, a card grid, a shop sheet — the combat
-   * screen's own labels keep painting OVER it. That is the second half of the user's U1 report, and it is not a
+   * screen's own labels keep painting OVER it. That is the second half of the reported overlay-depth problem, and it is not a
    * clip problem: nothing is out of bounds, something opaque was simply painted in front of it.
    *
    * The predicate is `mirrorRenderer.coverAbove`'s, restated HERE because the walk already has the composed
@@ -370,7 +370,7 @@ export interface DrawListBuild {
   /** Is that fill BLACK? See {@link BACKSTOP_BLACK_EPS} — the only case CSS `opacity` can reproduce exactly. */
   backstopBlack: boolean;
   /**
-   * The four matrices per LOCALLY-ANIMATED node the tier-3 transform patcher re-poses a subtree from (R7 W3-T).
+   * The four matrices per LOCALLY-ANIMATED node the tier-3 transform patcher re-poses a subtree from.
    *
    * Empty without {@link BuildDrawListOptions.localAnims} — i.e. on every settled screen. A node whose
    * `transformOverrides` entry was in force is deliberately ABSENT rather than
@@ -388,7 +388,7 @@ export interface DrawListBuild {
 }
 
 /**
- * A node's animated alpha, as the renderer's evaluator resolved it (Wave 2a).
+ * A node's animated alpha, as the renderer's evaluator resolved it.
  *
  * The two factors are the SAME two the walk composes: `mod` replaces `modulate.a` (and therefore CASCADES to the
  * subtree), `self` replaces `self_modulate.a` (the node's OWN paint alone). Null on a field means "the streamed
@@ -445,7 +445,7 @@ export interface SpreadRegistry {
 }
 
 /**
- * What a build needs to paint SPINE STILLS inside the canvas instead of hoisting them (M3 A2).
+ * What a build needs to paint SPINE STILLS inside the canvas instead of hoisting them.
  *
  * THREE QUESTIONS, and they are separate because they are answered by three different things.
  *
@@ -476,7 +476,7 @@ export interface SpineQuadSource {
 }
 
 /**
- * The LATCHED WIRE-LOCAL of a map-quill stroke (R8) — `mirrorRenderer.pinnedStrokeLocal`'s twin, owned by the
+ * The LATCHED WIRE-LOCAL of a map-quill stroke — `mirrorRenderer.pinnedStrokeLocal`'s twin, owned by the
  * caller because the latch is per-STREAM state and this module is stateless.
  *
  * A quill stroke's local transform is the DrawViewport's viewport→screen fit and is CONSTANT for the stroke's
@@ -495,7 +495,7 @@ export interface PinnedLocalSource {
 }
 
 /**
- * One node's IDLE-LOOP pose for this frame (R4) — the numeric replacement for the CSS animation the DOM backend
+ * One node's IDLE-LOOP pose for this frame — the numeric replacement for the CSS animation the DOM backend
  * puts on the same node, sampled by `canvas/idleAnim.ts` from `tweenLoop`'s phase.
  *
  * TWO CHANNELS, because the vocabulary has two shapes and they compose in different places (see the walk):
@@ -722,14 +722,14 @@ export interface BuildDrawListOptions {
    */
   renderWidthOverrides?: ReadonlyMap<string, number> | null;
   /**
-   * THE EFFECT-SURFACE SOURCE (M2) — `fxSurfaces`' registry.
+   * THE EFFECT-SURFACE SOURCE — `fxSurfaces`' registry.
    *
    * ABSENT IS THE DEFAULT AND IT MUST STAY BYTE-IDENTICAL. Without one, the `overlay` branch pushes a record and
    * nothing else. That keeps the offline draw-list gate (which has no GL, no gsw runtime and therefore no surfaces)
    * producing its source-free list, float for float — the same contract `viewScaleEnv` has one option up.
    *
    * With one, a shader or particle record ALSO emits a quad at the node's own paint index (see
-   * `paintSpec.emitFxQuad`), which is the whole of M2's "effects into the canvas".
+   * `paintSpec.emitFxQuad`), which is the whole of the "effects into the canvas" path.
    */
   fxSource?: FxQuadSource | null;
   /**
@@ -739,7 +739,7 @@ export interface BuildDrawListOptions {
    */
   stageOwnedNoop?: (input: NodePaintInput, record: OverlayRecord) => boolean;
   /**
-   * THE SPINE-STILL SOURCE (M3 A2) — see {@link SpineQuadSource}.
+   * THE SPINE-STILL SOURCE — see {@link SpineQuadSource}.
    *
    * ABSENT MUST STAY BYTE-IDENTICAL, exactly like `fxSource` one option up: without one the
    * `overlay` branch pushes a record and nothing else, the cover pass keeps its "a 0x0 record has no extent, so
@@ -748,7 +748,7 @@ export interface BuildDrawListOptions {
    */
   spineSource?: SpineQuadSource | null;
   /**
-   * THE CARD-TRAIL SOURCE (M3 A4) —
+   * THE CARD-TRAIL SOURCE —
    * `cardTrailState`'s integrator.
    *
    * ABSENT IS BYTE-IDENTICAL, exactly like `fxSource` and `spineSource` above: without one the `overlay` branch
@@ -757,14 +757,14 @@ export interface BuildDrawListOptions {
    */
   trailSource?: TrailQuadSource | null;
   /**
-   * THE TEXT-RASTER SOURCE (M4) — see {@link TextQuadSource}.
+   * THE TEXT-RASTER SOURCE — see {@link TextQuadSource}.
    *
    * ABSENT IS THE DEFAULT AND IT MUST STAY BYTE-IDENTICAL, the same contract the three sources above hold: without
    * one the `overlay` branch pushes a text record and nothing else, and the offline draw-list gate — which has no
    * 2D context, no font and therefore no raster — builds the same list float for float.
    *
    * CLASSIFICATION IS UNTOUCHED EITHER WAY. A text node stays `overlay` whether or not its pixels reach the list,
-   * exactly as a shader node does under M2, so the union oracle the offline gate checks is the same set on both
+   * exactly as a shader node does under the fx path, so the union oracle the offline gate checks is the same set on both
    * settings. That is why turning this on cannot move a single number in that gate.
    */
   textSource?: TextQuadSource | null;
@@ -805,7 +805,7 @@ export interface BuildDrawListOptions {
    */
   textSnap?: TextSnap | null;
   /**
-   * PIN A MAP-QUILL STROKE'S WIRE-LOCAL (R8). Absent ⇒ nothing is pinned and every matrix below remains streamed,
+   * PIN A MAP-QUILL STROKE'S WIRE-LOCAL. Absent ⇒ nothing is pinned and every matrix below remains streamed,
    * which is the offline gate's unpinned mode.
    *
    * Consulted for a node carrying stroke geometry and nothing else — see
@@ -813,7 +813,7 @@ export interface BuildDrawListOptions {
    */
   pinnedLocals?: PinnedLocalSource | null;
   /**
-   * PER-NODE IDLE-LOOP POSES (R4) — see {@link LocalAnim}. Absent ⇒ no node is animated and every matrix remains
+   * PER-NODE IDLE-LOOP POSES — see {@link LocalAnim}. Absent ⇒ no node is animated and every matrix remains
    * at its streamed pose, which is the offline gate's no-animation mode.
    */
   localAnims?: ReadonlyMap<string, LocalAnim> | null;
@@ -825,7 +825,7 @@ export interface BuildDrawListOptions {
   /** Retain painted-box identities for the optional reference-patch cover refresh. */
   coverageRefresh?: boolean;
   /**
-   * PER-NODE PAINT SUBSTITUTES (R6) — a shallow clone of the node carrying a DIFFERENT
+   * PER-NODE PAINT SUBSTITUTES — a shallow clone of the node carrying a DIFFERENT
    * frame's texture fields, used for this node's paint and for nothing else.
    *
    * An enemy intent's glyph is a frame ANIMATION the producer freezes game-side: the wire ships the whole frame
@@ -916,7 +916,7 @@ const NO_FX_QUAD_IDS: ReadonlySet<string> = new Set<string>();
 const NO_SPINE_QUAD_IDS: ReadonlySet<string> = new Set<string>();
 /** …and its trail twin. */
 const NO_TRAIL_QUAD_IDS: ReadonlySet<string> = new Set<string>();
-/** …and its text twin (M4). */
+/** …and its text twin. */
 const NO_TEXT_QUAD_IDS: ReadonlySet<string> = new Set<string>();
 const NO_COMMAND_INDICES: ReadonlySet<number> = new Set<number>();
 
@@ -1162,7 +1162,7 @@ export function buildDrawList(
         if (memoRec !== null) memoRec.refuse = reason;
       })
     : null;
-  // R6 M2 — re-base an ANIMATED node's field claim at the pose it is drawn at (`?spreadEndpoint`, shared with the
+  // Re-base an ANIMATED node's field claim at the pose it is drawn at (`?spreadEndpoint`, shared with the
   // DOM writer, default ON). Hoisted per build like `spreading` itself, and false at 16:9 by construction.
   const spreadRebase = spreading;
   const spreadScratch: SpreadOut | null = spreading ? createSpreadOut() : null;
@@ -1170,18 +1170,17 @@ export function buildDrawList(
   /**
    * A DEPTH-INDEXED stack of reusable child contexts, and why the walk does not just allocate one per node.
    *
-   * The wide-screen branch builds a fresh `SpreadCtx` for EVERY node it visits — and on a wide screen (the phone
-   * this round is gated on is 2712x1220) that branch is live for the whole tree, so it is ~1500 short-lived
-   * nine-field objects per build, every build. The Aug-28 combat trace put the collector at 4.4 % of frame self
+   * The wide-screen branch builds a fresh `SpreadCtx` for EVERY node it visits — and on a wide screen (a phone)
+   * that branch is live for the whole tree, so it is ~1500 short-lived nine-field objects per build, every build. A combat trace put the collector at a few percent of frame self
    * time.
    *
    * WHAT THIS IS AND IS NOT WORTH, measured rather than assumed. On desktop V8 the pool is worth NOTHING: a
-   * 1501-node build measured 3.34 ms with per-node allocation and 3.30 ms pooled, i.e. inside the noise. Nursery
+   * ~1500-node build costs the same with per-node allocation and pooled, i.e. inside the noise. Nursery
    * scavenging of small short-lived objects is very nearly free there, and the walk's real allocation cost turned
    * out to be elsewhere (the per-node `names` array and joined path string that `sceneIdentityOf` no longer
-   * builds — see `HitMemo`, which measured 41 % off the same build). This is kept because it is strictly less
+   * builds — see `HitMemo`, which removed a large share of the same build's cost). This is kept because it is strictly less
    * garbage on a device whose collector is not desktop V8's, and it is CHEAP and pinned by tests — but it is
-   * UNPROVEN, and the phone trace is the only thing that can settle it. Do not quote it as a win.
+   * UNPROVEN, and a device trace is the only thing that can settle it. Do not quote it as a win.
    *
    * WHAT MAKES REUSE SAFE, and it is one property: a context's ONLY consumer is the child recursion it is handed
    * to, and that recursion is synchronous and fully nested. `computeSpread` reads its `ctx` into locals and keeps
@@ -1321,7 +1320,7 @@ export function buildDrawList(
           stampOf: (id) => viewScaleStamps.get(id)
         }
       : null;
-  // --- what the TRANSFORM patcher is handed (R7 W3-T) ----------------------------------------------------------
+  // --- what the TRANSFORM patcher is handed ----------------------------------------------------------
   //
   // All three are filled ONLY when something is animating locally, which is the same "null rather than empty" rule
   // `cosmeticOffsets` takes and for the same reason: a settled screen must not pay a `Set.add` per node for a
@@ -1544,7 +1543,7 @@ export function buildDrawList(
     if (!wireNode || (skipRoots !== null && skipRoots.has(id))) {
       return;
     }
-    // R6 — the animating glyph's own frame, if this node has one. A shallow clone that differs only in its
+    // The animating glyph's own frame, if this node has one. A shallow clone that differs only in its
     // texture fields, so every other answer below is the wire node's.
     const node = frameSubstitutes === null ? wireNode : (frameSubstitutes.get(id) ?? wireNode);
     // An OUTERMOST hidden root (the same test as `hidden` below, first on its path): the memo either replays
@@ -1572,7 +1571,7 @@ export function buildDrawList(
     // where it is DRAWN. The two diverge whenever a tween override, a cosmetic offset or the wide-screen spread is
     // in force.
     //
-    // THE ONE SUBSTITUTION THAT REACHES `gGame` (R8): a map-quill stroke's local is the DrawViewport fit and never
+    // THE ONE SUBSTITUTION THAT REACHES `gGame`: a map-quill stroke's local is the DrawViewport fit and never
     // legitimately changes, so it is LATCHED (see `PinnedLocalSource`). This is a correction to what the wire
     // said rather than a cosmetic override, which is why it goes in here — ahead of the split — instead of
     // through `transformOverrides`. The guard is the DOM twin's, in its order: only a node that carries stroke
@@ -1583,7 +1582,7 @@ export function buildDrawList(
     const own = pinned ? pinnedLocals.pin(id, wire as Affine) : wire;
     const gGame: Affine = own == null ? parentGame : affineMul(parentGame, own as Affine);
     const override = transformOverrides?.get(id) ?? null;
-    // THE IDLE LOOP (R4), and the whole of its composition law. `pre` is a PARENT-space translate applied ahead
+    // THE IDLE LOOP, and the whole of its composition law. `pre` is a PARENT-space translate applied ahead
     // of the node's own wire matrix (the intent bob, which the game runs on the holder so its subtree rides it);
     // `post` is a node-LOCAL conjugation applied after the composition (the orb spin, the map pulse — a rotation
     // or a uniform scale about the node's own pivot, which is what stops it orbiting). Neither reaches `gGame`
@@ -1625,7 +1624,7 @@ export function buildDrawList(
       const spreadBox = spreadDrawBox(node);
       computeSpread(id, node, spreadCtx, gGame, spreadBox, spreadFactor, spreadEnv, spreadScratch);
       if (diagnosticHidden) hiddenWalk!.spreadComputations++;
-      // …and, for a node something is ANIMATING, at the pose it is actually DRAWN at (R6 M2). The walk above
+      // …and, for a node something is ANIMATING, at the pose it is actually DRAWN at. The walk above
       // measures the field at `gGame` because that is where the GAME has the node; an override says where the
       // client is drawing it this frame, and a field claim is a function of the claimer's own rendered X. Only
       // the two field modes move — see `applyDrawnFieldRebase` for why a rider must not.
@@ -1640,7 +1639,7 @@ export function buildDrawList(
       // every animation, which is the invariant the hit-grid gate holds this to.
       //
       // IT IS THE WHOLE MOVED SUBTREE, not just the node the override is on — and getting that wrong is what the
-      // Aug-29 landing defect was. A hand tween targets the HOLDER, a zero-size positioner that paints nothing;
+      // landing defect was. A hand tween targets the HOLDER, a zero-size positioner that paints nothing;
       // the pixels belong to its descendants, which compose position through the moved holder (`gRaw` carries the
       // move) while claiming the field at their own `gGame` — which the producer FREEZES for the window's whole
       // length. So the card was drawn `travel · (F − 1)` off and snapped when the settle delta thawed `gGame`.
@@ -1698,13 +1697,13 @@ export function buildDrawList(
     // origin only, and never to `gGame`. Resolved HERE, above the view-scale block, because it is an input to it
     // (see the stamp's measured box below) as well as to `gFinal`.
     //
-    // IT IS BANKED IN DESIGN SPACE AT ITS OWNER, and that is the correction R7's settle step found. The DOM twin
+    // IT IS BANKED IN DESIGN SPACE AT ITS OWNER, and that is a correction the settle step needed. The DOM twin
     // is the individual CSS `translate` property on the OWNER's element, which nesting then carries down: a
     // descendant inherits the owner's translate through the owner's own transform, so stamps applied BELOW the
     // owner cannot scale it. Multiplying every descendant's inherited offset by ITS OWN accumulated stamp — which
     // is what this did — moved a travelable map point's icon by `offset x 1.5` while the map moved by `offset`,
-    // so the icons drifted 50% of every scroll and snapped back when a delta landed. That is the user's "map
-    // icons are not client-side scrolled; they lag behind", measured at 30 of the map's quads.
+    // so the icons drifted 50% of every scroll and snapped back when a delta landed. That is the reported "map
+    // icons are not client-side scrolled; they lag behind", visible across the map's quads.
     //
     // The case the old spelling was written for still holds, because the owner's OWN factor is applied at the
     // owner: a held card lifted inside a card-reward group that scales 1.25x still rides that group's factor,
@@ -1719,7 +1718,7 @@ export function buildDrawList(
     //
     // The RAISE is what makes this matter: its dy is measured in CREATURE-LOCAL px (a reticle top, a power row's
     // height — see `raise/creatureHud`), so a creature chain that is not the identity draws the DOM's shift and
-    // this one's at different heights, which is U3b's mechanism (1).
+    // this one's at different heights, which is one mechanism of the mismatch.
     const ownOffset = cosmeticOffsets?.get(id) ?? null;
     const kIn = vsIn === null ? 1 : vsIn[0];
     const ownDx = ownOffset ? parentFinal[0] * ownOffset.dx + parentFinal[2] * ownOffset.dy : 0;
@@ -1752,7 +1751,7 @@ export function buildDrawList(
         if ((box.w <= 0 || box.h <= 0) && !entry.isGroup) {
           box = viewScaleNominalBox(gSpread[4], gSpread[5]);
         }
-        // R7 — MEASURE WHERE THE NODE IS DRAWN, not where the wire last put it.
+        // MEASURE WHERE THE NODE IS DRAWN, not where the wire last put it.
         //
         // `gSpread` is the pre-offset pose, so a node a client-side scroll has moved is measured at a stale
         // place: `computeViewScaleStamp` answers NULL for a box fully outside the design stage, so a map point
@@ -1871,7 +1870,7 @@ export function buildDrawList(
               gHitScaled[5] + drawOffY
             ];
 
-    // R7 W3-T — HAND THE PATCHER THIS NODE'S FOUR MATRICES. See {@link LocalAnimFrame} for what each is for.
+    // HAND THE PATCHER THIS NODE'S FOUR MATRICES. See {@link LocalAnimFrame} for what each is for.
     //
     // OMITTED WHEN AN OVERRIDE IS IN FORCE, and that omission is load-bearing: with `override != null` the node's
     // `gRaw` is an absolute tween pose that ignores `pre` entirely, so `base`/`wire` no longer reconstruct it and
@@ -2023,13 +2022,13 @@ export function buildDrawList(
           // intersection, so moving it can add or remove a crop the patcher has no way to recompute.
           overlayClipped.add(id);
         }
-        // M2 — the effect surface's own pixels, RIGHT HERE, at the node's paint index. Emitting from inside the
+        // The effect surface's own pixels, RIGHT HERE, at the node's paint index. Emitting from inside the
         // walk is what makes the quad free of every problem the DOM overlay has with depth: it lands between the
         // commands the game paints before and after this node, inside whatever clip scopes are open, and inside
         // the node's own `NodeCommandRange` for the tier-3 patcher — none of which needed a line of new plumbing.
         //
         // NOT banked into the cover pass. `coverBoxes` feeds `OverlayRecord.coveredAbove`, whose only consumer is
-        // the HOIST RULE — which is inert for exactly these kinds once the flag is on (and which M2's follow-up
+        // the HOIST RULE — which is inert for exactly these kinds once the flag is on (and which a follow-up
         // retires outright). Banking them would change `coveredAbove` for the OTHER records under the flag and
         // for nothing else, i.e. it would move a number no one reads.
         if (stageOwnedNoop?.(input, record) === true) {
@@ -2080,7 +2079,7 @@ export function buildDrawList(
             trailQuadIds.add(record.id);
           }
         }
-        // …and the LABEL (M4). `boxFor` resolves the spec, lays the text out and rasters it, all inside this
+        // …and the LABEL. `boxFor` resolves the spec, lays the text out and rasters it, all inside this
         // build — the same "uploading happens where a budget can see it" rule the other three registries take.
         // Every null is safe by the same argument the spine branch makes: no quad means the DOM overlay keeps its
         // element and the label renders exactly as it does today.
@@ -2344,7 +2343,7 @@ const COVER_EDGE_EPS = 1;
  * `opacity` can express the first term and has no way at all to express the second, so a sheet with any colour in
  * it is not dimmable — it would come out as a faded label with the sheet's own wash missing. A BLACK sheet makes
  * `a·C` zero and the two agree exactly, which is why this is a threshold on the colour and not on the alpha. One
- * 8-bit step is the tolerance: `#000000d9` is the whole measured population.
+ * 8-bit step is the tolerance: `#000000d9` is the whole observed population.
  */
 const BACKSTOP_BLACK_EPS = 1 / 255;
 
@@ -2384,7 +2383,7 @@ export function spreadEnvFor(
 }
 
 /**
- * The R20 one-axis clip outset for a node's SCENE IDENTITY, or undefined.
+ * The one-axis clip outset for a node's SCENE IDENTITY, or undefined.
  *
  * `mirrorRenderer.clipAxisOutsetFor`'s shape: the cheap node-NAME pre-filter first, so the allocating scene walk
  * only runs for the handful of nodes that could match the table at all.

@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.Assets;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-U (M3): the disk asset-cache invalidation token composed on the server and used by the native client to name
+// The disk asset-cache invalidation token composed on the server and used by the native client to name
 // its cache namespace. Deterministic; changes iff any input changes; blank/whitespace inputs normalize to "unknown".
 internal static class AssetCacheTokenTests
 {

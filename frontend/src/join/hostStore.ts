@@ -105,7 +105,7 @@ export function rememberHost(
  * the freshest possible evidence), then the remembered list, then the host's mDNS name if one is known.
  *
  * `.local` earns its place because Chrome exempts `.local` from mixed-content blocking exactly like a
- * private IP literal (docs/agents/local-network-access.md), so it costs nothing to try and rescues the
+ * private IP literal (docs/local-network-access.md), so it costs nothing to try and rescues the
  * case where every remembered address has moved.
  */
 export function hostCandidates(options: {

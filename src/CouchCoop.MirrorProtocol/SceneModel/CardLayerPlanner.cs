@@ -66,14 +66,14 @@ public sealed class CardLayerPlanner
     public int LastEvaluated { get; private set; }
     public int LastPromoted { get; private set; }
 
-    // WS-CRISP capture (dumpcrisp verb): when CaptureRejects is set the LAST Plan records the per-NCard-root first-fail
+    // Crisp capture (dumpcrisp verb): when CaptureRejects is set the LAST Plan records the per-NCard-root first-fail
     // reject (None for a promoted root). Opt-in so a normal card eval pays zero recording cost; cleared + refilled by
     // that diagnostic Plan. The controller augments each root with its unsettled member ids + wantUrls off the views.
     public bool CaptureRejects;
     private readonly Dictionary<string, CardReject> _rejectByRoot = new(StringComparer.Ordinal);
     public IReadOnlyDictionary<string, CardReject> LastRejectByRoot => _rejectByRoot;
 
-    // WS-CRISP: every top-level NCard root the LAST Plan discovered and evaluated (Pass 0 candidates — nested cards
+    // Every top-level NCard root the LAST Plan discovered and evaluated (Pass 0 candidates — nested cards
     // are claimed by their outer root and not listed). The TextOverlay reads this via the
     // controller: a root in here that is NOT currently promoted was DECLINED, so its labels may promote as loose
     // text; a root NOT in here is unknown-this-plan and stays conservatively card-owned.
@@ -525,7 +525,7 @@ public sealed class CardLayerPlanner
             }
         }
 
-        // 5 (WS-CRISP #14 Leg A). A promoted cluster whose PROVEN clipping ancestor changed this drain ⇒ demote. The
+        // 5. A promoted cluster whose PROVEN clipping ancestor changed this drain ⇒ demote. The
         //    clip-contains relax promoted this card on the proof that the clip rect fully contains it; a scroll (the
         //    ScrollContainer's own node changing) moves that containment out from under the proof mid-drain, and the
         //    un-nested clone tree cannot reproduce the crop. Demote-on-scroll (the card re-promotes at the next eval if
@@ -563,7 +563,7 @@ public sealed class CardLayerPlanner
 
         // Exclusive ancestor chain: clip → effect → blend → z-order (+ accumulate visibility). Clip ancestors are
         // recorded (not an instant reject), while a non-clip special ancestor still rejects. A clip
-        //     ancestor rejects ONLY when its exact clip rect fails to CONTAIN the cluster union (WS-CRISP #14 Leg A:
+        //     ancestor rejects ONLY when its exact clip rect fails to CONTAIN the cluster union (
         //     the deck/draw/discard/smith GRID cards sit in a ScrollContainer whose rect fully contains every settled
         //     grid cell, so the un-nested clone reproduces no crop — the same clip-contains proof Track-B uses).
         CardReject nonClipReject = CardReject.None;
@@ -954,7 +954,7 @@ public sealed class CardLayerPlanner
 
 // One promotable card: its root wire id, its paint key (ascending = holder MoveChild order), its cluster design-space
 // AABB (the union of the cloneable members' boxes), the pre-order cloneable member ids (root first, siblings in paint
-// order), the effect subtrees left live in-stage (neither cloned nor hoisted), and (WS-CRISP #14 Leg A) the ids of the
+// order), the effect subtrees left live in-stage (neither cloned nor hoisted), and the ids of the
 // clipping ancestors whose rect PROVABLY contains the cluster union — the ancestors that let this card promote under
 // the clip-contains relax. Empty when the card has no clip ancestors (the common case) or the relax is off (a clip
 // ancestor then rejects outright). CollectDemotions rule 5 demotes the cluster when any proven clip ancestor changes

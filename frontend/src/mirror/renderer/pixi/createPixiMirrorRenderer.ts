@@ -244,7 +244,7 @@ export function createPixiMirrorRenderer(
   const documentFonts = stage.ownerDocument.fonts;
   const fontCheckCache = fast.fontCheckCache && typeof documentFonts?.addEventListener === "function"
     ? createFontCheckCache(documentFonts, fontFaceInjectionVersion) : null;
-  // R2-P3 (rustSceneIndex): a superset node-id index by leaf type, kept current from `next.changedIds` at
+  // rustSceneIndex: a superset node-id index by leaf type, kept current from `next.changedIds` at
   // `reconcile` — see sceneCandidateIndex.ts. Used today for the two reward-focus types; the two lines at
   // `reconcile` below are the only place it is fed.
   const rewardCandidateIndex = fast.sceneIndex
@@ -2431,7 +2431,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
    * An override is the root's ABSOLUTE rendered global (`gRaw`); its descendants compose through it, and the build
    * re-bases every field claim in the span at the rendered pose. So the span's rendered globals move by
    * `Δ = O_new·O_old⁻¹` while its game globals stay, and each node is re-posed by `T(O + s'ᵢ)·Δ·T(−O − sᵢ)` with `s'ᵢ`
-   * from the R2-C re-walk (`planWireSpread` with `rendered`). Hits keep `mGame`. Text needs no refusal: the Rust text
+   * from the re-walk (`planWireSpread` with `rendered`). Hits keep `mGame`. Text needs no refusal: the Rust text
    * path rasters at the style's size, keyed without the transform (`createRustDrawListExecutor.textResourceKey`), so
    * a scaled record draws what a rebuild draws. Refused: a clip or polyline in the span (`Δ` scales), a view-scale
    * stamp or candidate in or above it, a nested override, a local animation or source sample in it, a card trail, an
@@ -3250,7 +3250,7 @@ const traceId = nextTraceFrame();
   if (submitControl === "single-quad") globals.__pixiArmSingleQuad = () => pixi?.armDiagnosticSingleQuad() ?? false;
   if (lifecycle) globals.__mirrorFrameLifecycle = lifecycle.report;
   globals.__mirrorLogicalPaint = logicalPaintRows;
-  // scripts/probe-eager-scroll.mjs --stage canvas: the eager-scroll container's drawn base and offset (read on demand).
+  // Eager-scroll probe hook: the eager-scroll container's drawn base and offset (read on demand).
   globals.__mirrorScrollProbe = interaction.scrollProbe;
   globals.__mirrorFrameIdentity = () => diagnostics().frameIdentity;
   async function setRustDiagnosticClock(ms: number | null): Promise<unknown> {

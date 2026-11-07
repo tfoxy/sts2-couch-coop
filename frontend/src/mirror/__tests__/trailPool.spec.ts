@@ -4,7 +4,7 @@ import { trailProfile } from "@/mirror/cardTrail";
 import { createMirrorRenderer, type MirrorRenderer } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R11 B2 — THE TRAIL SCAFFOLD POOL.
+// THE TRAIL SCAFFOLD POOL.
 //
 // Every trail stroke needs the same tree: `div.mirror-trail > svg > (defs > linearGradient) + N paths`, plus the
 // gradient's `<stop>`s. That is ~10 elements, and a 30-card reshuffle builds and destroys SIXTY of them inside

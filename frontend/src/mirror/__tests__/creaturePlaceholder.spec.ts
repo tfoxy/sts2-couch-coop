@@ -12,8 +12,8 @@ import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 import { resolveRenderQuality, __setRenderQualityForTest } from "@/render/quality";
 
-// EVERY SHAPE HERE IS TRANSCRIBED FROM A RECORDED WIRE STREAM, not invented: the combat trees come from
-// `.sts2/bench/combat-modern-2026-08-06.ndjson` and the shop tree from `.sts2/bench/audit-shop.ndjson`. The box
+// EVERY SHAPE HERE IS TRANSCRIBED FROM A RECORDED WIRE STREAM, not invented: the combat trees and the shop tree
+// come from recorded live sessions. The box
 // algebra is the whole point of the module, so its inputs have to be the numbers the game actually sends —
 // including the merchant's (-1122.7, -396.68) spine origin, which is what proves the placeholder is positioned
 // from the BOX and not from the node origin.
@@ -194,7 +194,7 @@ describe("creature placeholder — which nodes qualify", () => {
     expect(creaturePlaceholderKind(build(merchantTree()).nodes.get("spine")!)).toBe("shop-merchant");
   });
 
-  // LIVE-FOUND DRIFT, 2026-09-21. The merchant button was authored inline in the room and is now its own
+  // LIVE-FOUND DRIFT. The merchant button was authored inline in the room and is now its own
   // scene, so the SAME node's address went from room-qualified to scene-local. The first cut matched only the
   // old form, and the whole feature silently did nothing in the shop on game v0.111.0 — no error, no warning,
   // just no stand-in. Both addresses are claimed, and this is the case that says so.
@@ -206,7 +206,7 @@ describe("creature placeholder — which nodes qualify", () => {
       ["res://scenes/rooms/merchant_button.tscn", "MerchantVisual"],
       // …and the same file after a hypothetical re-home, which is the churn this has already seen twice.
       ["res://scenes/merchant/merchant_button.tscn", "MerchantVisual"],
-      // Older builds (and `.sts2/bench/audit-shop.ndjson`): authored inline in the room.
+      // Older builds (and the recorded shop tree): authored inline in the room.
       ["res://scenes/rooms/merchant_room.tscn", "SceneContainer/MerchantButton/MerchantVisual"]
     ];
     for (const [scene, path] of addresses) {

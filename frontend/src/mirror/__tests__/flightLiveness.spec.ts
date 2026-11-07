@@ -18,10 +18,10 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// R12 WS-B — FLIGHT LIVENESS, AND THE COUNTERS THAT WOULD HAVE FOUND IT.
+// FLIGHT LIVENESS, AND THE COUNTERS THAT WOULD HAVE FOUND IT.
 //
 // THE INCIDENT. A phone trace showed a 30-card reshuffle whose cards crawled across the screen in 4-8 Hz steps
-// instead of flying. The declarative replay (R11) had silently never run — a producer gate upstream had stopped
+// instead of flying. The declarative replay had silently never run — a producer gate upstream had stopped
 // emitting `cardFlights[]` — and the client could not say so: the only flight series was `flightsPeak`, which reads
 // 0 both for "no shuffle is happening" and for "every shuffle is broken". Two things come out of that:
 //
@@ -81,7 +81,7 @@ function flightNodes(): Raw[] {
   ];
 }
 
-// R13 — the DISCARD's mover, which is a different animal from the shuffle's. The shuffle flies a spawned VFX node
+// The DISCARD's mover, which is a different animal from the shuffle's. The shuffle flies a spawned VFX node
 // that exists only for the sweep; a discard flies the REAL card the player just played — an ordinary streamed
 // Control with a full card face, already on screen, with a box of its own and no trail. The producer suppresses its
 // whole subtree for the window and then FREES it, so the flight's end arrives as a removal rather than a settle.
@@ -321,7 +321,7 @@ describe("flight liveness — an armed flight runs on the CLIENT's clock, not th
     expect(translation(stage, "41")![0]).toBeGreaterThan(before[0]);
   });
 
-  // ---- R13: the second kind, on the same chain ----------------------------------------------------------------
+  // ---- The second kind, on the same chain ----------------------------------------------------------------
 
   it("arms a DISCARD from one reconcile and flies it wire-silent for the whole window", () => {
     installAnimate();
@@ -469,7 +469,7 @@ describe("flight liveness — the counters name which link of the chain is missi
 
   it("jsdom has no Element.animate, so the flight is counted as `noWaapi` and still completes", () => {
     // The most important property of the whole failure-reason split: a compositor miss is NOT a regression. The
-    // flight falls back to the stepped integrator — the pre-R11 shipped behaviour — and the counter is the only
+    // flight falls back to the stepped integrator — the earlier shipped behaviour — and the counter is the only
     // thing that changes.
     expect(typeof (Element.prototype as unknown as { animate?: unknown }).animate).not.toBe("function");
     arm();

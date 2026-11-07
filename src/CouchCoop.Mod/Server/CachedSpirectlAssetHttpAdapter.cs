@@ -96,12 +96,12 @@ public sealed class CachedSpirectlAssetHttpAdapter(
     // Qualify the cache key with the format for the non-default variants only; the raw variant keeps the bare key
     // so the scheme-partitioned cache layout is unchanged for the default path. (All variants are already
     // invalidated by the SpirectlAssetBinaryCache schema-version bump, so there is no collision with pre-switch
-    // entries.) A `png` (WS-PARTICLE raster) hit must never serve raw `.tres` text or vice versa.
+    // entries.) A `png` (particle raster) hit must never serve raw `.tres` text or vice versa.
     //
-    // R19: a RENDER SIZE is part of the identity for the same reason the format is — /icons/icon-192.png and
+    // A RENDER SIZE is part of the identity for the same reason the format is — /icons/icon-192.png and
     // /icons/icon-512.png resolve the SAME res:// key and differ only in the resample spirectl performs, so
     // without the suffix the first one cached would be served for both. A request that asks for no size keeps
-    // the bare key, so every pre-R19 entry stays addressable.
+    // the bare key, so every earlier entry stays addressable.
     private static string CacheKey(string opaqueKey, CouchCoopResourceFormat format, CouchCoopAssetRenderSize renderSize)
         => format switch
         {

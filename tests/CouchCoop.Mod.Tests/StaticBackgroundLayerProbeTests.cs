@@ -4,7 +4,7 @@ using CouchCoop.Mod.Server;
 // host-rendered image is asked to depict ("match the mounted variant", the product decision behind the
 // digest-qualified /bg/ URL).
 //
-// The defect these pin (found live, Aug-13): the probe read only the bg root's DIRECT children. In the real
+// The defect these pin (found live): the probe read only the bg root's DIRECT children. In the real
 // scene those are the declared PLACEHOLDER containers (Layer_00..Layer_NN, Foreground) with NO SceneFilePath —
 // the randomly chosen variant is instanced ONE LEVEL BELOW each. So the probe collected zero layers, published a
 // digest-less descriptor, and the render silently fell back to deterministic-first-sorted discovery: measured

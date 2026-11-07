@@ -312,7 +312,7 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
         frames: paintedFrames,
         animFrames,
         // B1 — THE PAINTS THAT DID NOT HAPPEN, and the price of asking. `frames` above counts only the executes
-        // that really ran, so `frames + paintSkip.skipped` is what this session would have painted before R21 and
+        // that really ran, so `frames + paintSkip.skipped` is what this session would have painted before the paint guard and
         // the ratio is the lever's whole value on this screen. `cold` separates "nothing to compare against" (a
         // first paint, a resize, a context loss) from "compared and differed", because a lever that is quietly
         // never armed and a lever that is armed and always says no read the same without it. `compareMs` is the
@@ -327,9 +327,9 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
         // THE TWO ARM MODES, counted (M3). `parks` above zero says the timer path is live on this screen;
         // `parks` at zero with `animFrames` climbing says every wakeup was a display frame, which is either a
         // running tween (correct) or a deadline nobody is honouring (the pre-M3 bug).
-        // …and `pulled` (R6 P6-A): animation frames that ran MirrorView's pending reconcile instead of a build of
+        // …and `pulled`: animation frames that ran MirrorView's pending reconcile instead of a build of
         // their own. Every one of them is a build-and-paint pair that used to happen twice in one display frame.
-        // …and `rampFrames` (R6 M5): frames on which a cosmetic-offset ramp moved something. Zero on every screen
+        // …and `rampFrames`: frames on which a cosmetic-offset ramp moved something. Zero on every screen
         // that never raises a hand, and the evidence that the raise GLIDES rather than teleporting.
         schedule: { rafs: armedRafs, parks: armedParks, parkWakeups, pulled: pulledReconciles, rampFrames },
         commands: build?.stats.commands ?? 0,
@@ -353,18 +353,18 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
         skipped: build?.stats.skip ?? 0,
         silent: build?.stats.silent ?? 0,
         overlayCounts,
-        // THE MAP-QUILL PIN (R8). `pinned` is the number of strokes whose local
+        // THE MAP-QUILL PIN. `pinned` is the number of strokes whose local
         // this stream has latched; `pinReuses` is how many times a build read one back instead of the wire's —
         // which is what says the pin is DOING something rather than merely being wired, because a stroke whose
         // producer never re-sent its local would look identical either way.
         mapStroke: { pinned: mapStrokeLocals.size, pinReuses: mapStrokePinReuses },
-        // THE IDLE LOOPS (R4). `plans`
+        // THE IDLE LOOPS. `plans`
         // is what the resolver found, `transformLoops`/`alphaLoops` split them by the channel they drive, and
         // `invisible` counts the samples an off-screen loop did NOT take.
         //
         // `rebuilds` KEEPS ITS NAME AND ITS MEANING — frames on which a local anim MOVED a pose — because half a
         // dozen published numbers are in its units (idle animation has no authored cadence cap anymore: it samples
-        // every display frame, like DOM's compositor animations). What changed in R7 is that such a frame no longer
+        // every display frame, like DOM's compositor animations). What changed is that such a frame no longer
         // has to rebuild: `patched` is the subtraction, so `rebuilds - patched` is the count that still costs a
         // walk. On the `opacity` default `patched` is 0 by construction.
         idle: {
@@ -387,11 +387,11 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
           achievedP50: idlePeriodSamples.length >= IDLE_PERIOD_MIN_SAMPLES ? p50(idlePeriodSamples) : null,
           rafDeliveryP50: rafDeliverySamples.length > 0 ? p50(rafDeliverySamples) : null
         },
-        // THE GLYPH TICKER (R6). `cycles` is the intents currently animating and
+        // THE GLYPH TICKER. `cycles` is the intents currently animating and
         // `swaps` the frame changes this page has drawn — the second is what says the ticker is RUNNING, since a
         // settled census reads one glyph per intent whether it cycles or not.
         intents: { cycles: intentEntries.size, swaps: intentSwaps },
-        // R2's INPUT, reported on BOTH settings: the paint order of the last stage-spanning opaque fill this
+        // The flip decision's INPUT, reported on BOTH settings: the paint order of the last stage-spanning opaque fill this
         // build drew, or -1. It is what the flip decision is measured against — a dialog recording should show a
         // real order here and a plain combat frame should show -1 — and it costs nothing to publish with the
         // lever off, which is the point (the evidence can be gathered before the behaviour is turned on).
@@ -425,7 +425,7 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
           lastUploadAt: Math.round(bridge.stats.lastUploadAt),
           paceBytes: pace.bytes ?? TEXTURE_PACE_BYTES_DEFAULT,
           paceCount: pace.count ?? TEXTURE_PACE_COUNT_DEFAULT,
-          // THE TINY-PAGE EXEMPTION (R6 P6-B1), the settings and what they bought: `paceExempt` counts the grants
+          // THE TINY-PAGE EXEMPTION, the settings and what they bought: `paceExempt` counts the grants
           // the budget would otherwise have deferred, `paceTinyBytes` what they cost. Both zero on the `off` arm,
           // which is how a reader tells the A/B halves apart without reading the url.
           paceTinyLimit: paceTiny ?? TEXTURE_TINY_BYTES_DEFAULT,
@@ -445,7 +445,7 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
           // OWNED PAGE PIXELS, and each of these answers a different question the other cannot.
           // `pageElementUploads` is the ONLY arm that can still re-decode a multi-megabyte page inside a build,
           // so it is the number that says whether the fix is in force: it should be ~0 wherever
-          // `createImageBitmap` exists, and every unit of it is a candidate for the 14-40 ms decodes the Aug-28
+          // `createImageBitmap` exists, and every unit of it is a candidate for the 14-40 ms decodes a mid-range phone
           // phone trace measured. `pageDecodeFailed` above zero says WHY it is not (undecodable, or a capture
           // whose size disagreed with the page). And `maxPageDecodeSyncMs` is the honest cost side: a capture may
           // be a main-thread copy rather than an off-thread decode (gsw measured 576 ms on a GPU-resident
@@ -551,7 +551,7 @@ export function canvasStats(snapshot: CanvasStatsSnapshot): unknown {
             }
           : null,
         animActive: loop.activeCount(),
-        // THE COMET ROOT DRIVE (R5 T-DR4), counted once per FLIGHT rather than once per frame. Top-level rather
+        // THE COMET ROOT DRIVE, counted once per FLIGHT rather than once per frame. Top-level rather
         // than inside `trails` because it is not gated on `?trailCanvas`: this client votes `trailDrive` on its
         // socket whatever the ribbons are doing, so a zero here on a recording that contains flights means the
         // producer has stopped streaming a root that nothing is placing — the frozen-comet defect, whichever

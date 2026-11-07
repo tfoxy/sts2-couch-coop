@@ -14,8 +14,7 @@
 //   line 1:  {"meta":{"format":"repro/1",recordedAt,url,durationMs,messages,bytes}}   (written at finalize)
 //   line 2+: {"t":<ms since first message>,"data":"<raw message string>"}
 //
-// The replay/bench tooling (frontend/bench/mirrorReplay.bench.ts, scripts/bench-mirror-replay.mjs) reads these
-// files. `server-reload` frames are recorded verbatim; the replayers strip them.
+// The replay tooling (scripts/replay-ws-server.mjs, scripts/replay-repro.mjs) reads these files. `server-reload` frames are recorded verbatim; the replayers strip them.
 //
 // Zero runtime dependencies — uses Node's built-in global `WebSocket` (Node >= 22). No spirectl, no playwright.
 

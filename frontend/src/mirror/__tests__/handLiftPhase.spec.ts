@@ -9,8 +9,8 @@
 // journey home. Both stages paint that step at once and then ease the remainder; both gave the lift the tween's
 // own duration and easing. Neither gave it the tween's own START: the lift left the value conjugate to the pose
 // BEFORE the step, so one frame of new pose composed with an old lift drew the card `step − (journey − lift)` PAST
-// the place it was heading for, and the error decayed over the tween's window. Live H10 measured it on the DOM at
-// 9.4 design px, 1 focus change in 8, and the DOM was fixed on 2026-09-19 (`noteTransformArmPose`); this file is
+// the place it was heading for, and the error decayed over the tween's window. A live check measured it on the DOM at
+// 9.4 design px, 1 focus change in 8, and the DOM was fixed (`noteTransformArmPose`); this file is
 // where the canvas twin was measured, and it was worse — 24.4 px on this fixture, on every un-focus rather than
 // one in eight, because the canvas ramp re-derives the lift every frame and had no notion of a start at all.
 //

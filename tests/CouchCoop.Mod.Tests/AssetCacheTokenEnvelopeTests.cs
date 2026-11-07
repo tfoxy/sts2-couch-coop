@@ -13,7 +13,7 @@ using Spirectl.Sts2.Core.Reference;
 using Spirectl.Sts2.Core.SceneInspection;
 using Spirectl.Sts2.Embedding;
 
-// WS-U (M3): the `session` envelope carries the client asset-cache invalidation token, composed from the host's
+// The `session` envelope carries the client asset-cache invalidation token, composed from the host's
 // GAME BUILD + the mod assembly version + the server asset schema. The native client names its disk-cache
 // namespace after it; the BROWSER puts it in the url of every asset it fetches (`?b=`) and drops its durable
 // service-worker /res/ store when it moves.

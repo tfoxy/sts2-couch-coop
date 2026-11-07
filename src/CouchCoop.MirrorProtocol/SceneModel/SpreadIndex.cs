@@ -2,19 +2,19 @@ using CouchCoop.MirrorProtocol.Input;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// OWNER: WS-P (SpreadWalk). WS-O shipped this STUB — the F=1 strict no-op path + the FROZEN public surface
+// SpreadWalk. The first cut shipped this as a STUB — the F=1 strict no-op path + the FROZEN public surface
 // (<see cref="Update"/> / <see cref="TryGet"/>) that MirrorStore, SceneReconciler, and InteractiveRectScan program
-// against. WS-P fills <see cref="Update"/> with the verbatim port of mirrorRenderer.ts visit() L2101-2255:
+// against. The full version fills <see cref="Update"/> with the verbatim port of mirrorRenderer.ts visit():
 //   * the four spread branches (pass-through group / anchor algebra / boxed-Control ride / positional claimer)
 //     + the fullCanvas re-center exception + the width override,
 //   * the owner-anchored floater override (`dx = ParentDx + records[anchorOwnerId].Dx`) — which is WHY the records
 //     dictionary must PERSIST across Updates (a not-yet-walked owner reads last drain's value, the web one-frame lag),
 //   * the remote-follower hitTestShift over InteractiveRectScan,
 //   * the `Paints` predicate (nodePaintsContent, native always renders shaders) AND NOT isPaintAnchorExcluded.
-// WS-P touches ONLY this file + tests/.../SpreadWalkTests.cs.
+// It touches ONLY this file + tests/.../SpreadWalkTests.cs.
 //
 // The per-node record maps to the web `data-spread-*` attrs (see SpreadRecord). Keyed by wire node id. Persisted
-// across Updates (WS-P relies on last drain's values for the owner-floater override); the F=1 early-out clears it.
+// across Updates (the walk relies on last drain's values for the owner-floater override); the F=1 early-out clears it.
 public sealed class SpreadIndex
 {
     // The 1920-design canvas width (web MIRROR_DESIGN_WIDTH) — the squeeze-field clamp bound and the root's
@@ -50,7 +50,7 @@ public sealed class SpreadIndex
     private readonly HashSet<string> _visited = new(StringComparer.Ordinal);
     private readonly List<string> _pruneScratch = new();
 
-    // WS-P2 incremental ApplySpread. The pre-resolved per-VIEW stamp (SceneReconciler.ApplySpread's parent-relative
+    // Incremental ApplySpread. The pre-resolved per-VIEW stamp (SceneReconciler.ApplySpread's parent-relative
     // fold, computed inside the walk) keyed by wire node id, PERSISTED across Updates alongside _records so a stamp
     // can be compared against last drain's to detect which views actually need re-stamping. `_dirty` is the set of
     // ids whose stamp changed (or that were pruned) THIS Update; it clears at the top of every Update. `DirtyAll`
@@ -73,11 +73,11 @@ public sealed class SpreadIndex
         NodeChangeFlags.New | NodeChangeFlags.Static | NodeChangeFlags.Transform |
         NodeChangeFlags.Tint | NodeChangeFlags.Draw | NodeChangeFlags.Removed;
 
-    // WS-P2: true for the ONE Update after the factor changed (incl. 1→F and F→1) — every view's stamp rescales, so
+    // True for the ONE Update after the factor changed (incl. 1→F and F→1) — every view's stamp rescales, so
     // the reconciler takes its full loop and ignores <see cref="DirtyIds"/>. False on a steady-factor Update.
     public bool DirtyAll { get; private set; }
 
-    // WS-P2: the ids whose view-stamp changed (a moved node/ancestor, a new node, or a pruned one) since last Update.
+    // The ids whose view-stamp changed (a moved node/ancestor, a new node, or a pruned one) since last Update.
     // Only meaningful when !DirtyAll (a steady-factor drain). The reconciler stamps exactly these views.
     public IReadOnlyCollection<string> DirtyIds => _dirty;
 
@@ -85,7 +85,7 @@ public sealed class SpreadIndex
     // walk — the common case even on a widened stage (most nodes ride their parent, dx == parent's dx).
     public bool TryGet(string id, out SpreadRecord record) => _records.TryGetValue(id, out record);
 
-    // WS-P2: the pre-resolved view stamp for a wire node (the incremental reconciler reads this for a DirtyId), or
+    // The pre-resolved view stamp for a wire node (the incremental reconciler reads this for a DirtyId), or
     // false when the node did not shift/widen this walk (no stamp → the view carries a zero offset).
     public bool TryGetStamp(string id, out SpreadViewStamp stamp) => _stamps.TryGetValue(id, out stamp);
 
@@ -96,7 +96,7 @@ public sealed class SpreadIndex
         double prevFactor = Factor;
         Factor = factor;
 
-        // WS-P2: a factor change (incl. 1↔F) rescales EVERY view's offset — force the reconciler onto its full loop
+        // A factor change (incl. 1↔F) rescales EVERY view's offset — force the reconciler onto its full loop
         // for this one Update (per-node comparison below would flag ~everything anyway). A steady-factor drain keeps
         // DirtyAll false and drives only the changed views. `_dirty` accumulates this Update's changed/pruned ids.
         DirtyAll = factor != prevFactor;
@@ -112,7 +112,7 @@ public sealed class SpreadIndex
             return;
         }
 
-        // WS-FPS BAIL: skip the whole walk when THIS drain could not have moved any spread input — steady factor,
+        // BAIL: skip the whole walk when THIS drain could not have moved any spread input — steady factor,
         // a prior walk's records exist, and every changed node's OR-merged flags sit outside WalkRelevant (a spine
         // track echo / text / particle-volatile drain). Records, stamps, and (already-cleared) dirty ids stay as
         // last walk's — identical to what a full re-walk would recompute. FAIL-CLOSED guards: a keyframe re-upserts
@@ -140,7 +140,7 @@ public sealed class SpreadIndex
             RideDx: 0,
             ParentWidth: DesignWidth,
             ParentGlobal: Affine.Identity,
-            ParentRecordDx: 0); // WS-P2: the root's parent (the viewport) has no spread record → Dx 0
+            ParentRecordDx: 0); // The root's parent (the viewport) has no spread record → Dx 0
 
         _visited.Clear();
         foreach (var id in rootIds)
@@ -150,7 +150,7 @@ public sealed class SpreadIndex
 
         // Prune records for nodes no longer walked (a removed subtree) — the web's structural-walk prune. In-walk
         // persistence is untouched (a not-yet-walked owner still reads last drain's Dx during THIS walk; the prune
-        // only drops ids that vanished from the tree). Cheap early-out when counts already match. WS-P2: _records and
+        // only drops ids that vanished from the tree). Cheap early-out when counts already match. _records and
         // _stamps carry identical key sets (both written every Visit), so the same prune drops both — and each pruned
         // id is marked dirty so the reconciler zeroes that view's now-orphaned offset.
         if (_records.Count != _visited.Count)
@@ -247,7 +247,7 @@ public sealed class SpreadIndex
         {
             if (IsBackgroundSceneRoot(node))
             {
-                // R10 EVENT BACKGROUND SCENE ROOT (matched by scene identity, not geometry): re-center this
+                // EVENT BACKGROUND SCENE ROOT (matched by scene identity, not geometry): re-center this
                 // full-canvas bg on the widened frame and CONSUME the budget so the whole packed bg scene — the
                 // background art AND its candle-flame Sprite2Ds — rides this ONE rigid shift, staying matched. 0.5·Δ
                 // is the fullCanvas convention (a full-width bg centered at 960 in 1920-space would positional-claim
@@ -264,7 +264,7 @@ public sealed class SpreadIndex
             }
             else if (IsPreviewContainer(node))
             {
-                // R3-Q4 CARD-PREVIEW CONTAINER (matched by leaf type — a sibling of the event-bg re-center): a
+                // CARD-PREVIEW CONTAINER (matched by leaf type — a sibling of the event-bg re-center): a
                 // (0/1-anchored) NGlobalUi container that re-renders a focused card's linked preview. The game lays the
                 // backdrop + preview card out in CONTAINER-LOCAL coords; at F≠1 the inner card would otherwise take its
                 // OWN positional center claim and drift off its backdrop. CONSUME the budget so backdrop + card ride the
@@ -433,7 +433,7 @@ public sealed class SpreadIndex
 
         _records[id] = new SpreadRecord(dx, renderWidthOverride, spreadMode, paints);
 
-        // WS-P2: resolve the FINAL per-view stamp here — the exact value SceneReconciler.ApplySpread would derive for
+        // Resolve the FINAL per-view stamp here — the exact value SceneReconciler.ApplySpread would derive for
         // this node's view: fold the parent-relative shift (dx − parent's record Dx) through the parent's UNSHIFTED
         // global. `ctx.ParentGlobal` IS the same parent global ApplySpread reads from the transform index, and
         // `ctx.ParentRecordDx` IS the parent's own record Dx (root = 0), so this reproduces ApplySpread bit-for-bit
@@ -462,7 +462,7 @@ public sealed class SpreadIndex
                 // Children compose their global in the walk against this node's UNSHIFTED true global (web
                 // childParentGlobal = gNode), used by the anchor algebra's parentGlobal[0] basis lift.
                 ParentGlobal: gNode,
-                // WS-P2: this node's own record Dx is what its children fold against (ApplySpread reads it via the
+                // This node's own record Dx is what its children fold against (ApplySpread reads it via the
                 // parent's own SpreadRecord). Written above, so children read THIS walk's value.
                 ParentRecordDx: dx,
                 // If THIS node is a widened BoxContainer, its children ride its re-layout (see the BOX CHILD branch).
@@ -548,7 +548,7 @@ public sealed class SpreadIndex
     private static bool IsPaintAnchorExcluded(MirrorNode node) =>
         PaintAnchorExcludedTypes.Contains(NodeTypeLeaf(node.NodeType)) || PaintAnchorExcludedNames.Contains(node.Name);
 
-    // R10/R7: an EVENT background-scene root, identified by its streamed SceneFilePath. STS2 mounts each event
+    // An EVENT background-scene root, identified by its streamed SceneFilePath. STS2 mounts each event
     // backdrop from ModelCatalog.BackgroundScenePath as a single packed scene directly under
     // `res://scenes/events/background_scenes/<event>.tscn` (neow, darv, orobas, pael, tanx, vakuu, nonupeipe,
     // tezcatara ship in the current build). Matching that DIRECTORY segment makes EVERY event backdrop — the
@@ -567,7 +567,7 @@ public sealed class SpreadIndex
     private static bool IsBackgroundSceneRoot(MirrorNode node)
         => node.SceneFilePath is { Length: > 0 } path && BackgroundSceneFamilies.MatchesEventBackgroundPattern(path);
 
-    // R3-Q4: the leaf node types of the full-frame card-PREVIEW containers (a focused card's linked-card preview,
+    // The leaf node types of the full-frame card-PREVIEW containers (a focused card's linked-card preview,
     // e.g. Infinite Blades → Shiv). These are the ECHO_CONTAINER "Preview" subset (mirrorRenderer isEchoContainer) —
     // NARROWED to the three PREVIEW classes only, NOT the HoverTip/Inspect echoes (those float/zoom differently and
     // must not re-center). The container lays its backdrop + preview card out in container-local coords, so it must
@@ -579,11 +579,11 @@ public sealed class SpreadIndex
         "NMessyCardPreviewContainer",
     };
 
-    // True when this node is a full-frame card-preview container (R3-Q4). Matched by leaf node type.
+    // True when this node is a full-frame card-preview container. Matched by leaf node type.
     private static bool IsPreviewContainer(MirrorNode node) =>
         PreviewContainerTypes.Contains(NodeTypeLeaf(node.NodeType));
 
-    // WS-3: the map screen's DRAWING-TOOLS palette, matched by SCENE IDENTITY — the scene FILE of the owning root plus
+    // The map screen's DRAWING-TOOLS palette, matched by SCENE IDENTITY — the scene FILE of the owning root plus
     // the node's scene-relative path, exactly the (file, relPath) tuple the view-scale table keys on (and the web
     // stamps as data-scene-file / data-scene-node-path). Identity rather than geometry/type: a 208×68 0/0-anchored
     // NinePatchRect is indistinguishable from any ordinary bottom-left corner widget, and those must KEEP their corner.
@@ -604,7 +604,7 @@ public sealed class SpreadIndex
         return file == MapScreenSceneFile && relPath == DrawingToolsName;
     }
 
-    // R19 6b: the MAIN MENU's focus ribbons, matched by the same SCENE IDENTITY shape as IsDrawingTools — the scene
+    // The MAIN MENU's focus ribbons, matched by the same SCENE IDENTITY shape as IsDrawingTools — the scene
     // FILE of the owning root plus the node's scene-relative path. Identity rather than geometry/type: a 40x40
     // 0/0-anchored TextureRect is indistinguishable from any ordinary top-left corner widget, and those must KEEP
     // their corner. relPath == the name because the ribbons are DIRECT children of the menu root.
@@ -705,7 +705,7 @@ public sealed class SpreadIndex
         double RideDx,
         double ParentWidth,
         IReadOnlyList<double> ParentGlobal,
-        // WS-P2: the parent's OWN record Dx (root = 0), so a child can fold its parent-relative shift exactly as
+        // The parent's OWN record Dx (root = 0), so a child can fold its parent-relative shift exactly as
         // SceneReconciler.ApplySpread does (rec.Dx − parentRecord.Dx). Independent of ParentDx (the baseline shift a
         // child inherits), which is NOT always the parent's record Dx (e.g. an anchor-algebra child's ParentDx is
         // the parent's shift, but a positional claimer overwrites ParentDx with its own claim for its children).

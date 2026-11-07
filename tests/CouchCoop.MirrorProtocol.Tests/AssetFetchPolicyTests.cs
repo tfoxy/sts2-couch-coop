@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.Assets;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Missing-textures fix (2026-07-19): the asset stores' bounded transient-retry policy. Transport hiccups
+// Missing-textures fix: the asset stores' bounded transient-retry policy. Transport hiccups
 // (timeout / connection errors) and HTTP 429/5xx retry up to MaxAttempts; other 4xx and non-transient transport
 // results are permanent; attempts are 1-based and exhaust at MaxAttempts.
 internal static class AssetFetchPolicyTests

@@ -4,7 +4,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R5 (WS-A) HEADLESS live-data verification of the view-scale TAP remap over recorded mirror streams — no Godot, no
+// HEADLESS live-data verification of the view-scale TAP remap over recorded mirror streams — no Godot, no
 // display, no live lock. It reconstructs, purely from the retained MirrorState, the SAME input-gate registry the
 // native ViewScaler publishes (group stamps + ViewScaleInputRegistry.Build with the neighbour filter), then proves the
 // end-to-end tap path: forward-map an OFF-PIVOT element's TRUE centre to the VISUAL point the user actually taps, and

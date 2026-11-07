@@ -83,11 +83,11 @@ public sealed record WireNodeDelta(
     string? FontStyle,
     string? AnchorOwnerId,
     string? ContainerLayout,
-    // WS-E: the DECLARATIVE INFINITE ANIMATION the producer pinned to rest on this node, for the client to replay
+    // The DECLARATIVE INFINITE ANIMATION the producer pinned to rest on this node, for the client to replay
     // on its own clock (today: "mapPointPulse", the travelable map node's icon-scale sweep). Volatile, but it only
     // changes on the animation's start/stop edges. Null for every node without a pinned loop → omitted.
     string? PinnedLoopAnim,
-    // R13: the stable identity of the CONTENT this node shows — STATIC (rides add/keyframe/re-attach only, and
+    // The stable identity of the CONTENT this node shows — STATIC (rides add/keyframe/re-attach only, and
     // MergeVolatile carries it forward). Today the one case is a card: STS2 POOLS `NCard` visuals, so a node's
     // instance id says nothing about WHICH card is on screen (the same id is a Strike this tick and a Bash the
     // next). The key is `nc:{entry}#{serial}` — see RuntimeSceneNodeDelta.ContentKey / Sts2ContentKey. Null for
@@ -237,7 +237,7 @@ public sealed record WireSceneDelta(
     IReadOnlyList<string>? OrderedIds,
     WireOrderPatch? OrderPatch,
     IReadOnlyList<TweenHintDelta>? Hints,
-    // WS-3 declarative card flights (see CardFlightHintDelta). Omitted when empty, like Hints — an older client
+    // Declarative card flights (see CardFlightHintDelta). Omitted when empty, like Hints — an older client
     // simply never sees the key, and the host only ever suppresses a flight's transforms when the connecting
     // client declared it can replay them (`?cardFlight`).
     //

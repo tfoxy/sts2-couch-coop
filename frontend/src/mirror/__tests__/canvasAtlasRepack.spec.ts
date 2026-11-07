@@ -854,9 +854,9 @@ describe("the bridge's rp:// seam", () => {
 // THE CROP SOURCE, and the phone finding behind it.
 //
 // The re-packer was handed the bridge's own `<img>` and both modules costed the crop as a memcpy, because the
-// bridge `decode()`s a page before it is ever `ready`. A Moto G86 combat trace (Aug-28) says otherwise: an
+// bridge `decode()`s a page before it is ever `ready`. Phone combat traces say otherwise: an
 // `<img>`'s decoded frame is a CACHE, Chrome discards it under memory pressure, and `drawImage` then re-decodes
-// the whole sheet synchronously — seven times in 29.5 s, 260-306 ms each, all inside a rAF, against a byte budget
+// the whole sheet synchronously — repeatedly, hundreds of ms each, all inside a rAF, against a byte budget
 // that thought it had spent 1.4 MB.
 //
 // Two answers, and these specs pin both: crop from pixels nobody can discard (`decodedPageSource`, in practice

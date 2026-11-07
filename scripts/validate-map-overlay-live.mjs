@@ -26,8 +26,8 @@
 //   * the mirror's pointer wire is COORDINATE-ONLY (`type:"input"`), so the synthetic DOM
 //     `click` used here to open/close the map does nothing, and the action-swallowing
 //     safety net does not cover input envelopes. Opening the map from the top bar means
-//     real pointer events against the live game -- read docs/agents/touch-live-harness.md
-//     and use the `touch-input-qa` agent before pointing this at anything live.
+//     real pointer events against the live game -- drive that through the touch harness
+//     (scripts/validate-touch-live.mjs) before pointing this at anything live.
 // Run it under the live-QA lock against a fixture instance, and fix the drive path first.
 
 import { createRequire } from "node:module";
@@ -171,8 +171,8 @@ if (legend.labels.length >= 6 && legend.labels.every((t) => t.length > 0)) {
 // own hit routing (an inline `pointer-events` per node, bound from the catalog). The mirror
 // makes every node hit-targetable and arbitrates taps against the interactive-rect registry
 // before putting a bare coordinate on the wire, so the equivalent gate lives in the touch
-// harness (docs/agents/touch-live-harness.md, H-series) -- not here.
-skip("click-through: not a client-side property on the mirror (see touch-live-harness.md)");
+// harness (scripts/validate-touch-live.mjs) -- not here.
+skip("click-through: not a client-side property on the mirror (see scripts/validate-touch-live.mjs)");
 
 // ---- close, then open #2
 if (!(await setMapOpen(false, `${MS}/Back`))) fail("could not close the map via Back");

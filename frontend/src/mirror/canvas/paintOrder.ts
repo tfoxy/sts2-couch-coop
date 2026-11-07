@@ -26,8 +26,8 @@
 // `state.orderedIds` verbatim: the producer's pre-order DFS, with NO z sort and NO behind-parent lift (the
 // browser applies both at paint time, so the renderer's *index* never had to). Every consumer of that index is a
 // hit-test tiebreak, where the approximation is cheap. This module is the more correct one, and the divergence is
-// pre-registered: probe P4 measured its size at 0-3 z-index nodes and 4-65 `show_behind_parent` nodes per screen
-// (docs/agents/canvas-stage-probes-aug26.md).
+// pre-registered: it is small in practice, a handful of z-index nodes and a few dozen `show_behind_parent` nodes per
+// screen.
 //
 // Self-contained per the mirror decoupling rule: `@/mirror/*` only, no DOM, no gsw.
 
@@ -88,7 +88,7 @@ export interface PaintOrderCacheStats {
  * children's `z_index` / `show_behind_parent`. Both signals are things the reconciler already computes:
  *
  *   * STRUCTURAL — `state.orderedIds` gets a NEW ARRAY REFERENCE exactly when the child structure changed
- *     (`applySceneDelta` replaces it wholesale, rebuilds it from an order patch, or re-slices it for the R10
+ *     (`applySceneDelta` replaces it wholesale, rebuilds it from an order patch, or re-slices it for the
  *     late-node guard). That is the same signal `mirrorRenderer` selects its structural walk on, so the two can
  *     never disagree about what "the tree moved" means. Detected here, automatically, on every build.
  *   * Z — a node whose `z_index` or `show_behind_parent` changed arrives in `state.changedIds`. Feed those to

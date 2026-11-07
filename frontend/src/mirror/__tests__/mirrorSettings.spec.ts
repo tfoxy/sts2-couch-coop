@@ -779,7 +779,7 @@ describe("serverSettingsPayload", () => {
     expect(payload).not.toHaveProperty("particleMode");
     expect(payload).not.toHaveProperty("effectModePinned");
     expect(payload).not.toHaveProperty("panelOpen");
-    // R9 items 10/11: the manual spine override + the latency-overlay toggle are CLIENT-only — they must never
+    // The manual spine override + the latency-overlay toggle are CLIENT-only — they must never
     // reach the game's `settings` channel (nor trip the SERVER_SETTING_KEYS watch that sends it).
     expect(payload).not.toHaveProperty("spineMode");
     expect(payload).not.toHaveProperty("latencyOverlay");

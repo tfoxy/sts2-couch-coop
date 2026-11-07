@@ -278,7 +278,7 @@ internal static class ConnectionRegistryTests
     }
 
     /// <summary>
-    /// The Sep-16 defect: a phone that completes its join, is redirected to its seat and cannot reach it was
+    /// The defect: a phone that completes its join, is redirected to its seat and cannot reach it was
     /// reported to the HOST as a closed browser tab ("reload the browser and select the same player"), while the
     /// phone itself was correctly told its network path was blocked. Two surfaces, two diagnoses, the host's
     /// wrong. Both producers of that row are asserted here, because the one the panel actually shows is the

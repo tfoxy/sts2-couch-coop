@@ -111,7 +111,7 @@ describe("computeHoverTipScale — grow toward the side the tip sits on (owner k
   });
 });
 
-// R5 (item 5) non-overlap invariant — the SAME vectors as native HoverTipScaleMathTests.SideClamp* + OwnerFollow*.
+// Non-overlap invariant — the SAME vectors as native HoverTipScaleMathTests.SideClamp* + OwnerFollow*.
 describe("computeHoverTipScale — non-overlap side-clamp", () => {
   it("HandCard tip overlapping its owner is pushed RIGHT (left edge → owner.MaxX + SideGap)", () => {
     const owner = aabb(900, 430, 100, 60);

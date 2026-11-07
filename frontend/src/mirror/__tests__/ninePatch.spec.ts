@@ -50,7 +50,7 @@ describe("ninePatchAtlasSlices", () => {
   });
 });
 
-// R19 6c — the WIDESCREEN case. `box` is the element's RENDERED box, not its streamed 1920-space localRect: on a
+// The WIDESCREEN case. `box` is the element's RENDERED box, not its streamed 1920-space localRect: on a
 // wider-than-16:9 stage the anchor algebra hands an anchored SPAN a `renderWidthOverride` and nodeStyles lays the
 // element out that much wider. Slicing from the 1920 width leaves the right cap `deltaW` px short of the element's
 // right edge and stops the stretched middle there — the panel art visibly ends before its own frame does.

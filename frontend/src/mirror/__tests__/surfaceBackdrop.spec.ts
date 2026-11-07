@@ -7,7 +7,7 @@ import { nextTick } from "vue";
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
 
-// R21 B5 — DON'T RASTERIZE A FULL-SCREEN GRADIENT NOBODY CAN SEE.
+// DON'T RASTERIZE A FULL-SCREEN GRADIENT NOBODY CAN SEE.
 //
 // `.game-surface` paints a gradient behind the join panels and loading view. Once the mirror is mounted,
 // its inset frame covers the safe rectangle and the surface paints the remaining device gutters black.

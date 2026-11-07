@@ -8,7 +8,7 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R20 item 5 — "every relic dialog after the first opens black".
+// "every relic dialog after the first opens black".
 //
 // A Godot dialog opens with ONE tween that animates `position` AND `modulate` together. The client replays the
 // transform half by pinning the node's element to the tween endpoint, and while that pin is live the walk treats
@@ -20,8 +20,8 @@ import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState }
 // repaired it. The first open in a page session was correct because the popup had no record yet, so
 // `applyTweenHints` dropped its hints and no pin existed.
 //
-// THE FIXTURE is distilled from a live capture of the second open (`.sts2/bench/r20-relic/relic-open2.ndjson`,
-// 30s / 3.5MB / 1278 messages — uncommittable, and 99% of it is unrelated scene traffic). Kept verbatim from it:
+// THE FIXTURE is distilled from a live capture of the second open (30s / 1278 messages — uncommittable, and 99% of
+// it is unrelated scene traffic). Kept verbatim from it:
 //   * the tween hints the open delta carries (position + modulate, 250ms, Cubic/Out, with declared starts),
 //   * the 18 fade frames and their wire timings, i.e. the exact modulate ramp of the popup (#00 → #ff over
 //     ~280ms) and of the side arrows (which start 135ms later and end ~365ms in),

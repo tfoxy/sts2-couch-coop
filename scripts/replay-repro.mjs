@@ -18,8 +18,8 @@
 // IT NEVER BUILDS AND NEVER LAUNCHES A GAME. Point `--url` at a dev server the operator already started; the
 // page is loaded with `repro=off` appended so a replay cannot recursively record itself.
 //
-// HOW THE STREAM GETS IN. An init script replaces `window.WebSocket` before any page script runs (the model is
-// bench-mirror-replay.mjs's BenchWebSocket), so the mirror's own `new WebSocket(…/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0)` gets a fake
+// HOW THE STREAM GETS IN. An init script replaces `window.WebSocket` before any page script runs, so the mirror's
+// own `new WebSocket(…/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0)` gets a fake
 // that holds every recorded inbound frame until this process says go, then delivers them at their recorded
 // offsets. Recorded `pong` and `server-reload` frames are dropped — the first is a reply to a ping this session
 // never sent, the second would reload the page — and live `ping`s are answered here instead.
@@ -64,8 +64,7 @@ import {
   urlNameParam
 } from "./lib/repro-replay.mjs";
 
-// Playwright is a frontend devDependency, resolved from there rather than from the repo root (precedent:
-// scripts/bench-mirror-replay.mjs).
+// Playwright is a frontend devDependency, resolved from there rather than from the repo root.
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("@playwright/test");
 
@@ -177,10 +176,10 @@ const HELP = `replay-repro.mjs — replay a "repro/1" recording through the real
   --window <a>:<b>           ms on the RECORDING clock; narrows the --diag-out Performance deltas to
                              this span (default: the whole replay)
   --as-seat                  join as a seat (headlessMirrorPort + a second socket) instead of watching
-                             as a direct-view spectator — see docs/agents/repro-recorder.md
+                             as a direct-view spectator — see docs/repro-recorder.md
   --pre-tap <x>,<y>          dispatch one synthetic tap (CSS px) BEFORE the recorded clock starts — for
                              local-only UI toggle state (e.g. the settings panel) a recording armed
-                             mid-session carries no record of; see docs/agents/repro-recorder.md
+                             mid-session carries no record of; see docs/repro-recorder.md
 `;
 
 // ===========================================================================================================
@@ -363,7 +362,7 @@ function reproWebSocketInit(config) {
       // A recording made before the viewer joined has no directView session in it; without one the browser
       // envelope parser rejects a bare `{"type":"session","directView":true}` (it requires hostName, scrollAction,
       // screen and players — browserEnvelope.ts), and the mirror sits on "Waiting for the game…" forever, acking
-      // nothing. Synthesize a COMPLETE session envelope instead, exactly as bench-mirror-replay.mjs does
+      // nothing. Synthesize a COMPLETE session envelope instead
       // (`replaySession`, reusing the recording's own host/screen/player/asset fields when it has a session in it).
       // Seat mode never does this on the SEAT socket — that session already came from the host socket (or, for a
       // recording with no session in it at all, from the synthetic-seat meta's short-circuit — see below).
@@ -1111,7 +1110,7 @@ if (offStage.count > 0) {
   console.log(`   ⚠ ${offStage.count} dispatched touch/pointer events landed OUTSIDE .mirror-stage — these can`);
   console.log("     never reach inputCapture.ts. First targets hit: " + offStage.samples.join(", "));
   console.log("     Likely cause: client-local UI state (e.g. the settings panel) the recording cannot carry —");
-  console.log("     see --pre-tap and docs/agents/repro-recorder.md.");
+  console.log("     see --pre-tap and docs/repro-recorder.md.");
 }
 
 // ---- renderer diagnostics -----------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-// R4 — THE IDLE LOOPS, WIRED: the energy orb spins and the enemy intents bob on the canvas stage.
+// THE IDLE LOOPS, WIRED: the energy orb spins and the enemy intents bob on the canvas stage.
 //
 // Three contracts, tested where each one lives.
 //   * THE WALK owns the composition law. `pre` is a parent-space translate ahead of the node's own wire matrix

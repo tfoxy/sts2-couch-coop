@@ -85,7 +85,7 @@ function flamePhaseMs(parentPath: string): number {
   return (h >>> 0) % FLAME_PHASE_MOD_MS;
 }
 
-// ---- Pinned-loop replay (WS-E) --------------------------------------------------------------------------------
+// ---- Pinned-loop replay --------------------------------------------------------------------------------
 // A second, WIRE-DRIVEN family of replayed animations. The path-keyed table above covers animators that are
 // ALWAYS frozen on a KNOWN set of nodes, so a static path match is enough. These are different: the producer pins
 // them per-node and names them on the wire (`MirrorNode.pinnedLoopAnim`) because MEMBERSHIP CHANGES AT RUNTIME and
@@ -101,7 +101,7 @@ const MAP_POINT_PULSE_PERIOD_MS = (2000 * Math.PI) / 4; // 1570.7963… — one 
 const MAP_POINT_PULSE_MIN = 1.2 - 0.25;
 const MAP_POINT_PULSE_MAX = 1.2 + 0.25;
 
-// R10-B2 — the four loops the R13 producer folds out of the wire on top of the map pulse. Same contract: the
+// The four loops the producer folds out of the wire on top of the map pulse. Same contract: the
 // producer names the loop it pinned, the CLIENT owns the vocabulary (period / amplitude / easing). The tokens are
 // byte-exact copies of `Sts2TopBarFold.{Deck,Map,Settings}LoopAnimName` and `Sts2ProceedGlow.LoopAnimName`.
 //
@@ -114,14 +114,14 @@ const MAP_POINT_PULSE_MAX = 1.2 + 0.25;
 //   * `proceedGlow` — the proceed button's glow breathes: alpha 0.75 → 0.25 → 0.75, two 0.5s LINEAR legs.
 //
 // All four are pinned ANALYTICALLY (rotation → 0 / alpha → 0.75), NOT to a first-seen sample, and only the pinned
-// channel is folded: position, scale and the glow's RGB keep streaming live. That is what fixed the WS-D
+// channel is folded: position, scale and the glow's RGB keep streaming live. That is what fixed the
 // mispositioning bug, and it is why the client replay must never touch the node's own transform/placement.
 export const TOP_BAR_DECK_ROCK_TOKEN = "topBarDeckRock";
 export const TOP_BAR_MAP_ROCK_TOKEN = "topBarMapRock";
 export const TOP_BAR_SPIN_TOKEN = "topBarSpin";
 export const PROCEED_GLOW_TOKEN = "proceedGlow";
 
-// WS-A (idle-wire) — the END-TURN BUTTON's glow pulse, folded by the R14 producer (`Sts2EndTurnGlowFold`). Same
+// The END-TURN BUTTON's glow pulse, folded by the producer (`Sts2EndTurnGlowFold`). Same
 // contract as the four above: the producer names the loop, the client owns the vocabulary.
 //
 // On screen it is the `Visuals/GlowVfx` halo swelling and fading out on a 1.5s cycle, then starting over from

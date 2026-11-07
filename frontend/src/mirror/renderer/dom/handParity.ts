@@ -143,7 +143,7 @@ function cancelParityWatch(record: RenderRecord): void {
 // streamed closes silently (the producer never contradicted the endpoint, which is the case the settle measure
 // already scores as zero drift).
 //
-// Aug-20: the two ways a watch dies UNSCORED are checked first, because both used to score. (a) EXPIRY was only
+// The two ways a watch dies UNSCORED are checked first, because both used to score. (a) EXPIRY was only
 // enforced on the streamed==null branch, so a node the producer stayed silent about for a second and then moved for
 // ordinary gameplay reasons counted the move as a snap — at any distance, at any later time. (b) A REPARENT keeps
 // the record and the id but changes the space: these transforms are parent-relative, so comparing a pose taken under

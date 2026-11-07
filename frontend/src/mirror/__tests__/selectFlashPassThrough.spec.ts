@@ -15,7 +15,7 @@ import {
 //      truly leaves node.transform === null.
 //   2. the renderer's gNode rule (mirrorRenderer.ts: `node.transform == null ? ctx.parentGlobal : ...`) then
 //      composes the card at its PARENT's global — the new centre holder — instead of a corner. No flash.
-// The before variant (round-3, transform present) is included to show the diff: the card lands bottom-centre.
+// The before variant (transform present) is included to show the diff: the card lands bottom-centre.
 
 // Wire transform helper (matches the producer's {xAxis,yAxis,origin} shape). 6-tuple order is [a,b,c,d,tx,ty].
 function xform(tx: number, ty: number, a = 1, b = 0, c = 0, d = 1): Record<string, unknown> {
@@ -46,7 +46,7 @@ function keyframe(state: MirrorState): void {
 function reparent(state: MirrorState, omitTransform: boolean): void {
   const cardUpsert: Record<string, unknown> = { id: "card", parentId: "sel", name: "Card", nodeType: "NCard" };
   if (!omitTransform) {
-    cardUpsert.transform = xform(0, 677.5); // round-3: the transition-start local
+    cardUpsert.transform = xform(0, 677.5); // The transition-start local
   }
   applySceneDelta(
     state,
@@ -84,7 +84,7 @@ describe("discard-select flash — transform-less reparent pass-through (web twi
     reparent(state, /* omitTransform */ false);
     const card = state.nodes.get("card")!;
     expect(card.parentId).toBe("sel");
-    expect(card.transform).not.toBeNull(); // round-3 shipped the transition-start local
+    expect(card.transform).not.toBeNull(); // The earlier version shipped the transition-start local
     // Composed global: holder(960,488, scale 0.8) · card-local(0,677.5) → (960, 488 + 0.8*677.5) = (960,1030).
     const g = composeGlobal(state, "card");
     expect(g[4]).toBeCloseTo(960, 3);

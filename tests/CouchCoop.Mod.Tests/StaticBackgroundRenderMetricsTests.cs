@@ -160,7 +160,7 @@ internal static class StaticBackgroundRenderMetricsTests
         }
     }
 
-    // R21: `formats=codec[@quality][:opaque]`. The grammar is what lets one bench run price the whole encoder
+    // `formats=codec[@quality][:opaque]`. The grammar is what lets one bench run price the whole encoder
     // field in one table; the LABEL is what keeps two settings of one codec from folding into one row.
     private static void FormatGrammarParses()
     {
@@ -168,7 +168,7 @@ internal static class StaticBackgroundRenderMetricsTests
         Assert(formats is { Count: 6 }, $"six candidates parse (got {formats?.Count.ToString() ?? "null"})");
 
         Assert(formats![0] == new StaticBackgroundRenderMetrics.BenchCodec("png"), "bare png parses to lossless png with alpha");
-        // R21: png stopped being the shipped policy (it is jpg@0.9 now), so it is an ordinary bench candidate and
+        // png stopped being the shipped policy (it is jpg@0.9 now), so it is an ordinary bench candidate and
         // gets its own labelled metric block — which is exactly what a png-vs-jpg comparison needs.
         Assert(!formats[0].IsShippedPolicy && formats[0].Label == "png", "…and is no longer the shipped policy");
 
@@ -217,7 +217,7 @@ internal static class StaticBackgroundRenderMetricsTests
         var metrics = json["metrics"]!.AsObject();
 
         // The SHIPPED policy keys as the bare size exactly as it always did, so cross-round comparisons line up
-        // even though the shipped encoder itself moved (png -> jpg@0.9 in R21).
+        // even though the shipped encoder itself moved (png -> jpg@0.9).
         Assert(metrics.ContainsKey("2520x1080"), $"the shipped policy ({shipped}) keeps the bare size key");
         Assert((double?)metrics["2520x1080"]!["outputBytes"]!["max"] == 280_000, "…and it is the shipped candidate's bytes there");
         Assert(metrics.ContainsKey("2520x1080:png"), "png is now an ordinary bench candidate with its own block");

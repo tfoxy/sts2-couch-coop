@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using CouchCoop.Mod.HostUi;
 
-// WS-F: the advertised-LAN-IPv4 ranking. The reported defect is "on Windows with a mesh VPN installed the lobby
+// The advertised-LAN-IPv4 ranking. The reported defect is "on Windows with a mesh VPN installed the lobby
 // shows the tunnel's IP instead of the wifi IP" — the old code took the first IPv4 on the first Up, non-loopback
 // interface in OS enumeration order, so it was pure luck which adapter won.
 //

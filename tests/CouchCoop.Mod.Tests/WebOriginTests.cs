@@ -3,7 +3,7 @@ using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Server;
 
 // The "web link" QR option: the public-origin client that reaches this PC by literal IPv4 under the
-// browser's Local Network Access permission (docs/agents/local-network-access.md).
+// browser's Local Network Access permission (docs/local-network-access.md).
 //
 // Everything here is pure — no Godot, no NICs, no sockets — for the same reason QrHostOptionsTests is:
 // "what does the phone scan, and who is allowed to talk to us" is the part of this feature that is

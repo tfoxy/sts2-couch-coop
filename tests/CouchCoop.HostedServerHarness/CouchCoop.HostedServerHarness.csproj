@@ -10,8 +10,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/CouchCoop.Mod/CouchCoop.Mod.csproj" />
-    <!-- DisableTransitiveProjectReferences hides the mod's MirrorProtocol reference from this compiler; the M3
-         WS-T host-discovery responder mount below names HostDiscoveryReply directly, so reference it here (same
+    <!-- DisableTransitiveProjectReferences hides the mod's MirrorProtocol reference from this compiler; the
+         host-discovery responder mount below names HostDiscoveryReply directly, so reference it here (same
          pattern CouchCoop.Mod.Tests uses). -->
     <ProjectReference Include="../../src/CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />
     <!-- The browser server's public constructor exposes NetworkAdmissionLimiter. With transitive project

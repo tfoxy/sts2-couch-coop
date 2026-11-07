@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// IDLE ATLAS PREFETCH (Aug-19). The contract these specs pin is a SCHEDULE, not a set of urls: the whole point of
+// IDLE ATLAS PREFETCH. The contract these specs pin is a SCHEDULE, not a set of urls: the whole point of
 // the rewrite is that `prefetchMirrorImages()` requests nothing on the caller's task and never has more than one
 // page in flight, so a connect/join that is already fetching the scene stream is not made to race a dozen
 // multi-megabyte atlas fetches. So the atlasBaker mock below is a small FAKE of the real cache rather than a bare
@@ -444,7 +444,7 @@ describe("prefetchMirrorImages and the host's atlas manifest", () => {
 
   // A manifest for some OTHER directory says nothing about these pages, and a host that stops sending one has
   // not retracted what it already said. Both fail open, because a prefetch that warms nothing is the regression
-  // this list was written to avoid (a median 1501 ms later last texture upload).
+  // this list was written to avoid (a later last texture upload).
   it("fails open for pages outside the published directory, and ignores a later null", () => {
     publishAtlasManifest({ directory: "res://images/other_atlases/", pages: [RES("nothing_we_want")] });
     publishAtlasManifest(null);
@@ -532,7 +532,7 @@ describe("prefetchMirrorImages and the host's game build", () => {
   });
 });
 
-// THE LEVER, restored Sep-18. `readPrefetchParam` returned `null` unconditionally, so `?atlasPrefetch` — which
+// THE LEVER, restored. `readPrefetchParam` returned `null` unconditionally, so `?atlasPrefetch` — which
 // every comment in the module documents, and which the device legs quoted below were supposedly measured with —
 // had been inert since the first public release. Nothing caught it because every spec in this file pins the
 // override instead of the URL, so these two read the real one.
@@ -578,10 +578,10 @@ describe("the ?atlasPrefetch URL lever", () => {
   });
 });
 
-// R7 W1 fix (b) — THE PRICE LIST. The prefetch's cost was an estimate for a whole round, and estimates do not
+// THE PRICE LIST. The prefetch's cost was an estimate for a whole run, and estimates do not
 // survive contact with a device, so the chain counts the pixel size of what it walked. Read it as a price list
-// and NOT as residency (Sep-18): it is cumulative over this chain's own plan, it can never fall, and nothing
-// outside the walk can move it — which is why the iPhone round could not use it to test whether anything
+// and NOT as residency: it is cumulative over this chain's own plan, it can never fall, and nothing
+// outside the walk can move it — which is why an iPhone run could not use it to test whether anything
 // accumulated. Live residency lives in `atlasBaker.atlasResidencyStats` and is what the census reports. Warming
 // a page no longer pins its pixels either; the host VmRSS pairs of 222-292 MB describe the old ownership rule.
 describe("prefetch decoded-byte accounting", () => {

@@ -206,7 +206,7 @@ describe("pinnedLoopBinding", () => {
   });
 });
 
-// --- the CANVAS arm (R5) ----------------------------------------------------------------------------------------
+// --- the CANVAS arm ----------------------------------------------------------------------------------------
 //
 // Same producer token, same binding, same endpoints — a different way of putting them on screen. The DOM backend
 // composes `scale:` + a paired `translate:` on the element that already carries the baked matrix; the canvas

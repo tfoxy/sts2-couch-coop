@@ -21,8 +21,7 @@ every `width` tween) leaves that fleet entirely. The dynamic modes are untouched
 | `glow-uncommon.png` | `res://scenes/vfx/uncommon_glow_vfx.tscn` | `-256, -256, 512, 512` | live emitter, `modulate = 1,1,1,1`, downscaled 2× |
 | `glow-rare.png` | `res://scenes/vfx/rare_glow_vfx.tscn` | `-384, -384, 768, 768` | live emitter, `modulate = 1,1,1,1`, downscaled 2× |
 
-Rendered by the real game through spirectl's `scene-subtree://` extraction, against **game v0.111.0** on
-2026-09-22. Re-bake with:
+Rendered by the real game through spirectl's `scene-subtree://` extraction, against **game v0.111.0**. Re-bake with:
 
 ```
 scripts/bring-up-gamescope-instance.sh --instance effectbake \

@@ -9,7 +9,7 @@ import { applySceneDelta, createMirrorState, MIRROR_DESIGN_WIDTH, parseSceneDelt
 import { remapViewScaleInverse, type ViewScaleAabb, type ViewScaleInputStamp } from "@/mirror/viewScaleInverse";
 import { buildViewScaleInputRegistry } from "@/mirror/viewScaleLayout";
 
-// R9 (WS-A) — the WEB half of the view-scale input-gate truth table: mirrorRenderer.buildViewScaleInputStamps and its
+// The WEB half of the view-scale input-gate truth table: mirrorRenderer.buildViewScaleInputStamps and its
 // FOUR neighbour-exclusion rules, in lockstep with the native
 // tests/CouchCoop.MirrorProtocol.Tests/ViewScaleInputRegistryTests.cs (same cases, same names in the titles). Change
 // one suite, change the other.
@@ -20,7 +20,7 @@ import { buildViewScaleInputRegistry } from "@/mirror/viewScaleLayout";
 // ancestor, not enclosing the legend's pre-scale box, not a stage band) survived 1/2/3 and overlaps the legend's 1.2x
 // ScaledBox. Every covered point of the enlarged legend interior was therefore EXEMPT from the inverse -> identity ->
 // the legend's rows only reacted at their PRE-scale positions ("the legend interaction position is not mapped").
-// Geometry below is the REAL live capture (.sts2/bench/r9-wsa-live-map.ndjson, map open over a combat room).
+// Geometry below is the REAL live capture (map open over a combat room).
 
 const LEGEND_SCENE = "res://scenes/screens/map/map_screen.tscn";
 const MAP_POINT_SCENE = "res://scenes/ui/normal_map_point.tscn";
@@ -201,7 +201,7 @@ describe("buildViewScaleInputStamps — neighbour rules (native twin: ViewScaleI
   });
 
   // ItemHaloSiblingSurvivesFilter (native twin). An ITEM stamp's halo sibling survives when it paints ABOVE the item
-  // (a legitimate un-scaled overlay). R19 WP-6d gave item stamps a paint floor of their OWN index, so the same
+  // (a legitimate un-scaled overlay). Item stamps now have a paint floor of their OWN index, so the same
   // sibling painted BELOW is now dropped — an item's halo is the pixels it paints OVER, so a rect it paints over
   // cannot be what the finger is on.
   it("rule 4 for an ITEM stamp: a halo sibling ABOVE it survives, one BELOW it is dropped", () => {
@@ -228,7 +228,7 @@ describe("buildViewScaleInputStamps — neighbour rules (native twin: ViewScaleI
 
     const regBelow = registryOf(below, below.map((n) => n.id as string));
     expect(regBelow).toHaveLength(1);
-    expect(hasBox(regBelow[0].neighborRects, sibling)).toBe(false); // the R19 item paint floor
+    expect(hasBox(regBelow[0].neighborRects, sibling)).toBe(false); // the item paint floor
 
   });
 
@@ -330,12 +330,12 @@ describe("buildViewScaleInputStamps — renderedBox (widened-design on-stage box
   });
 });
 
-// R10 WS-F — EFFECTIVE VISIBILITY. A SCREEN is hidden by clearing the flag on its ROOT; every descendant keeps
+// EFFECTIVE VISIBILITY. A SCREEN is hidden by clearing the flag on its ROOT; every descendant keeps
 // `visible: true`. The stamp pass only tested the item's OWN flag, so a CLOSED map screen kept publishing its
 // MapLegend (1.2 group) and NNormalMapPoint (1.5) stamps into this coordinate-only registry while the player was back
 // in COMBAT. Nothing was drawn (the elements are display:none), but every pointer whose resolved game X crossed one of
-// those bands was silently remapped: measured on the real page with a combat recording, 66.7 design px of
-// instantaneous cursor jump at 1920x1080 and 67.6 at 2520x1080 (scripts/probe-targeting-drag-jump.mjs). Native twin:
+// those bands was silently remapped: measured on the real page with a combat recording, a cursor jump of roughly
+// 67 design px at both 1920x1080 and 2520x1080. Native twin:
 // the EffectivelyVisible gate in ViewScaleStampIndex.Build.
 describe("buildViewScaleInputStamps — effective visibility (R10 WS-F)", () => {
   it("publishes nothing for a stamp under a HIDDEN ancestor (the closed map screen behind combat)", () => {

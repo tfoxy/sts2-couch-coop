@@ -521,7 +521,7 @@ describe("rasterScaleFor", () => {
     expect(scaled(0.87) / 0.87).toBeLessThan(1.02);
   });
 
-  // --- THE TWO TIERS (round 10) ------------------------------------------------------------------------------
+  // --- THE TWO TIERS ------------------------------------------------------------------------------
   //
   // Once the quad is sized from the texture (`exactBlitSize`), this number stops setting SHARPNESS and starts
   // setting SIZE: the ink is drawn at exactly `scale` device px per design px, so the step's round-up becomes a

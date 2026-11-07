@@ -8,7 +8,7 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// R10 LATE-NODE GUARD — "the relics are missing until I reload the browser" / "the targeting arrow never appears
+// LATE-NODE GUARD — "the relics are missing until I reload the browser" / "the targeting arrow never appears
 // after a game restart".
 //
 // Both are ONE seam. The renderer picks a STRUCTURAL walk purely on `state.orderedIds !== lastOrderedIds`; an
@@ -79,7 +79,7 @@ describe("late-node structure guard", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
     // The keyframe's order names "relic" (the producer put the pruned hidden node in the array) but carries no
-    // node for it — exactly what a pre-R10 producer/host pair shipped.
+    // node for it — exactly what an earlier producer/host pair shipped.
     full(state, [rawNode("room", null), rawNode("chest", "room")], ["room", "chest", "relic"]);
     renderer.reconcile(state);
     expect(el(stage, "relic")).toBeNull();

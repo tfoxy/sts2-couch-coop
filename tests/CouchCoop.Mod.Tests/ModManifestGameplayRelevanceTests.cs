@@ -5,7 +5,7 @@ using System.Text.Json;
 // This is not cosmetic metadata. JoinFlow.Begin compares ModManager.GetGameplayRelevantModNameList() between host
 // and joiner and REFUSES the connection when the lists differ (NetError/ConnectionFailureReason.ModMismatch, which
 // the error popup renders as "missing on host / missing on local"). With affects_gameplay false the mod is absent
-// from both lists, so [] == [] and a VANILLA Steam friend can join a couch-coop host — the entire point of WS-1.
+// from both lists, so [] == [] and a VANILLA Steam friend can join a couch-coop host — the entire point of the hosting guards.
 // Flipping this flag to true would lock out every unmodded player, and would do it silently: nothing else in the
 // build would fail. Hence a test that reads the shipped manifest itself.
 internal static class ModManifestGameplayRelevanceTests

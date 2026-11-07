@@ -1,4 +1,4 @@
-// R11 (Aug-14) — THE REGION BAKE RUNS IN A WORKER POOL.
+// THE REGION BAKE RUNS IN A WORKER POOL.
 //
 // The phone session that motivated this measured 4,502.6ms of bake WALL against 385.3ms of main thread (91.4% of
 // a bake's life is not main-thread time) and still tripped the self-disable three times, leaving 41 regions on the
@@ -298,7 +298,7 @@ describe("worker pool sizing", () => {
     // thread, not the extra cores.
     expect(resolveAtlasBakePoolSize(1, undefined)).toBe(1);
     expect(resolveAtlasBakePoolSize(2, undefined)).toBe(1);
-    // …and the ladder is FLAT from 3 cores up. It used to climb to 4; the Aug-14 device sweep (see the table on
+    // …and the ladder is FLAT from 3 cores up. It used to climb to 4; the device sweep (see the table on
     // POOL_MAX) measured four workers as the worst main-thread arm AND 65MB heavier than two, because the
     // parallelism here is bounded by distinct PAGES in flight, not by cores.
     expect(resolveAtlasBakePoolSize(3, undefined)).toBe(2);
@@ -329,7 +329,7 @@ describe("worker pool sizing", () => {
     expect(resolveAtlasBudgetBytes(4)).toBe(64 * 1024 * 1024);
     expect(resolveAtlasBudgetBytes(1)).toBe(BUDGET_MIN_BYTES);
     expect(resolveAtlasBudgetBytes(64)).toBe(BUDGET_MAX_BYTES);
-    // …and the fallback that the Aug-20 mount burst put on trial and did NOT move: an unreported reading is the
+    // …and the fallback that the mount burst put on trial and did NOT move: an unreported reading is the
     // TIER LINE, not a desktop, because iOS Safari and Firefox report nothing at all and phones are in that
     // bucket. It is the same reading the pool size and the drop tier already take (see the two specs above).
     expect(resolveAtlasBudgetBytes(undefined), "4GB assumed when unreported").toBe(64 * 1024 * 1024);
@@ -417,7 +417,7 @@ describe("the page-drop tier", () => {
 
 });
 
-// --- the hold-slot line: which pages stop being budgetable by a share at all (Aug-20) ----------------------------
+// --- the hold-slot line: which pages stop being budgetable by a share at all ----------------------------
 //
 // The other half of the same policy, and derived from it rather than from the device: a worker that is KEEPING its
 // oversized pages (`dropIdleMs: "off"`) needs somewhere to keep them that is not the share they cannot fit in, and
@@ -782,7 +782,7 @@ describe("keepPage", () => {
 
 // --- a page a worker gave back ------------------------------------------------------------------------------------
 //
-// TIER NOTE (Aug-19): an IDLE release only happens on a device under PAGE_DROP_MIN_MEMORY_GB now — the fixture
+// TIER NOTE: an IDLE release only happens on a device under PAGE_DROP_MIN_MEMORY_GB now — the fixture
 // device is 8GB, where the pool configures `dropIdleMs: "off"` — so the specs below that model one put the pool on
 // that tier explicitly (`useIdleDropTier`). They are unchanged otherwise: what a release costs the pool, and how
 // the stats attribute it, is the same question it always was, and it is the question the pin above answers a
@@ -814,7 +814,7 @@ describe("a released page", () => {
   // THE HONEST COST OF THE DROP, pinned rather than hoped away. Releasing a page is exactly what makes a later
   // region of it pay for a second ~590ms decode, and the amortization gate does NOT prevent it — that gate only
   // guards SECOND copies, and after a release `holders === 0`, which is the case that bypasses it. So the cost is
-  // real, it is bounded at one re-decode per gap in demand, and it shows up where the Aug-14 round taught us to
+  // real, it is bounded at one re-decode per gap in demand, and it shows up where earlier measurement taught us to
   // look: `atlasLoads` above `atlasPages`, with `atlasReleased` naming the cause.
   it("re-loads on the next region — and says so in the stats", () => {
     useIdleDropTier();
@@ -848,17 +848,14 @@ describe("a released page", () => {
   });
 });
 
-// --- a realistic multi-page workload (Aug-14 device calibration) --------------------------------------------------
+// --- a realistic multi-page workload ------------------------------------------------------------------------------
 //
-// A controlled device calibration on a moto g86 (54-region combat, one build, hiddenSamples 0) found the real
-// session touches 8 DISTINCT atlas pages, and larger pools paid for redundant
-// decodes purely from the pool opening extra copies of a page other queued regions were about to reuse:
-//   pool 1: atlasLoads 8 / atlasPages 8 (0 redundant — a single worker can only ever hold ONE copy of anything)
-//   pool 2: atlasLoads 14 / atlasPages 8, and 12 / 8 on a repeat run (6 redundant decodes)
-//   pool 4: atlasLoads 11 / atlasPages 8, and 10 / 8 on a repeat run (2-3 redundant decodes)
-// This is the strongest pin for the fix: drive something SHAPED like that session through the REAL baker
-// pipeline (not the pool's API directly — see `bakeDirect`'s note) and check the pool never pays for a page
-// twice, however the pool happens to be sized.
+// A real combat session touches several DISTINCT atlas pages (8 in the calibration this is modelled on), and larger
+// pools paid for redundant decodes purely from the pool opening extra copies of a page other queued regions were
+// about to reuse. A single worker can only ever hold ONE copy of anything, so it never pays; with a pool of 2 or 4
+// the redundant decodes appeared. This is the strongest pin for the fix: drive something SHAPED like that session
+// through the REAL baker pipeline (not the pool's API directly — see `bakeDirect`'s note) and check the pool never
+// pays for a page twice, however the pool happens to be sized.
 describe("realistic multi-page workload (regression pin for atlasLoads:9 / atlasPages:7)", () => {
   const PAGES = [
     ATLAS,
@@ -1021,16 +1018,12 @@ describe("strip bakes", () => {
 
 // --- the stall backstop on the worker path ------------------------------------------------------------------------
 //
-// R11 Aug-14, SECOND device probe (moto g86, 60s of real recorded combat over a real WebSocket, own visible tab,
-// workers on, pool 4). The main-thread half of the new criterion worked — slow 0, syncTrips 0, slowestSyncMs 7.0,
-// parked 0 — and the WALL backstop tripped anyway:
-//   {"baked":64,"stalled":3,"slowestMs":2725.3,"syncTotalMs":108.2,"trips":1,"stallTrips":1,"requeued":34,
-//    "poolSize":4,"workerMsTotal":4680.7,"workerEncodeMsTotal":544.9,"workerSlowestMs":1837.4,"atlasLoads":7}
-// A worker bake's wall is three unrelated things added together: the pool's queue wait (2,725.3 - 1,837.4 ≈ 888ms
-// on the worst bake — 64 regions through 4 workers HAS to queue), a ONE-OFF page decode (4,680.7 - 544.9 = 88% of
-// all worker time, paid in full by the first region of each of 7 pages and by nobody after it), and the region's
-// own encode (544.9ms over 64 regions, ~8.5ms each). Only the third is evidence about this device. These specs pin
-// that the backstop reads it and nothing else.
+// A device probe with workers on and a pool of 4 showed the main-thread half of the criterion working (no slow
+// bakes, no sync trips, nothing parked) while the WALL backstop tripped anyway. A worker bake's wall is three
+// unrelated things added together: the pool's queue wait (many regions through 4 workers HAVE to queue), a
+// ONE-OFF page decode (most of all worker time, paid in full by the first region of each page and by nobody after
+// it), and the region's own encode. Only the third is evidence about this device. These specs pin that the
+// backstop reads it and nothing else.
 describe("the stall backstop measures work, not waiting", () => {
   it("does NOT strike on POOL QUEUE WAIT, however long the bake's wall ends up", async () => {
     usePoolSize(4); // pool MECHANICS, not sizing — see usePoolSize
@@ -1938,7 +1931,7 @@ describe("the worker's own page residency", () => {
     expect(encodes, "nothing was encoded").toBe(0);
   });
 
-  // --- THE HOLD SLOT (Aug-20): a page too big for the share is held APART from it -------------------------------
+  // --- THE HOLD SLOT: a page too big for the share is held APART from it -------------------------------
   //
   // The defect this replaced, in one line: `evictPages` asked `total + incoming > keepBytes` over ONE flat set of
   // pages, so a page bigger than the whole share was evicted by whatever arrived next and re-decoded by whatever
@@ -1979,7 +1972,7 @@ describe("the worker's own page residency", () => {
       configureTier();
       bakeInWorker(SMALL, false);
       await settle();
-      bakeInWorker(BIG, false); // 62KB against a 32KB share: pre-Aug-20 this emptied the worker
+      bakeInWorker(BIG, false); // 62KB against a 32KB share: previously this emptied the worker
       await settle();
 
       expect(releasedUrls(), "the small page was never competing with it").toEqual([]);
@@ -2133,7 +2126,7 @@ describe("the worker's own page residency", () => {
     });
 
     // The other side of the same lever, and the reason `bigPageBytes` is optional at all: under `"off"` this
-    // module's sweep is the pre-Aug-20 one, byte for byte. That is not a leftover — it is what the under-4GB tier
+    // module's sweep is the previous one, byte for byte. That is not a leftover — it is what the under-4GB tier
     // still ships, where an oversized page is given back on an idle timer instead of held (see `the page-drop
     // tier`), and it is the arm the real-pipeline pin below measures the fix against.
     it("evicts the big page for a small one under `bigPageBytes: off` — today's rule, on the tier that keeps it", async () => {
@@ -2196,7 +2189,7 @@ describe("the worker's own page residency", () => {
     const PASSES = 2;
 
     /**
-     * INTERLEAVED, AND SPREAD OVER FRAMES — both halves matter, and the second one is why the Aug-14 workload
+     * INTERLEAVED, AND SPREAD OVER FRAMES — both halves matter, and the second one is why the original workload
      * never caught this. A mount walks the scene once and asks for each sprite's region as it reaches it, so
      * consecutive requests hop between atlases; but if a whole pass is handed to the pool AT ONCE, the pool's
      * holder-first placement re-groups it page by page and every page finishes before anything can evict it. On a
@@ -2259,7 +2252,7 @@ describe("the worker's own page residency", () => {
 
       // 19 loads for 10 pages, against the device's 18 for 10 — the same defect, in a fixture, at the game's own
       // page sizes. Every one of those extra nine is a full fetch + decode + readback (~590ms of worker time on
-      // the Aug-14 phone) spent re-acquiring a page the worker had already had.
+      // the phone) spent re-acquiring a page the worker had already had.
       expect([atlasBakePoolStats.atlasLoads, atlasBakePoolStats.atlasPages]).toEqual([19, 10]);
       // …and NOT ONE of them was a release: `atlasEvicted` is the mechanism, which is exactly why the damage
       // gauge is `atlasLoads - atlasPages` and not either release counter.

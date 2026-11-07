@@ -5,7 +5,7 @@ using CouchCoop.Mod.Diagnostics;
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// The host's half of the streaming seat (handoff-mirror-new-renderer.md MIR-3): which seat launch becomes the
+/// The host's half of the streaming seat: which seat launch becomes the
 /// streaming seat, and the environment it is launched with.
 /// </summary>
 /// <remarks>

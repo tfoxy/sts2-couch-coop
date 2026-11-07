@@ -6,7 +6,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R8 (WS-2) — the REGRESSION GATE for the event-option scale flicker (reported three times: R4, R6, R7).
+// The REGRESSION GATE for the event-option scale flicker (reported three times).
 //
 // It replays a recorded ancient-event stream DELTA BY DELTA through the exact pipeline the native client runs each
 // drain — SceneDeltaReader → SceneTreeApplier → GlobalTransformIndex.Update → SpreadIndex.Update →
@@ -24,7 +24,8 @@ namespace CouchCoop.MirrorProtocol.Tests;
 // It also checks PURITY (rebuilding twice off the same state gives an identical index — no hidden state) and that
 // the stamped subtree lands in the StaticBake exclusion set.
 //
-// Path-presence-gated (BandResidencyReplayProbe idiom): default `.sts2/bench/audit-mprun.ndjson`, overridable via
+// Path-presence-gated (BandResidencyReplayProbe idiom): reads a recorded ancient-event stream from the gitignored
+// `.sts2/` directory, overridable via
 // COUCHCOOP_MIRROR_VIEWSCALE_STAMP_NDJSON. Prints ONE skip line and passes when absent (nothing under .sts2/ is
 // committed).
 internal static class ViewScaleStampReplayProbe

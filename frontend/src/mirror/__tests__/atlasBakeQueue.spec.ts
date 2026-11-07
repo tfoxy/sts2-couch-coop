@@ -9,7 +9,7 @@ import {
   type AtlasRegion
 } from "@/mirror/atlasBaker";
 
-// R10-PERF6 WS-P2 — THE BAKE QUEUE'S TWO PRIORITIES.
+// THE BAKE QUEUE'S TWO PRIORITIES.
 //
 // Shipping the hidden-sprite warm-up means a session goes from ~54 region bakes to ~780,
 // and every one of them is SPECULATIVE: nobody is looking at the screen it belongs to. That changes what the
@@ -74,9 +74,9 @@ class FakeOffscreenCanvas {
 // A clock the test advances by hand, so "this bake took 900ms" needs no real time.
 let clockMs = 0;
 /**
- * Main-thread ms every bake's draw costs, billed inside the bake's synchronous segment. Aug-14: the strike
+ * Main-thread ms every bake's draw costs, billed inside the bake's synchronous segment. The strike
  * criterion reads THAT, not wall (`settleBake`'s argument), because the phone session that motivated the change
- * spent 91.4% of its bake wall time off the main thread and tripped the switch anyway. A test that wants a bake
+ * spent most of its bake wall time off the main thread and tripped the switch anyway. A test that wants a bake
  * to strike must set this BEFORE the bake is issued — the drain starts the next one inside the previous settle.
  */
 let syncCostMs = 0;
@@ -231,16 +231,15 @@ describe("sticky revert exposure", () => {
   });
 });
 
-// R11 R4-RESIDUALS — THE REVERT HAS TO HEAL.
+// THE REVERT HAS TO HEAL.
 //
-// The revert above used to be a SESSION-DEATH LATCH, and a real phone (moto g86) tripped it on its first screens:
-// {"baked":20,"slow":3,"slowestMs":3762,"disabled":true}. What followed was permanent — a 941-canvas / 1,888-layer
-// map open, and combat traces holding 2,029ms and 2,705ms main-thread tasks on ~100ms of CPU (blocked on the GPU
-// process). Worse than any bake. A live re-arm probe then found that flipping `disabled` back would NOT have
-// recovered it: every region the session had asked for was parked in `regionFailed` forever, so 28s and a deck-view
-// open that mounted 82 canvases produced 0 bake requests. These specs pin the mechanism that replaced it.
+// The revert above used to be a SESSION-DEATH LATCH, and a real phone tripped it on its first screens, after which
+// the mechanism stayed off for good while the main thread sat blocked on the GPU process. Worse, flipping
+// `disabled` back would NOT have recovered it: every region the session had asked for was parked in
+// `regionFailed` forever, so later screens produced no bake requests at all. These specs pin the mechanism that
+// replaced it.
 describe("slow-bake backoff decay", () => {
-  // Aug-14: a strike is MAIN-THREAD time, so every bake in this block is armed to block past BAKE_SLOW_MS. The
+  // A strike is MAIN-THREAD time, so every bake in this block is armed to block past BAKE_SLOW_MS. The
   // arming has to happen before a bake is ISSUED (the draw is billed when the drain starts it), which is why it
   // lives here rather than inside trip().
   beforeEach(() => {

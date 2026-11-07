@@ -4,12 +4,12 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R5 (WS-G1) HEADLESS live-data verification of the HoverTip floater fix (H1/H2) — no Godot, no display, no live
+// HEADLESS live-data verification of the HoverTip floater fix (H1/H2) — no Godot, no display, no live
 // lock. Point COUCHCOOP_MIRROR_TIPPROBE_NDJSON at a recorded mirror stream that contains a combat HoverTip (e.g.
-// .sts2/bench/wscrisp-hovertip.ndjson, `{"t":ms,"data":"<raw message>"}` lines), and this replays every scene-delta
+// a recorded hover-tip session, `{"t":ms,"data":"<raw message>"}` lines), and this replays every scene-delta
 // into a MirrorState, runs the REAL GlobalTransformIndex + SpreadIndex at a widened factor (F≠1, phone aspect), and
 // prints, per visible NHoverTipSet: its anchor owner, the resolved VISUAL owner (H2), and the tip's spread Dx under
-// BOTH the fixed walk and the pre-R5 double-count walk — the exact user symptom (tip Dx ≠ card Dx) becomes a number.
+// BOTH the fixed walk and the earlier double-count walk — the exact user symptom (tip Dx ≠ card Dx) becomes a number.
 // Skips SILENTLY when the env var is unset/absent so the suite stays green in a plain checkout. Env-gated, no assert.
 internal static class TipFloaterReplayProbe
 {

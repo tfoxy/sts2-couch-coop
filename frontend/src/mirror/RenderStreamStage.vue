@@ -3,18 +3,18 @@
 // game's own draw calls, replayed on one canvas. Couch chrome only; the protocol loop, the wasm and its teardown
 // all belong to `@godot-scene-web/render-stream-client`.
 //
-// What this component owns (handoff-mirror-new-renderer.md §3 Q5):
+// What this component owns:
 //   * the <canvas>: a W×1080 backing store, W being the seat's presentation width (`GRC_ROOT_SIZE=presentation:<W>x1080`,
-//     the descriptor's `presentation`: 1920, or wider when the seat was launched at this viewer's aspect — PRES-A),
+//     the descriptor's `presentation`: 1920, or wider when the seat was launched at this viewer's aspect),
 //     CSS-fitted at that aspect inside the frame (letterboxed: a box whose aspect changed since the seat started, a
-//     rotated phone, keeps the seat's width until its next start — PRES-R), honouring the safe-area padding
+//     rotated phone, keeps the seat's width until its next start), honouring the safe-area padding
 //     preference exactly as MirrorView's frame does;
 //   * the client's lifetime: created and connected on mount, disposed on unmount (heap, socket, GL context);
 //   * the loading line until the first drawn transaction, and "Reconnecting…" while the package backs off;
 //   * the hidden tab: rAF stops by itself (so no credit returns and the hub stops publishing to us); after
 //     60 s hidden the client is disposed outright, and a visible tab reconnects as a fresh join ON A NEW CANVAS:
 //     the package's `dispose()` loses the canvas's WebGL context for good (`WEBGL_lose_context`), and a canvas keeps
-//     that lost context, so a client given the old one connects and then draws nothing (MIR-4);
+//     that lost context, so a client given the old one connects and then draws nothing;
 //   * `unauthorized` (the hub refused the token: the seat restarted with a new one): ask MirrorApp ONCE for the
 //     seat's current descriptor (`refresh-endpoint`); a different one arriving reconnects with it, the same one (or
 //     none within `refreshTimeoutMs`) is a stop;
@@ -24,7 +24,7 @@
 //     new list — the modules' `wants` ride the hello, so an attached client cannot gain or drop one in place.
 //
 // VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
-// the INP2 input channel: pointer events over the canvas → INP1's mapping → the seat socket's `input` message
+// the input channel: pointer events over the canvas → the pointer mapping → the seat socket's `input` message
 // (streamInput.ts: godot-scene-web's pointer capture behind couch's adapter); and the keyboard and gamepad
 // (keyPadInput.ts: the same package's captures behind couch's adapter), on the same socket.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";

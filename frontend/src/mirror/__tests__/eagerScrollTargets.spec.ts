@@ -6,8 +6,8 @@ import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState }
 
 // The RENDERER half of eager scrolling: which nodes are scrollables, where their viewport is, what the eager offset
 // may reach, and how much of a virtualized grid is actually materialized. Everything here is measured off a wire
-// shape taken from a real recording (`.sts2/bench/r8-map-live.ndjson` for the map, `wscrisp-deckdialog.ndjson` for
-// the deck grid), so the names and node types below are the ones that really arrive on the wire.
+// shape taken from a real recording (the map, and the deck grid), so the names and node types below are the ones
+// that really arrive on the wire.
 
 function xform(tx: number, ty: number): Record<string, unknown> {
   return { xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x: tx, y: ty } };
@@ -93,7 +93,7 @@ function gridScene(
       })
     )
   );
-  // The ANCHOR claims are the real wire's (`.sts2/bench/wscrisp-deckdialog.ndjson`): every frame from Run down to the
+  // The ANCHOR claims are the real wire's (a recorded deck dialog): every frame from Run down to the
   // NCardGrid is a full-width [0,1] span, so on a widened stage each one reproduces Godot's own resize and passes the
   // whole budget down. They are inert at 16:9 (no widening budget is open), so every case below is unchanged by them.
   return [
@@ -219,7 +219,7 @@ describe("mirrorRenderer.eagerScrollTargets", () => {
     expect(band.hi).toBeCloseTo(1104 + (1104 - 348.8) / 2, 3);
   });
 
-  // R11 WS-S §2 — the HEADER MERGE. `SortingOptions` (a plain Control child of the ScrollContainer, always streamed)
+  // The HEADER MERGE. `SortingOptions` (a plain Control child of the ScrollContainer, always streamed)
   // sits at y≈92 above the first card row at y≈348.8; without merging it in, the RESTING offset 0 is outside the
   // band and the very first wheel notch yanked the grid ~270px.
   const sortingHeader = node("sorting", "scroll", "SortingOptions", "Godot.Control", {
@@ -259,7 +259,7 @@ describe("mirrorRenderer.eagerScrollTargets", () => {
     expect(grid.bar?.id).toBe("handle");
   });
 
-  // R20 — the WIDENED stage, which no bar test had ever run (every eager-scroll spec was 16:9, so the branch that
+  // The WIDENED stage, which no bar test had ever run (every eager-scroll spec was 16:9, so the branch that
   // shifts the strip could not execute and the defect below shipped). "Widescreen stretch" at 2520 design px is
   // spreadFactor 1.3125 ⇒ Δ = 600; the bar hugs the right edge of the anchored 1920-wide frame, so it takes the WHOLE
   // delta. The GAME box must not move (the game still hit-tests 1920 space) while the RENDERED box is where the strip
@@ -348,7 +348,7 @@ describe("mirrorRenderer.eagerScrollTargets", () => {
     expect(renderer.eagerScrollTargets()).toEqual([]);
   });
 
-  // R19 WP5 — the two facts the ABSOLUTE channel takes from the renderer, checked against a streamed scene rather
+  // The two facts the ABSOLUTE channel takes from the renderer, checked against a streamed scene rather
   // than against a hand-built target: the container's ADDRESS, and the bar geometry the press mapping runs on.
   it("names the scroll container by its live node id — the elementId set-scroll-offset resolves", () => {
     const { renderer, state } = harness();

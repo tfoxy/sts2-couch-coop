@@ -78,7 +78,7 @@ public sealed class BrowserSessionRegistry
         }
     }
 
-    // `characterId` is the seat's character model id where the state snapshot has one (R19 WP-2 — the picker's
+    // `characterId` is the seat's character model id where the state snapshot has one (the picker's
     // per-seat icon). Trailing + defaulted so every existing call site is unaffected; the registry itself never
     // invents one, since it only knows names and connection counts.
     public BrowserPlayerOption ToPlayerOption(

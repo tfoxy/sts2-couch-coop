@@ -76,8 +76,14 @@ done
 
 git -C "$REPO" worktree add --detach "$WT" HEAD >/dev/null 2>&1 || die "git worktree add"
 for d in scripts agents skills; do
+  [ -d "$REPO/$d" ] || continue
+  mkdir -p "$WT/$d"
   cp -a "$REPO/$d/." "$WT/$d/" || die "copy $d"
 done
+# A fixture agent, so the generator checks below hold whichever agents this repo keeps public.
+mkdir -p "$WT/agents"
+printf -- '---\nname: fixture-role\ndescription: A fixture agent.\n---\n\n# Fixture role\n\nSee [x](../docs/x.md).\n' \
+  > "$WT/agents/fixture-role.md"
 # The shipped DSH standard preset is versioned with the installed harness; use the
 # committed fixture so role-preset generation is deterministic and hermetic.
 export DSH_PRESET_FILE="$WT/scripts/test-support/dsh-standard.patch.yml"
@@ -87,11 +93,11 @@ export DSH_PRESET_FILE="$WT/scripts/test-support/dsh-standard.patch.yml"
 # ---------------------------------------------------------------------------------------------
 # Sibling repos live next to the checkout; each EXTRA_SKILLS path resolves beside $WT.
 mkdir -p "$TMP/spirectl/skills/spirectl" "$TMP/godot-qa/skills/godot-qa" \
-  "$TMP/godot-scene-web/skills/gsw-wgpu-renderer"
+  "$TMP/godot-scene-web/private/skills/gsw-wgpu-renderer"
 printf -- '---\nname: spirectl\ndescription: stub\n---\n' > "$TMP/spirectl/skills/spirectl/SKILL.md"
 printf -- '---\nname: godot-qa\ndescription: stub\n---\n' > "$TMP/godot-qa/skills/godot-qa/SKILL.md"
 printf -- '---\nname: gsw-wgpu-renderer\ndescription: stub\n---\n' \
-  > "$TMP/godot-scene-web/skills/gsw-wgpu-renderer/SKILL.md"
+  > "$TMP/godot-scene-web/private/skills/gsw-wgpu-renderer/SKILL.md"
 
 # A locally installed skill is a REAL directory and must never be replaced by a symlink.
 mkdir -p "$WT/.claude/skills/godot-qa"
@@ -134,11 +140,13 @@ ok "no .dsh writes in the home without --user" test ! -e "$FAKEHOME_RO/.dsh"
 
 echo "== Claude Code layout =="
 for f in "$WT"/agents/*.md; do
+  [ -e "$f" ] || continue
   n="$(basename "$f")"
   ok ".claude/agents/$n is a symlink"      test -L "$WT/.claude/agents/$n"
   ok ".claude/agents/$n resolves"          test -e "$WT/.claude/agents/$n"
 done
 for d in "$WT"/skills/*/; do
+  [ -e "$d" ] || continue
   n="$(basename "$d")"
   ok ".claude/skills/$n resolves"          test -e "$WT/.claude/skills/$n"
   ok ".agents/skills/$n resolves"          test -e "$WT/.agents/skills/$n"
@@ -160,11 +168,13 @@ PATCH="$WT/.dsh/profile.patch.yml"
 ok ".dsh/profile.patch.yml exists" test -f "$PATCH"
 ok "a user MCP server is present"              grep -qx '    - id: agentcfg-mcp-user-only' "$PATCH"
 ok "a project-scoped MCP server is present"    grep -qx '    - id: agentcfg-mcp-project-user-only' "$PATCH"
-for n in user-agent live-game-qa mirror-bench round-implementer touch-input-qa; do
+for f in "$FAKEHOME_RO/.claude/agents/user-agent.md" "$WT"/agents/*.md "$WT"/private/agents/*.md; do
+  [ -e "$f" ] || continue
+  n="$(basename "$f" .md)"
   ok "role preset $n"                          grep -qx "    - id: agentcfg-preset-$n" "$PATCH"
 done
 ok "the role tool is present"                  grep -q 'toolName: subagent_role' "$PATCH"
-ok "a role body is inlined as the persona"     grep -q '# Live-game QA' "$PATCH"
+ok "a role body is inlined as the persona"     grep -q '# Fixture role' "$PATCH"
 ok "the shipped persona was replaced"          bash -c '! grep -q "You are a coding agent" "$1"' _ "$PATCH"
 ok "the DSH generator self-test passes"        python3 "$WT/scripts/test-gen-dsh-config.py"
 
@@ -195,6 +205,7 @@ eq "core.hooksPath is set, relative"  "scripts/githooks" "$(git -C "$WT" config 
 eq "commit.template is set, relative" ".gitmessage"      "$(git -C "$WT" config --get commit.template)"
 ok "the hook it points at exists here"     test -f "$WT/scripts/githooks/commit-msg"
 ok "…and is executable"                    test -x "$WT/scripts/githooks/commit-msg"
+ok "the pre-push hook is there too"        test -x "$WT/scripts/githooks/pre-push"
 # Both branches, hermetically: the install above ran under a fake HOME with no git identity at all,
 # which is exactly the no-signing-key case. Setting tag.gpgsign there would make `git tag` fail.
 ok "tag.gpgsign is skipped without a signing key" \
@@ -219,6 +230,7 @@ for t in "$WT"/.codex/config.toml "$WT"/.codex/agents/*.toml; do
     'import sys,tomllib; tomllib.load(open(sys.argv[1],"rb"))' "$t"
 done
 for f in "$WT"/agents/*.md; do
+  [ -e "$f" ] || continue
   n="$(basename "$f" .md)"
   toml="$WT/.codex/agents/$n.toml"
   ok "agents/$n.md -> .codex/agents/$n.toml" test -f "$toml"
@@ -476,6 +488,101 @@ ok "http server added with --url" \
   grep -qxF 'mcp add remote-thing --url https://example.invalid/mcp' "$STUB_LOG"
 ok "a server already in ~/.codex/config.toml is not re-added" \
   bash -c '! grep -q "already-there" "$1"' _ "$STUB_LOG"
+
+echo "== private companion (hermetic: a scratch repo with its own private/) =="
+# Everything here runs in a scratch repository under $TMP, never against this checkout's real
+# private/ companion: a main checkout first without private/, then with one, then a linked worktree.
+MINI="$TMP/mini-repo"
+git init -q -b main "$MINI"
+git -C "$MINI" config user.email t@example.com
+git -C "$MINI" config user.name t
+git -C "$MINI" config commit.gpgsign false
+git -C "$MINI" remote add origin git@github.com:example/mini-repo.git
+mkdir -p "$MINI/agents" "$MINI/skills/pub-skill"
+cp -a "$WT/scripts" "$MINI/scripts"
+rm -f "$MINI/scripts/install-with-extra-skills.sh"
+cp "$REPO/.gitignore" "$MINI/.gitignore"   # the working-tree copy, like scripts/
+printf -- '---\nname: pub-role\ndescription: A public agent.\n---\n\n# Public role\n' > "$MINI/agents/pub-role.md"
+printf -- '---\nname: pub-skill\ndescription: stub\n---\n' > "$MINI/skills/pub-skill/SKILL.md"
+git -C "$MINI" add -A && git -C "$MINI" commit -qm init
+
+env HOME="$FAKEHOME_RO" bash "$MINI/scripts/install-agent-config.sh" > "$TMP/mini-fresh.log" 2>&1
+eq "a fresh clone without private/ installs" 0 "$?"
+ok "…and prints the clone hint, named from origin" \
+  grep -qF 'git clone git@github.com:tfoxy/mini-repo-internal.git private' "$TMP/mini-fresh.log"
+ok "…and makes no private link"  test ! -e "$MINI/private"
+ok "…and no root overlay link"    test ! -L "$MINI/.codex-orchestration.toml"
+ok "the public agent is linked"   test -e "$MINI/.claude/agents/pub-role.md"
+
+mkdir -p "$MINI/private/agents" "$MINI/private/skills/priv-skill" "$MINI/private/skills/pub-skill"
+printf -- '---\nname: priv-role\ndescription: A private agent.\n---\n\n# Private role\n\nSee [x](../docs/x.md).\n' \
+  > "$MINI/private/agents/priv-role.md"
+printf -- '---\nname: pub-role\ndescription: A shadow.\n---\n\n# Shadow role\n' > "$MINI/private/agents/pub-role.md"
+printf -- '---\nname: priv-skill\ndescription: stub\n---\n' > "$MINI/private/skills/priv-skill/SKILL.md"
+printf -- '---\nname: pub-skill\ndescription: shadow\n---\n' > "$MINI/private/skills/pub-skill/SKILL.md"
+printf '[gate]\n' > "$MINI/private/.codex-orchestration.toml"
+env HOME="$FAKEHOME_RO" bash "$MINI/scripts/install-agent-config.sh" > "$TMP/mini-main.log" 2>&1
+eq "main checkout with private/ installs" 0 "$?"
+ok "main: private agent linked into .claude/agents"  test -e "$MINI/.claude/agents/priv-role.md"
+eq "main: …through private/agents" "../../private/agents/priv-role.md" "$(readlink "$MINI/.claude/agents/priv-role.md")"
+eq "main: a public agent wins over a private one of its name" "../../agents/pub-role.md" \
+  "$(readlink "$MINI/.claude/agents/pub-role.md")"
+ok "main: …and the installer says so" grep -q 'skipped private/agents/pub-role.md' "$TMP/mini-main.log"
+ok "main: private skill linked into .claude/skills"  test -e "$MINI/.claude/skills/priv-skill/SKILL.md"
+ok "main: private skill linked into .agents/skills"  test -e "$MINI/.agents/skills/priv-skill/SKILL.md"
+eq "main: a public skill wins over a private one" "../../skills/pub-skill" "$(readlink "$MINI/.agents/skills/pub-skill")"
+eq "main: root overlay link" "private/.codex-orchestration.toml" "$(readlink "$MINI/.codex-orchestration.toml")"
+ok "main: private agent reaches Codex"  test -f "$MINI/.codex/agents/priv-role.toml"
+ok "main: …with links rebased onto private/" grep -qF '](private/docs/x.md)' "$MINI/.codex/agents/priv-role.toml"
+ok "main: …and the public agent is not shadowed" grep -q '# Public role' "$MINI/.codex/agents/pub-role.toml"
+ok "main: private agent reaches DSH"   grep -qx '    - id: agentcfg-preset-priv-role' "$MINI/.dsh/profile.patch.yml"
+ok "main: the private dir and overlay stay untracked" \
+  test -z "$(git -C "$MINI" status --porcelain --ignored=no -- private .codex-orchestration.toml)"
+
+MINIWT="$MINI/.worktrees/wt"
+git -C "$MINI" worktree add -q --detach "$MINIWT" HEAD >/dev/null 2>&1 || die "git worktree add mini"
+env HOME="$FAKEHOME_RO" bash "$MINIWT/scripts/install-agent-config.sh" > "$TMP/mini-wt.log" 2>&1
+eq "worktree install exits 0" 0 "$?"
+ok "worktree: private is a link"              test -L "$MINIWT/private"
+eq "worktree: …to the main checkout's private/" "$MINI/private" "$(readlink "$MINIWT/private")"
+ok "worktree: private agent resolves"         test -e "$MINIWT/.claude/agents/priv-role.md"
+ok "worktree: private skill resolves"         test -e "$MINIWT/.agents/skills/priv-skill/SKILL.md"
+ok "worktree: root overlay resolves"          test -f "$MINIWT/.codex-orchestration.toml"
+ok "worktree: the private link is ignored by git" \
+  test -z "$(git -C "$MINIWT" status --porcelain -- private .codex-orchestration.toml)"
+eq "worktree: Codex may write the private companion" "True" \
+  "$(tomlq "$MINIWT/.codex/config.toml" "'$MINI/private' in d['sandbox_workspace_write']['writable_roots']")"
+
+snapshot "$MINIWT" > "$TMP/mini-snap1"; readlink "$MINIWT/private" >> "$TMP/mini-snap1"
+env HOME="$FAKEHOME_RO" bash "$MINIWT/scripts/install-agent-config.sh" > /dev/null 2>&1
+snapshot "$MINIWT" > "$TMP/mini-snap2"; readlink "$MINIWT/private" >> "$TMP/mini-snap2"
+ok "worktree: a second run changes nothing" diff -q "$TMP/mini-snap1" "$TMP/mini-snap2"
+
+ln -sfn /nonexistent/private "$MINIWT/private"
+env HOME="$FAKEHOME_RO" bash "$MINIWT/scripts/install-agent-config.sh" > /dev/null 2>&1
+eq "worktree: a wrong private link is repaired" "$MINI/private" "$(readlink "$MINIWT/private")"
+
+rm "$MINIWT/private" "$MINIWT/.codex-orchestration.toml"
+mkdir "$MINIWT/private"; printf 'mine\n' > "$MINIWT/private/MARKER"
+printf 'real\n' > "$MINIWT/.codex-orchestration.toml"
+env HOME="$FAKEHOME_RO" bash "$MINIWT/scripts/install-agent-config.sh" > "$TMP/mini-real.log" 2>&1
+eq "worktree: install over a real private/ exits 0" 0 "$?"
+ok "worktree: a real private/ is never replaced" test -f "$MINIWT/private/MARKER"
+ok "worktree: …and the installer says so" grep -q 'private is a real directory here' "$TMP/mini-real.log"
+eq "worktree: a real root file is never replaced" "real" "$(cat "$MINIWT/.codex-orchestration.toml")"
+rm -rf "$MINIWT/private" "$MINIWT/.codex-orchestration.toml"
+
+# The companion goes away: its links are dropped, the public setup is untouched.
+mv "$MINI/private" "$TMP/mini-private-away"
+env HOME="$FAKEHOME_RO" bash "$MINIWT/scripts/install-agent-config.sh" > /dev/null 2>&1
+env HOME="$FAKEHOME_RO" bash "$MINI/scripts/install-agent-config.sh" > "$TMP/mini-gone.log" 2>&1
+eq "main: install after private/ went away exits 0" 0 "$?"
+ok "main: the dangling private agent link is pruned" test ! -L "$MINI/.claude/agents/priv-role.md"
+ok "main: the dangling root overlay link is removed" test ! -L "$MINI/.codex-orchestration.toml"
+ok "main: its Codex agent is removed"                test ! -e "$MINI/.codex/agents/priv-role.toml"
+ok "main: the public agent is still linked"          test -e "$MINI/.claude/agents/pub-role.md"
+ok "worktree: no dangling private link is left"      test ! -L "$MINIWT/private"
+git -C "$MINI" worktree remove --force "$MINIWT" >/dev/null 2>&1
 
 echo
 if [ "$fail" -eq 0 ]; then

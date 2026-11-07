@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Unit tests for EffectMath — the pure math backing WS-J's native cosmetic effects (intent-glyph frame cycling,
+// Unit tests for EffectMath — the pure math backing the native cosmetic effects (intent-glyph frame cycling,
 // enemy-intent bob wave, orb spin). These pin the native twins of frontend/src/mirror/mirrorRenderer.ts's
 // intentFrameIndex, the intent bob sine, and the presentation ROTATE spin, so a native/web drift is caught by the
 // Exe runner.
@@ -115,7 +115,7 @@ internal static class IntentMathTests
     // ---- SpinPeriodMs: scene-relative path → one-turn period (twin of animAttributes.ts spinDurationMs) ----------
     // `%RotationLayers` children spin at a rate proportional to the CHILD INDEX, so the period depends on the
     // child's ORDINAL, not on its leaf number. Energy counters number them from Layer2; the star counter from
-    // Layer1 — which is why a leaf-number-only rule mis-bound the star counter (round-8 item 6, secondary defect).
+    // Layer1 — which is why a leaf-number-only rule mis-bound the star counter (a secondary defect).
 
     // ironclad/silent/defect/regent: Layers/RotationLayers/{Layer2,Layer3} = child indices 0,1 → 1× and 2×.
     private static void SpinPeriodResolvesEnergyCounterLayers()

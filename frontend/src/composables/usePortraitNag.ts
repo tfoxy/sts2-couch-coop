@@ -29,7 +29,7 @@ export const PORTRAIT_NAG_ANDROID_HINT =
 export const PORTRAIT_NAG_GENERIC_HINT =
   "If the screen won't rotate, check your device's rotation lock.";
 
-// R19 WP-2 — the hints when the overlay ALSO offers "Go fullscreen". Entering fullscreen is what asks for the
+// The hints when the overlay ALSO offers "Go fullscreen". Entering fullscreen is what asks for the
 // landscape lock (the lock hangs off `fullscreenchange`, not off the caller — see useFullscreen), so on a device
 // that has the button the first thing to say is "press this", not "go hunting in Quick Settings". The platform
 // rotation-lock advice above is still the honest fallback for the devices with no button (iPhone Safari, an
@@ -47,7 +47,7 @@ export const PORTRAIT_NAG_GENERIC_FULLSCREEN_HINT =
  */
 export function portraitRotationHint(
   userAgent: string | null | undefined,
-  // R19 WP-2: whether the overlay is showing its own "Go fullscreen" button. When it is, the advice leads with
+  // Whether the overlay is showing its own "Go fullscreen" button. When it is, the advice leads with
   // the button that is on screen; the rotation-lock gesture stays as the "still stuck?" tail.
   withFullscreen = false
 ): string {
@@ -128,7 +128,7 @@ export interface PortraitNag {
  * polling interval: the nag has exactly two moments, and a phone under load should not be paying for a ticker
  * to discover them.
  *
- * R19 WP-2: the orientation media query moved to `usePortraitViewport`, so the nag and the portrait chrome
+ * The orientation media query moved to `usePortraitViewport`, so the nag and the portrait chrome
  * placement read ONE definition of portrait. Behaviour here is unchanged — the query string is the same set of
  * viewports, the flip still restarts the clock from zero, and the listener is still attached exactly once and
  * dropped on scope dispose (the shared module's refcount owns it now).
@@ -216,7 +216,7 @@ export function usePortraitNag(
 
 // ---- kill switch ----------------------------------------------------------------------------------------------
 
-// `?nagFullscreen=off` restores the pre-R19 overlay BYTE-IDENTICALLY: "Got it" alone, and the plain rotation-lock
+// `?nagFullscreen=off` restores the previous overlay BYTE-IDENTICALLY: "Got it" alone, and the plain rotation-lock
 // hints. Read once per session and cached, like every other web valve here (see inputCapture.ts).
 function readNagFullscreen(): boolean {
   return true;

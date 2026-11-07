@@ -15,7 +15,7 @@ import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { __resetAtlasCacheForTest, __setAtlasPageSizeForTest } from "@/mirror/atlasBaker";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF6 WS-B — THE OVERLAY-BACKSTOP EXCEPTION. Two halves of one feature, both driven by the occlusion pass:
+// THE OVERLAY-BACKSTOP EXCEPTION. Two halves of one feature, both driven by the occlusion pass:
 //
 //   1. THRESHOLD. STS2's overlay scrims are `#000000d9` (0.851) ColorRects, but LIVE three of them also carry a
 //      `d9` MODULATE while their screen is open — composed 0.724, just under the generic COVER_MIN_ALPHA of 0.75,
@@ -319,7 +319,7 @@ describe("live-alpha backstop covers", () => {
   });
 
   it("works when the backstop only APPEARS later (a dormant screen revealing)", () => {
-    // R10-PERF5 WS-1: a hidden MapScreen builds no DOM at all, so its Backstop is not even a cover CANDIDATE
+    // A hidden MapScreen builds no DOM at all, so its Backstop is not even a cover CANDIDATE
     // until the reveal walk visits it. The gate must then engage through the normal hysteresis.
     const nodes = liveScene("Backstop", "MapScreen", 0.851, 0.851);
     (nodes.find((n) => n.id === "Screen") as Raw).visible = false;

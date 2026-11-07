@@ -38,7 +38,7 @@ export const RENDERER_COMPARISON_PRESETS: Record<ComparisonPresetId, RendererCom
   copy: canvasPreset({ textCache: "gpu", pixels: "dirty-copy" }),
   cpuPrep: canvasPreset({ textCache: "gpu", structureReuse: true, textPreparationReuse: true }),
   sourceFrame: canvasPreset({ textCache: "gpu", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true }),
-  // No campaign prototype has passed CPU acceptance yet. Retain the verified starting configuration.
+  // No prototype has passed CPU acceptance yet. Retain the verified starting configuration.
   cpuBest: canvasPreset({ textCache: "gpu", structureReuse: true, textPreparationReuse: true, sourceFrameReuse: true })
 };
 

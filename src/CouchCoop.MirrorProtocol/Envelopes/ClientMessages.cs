@@ -23,7 +23,7 @@ public sealed record JoinMessage(string RequestId, string Name, string? PlayerId
 // browser KeyboardEvent.code in `key`. Mirrors MirrorInputMessage; the host's BrowserInputRequestEnvelope ALSO
 // accepts elementId/offset for the spirectl CLI, which the mirror never sends.
 //
-// `Count` (R10 WS-E) is the COALESCED WHEEL TICK count: how many identical notches one message stands for. Only a
+// `Count` is the COALESCED WHEEL TICK count: how many identical notches one message stands for. Only a
 // full wheel click may carry it (the host refuses to repeat anything else) and it is OMITTED for a single tick, so
 // an un-coalesced wheel message is byte-identical to the pre-feature wire.
 public sealed record InputMessage(
@@ -52,7 +52,7 @@ public sealed record SceneAckMessage
     public string Type => "scene-ack";
 }
 
-// `{type:"watch", on}` — the WS-B stream gate, flipped live. `on:false` tells the host to send this connection NO
+// `{type:"watch", on}` — the stream gate, flipped live. `on:false` tells the host to send this connection NO
 // scene bytes at all (it is showing the join picker, or it is a host socket kept open after a headless redirect);
 // `on:true` re-opens the stream and the host answers with a fresh FULL keyframe. The INITIAL value rides the
 // connect query instead (`?watch=0`) — a message cannot arrive early enough to suppress the connect keyframe.
@@ -82,7 +82,7 @@ public sealed record SettingsMessage(
     // Stage-B walk skip: this viewer's effective "Static background" state (see BrowserSettingsRequestEnvelope.
     // StaticBg — per-connection unanimity input, not a process lever). Omit-null keeps the pre-field wire identical.
     bool? StaticBg = null,
-    // R14 trail drive: this viewer's trail-root CAPABILITY (see BrowserSettingsRequestEnvelope.TrailDrive — the
+    // Trail drive: this viewer's trail-root CAPABILITY (see BrowserSettingsRequestEnvelope.TrailDrive — the
     // other per-connection unanimity input). Omit-null keeps the pre-field wire identical, and reads as NOT capable.
     bool? TrailDrive = null)
 {

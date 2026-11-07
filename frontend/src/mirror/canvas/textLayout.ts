@@ -297,7 +297,7 @@ function lengthFromFontRelative(value: string | undefined, fontPx: number): numb
 /**
  * `scale(1.24)` from a `transform` declaration, or 1. The card rules are the only writers.
  *
- * EXPORTED for the paint dump (R8). The `O` row publishes the block scale its matrix does NOT carry, and it has
+ * EXPORTED for the paint dump. The `O` row publishes the block scale its matrix does NOT carry, and it has
  * to compute that from the same declaration this does — a second parser would be a second answer.
  */
 export function scaleFromTransform(value: string | undefined): number {

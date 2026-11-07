@@ -4,6 +4,8 @@
     gen-dsh-config.py <repo-root>
 
 Source of truth (committed):  agents/*.md, skills/*/SKILL.md, /.mcp.json
+Also read when present:       private/agents/*.md (the private companion; a public agent of the
+                              same name wins)
 Generated (gitignored):       .dsh/profile.patch.yml
 
 Claude Code reads `agents/*.md` through symlinks in `.claude/agents/`; DSH mounts an
@@ -36,7 +38,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agent_config import AgentError, parse_agent  # noqa: E402
+from agent_config import AgentError, parse_agent, repo_agent_sources  # noqa: E402
 
 MCP_ROW_PREFIX = "agentcfg-mcp-"
 PRESET_ROW_PREFIX = "agentcfg-preset-"
@@ -221,32 +223,28 @@ def mcp_row(name: str, entry: dict, where: str) -> list[str] | None:
 # --------------------------------------------------------------------------------------------
 
 
-def agent_sources(repo: str, home: str) -> list[tuple[str, bool, bool]]:
-    """(path, strict, rewrite_links) in precedence order.
+def agent_sources(repo: str, home: str) -> list[tuple[str, bool, bool, str]]:
+    """(path, strict, rewrite_links, link_prefix) in precedence order.
 
-    The repo's committed agents are strict. `.claude/agents` can hold locally installed
-    real files (the repo's own entries there are symlinks and are skipped), and
+    The repo's committed agents are strict, then the private companion's
+    (`private/agents`, also strict). `.claude/agents` can hold locally installed real
+    files (the repo's own entries there are symlinks and are skipped), and
     `~/.claude/agents` holds user-level agents. Both are best-effort.
     """
-    sources: list[tuple[str, bool, bool]] = []
-    repo_dir = os.path.join(repo, "agents")
-    if os.path.isdir(repo_dir):
-        sources += [
-            (os.path.join(repo_dir, f), True, True)
-            for f in sorted(os.listdir(repo_dir))
-            if f.endswith(".md")
-        ]
+    sources: list[tuple[str, bool, bool, str]] = [
+        (src.path, True, True, src.link_prefix) for src in repo_agent_sources(repo)
+    ]
     local_dir = os.path.join(repo, ".claude", "agents")
     if os.path.isdir(local_dir):
         sources += [
-            (os.path.join(local_dir, f), False, False)
+            (os.path.join(local_dir, f), False, False, "")
             for f in sorted(os.listdir(local_dir))
             if f.endswith(".md") and not os.path.islink(os.path.join(local_dir, f))
         ]
     user_dir = os.path.join(home, ".claude", "agents")
     if os.path.isdir(user_dir):
         sources += [
-            (os.path.join(user_dir, f), False, False)
+            (os.path.join(user_dir, f), False, False, "")
             for f in sorted(os.listdir(user_dir))
             if f.endswith(".md")
         ]
@@ -256,9 +254,9 @@ def agent_sources(repo: str, home: str) -> list[tuple[str, bool, bool]]:
 def collect_agents(repo: str, home: str) -> list:
     agents = []
     seen: dict[str, str] = {}
-    for path, strict, rewrite in agent_sources(repo, home):
+    for path, strict, rewrite, prefix in agent_sources(repo, home):
         try:
-            spec = parse_agent(path, warn, rewrite_links=rewrite)
+            spec = parse_agent(path, warn, rewrite_links=rewrite, link_prefix=prefix)
         except AgentError as exc:
             if strict:
                 die(str(exc))

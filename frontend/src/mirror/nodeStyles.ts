@@ -48,7 +48,7 @@ export interface RenderItem {
   // sets it when `node.transform != null` (it IS that matrix, spread-shifted / composed to global), so "does this
   // node have a transform-based box" is unchanged either way.
   transformOverride?: readonly number[] | null;
-  // R11 — the MASS-FLIGHT VFX DIET's `blend` rung (see mirrorRenderer's `?flightVfxDiet`). A `mix-blend-mode`
+  // The MASS-FLIGHT VFX DIET's `blend` rung (see mirrorRenderer's `?flightVfxDiet`). A `mix-blend-mode`
   // element is its own compositor render surface, and 30 flying cards drag ~180 decorative ones onto a scene whose
   // steady state is ~106. While the diet is armed the renderer sets this on the DECORATIVE branch of a
   // flight-owned trail so the node still paints, just composited normally. It is a style INPUT — the mirror
@@ -295,7 +295,7 @@ export function nodePaintsContent(node: MirrorNode, effectiveOpacity: number): b
   return paintsTexture;
 }
 
-// R19 6c — the node's RENDERED box width: the wide-screen `renderWidthOverride` when the anchor algebra stretched
+// The node's RENDERED box width: the wide-screen `renderWidthOverride` when the anchor algebra stretched
 // this anchored SPAN, else its streamed 1920-space width. Every read that asks "how wide is this element on screen"
 // must go through here: the element IS laid out at this width (see `style.width` in nodeStyle), so a nine-patch
 // sliced from `localRect.width` puts its right cap `deltaW` px short of the element edge, a clip radius derived
@@ -307,7 +307,7 @@ function renderedWidth(lr: MirrorRect, override: number | undefined): number {
 // `renderWidthOverride` is the caller's (the walk's) wide-screen stretch for this node — see renderedWidth.
 export function ninePatchAtlasSlices(node: MirrorNode, renderWidthOverride?: number): Array<Record<string, string>> {
   // The atlas PAGE size is measured asynchronously (warmImage): until it lands this returns no slices, and the
-  // `naturalSize` miss below registers THIS node against the url so the load re-styles exactly it (R10-PERF3 WS-4,
+  // `naturalSize` miss below registers THIS node against the url so the load re-styles exactly it (see
   // textureCache). The version read keeps reactive consumers current after an image measurement lands.
   void textureSizeVersion.value;
   const lr = node.localRect;
@@ -322,7 +322,7 @@ export function ninePatchAtlasSlices(node: MirrorNode, renderWidthOverride?: num
   }
   const url = `url("${node.textureUrl}")`;
   // The bands are laid out across the RENDERED box: the element is `renderWidthOverride` wide, so slicing from the
-  // 1920-space `lr` would strand the right cap and stop the stretched middle short (R19 6c).
+  // 1920-space `lr` would strand the right cap and stop the stretched middle short.
   const box = { width: renderedWidth(lr, renderWidthOverride), height: lr.height };
   // LAYOUT SPACE (stageFit.ts): every one of these is a length in the ELEMENT's box — the slice quads and the
   // blown-up atlas page they crop from — so all eight take the factor together. Scaling the page by the same factor
@@ -355,7 +355,7 @@ export function clipCornerRadius(node: MirrorNode, renderWidthOverride?: number)
   if (!node.textureUrl || !m || !lr || lr.width <= 0 || lr.height <= 0) {
     return 0;
   }
-  // R19 6c: the half-box clamps are about the box the radius is drawn on — the RENDERED one.
+  // The half-box clamps are about the box the radius is drawn on — the RENDERED one.
   return Math.min(Math.max(m.left, m.right, m.top, m.bottom), renderedWidth(lr, renderWidthOverride) / 2, lr.height / 2);
 }
 
@@ -561,7 +561,7 @@ function atlasFitPlacement(
   };
 }
 
-// R10-PERF6 WS-P1 — the walk's ancestor-affine fast path re-derives ONLY a node's placement when an ancestor moved
+// The walk's ancestor-affine fast path re-derives ONLY a node's placement when an ancestor moved
 // (its paint, text, attributes and sub-layers are all unchanged). This is exactly the `transform`/`transformOrigin`
 // pair `nodeStyle` would emit for the same item — computed through the SAME two helpers `nodeStyle` uses, so the
 // fast path can never drift from the full restyle. Null for a node with no transform-based box.
@@ -622,11 +622,11 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
   if (item.tintId) {
     style.filter = `url(#mtint-${item.tintId})`;
   }
-  // R11: `item.suppressBlend` is the mass-flight VFX diet asking for this node's decorative blend to be dropped —
+  // `item.suppressBlend` is the mass-flight VFX diet asking for this node's decorative blend to be dropped —
   // the element still paints, it just stops being its own compositor surface. Nothing else about the node changes,
   // and the flag clears (restoring the blend for free, through this same path) when the diet lifts.
-  // R16: the flag now also carries the trail-surface diet's `noblend` rung, which covers the two `NCardTrail`
-  // STROKE hosts — the elements R11 deliberately exempted. Same meaning, same restore path, different opt-in: the
+  // The flag now also carries the trail-surface diet's `noblend` rung, which covers the two `NCardTrail`
+  // STROKE hosts — the elements the first diet deliberately exempted. Same meaning, same restore path, different opt-in: the
   // caller decides which nodes are covered, and this stays a single "do not be a surface" instruction.
   if (!item.suppressBlend) {
     switch (node.canvasBlendMode) {
@@ -761,14 +761,14 @@ export function nodeStyle(item: RenderItem): Record<string, string> {
       // center). Gated to degenerate-only so a normal ninepatch (whose border-image `fill` already paints its
       // center) never double-paints — at the `>=` boundary the fill/edge slices are already blank.
       // Until the natural size lands (warmImage records it) neither degenerate check can fire, so the node styles
-      // caps-only; the `naturalSize` miss below registers it for a TARGETED re-style once it does (R10-PERF3 WS-4,
+      // caps-only; the `naturalSize` miss below registers it for a TARGETED re-style once it does (see
       // textureCache). The version read keeps reactive consumers current after an image measurement lands — see
       // ninePatchAtlasSlices.
       void textureSizeVersion.value;
       const tex = node.textureUrl ? naturalSize(node.textureUrl) : null;
       const lr = node.localRect;
       const srcDegenerate = tex != null && (m.left + m.right >= tex.width || m.top + m.bottom >= tex.height);
-      // R19 6c: `border-image` already scales its slices to the ELEMENT box, so only this test was width-blind —
+      // `border-image` already scales its slices to the ELEMENT box, so only this test was width-blind —
       // it must ask whether the margins overlap the RENDERED width, which is the width the caps are drawn at.
       const dstDegenerate =
         lr != null && (m.left + m.right >= renderedWidth(lr, item.renderWidthOverride) || m.top + m.bottom >= lr.height);
@@ -810,7 +810,7 @@ const SELF_CONTAINER_STYLE_KEYS = new Set([
   "transformOrigin",
   "zIndex",
   "overflow",
-  // R20: the one-axis `clip-path` is the same STRUCTURAL clip `overflow` is (it bounds the node's DESCENDANTS), so
+  // The one-axis `clip-path` is the same STRUCTURAL clip `overflow` is (it bounds the node's DESCENDANTS), so
   // it must stay on the container element — on the self-layer it would clip only the node's own paint.
   "clipPath",
   "borderRadius",
@@ -938,7 +938,7 @@ export function textStyle(node: MirrorNode): Record<string, string> {
     // and stays outside it, as does every `calc(1em * r)` role ratio below.
     style.fontSize = `calc(${pxCss(text.fontSizePx)} * var(--godot-text-scale, 1))`;
     // Expose the streamed base px so a generated per-label declaration can re-derive the scaled size and CAP it
-    // (WS-TEXT v4 End Turn: `font-size: min(calc(var(--godot-font-px) * var(--godot-text-scale)), <cap>px)`). The
+    // (End Turn: `font-size: min(calc(var(--godot-font-px) * var(--godot-text-scale)), <cap>px)`). The
     // font-size above is unchanged, so this is purely additive.
     style["--godot-font-px"] = pxCss(text.fontSizePx);
   }

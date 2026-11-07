@@ -1,5 +1,5 @@
 // THE MAP QUILL ON THE CANVAS STAGE — the player's own annotations, and the two things the DOM backend does with
-// them that this one did not (R8/R9).
+// them that this one did not.
 //
 // A quill stroke's local transform is the DrawViewport's viewport→screen fit and is CONSTANT for the stroke's
 // life: the stroke never moves inside the viewport, and scrolling the map moves the MapDrawing ANCESTOR. The DOM

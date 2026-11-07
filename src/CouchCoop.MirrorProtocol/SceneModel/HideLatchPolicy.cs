@@ -1,4 +1,4 @@
-// Pure state machine for the tween HIDE-LATCH (Feature B / WS-VIEW). After a fade-to-0 opacity tween settles, the game
+// Pure state machine for the tween HIDE-LATCH. After a fade-to-0 opacity tween settles, the game
 // restores the node's alpha to its RESTING value (with Visible=true) for ONE drain BEFORE it hides/removes the node
 // for pooling — and with the tween's alpha-ownership already cleared, the client writes that resting alpha straight
 // through for a single frame: a 1-frame reappear FLASH. The latch clamps that lone resting-valued write back to the
@@ -32,7 +32,7 @@ public static class HideLatchPolicy
     public const double RestingEps = 0.02;   // |a − restingA| ≤ this ⇒ the resting-valued flash
     public const double GraceMs = 400;       // the latch window (≫ the ~1-drain defect, ≪ the ~1.1s legit re-show)
 
-    // WS-REST held-restore short expiry. The rest-site-refocus defect: the game
+    // Held-restore short expiry. The rest-site-refocus defect: the game
     // re-shows a faded option's description as a PLAIN streamed resting-alpha write with NO fade-in hint (the fade-in
     // tween was killed by the unfocus, so the producer never emits its hint). That write is value-IDENTICAL to the
     // pre-hide reappear FLASH at Decide time, so a value-based rule cannot tell them apart without regressing the

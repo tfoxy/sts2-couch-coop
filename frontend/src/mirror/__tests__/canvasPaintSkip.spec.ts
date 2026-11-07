@@ -1,4 +1,4 @@
-// THE PAINT SKIP, THROUGH A REAL RENDERER — R21 B1's other half.
+// THE PAINT SKIP, THROUGH A REAL RENDERER.
 //
 // `canvasPaintGuard.spec` owns the equality test in isolation. What it cannot reach is whether the RENDERER hands
 // that test the right things and honours its answer, and there is exactly one way for this feature to be a

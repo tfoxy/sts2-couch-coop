@@ -376,7 +376,7 @@ internal static class MirrorSeatRosterTests
         Assert(host.IsHost && !host.IsMirrorSeat, "the host is netId 1 — kept by the filter, but not a seat");
     }
 
-    // R19 WP-2d: the roster carries each seat's character so the picker can draw an icon beside the name. In
+    // The roster carries each seat's character so the picker can draw an icon beside the name. In
     // the multiplayer SAVE lobby every row is otherwise just a name, which is exactly where telling seats apart
     // matters most.
     private static void RosterCarriesEachSeatsCharacter()

@@ -468,7 +468,7 @@ export function preflight({ procRoot = "/proc", fs = nodeFs, seats, userDir, lob
 /**
  * Proves the game's display connection belongs to OUR compositor: the game's environment names the private display
  * and carries no Wayland route, AND every socket listening on that display is held by the compositor (or one of its
- * children). Environment alone is not proof (qa-recipes §2.x); socket ownership is.
+ * children). Environment alone is not proof; socket ownership is.
  *
  * gamescope creates the X listening sockets itself and hands them to its XWayland, which it starts DETACHED — the
  * XWayland process is re-parented away from gamescope (measured: its ppid is the session's subreaper). So "is the X
@@ -587,7 +587,7 @@ export function instanceUserDir({ instancesDir, instance }) {
 /**
  * Seat processes under the host: descendants of the host pid whose environment carries a couch seat slot and a
  * data dir inside this instance's user dir. Both conditions are identity, not guesswork: the operator's seats run
- * under the operator's user dir, and a seat's slot is in its environment by contract (architecture-map, seat
+ * under the operator's user dir, and a seat's slot is in its environment by contract (the seat
  * launch contract). When a launch wrapper did not `exec`, the wrapper and the game both match; the one with the
  * `--headless` argument is the game.
  */

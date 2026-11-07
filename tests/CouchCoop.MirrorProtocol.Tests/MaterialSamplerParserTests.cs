@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-EMITTER unit coverage for ShaderResourceParser.ParseMaterialSamplers — the additive parse that re-derives a
+// Unit coverage for ShaderResourceParser.ParseMaterialSamplers — the additive parse that re-derives a
 // material `.tres`'s baked sampler sub-resources (CurveTexture→Curve, GradientTexture1D/2D→Gradient) so the native
 // emitter can rebuild the sampler textures the shader reads (streamed as NULL SubResource refs on the wire). ALL
 // bodies here are SYNTHETIC (hand-written to the real vfx_ring_polar / vfx_fire_flipbook / vfx_glow SHAPES, matching

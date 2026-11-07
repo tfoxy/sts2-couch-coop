@@ -16,7 +16,7 @@ namespace CouchCoop.Mod.Session;
 /// several game instances run on one machine, and <c>scripts/lib/instance-port.mjs</c> reads the walked port out
 /// of <see cref="Server.BrowserPortFile"/> for exactly that reason. For a SEAT it is a silent lie: the host hands
 /// the browser <c>HeadlessClientManager.SlotToPort(slot)</c> and probes that same port, so a seat that walked
-/// serves a port nothing will ever ask for. Measured Sep-15 2026: the join burned the full 75-second deadline and
+/// serves a port nothing will ever ask for. Observed: the join burned the full 75-second deadline and
 /// died with "child HTTP listener: not responding" while the seat was alive and healthy one port up.
 /// </para>
 /// <para>

@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-SHOP (round 6): pure matrix over ViewScaleTweenStamp — the endpoint-global compose + the stamp predicate + the
+// Pure matrix over ViewScaleTweenStamp — the endpoint-global compose + the stamp predicate + the
 // design-box measurement that let ViewScaler stamp a GROUP being slid on-screen by a transform tween (the shop open
 // slide) at its tween ENDPOINT, on the arm drain, before TweenReplayer folds the endpoints. Godot-free / env-free.
 internal static class ViewScaleTweenStampTests

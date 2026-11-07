@@ -2,8 +2,8 @@
 // static-surface encode pacing (`shaderResources.ts`).
 //
 // WHY THIS EXISTS. Freezing an effect surface to an `<img>` costs one `canvas.toBlob`, and on a phone that
-// call is a GPU→CPU READBACK, not a codec run: the Aug-18 Moto G86 trace measured 52.8 ms of `toBlob` plus
-// 17.1 ms of `createObjectURL` inside a SINGLE `TimerFire`, against ~2.8 ms of actual encoder CPU. gsw's
+// call is a GPU→CPU READBACK, not a codec run: a mid-range phone trace showed tens of ms of `toBlob` plus
+// `createObjectURL` inside a SINGLE `TimerFire`, against a few ms of actual encoder CPU. gsw's
 // pacing (slice 4 / 120 ms) bounds how many of those run per window and `deferHead: true` keeps them off the
 // caller's stack, but neither can move the block out of the window it lands in — and a ~30 ms park dropped
 // between two draws of a card-flight burst is a dropped frame no matter how few encodes it was. gsw grew
@@ -13,7 +13,7 @@
 // render rAF and the renderer's animator tick — so the RECENCY term means "this pipeline produced a frame very
 // recently", which is the same thing as "an encode now would land between two of my draws". Nothing subscribes,
 // nothing is allocated: two numbers and a subtraction, called from paths that already run per frame.
-//   The second term is `registerPressureSource` — an ARMED-work predicate, added Aug-19 because recency alone
+//   The second term is `registerPressureSource` — an ARMED-work predicate, added because recency alone
 // has a hole a jam can drive through. See that function's doc: the short version is that a long readback
 // suppresses the very frames the recency term is made of, so the recovery gap after one reads as idle.
 //
@@ -61,10 +61,10 @@ export function noteMirrorFrame(now: number = defaultNow()): void {
 /** Register an armed-work supplier and get its unregister.
  *
  *  WHY THIS EXISTS. The recency term above is measured from frames the mirror PRODUCED, and a long main-thread
- *  block suppresses exactly those. The Aug-19 Moto G86 trace is the proof: a 285 ms and a 1,163 ms task, 97% of
- *  their self-time inside native `toBlob`, stop the tick loop for their whole duration — so 250 ms after the
+ *  block suppresses exactly those. A mid-range phone trace is the proof: tasks of hundreds of ms to over a second, almost
+ *  all of their self-time inside native `toBlob`, stop the tick loop for their whole duration — so 250 ms after the
  *  block began this module reports QUIET while the thread is still jammed, and gsw's drain spends another
- *  readback into the hole. The trace's two recovery gaps (362 ms and 674 ms of no frames at all) are exactly that
+ *  readback into the hole. The trace's recovery gaps (hundreds of ms of no frames at all) are exactly that
  *  reading, taken at peak overload. The jam manufactures its own idle signal.
  *
  *  A supplier answers a different question: what is ARMED, not what has RUN. A missing frame then reads as a

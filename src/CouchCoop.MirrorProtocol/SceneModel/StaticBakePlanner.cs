@@ -2,12 +2,12 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 
 using System.Collections.Generic;
 
-// Track-D/P static background pre-composite ("static bake") — the PURE-C# eligibility + prefix planner (Godot-free,
-// Exe-testable, exactly like CullIndex). The phone is GPU fill-bound inside the design-res raster and ~33% of scene
-// fill is background/room/floor that is ~80% static; this planner decides WHICH bottom-most run of the painter's
+// Static background pre-composite ("static bake") — the PURE-C# eligibility + prefix planner (Godot-free,
+// Exe-testable, exactly like CullIndex). A phone GPU is fill-bound inside the design-res raster, and a large share
+// of scene fill is background/room/floor that is ~80% static; this planner decides WHICH bottom-most run of the painter's
 // order can be replaced by ONE pre-composited quad, and the StaticBake controller (Godot side) builds/swaps the bake.
 //
-// Track-P (z-aware): the render order is NOT the raw pre-order DFS — a node's ZIndex re-sorts it. Godot paints in
+// Z-aware ordering: the render order is NOT the raw pre-order DFS — a node's ZIndex re-sorts it. Godot paints in
 // EFFECTIVE-Z order (the sum of ZIndex down the ancestor chain, ZAsRelative defaulting true), ties broken by pre-order
 // (a stable sort of the pre-order by effZ). Combat streams its whole background under a single zIndex:-10 container, so
 // ~276 nodes inherit effZ -10 (the "background band"): they paint UNDER the z=0 gameplay layer even though pre-order
@@ -50,11 +50,11 @@ public sealed class StaticBakePlanner
     public const int MinPaintingNodes = 10;
     public const double MinCoverageFactor = 1.25; // Σ clamped design-space paint areas ≥ 1.25 × design area
 
-    // ---- Track-P3 multi-region (bake static segments AROUND same-bucket interleaved particles) --------------------
+    // ---- Multi-region (bake static segments AROUND same-bucket interleaved particles) --------------------
     // v2 baked ONE contiguous bottom prefix and stopped at the first particle. In combat the z=-10 background band is
-    // PARTICLE-INTERLEAVED (~22 particle groups threaded through ~145 static painters), so the prefix collapses to ~4
+    // PARTICLE-INTERLEAVED (particle groups threaded through many static painters), so the prefix collapses to a few
     // nodes and never reaches budget. v3 keeps the interleaved particles LIVE (exact — a frozen particle can't be
-    // reordered or re-cloned faithfully; both were measured wrong at ~600-800k px vs a 15k jitter floor) and bakes the
+    // reordered or re-cloned faithfully; both were found wrong by a wide margin over the jitter floor) and bakes the
     // static SEGMENTS between them into separate quads. Correctness = paint-order preservation: the whole band (baked
     // segment quads + the live painters between them) is re-leveled to a dense run of DISTINCT absolute z values BELOW
     // the band's bucket z (so still under the creatures/gameplay that sit at the bucket z and above), in the exact live
@@ -71,15 +71,16 @@ public sealed class StaticBakePlanner
 
     public const int MinPaintersPerRegion = 3; // a 1-2 painter segment isn't worth its own viewport — leave it live
 
-    // ---- WS-ADDBAKE: alpha-preserving additive clone (Add joins region membership everywhere) ---------------------
+    // ---- Alpha-preserving additive clone (Add joins region membership everywhere) ---------------------
     // v3/v3b kept every non-Mix painter (and every Add-blend shader) OUT of upper regions (bottomOnly) because a
     // premult "over" quad can't reproduce a RAW additive draw sitting above a live particle, and the v3b add sub-quad
-    // (one hoisted Add suffix per region) couldn't reproduce the add/occluder interleave either (AE≈107k). WS-ADDBAKE
-    // bakes the Add content INTO the SAME region quad as the mix content via an alpha-preserving additive clone: the
+    // (one hoisted Add suffix per region) couldn't reproduce the add/occluder interleave either (a large pixel
+    // error). Instead the Add content is baked INTO the SAME region quad as the mix content via an alpha-preserving
+    // additive clone: the
     // Add clone renders in the bake viewport with `blend_premul_alpha` + a fragment epilogue (COLOR.rgb *= COLOR.a;
     // COLOR.a = 0.0;), so its bake texel is (rgb*a, 0) — under PMALPHA that accumulates rgb WITHOUT touching dst alpha,
-    // and the region's premult-over composite of an add-only texel IS a true add (the micro-leg proved the identity
-    // closes to RGBA8 rounding, including the (1-a_mix) attenuation of an earlier add by a later mix in the region).
+    // and the region's premult-over composite of an add-only texel IS a true add (the identity closes to RGBA8
+    // rounding, including the (1-a_mix) attenuation of an earlier add by a later mix in the region).
     //
     // So Add is NO LONGER bottom-only: a plain-Add painter and a REWRITABLE cleared Add-blend shader are ordinary
     // region members, baked in any region (region 0 included — raw-Add there was only accidentally correct over opaque
@@ -87,7 +88,7 @@ public sealed class StaticBakePlanner
     // now holds ONLY Sub/Mul painters + UN-rewritable Add-blend shaders (containment: they stay live/re-leveled, never
     // baked raw). The v3b add-partition split + the separate add quad are DELETED.
 
-    // ---- Track-P3c per-region isolation (position-stable z + per-region invalidation) -----------------------------
+    // ---- Per-region isolation (position-stable z + per-region invalidation) -----------------------------
     // v3 re-leveled the band to a DENSE run of z (baseZ = bucketZ − slotCount): removing/rebaking any one slot shifts
     // EVERY other slot's z by one, so the whole band must rebake as a unit. v3c assigns each slot a POSITION-STABLE z
     // (z = bucketZ − (N − paintPos)): distinct, strictly increasing with paint order, all below bucketZ — but a slot's
@@ -95,7 +96,7 @@ public sealed class StaticBakePlanner
     // band leaves every lower slot's z untouched. That lets the controller release a top-suffix of the band (an upper
     // region churned) and keep the stable bottom regions baked, byte-identically.
 
-    // ---- Track-P3c band-scoped stability relax --------------------------------------------------------------------
+    // ---- Band-scoped stability relax --------------------------------------------------------------------
     // Live combat never stabilizes the background band under the STRICT window (creature/VFX churn keeps arriving), so
     // combat can't bake live. The band (effZ == bucketZ, the bottom bucket that paints under gameplay) is exactly the
     // static fill we want; RELAX its stability window (halve both clauses) so it settles ~2× sooner, WITHOUT touching
@@ -106,14 +107,14 @@ public sealed class StaticBakePlanner
     public const int MinStableDrainsBand = MinStableDrains / 2;
     public const int MinStableFramesBand = MinStableFrames / 2;
 
-    // ---- WS-BGBAKE band flatten (per-room combat background bake) -------------------------------------------------
+    // ---- Band flatten (per-room combat background bake) -------------------------------------------------
     // The exact planners above end the bakeable band at the FIRST non-particle blocker, so live combat's ~65-way
     // additive-interleaved z<0 band (shaders/spines/intents threaded through the static parallax layers) never bakes
-    // (bakeState=Idle in 23/26 measured device configs). PlanBandFlatten trades exact mid-band ordering for fill:
+    // (bakeState=Idle in nearly every device config). PlanBandFlatten trades exact mid-band ordering for fill:
     // interlopers do NOT end the band — every eligible static painter below the LAST live interloper merges into ONE
     // flatten quad (A), the trailing static run above it (the Foreground) into a second exact quad (B), and the live
     // interlopers re-level between them. The only approximation: an interloper that had static painters above it now
-    // draws above that static (faint fog/glow rises through mid layers — measured cheap, gated by the fidelity loop).
+    // draws above that static (faint fog/glow rises through mid layers — cheap, gated by the fidelity loop).
     // Budget: ≥ BandMinPainters painters total and clamped coverage ≥ (base + perExtra·(regions−1)) design-areas, so
     // each quad's own screen of fill is paid for. bucketZ ≥ 0 (spine-background families) refuses — the caller falls
     // back to the exact Plan() path, which is also the fallback for every refusal here.
@@ -121,7 +122,7 @@ public sealed class StaticBakePlanner
     public const double BandMinCoverageFactor = 1.0;
     public const double BandCoveragePerExtraRegion = 0.5;
 
-    // WS-BGBAKE round 3 (ordering-exact segmentation): a segment becomes its own region quad only when its clamped
+    // Ordering-exact segmentation: a segment becomes its own region quad only when its clamped
     // coverage pays for the quad's own screen of fill. Runs below EITHER per-region gate (MinPaintersPerRegion /
     // this) demote to live-at-their-slots — no quad, ordering exact, zero fill overhead.
     public const double BandRegionMinCoverageFactor = 1.25;
@@ -131,7 +132,7 @@ public sealed class StaticBakePlanner
     public const int ThrashWindowDrains = 30;  // strikes older than this reset the counter
     public const int ThrashCooldownDrains = 30; // benched for this many drains
 
-    // ---- WS-BGBAKE room bench (band-plan repeat offenders exiled for the ROOM, not a drain window) -----------------
+    // ---- Room bench (band-plan repeat offenders exiled for the ROOM, not a drain window) -----------------
     // The drain-window thrash guard above can never catch combat's slow-cadence offenders: the wave banner
     // (NinePatchRect Draw + MegaLabel Text + a fade tween hint) redraws every ~9s, far outside ThrashWindowDrains
     // (~sub-second), so it re-baked and re-tore the band forever. Band invalidations therefore get a SECOND bench,
@@ -149,7 +150,7 @@ public sealed class StaticBakePlanner
     // static readonly (not const) so the retreat branch in BlendOk doesn't read as unreachable code.
     public static readonly bool RestrictToMixBlend = false;
 
-    // Track-P retreat lever: a `MaterialRef` (a custom `.tres` material reference) is NEVER consumed by the native
+    // Retreat lever: a `MaterialRef` (a custom `.tres` material reference) is NEVER consumed by the native
     // renderer — MaterialResolver only ever resolves a mounted ShaderAttachment or a CanvasBlendMode BlendMaterial,
     // and a MaterialRef-only node has neither. So a MaterialRef-only node renders as PLAIN base art in every effect
     // mode and is legitimately bakeable. Flip false to fall back to the conservative v1 treatment (MaterialRef ⇒
@@ -186,10 +187,10 @@ public sealed class StaticBakePlanner
     private readonly Dictionary<string, Stability> _stability = new(System.StringComparer.Ordinal);
     private readonly Dictionary<string, Thrash> _thrash = new(System.StringComparer.Ordinal);
 
-    // WS-BGBAKE round 3 keyframe stability preservation: the planner's OWN per-id prior-node snapshots (instances —
+    // Keyframe stability preservation: the planner's OWN per-id prior-node snapshots (instances —
     // the applier replaces node objects, never mutates them). MirrorState.ChangeFlags is USELESS on a keyframe
     // (Nodes.Clear() makes every upsert classify New|StructuralAll), so a loop restart / resync keyframe used to
-    // wipe ALL stability and force a full re-settle + re-bake (~1.3s of raw scene per seam). With priors retained,
+    // wipe ALL stability and force a full re-settle + re-bake (over a second of raw scene per seam). With priors retained,
     // the keyframe branch value-compares each id via NodeChangeDiffer.ClassifyKeyframe: an UNCHANGED node KEEPS its
     // stability entry (the immediate re-plan is identical → the controller can keep/rebuild the bake seamlessly);
     // changed/new ids stamp, vanished ids prune. Pure and KEYDIFF-independent.
@@ -202,7 +203,7 @@ public sealed class StaticBakePlanner
 
     public IReadOnlyCollection<string> LastKeyframeChangedIds => _lastKeyframeChanged;
 
-    // WS-BGBAKE room bench: per-room strike counts. The room boundary is a SCREEN-TYPE change (combat → rewards →
+    // Room bench: per-room strike counts. The room boundary is a SCREEN-TYPE change (combat → rewards →
     // combat …), NOT a keyframe: a mid-room resync/reconnect keyframe (or a looping replay harness) re-sends the same
     // scene with the same ids, and wiping the bench there would un-exile the wave banner and re-learn its 2 strikes
     // every time. Node ids are instance-scoped, so a REAL new room's nodes never collide with stale entries anyway;
@@ -210,7 +211,7 @@ public sealed class StaticBakePlanner
     // live interloper for the rest of the room (see the section comment).
     private readonly Dictionary<string, int> _roomBenchStrikes = new(System.StringComparer.Ordinal);
 
-    // WS-BGBAKE SUBTREE bench: per-room strike counts for NON-SPINE CARRIERS whose watch hits keep tearing the band
+    // SUBTREE bench: per-room strike counts for NON-SPINE CARRIERS whose watch hits keep tearing the band
     // down (the enemy "Intents" HBoxContainer: exiled as a member, it kept scaffolding a couple of bakeable children
     // as a CARRIER — and its per-action modulate fade hint is a hint-on-carrier ⇒ Teardown forever). The second
     // strike exiles the carrier's WHOLE SUBTREE: PlanBandFlatten refuses any member candidate that is, or descends
@@ -235,7 +236,7 @@ public sealed class StaticBakePlanner
     private readonly Dictionary<string, List<string>> _childrenByParent = new(System.StringComparer.Ordinal);
     private readonly HashSet<string> _members = new(System.StringComparer.Ordinal);
 
-    // Track-P paint-order scratch (rebuilt each Plan): the live-filtered pre-order, its per-id pre-order index, the
+    // Paint-order scratch (rebuilt each Plan): the live-filtered pre-order, its per-id pre-order index, the
     // effective-z per id, the effZ-sorted paint order, and per-id paint position.
     private readonly List<string> _liveOrder = new();
     private readonly List<string> _paintOrder = new();
@@ -293,7 +294,7 @@ public sealed class StaticBakePlanner
         _drain++;
         _lastDrainFrame = _frame;
 
-        // WS-BGBAKE room bench boundary: the SCREEN TYPE changing — and STAYING changed for the debounce window — is
+        // Room bench boundary: the SCREEN TYPE changing — and STAYING changed for the debounce window — is
         // the room change (see the field comments — a keyframe is NOT: resyncs and looping replays keyframe mid-room
         // and must not un-exile learned offenders; nor is a 1-delta transition blip).
         var screenType = state.ScreenType;
@@ -332,7 +333,7 @@ public sealed class StaticBakePlanner
 
         if (keyframe)
         {
-            // Round 3: a keyframe re-sends the scene, but it is usually the SAME scene (loop restart / resync). An
+            // A keyframe re-sends the scene, but it is usually the SAME scene (loop restart / resync). An
             // id whose retained prior value-compares identical (ClassifyKeyframe == None) KEEPS its stability entry;
             // anything changed / brand-new stamps just-changed; vanished ids prune (with their bench/thrash state).
             List<string>? stale = null;
@@ -439,7 +440,7 @@ public sealed class StaticBakePlanner
         }
     }
 
-    // WS-BGBAKE room bench: register the baked-MEMBER culprits of a band-bake invalidation. Strikes accumulate for
+    // Room bench: register the baked-MEMBER culprits of a band-bake invalidation. Strikes accumulate for
     // the current room only (ObserveDrain's keyframe branch resets them); the second strike within the room exiles
     // the id — Eligibility rejects it, so the next band plan re-levels it as a LIVE interloper instead of re-baking
     // and re-tearing forever. Callers MUST pass only ids that were actually baked members (never carriers — the
@@ -457,7 +458,7 @@ public sealed class StaticBakePlanner
     public bool IsRoomBenched(string id) =>
         _roomBenchStrikes.TryGetValue(id, out var strikes) && strikes >= RoomBenchStrikeLimit;
 
-    // WS-BGBAKE subtree bench: register the NON-SPINE CARRIER culprits of a band-bake invalidation (the controller
+    // Subtree bench: register the NON-SPINE CARRIER culprits of a band-bake invalidation (the controller
     // filters via BandInvalidationPolicy — a spine carrier or a baked member is NEVER passed here). Same 2-strike /
     // room-boundary rule as RegisterBandInvalidation, but the exile applies to the carrier's WHOLE SUBTREE: the next
     // band plan refuses every member candidate at or under a benched id, so a group that animates as a unit (the
@@ -479,7 +480,7 @@ public sealed class StaticBakePlanner
     public long DrainCount => _drain;
     public long FrameCount => _frame;
 
-    // WS-BGBAKE room bench: bumps on every keyframe (= room change) — the epoch the room bench is scoped to.
+    // Room bench: bumps on every keyframe (= room change) — the epoch the room bench is scoped to.
     public long RoomEpoch { get; private set; }
 
     // Classify EVERY paint-order node by its per-node eligibility (independent of the prefix boundary) — the coverage
@@ -514,7 +515,7 @@ public sealed class StaticBakePlanner
     // (1920·spreadFactor); `dynamicallyExcluded` are the ids the controller marked live-owned (tween / anim ticker /
     // input lift / unsettled texture); `effectStaticOk` are the ShaderId ids the controller cleared for Static-mode
     // baking (mounted, allowed blend class, screen-read policy satisfied). Pure — no side effects on planner state.
-    // `bottomOnlyIds` (WS-ADDBAKE): ids that can bake at the paint-order BOTTOM but not in an upper region — Sub/Mul
+    // `bottomOnlyIds`: ids that can bake at the paint-order BOTTOM but not in an upper region — Sub/Mul
     // painters and UN-rewritable Add-blend shaders (a Sub/Mul draw, or an add shader whose bake-add rewrite failed, is
     // not reproducible by a premult "over" quad above a re-leveled live particle). A bottom-only id may bake in region
     // 0 only; in any upper region it stays LIVE (re-leveled). Plain-Add painters and REWRITABLE cleared Add-blend
@@ -562,7 +563,7 @@ public sealed class StaticBakePlanner
             }
         }
 
-        // Track-P3: the v2 prefix ended at a PARTICLE in the bottom bucket → bake the static segments around the
+        // The v2 prefix ended at a PARTICLE in the bottom bucket → bake the static segments around the
         // interleaved particles (multi-region), re-leveling the whole band to preserve paint order exactly. Only the
         // particle boundary triggers this; a spine/intent/shader/dynamic boundary falls through to the v2 prefix below.
         if (k > 0
@@ -661,13 +662,13 @@ public sealed class StaticBakePlanner
         return StaticBakePlan.Single(new StaticBakeRegion(baked, carriers, buildOrder, paintCount, coverage, quadZ));
     }
 
-    // Track-P3 multi-region: the v2 prefix [0, firstBoundary) ended at a bottom-bucket particle. Bake the static
+    // Multi-region: the v2 prefix [0, firstBoundary) ended at a bottom-bucket particle. Bake the static
     // SEGMENTS around the interleaved particles into separate quads, keeping the particles (and any sub-threshold
     // static run) LIVE, and re-level the whole band to a dense run of DISTINCT absolute z values below the bucket z so
     // draw order is byte-identical (only the z labels spread). Returns null (→ caller falls back to the v2 prefix) when
     // fewer than 2 regions form or the total budget isn't met. Pure — reuses the same eligibility gate as v2.
     //
-    // WS-ADDBAKE: a segment is a contiguous run of eligible members regardless of blend (plain-Add painters + REWRITABLE
+    // A segment is a contiguous run of eligible members regardless of blend (plain-Add painters + REWRITABLE
     // cleared Add-blend shaders bake right into the region quad via the alpha-preserving variant — no add partition, no
     // mix-after-add split). Only bottom-only members (Sub/Mul + un-rewritable Add) end a segment and re-level live.
     private StaticBakePlan? PlanMultiRegion(
@@ -903,14 +904,14 @@ public sealed class StaticBakePlanner
         return new StaticBakePlan(regions, liveZ, totalPaint, totalCoverage, topQuadZ);
     }
 
-    // WS-BGBAKE band flatten, round 3: ORDERING-EXACT segmented plan. The z<0 bottom bucket is walked in paint order;
+    // Band flatten: ORDERING-EXACT segmented plan. The z<0 bottom bucket is walked in paint order;
     // live-subtree roots (exclusion policy + subtree bench — creatures/HUD/VFX containers) collapse to ONE LiveZ slot
     // each with their whole subtree skipped; eligible statics group into maximal contiguous runs CUT before every
     // member that follows a RECORDED live slot (particle / spine / intent / un-cleared shader / dynamic / unstable /
     // excluded root / demoted member — unrecorded non-painting skips never cut). Each run that clears the per-region
     // gates (painters + coverage) becomes a region quad at the SlotZ of its first member; failing runs demote to
     // live-at-their-slots. The induced order (quads at anchors + live ids at positions + excluded subtrees at root
-    // slots) is therefore order-isomorphic to the band paint order — mid-band occlusion is EXACT (round 2's one-quad
+    // slots) is therefore order-isomorphic to the band paint order — mid-band occlusion is EXACT (a one-quad
     // collapse re-leveled ~40 mid-band interlopers above the whole background). Sub/Mul members obey a SEGMENT-LOCAL
     // premise: a bottomOnly member stays only when a painting member of its OWN segment precedes it (its blend then
     // composites onto in-quad pixels; the residual — content below the segment escaping where the segment's own
@@ -964,7 +965,7 @@ public sealed class StaticBakePlanner
         // Strict-ancestor live-subtree status. Band roots land in the two sets before their descendants are visited
         // (pre-order within the bucket); an OUT-of-band ancestor (a z≥0 container that is policy-matched or
         // subtree-benched — e.g. a benched non-spine carrier above the band) makes its band descendants per-painter
-        // live, preserving the round-2 bench semantics for that shape.
+        // live, preserving the bench semantics for that shape.
         int UnderLiveSubtree(string id)
         {
             if (underStatus.TryGetValue(id, out var memo))
@@ -1115,7 +1116,7 @@ public sealed class StaticBakePlanner
         {
             changed = false;
 
-            // Containment fixpoint (unchanged semantics from round 2).
+            // Containment fixpoint.
             bool contChanged = true;
             while (contChanged)
             {
@@ -1342,16 +1343,16 @@ public sealed class StaticBakePlanner
         return new StaticBakePlan(regions, liveZ, totalPaint, totalCoverage, topQuadZ, bandIds, excludedRoots);
     }
 
-    // WS-BGBAKE round 3: the unified live-subtree-root predicate — the static exclusion policy (creatures / HUD /
+    // The unified live-subtree-root predicate — the static exclusion policy (creatures / HUD /
     // VFX containers, wire-data selectors) OR the runtime subtree bench (a learned repeat-offender carrier). Either
     // way the subtree re-levels live as a unit and is never baked/carried/watched.
     private bool IsLiveSubtreeRoot(string id, MirrorNode node) =>
         BandBakeExclusionPolicy.IsExcludedRoot(node) || IsRoomBenchedSubtree(id);
 
-    // WS-BGBAKE order guard (pure): does the CURRENT state's bottom-bucket paint-order prefix still match `bandIds`
+    // Order guard (pure): does the CURRENT state's bottom-bucket paint-order prefix still match `bandIds`
     // element-for-element — identity AND order AND count? Combat streams OrderChanged deltas ~7/s (hand-card
     // reorders, damage-number spawns …) that only shuffle the z≥0 world; a band-flatten bake depends ONLY on the z<0
-    // prefix, so the controller may keep it across an order change that leaves this prefix untouched. Round 3: the
+    // prefix, so the controller may keep it across an order change that leaves this prefix untouched. The
     // comparison is PROJECTED — ids under an `excludedRoots` root (strict-ancestor walk, memoized) are skipped, so
     // spawns / removals / reorders INSIDE an excluded live subtree (intent waves, combat VFX, HUD churn) are
     // invisible. ANY other difference — a member/gap reorder, add, remove, a z-migration, or an excluded ROOT itself
@@ -1484,7 +1485,7 @@ public sealed class StaticBakePlanner
         return n;
     }
 
-    // ---- paint-order construction (Track-P) ----------------------------------------------------------------------
+    // ---- paint-order construction -----------------------------------------------------------------------------
 
     // Build the effective-Z paint order over the LIVE nodes of state.OrderedIds. OrderedIds can carry STALE ids (a
     // wire order list that outlived the nodes — the reconciler filters them via BuildOrderStructure, and so must we),
@@ -1608,7 +1609,7 @@ public sealed class StaticBakePlanner
             return BakeReject.Thrash;
         }
 
-        // WS-BGBAKE room bench: struck out for this room (a band-bake repeat offender like the wave banner) — the
+        // Room bench: struck out for this room (a band-bake repeat offender like the wave banner) — the
         // band plan re-levels it live instead. Deliberately NOT mirrored into AncestorStaticReason: a benched id
         // only ever loses its own self-paint; it can never reject the band beneath it as a "benched parent".
         if (IsRoomBenched(id))
@@ -1931,7 +1932,7 @@ public readonly record struct StaticBakeRegion(
 // MirrorNodeView.SetZOverride and StaticBakePlanner's re-leveling.
 public readonly record struct LiveZOverride(string Id, int Z);
 
-// WS-BGBAKE: what the controller should do about the culprits of a drain that touched a live BAND bake's watch.
+// What the controller should do about the culprits of a drain that touched a live BAND bake's watch.
 public enum BandDrainDecision
 {
     None,             // no culprit touched a cloned id — the bake stands untouched
@@ -1940,7 +1941,7 @@ public enum BandDrainDecision
     BenchAndTeardown, // baked-member culprits — register their room-bench strikes, then tear down as before
 }
 
-// WS-BGBAKE: the PURE culprit classifier behind the band-bake drain decision (unit-tested truth table; the
+// The PURE culprit classifier behind the band-bake drain decision (unit-tested truth table; the
 // controller supplies the Godot-side lookups as delegates). Given the changed-id and hint-target culprits that hit
 // some region's watch:
 //   * a BAKED MEMBER culprit (any flags, changed or hint) ⇒ BenchAndTeardown, and it joins `outBenchIds` — the next
@@ -1956,10 +1957,10 @@ public enum BandDrainDecision
 //     is restricted to non-spine carriers precisely so the blast radius is that carrier's own subtree — it can never
 //     reject the band itself.
 // BenchAndTeardown dominates Teardown dominates Follow; no culprits at all ⇒ None.
-// WS-BGBAKE round 3: the PURE band-bake exclusion policy — wire-data selectors (QaHideSelector idiom: NodeType
+// The PURE band-bake exclusion policy — wire-data selectors (QaHideSelector idiom: NodeType
 // case-insensitive SUFFIX / Name case-insensitive EXACT, never ids) naming the subtrees that must NEVER be baked:
 // the whole combat world shares effZ=−10, so creatures AND their HUD (HealthBar / HpMiddleground / Nameplate /
-// Intents / reticles / orbs) are band nodes — round 2 SPLIT the HealthBar subtree (static parts baked, the
+// Intents / reticles / orbs) are band nodes — an earlier approach SPLIT the HealthBar subtree (static parts baked, the
 // tween-owned orange HpMiddleground re-leveled on top = the stale-orange-bar defect). An excluded root becomes a
 // LIVE SUBTREE ROOT: one LiveZ slot at its band position, the whole subtree skipped (never member / carrier /
 // watched) and re-leveled coherently via the root override (SetZOverride flips ZAsRelative on the ROOT only;
@@ -2077,7 +2078,7 @@ public static class BandInvalidationPolicy
 // A computed bake plan: an ordered list of `Regions` (bottom→top by QuadZ; v2 emits exactly one) plus the `LiveZ`
 // absolute-z overrides for the live painters interleaved between the regions (empty for v2 single-region — a prefix
 // has nothing live below it). `PaintCount`/`Coverage` are the totals; `QuadZ` is the top region's quad z (legacy).
-// `BandIds` (WS-BGBAKE order guard): the PROJECTED band paint-order prefix a flatten plan was computed from — every
+// `BandIds` (order guard): the PROJECTED band paint-order prefix a flatten plan was computed from — every
 // effZ==bucketZ id in paint order MINUS the descendants of `ExcludedLiveRoots` (the roots themselves stay) — so the
 // controller can keep the bake across an OrderChanged drain whose reshuffle leaves this projection untouched (see
 // IsBandOrderUnchanged; spawns/removals INSIDE an excluded subtree are invisible). `ExcludedLiveRoots` = the
@@ -2095,7 +2096,7 @@ public readonly record struct StaticBakePlan(
 {
     public bool IsBakeable => Regions.Count > 0;
 
-    // Track-P3c scoped invalidation: the indices of the regions whose WatchedIds intersect `changedIds` (in region
+    // Scoped invalidation: the indices of the regions whose WatchedIds intersect `changedIds` (in region
     // order). The controller releases these regions plus every region drawn ABOVE them (higher QuadZ) — a top-suffix
     // of the band — and keeps the stable lower regions baked byte-identically (position-stable z). A pure function
     // (the controller mirrors it with per-host HashSets to stay allocation-free on the drain path). Empty ⇒ no region
@@ -2166,7 +2167,7 @@ public enum BakeReject
     CarrierThrash,  // a strict ancestor is benched by the thrash guard
     TrimmedToEmpty,// the boundary trims (open clip / live show-behind-parent child) cut the whole prefix
     BudgetGate,    // too few painters or too little coverage
-    NoBand,        // WS-BGBAKE: the bottom bucket is not a z<0 background band — band flatten refused, exact path decides
+    NoBand,        // The bottom bucket is not a z<0 background band — band flatten refused, exact path decides
 }
 
 // Diagnostics from a Plan call (indices into the PAINT order). RawBoundary = the first-ineligible cut; TrimmedBoundary

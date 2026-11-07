@@ -3,7 +3,7 @@ namespace CouchCoop.MirrorProtocol.Assets;
 // Retry policy for the godot-client asset stores (Texture/Font/Shader/SpineClip HTTP fetches). Pure and Godot-free
 // (Exe-testable): the stores pass Godot's HttpRequest.Result and the HTTP status as plain longs.
 //
-// WHY (2026-07-19 missing-textures incident): the stores had NO HttpRequest.Timeout (Godot default 0 = wait
+// WHY (a missing-textures incident): the stores had NO HttpRequest.Timeout (Godot default 0 = wait
 // forever) and marked any failure PERMANENTLY `_failed` for the session. A phone that connected while the host was
 // loading a run had its /res responses stall (asset extraction runs on the game's main thread), silently wedging
 // the few in-flight slots forever — many textures missing, zero logs. With timeouts in place, a busy host surfaces

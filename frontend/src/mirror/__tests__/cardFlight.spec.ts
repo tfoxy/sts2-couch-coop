@@ -34,7 +34,7 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// WS-3 — the discard→draw shuffle card flight, REPLAYED client-side from a declarative hint.
+// The discard→draw shuffle card flight, REPLAYED client-side from a declarative hint.
 //
 // The producer used to stream every frame of every flying card (measured: 598 KB, 45% of a shuffle's upsert bytes,
 // 1852 of 3469 upserts on a 34.8s recording) and — because scene deltas are credit-gated on the client's ack — the
@@ -350,7 +350,7 @@ describe("cardFlight — the wire contract (parseSceneDelta)", () => {
     }
   });
 
-  // R13 — `kind`/`rot0` are the one pair this strict parser is lenient about, and in the OTHER direction: they are
+  // `kind`/`rot0` are the one pair this strict parser is lenient about, and in the OTHER direction: they are
   // normalized, never rejected. Unusable geometry is dropped because there is nothing to integrate from it; a kind
   // this build has never heard of still arrives with a complete flight, so failing open to the shuffle motion costs
   // the wrong flavour of animation, while dropping it would leave the (suppressed) card frozen on the pile.
@@ -563,7 +563,7 @@ describe("cardFlight — renderer integration", () => {
 //
 // On a widened stage every node is placed on the horizontal squeeze field, and a flying card's own shift is a
 // function of ITS OWN game X — so it changes all the way down the flight. The STREAMED sampler was fixed for this
-// in R10 WS-F (see noteCardTrailSample: both globals must be the shifted pair). The FLIGHT is the other sampler:
+// earlier (see noteCardTrailSample: both globals must be the shifted pair). The FLIGHT is the other sampler:
 // it writes the card's element through `nodeTransformForGlobal`, which applies the shift, but fed the ribbon the
 // raw 1920-space pose — so the comet flew a different path from the card it belongs to.
 describe("cardFlight — wide-screen spread (the ribbon rides the card's own shift)", () => {
@@ -672,7 +672,7 @@ describe("cardFlight — wide-screen spread (the ribbon rides the card's own shi
   });
 });
 
-// ---- R11: the flight as a COMPOSITOR animation ---------------------------------------------------------------
+// ---- the flight as a COMPOSITOR animation ---------------------------------------------------------------
 //
 // The integrator above is a per-frame JS callback per flying card; at 30 cards a reshuffle spent 30 × 60 whole
 // style-map derivations and transform writes a second on the main thread, and the animation stopped dead whenever
@@ -853,7 +853,7 @@ describe("cardFlight — the precomputed keyframes", () => {
 });
 
 // ================================================================================================================
-// R13 — THE SECOND KIND: the hand→discard flight
+// THE SECOND KIND: the hand→discard flight
 // ================================================================================================================
 //
 // Same curve, same two-phase integrator, same closed-form timing. What changes is what the player is LOOKING at:
@@ -1179,7 +1179,7 @@ describe("cardFlight — discard: the precomputed keyframes", () => {
 
 // ---- THE REGRESSION NET: the shuffle's math must not have moved ----------------------------------------------
 //
-// R13 threaded a `kind` through every pose function. The reference implementations below are the PRE-R13 formulas
+// A `kind` was later threaded through every pose function. The reference implementations below are the ORIGINAL formulas
 // written out from scratch — an independent copy, not a call into the module — and the shipped shuffle path is
 // compared against them exactly (`toBe`, not `toBeCloseTo`). If a discard branch ever leaks into the shuffle path
 // these fail on the first frame.
@@ -1199,7 +1199,7 @@ describe("cardFlight — the shuffle is byte-identical to the pre-R13 math", () 
     return Math.max(0.1 + (-0.1 - 0.1) * progress, 0);
   }
 
-  // The pre-R13 `advanceCardFlight`, restated.
+  // The original `advanceCardFlight`, restated.
   function refAdvance(
     state: { phase: string; time: number; speed: number; rotation: number },
     h: MirrorCardFlightHint,
@@ -1240,7 +1240,7 @@ describe("cardFlight — the shuffle is byte-identical to the pre-R13 math", () 
     return { x: h.end[0], y: h.end[1], rotation: state.rotation, scale: 0 };
   }
 
-  // The pre-R13 `cardFlightPoseAt`, restated.
+  // The original `cardFlightPoseAt`, restated.
   function refPoseAt(h: MirrorCardFlightHint, timing: ReturnType<typeof cardFlightTiming>, t: number, prev: number) {
     if (t < timing.arcSeconds) {
       const time = h.speed0 * t + (h.accel * t * t) / 2;

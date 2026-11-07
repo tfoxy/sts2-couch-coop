@@ -43,7 +43,7 @@ public sealed record BrowserPlayerOption(
     string SeatStatus = MirrorSeatStatuses.Ready,
     // Human-readable WHY for a non-ready seat, rendered next to the disabled row. Null when SeatStatus is "ready".
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? SeatStatusReason = null,
-    // R19 WP-2 — the character model id this seat is playing, from the same state snapshot the row's name comes
+    // The character model id this seat is playing, from the same state snapshot the row's name comes
     // from (lobby: StateCharacterSelectPlayerSnapshot.CharacterId; run: StateRunPlayerSnapshot.CharacterId). The
     // mirror picker renders it as the `/models/characters/{id}/icon` PNG left of the name, which is how a viewer
     // tells four seats apart in a saved-game lobby where several may still be labelled "Player 100x". Null where
@@ -220,7 +220,7 @@ public sealed record BrowserSettingsRequestEnvelope(
     // walk only when EVERY streaming mirror connection reports true. Null means this partial settings update leaves
     // the connection's current value unchanged; the required `?staticBg=0|1` selector seeds that value at connect.
     bool? StaticBg = null,
-    // R14 trail drive: whether THIS viewer drives the card-flight trail ROOT from the declarative flight hint, so
+    // Trail drive: whether THIS viewer drives the card-flight trail ROOT from the declarative flight hint, so
     // the producer may withhold that root's own transform writes in local emit mode. Per-CONNECTION like StaticBg,
     // and a CAPABILITY rather than a preference: it feeds the server's unanimity aggregate, which turns the
     // producer lever on only while EVERY streaming mirror connection reports true. Null means this partial settings

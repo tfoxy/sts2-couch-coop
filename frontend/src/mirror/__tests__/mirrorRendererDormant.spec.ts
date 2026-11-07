@@ -11,7 +11,7 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF5 WS-1 — DORMANT HIDDEN SUBTREES.
+// DORMANT HIDDEN SUBTREES.
 //
 // A census of the canonical combat recording found 82.8% of all stage elements (4,365 of 5,270) sitting under
 // `visible=false` subtree roots — a closed MapScreen alone is 1,922 elements. Dormancy is the boundary that stops
@@ -328,7 +328,7 @@ describe("reveal", () => {
 // --- 3. never a teardown --------------------------------------------------------------------------------------
 //
 // …on the PRUNED walks, which is what every case below drives (a volatile update / an incremental structural
-// delta). R10-PERF5 WS-4 added the one exception — a FULL walk reclaims an already-built hidden subtree — because
+// delta). A later change added the one exception — a FULL walk reclaims an already-built hidden subtree — because
 // only a full walk owns the `visited` set + post-walk prune that can clean up the descendants. That half lives in
 // `dormantReclaim.spec.ts`; the invariant here (a hide is never a teardown on the paths live play uses) is exactly
 // what keeps the two from colliding.

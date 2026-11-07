@@ -42,11 +42,11 @@ catalog labels. A claim belongs in this table only once something in the tree ha
 | the QR screen has a network selector on the left and a method selector on the right | `CouchCoopQrDialog` places the two selectors in that order; `QrSelectionModel` resolves their pair |
 | choose **Wired (Ethernet)** or **Wi-Fi**, and skip **PC name (.local)** | native `couchcoop_qr_adapter_ethernet_title`, `couchcoop_qr_adapter_wifi_title` and `couchcoop_qr_method_mdns_title`; the adapter descriptions identify normal LAN connections and the name-resolution dependency |
 | choose **Direct address**, without the HTTPS suffix, and expect `http://` | native `couchcoop_qr_method_ipv4_title` / `couchcoop_qr_method_direct_https_title` and the plain-method description; `QrSelectionModel` distinguishes the methods |
-| HTTPS methods are optional performance and security choices with additional requirements | native method descriptions and [direct-ip-https.md](../direct-ip-https.md); the secure-context browser paths are documented in [local-network-access.md](../agents/local-network-access.md) |
+| HTTPS methods are optional performance and security choices with additional requirements | native method descriptions and [direct-ip-https.md](../direct-ip-https.md); the secure-context browser paths are documented in [local-network-access.md](../local-network-access.md) |
 | the panel is **Connections** on the **Couch Co-Op QR Code** screen, with **Connection problems** and **Copy report** | native `couchcoop_qr_button`, `couchcoop_connection_title`, `couchcoop_connection_problems`, `couchcoop_connection_copy_report`; `CouchCoopQrDialog` hosts the panel |
 | starting a player's game can take up to a minute; keep the page open while its progress changes stage | `frontend/src/i18n/messages.ts`: `join.progress.line` and the stage messages; localized **Joining…** and **Loading…** come from the browser catalogs |
 | the report names the relevant log paths | `CaptureConnectionLogsLocked` attaches host and player log paths to the connection record |
-| opening the address on the host does not test whether its firewall allows the phone | [windows-connection-fingerprints.md](../agents/windows-connection-fingerprints.md) §5: with an inbound block rule, the host reached its own LAN address while the peer timed out |
+| opening the address on the host does not test whether its firewall allows the phone | [Windows firewall behaviour](#windows-firewall-behaviour) below: with an inbound block rule, the host reached its own LAN address while a peer timed out |
 | an old bookmark or home-screen shortcut may need replacing after an address change | `frontend/src/join/hostStore.ts` documents address-bound origins; the guide says to replace a shortcut only if it stops working |
 | logs can include the poster's Steam account ID and OS user name | prior host and player-log review found the host's SteamID64 and user name in file paths; detailed collection instructions remain in the reporting post |
 
@@ -54,6 +54,24 @@ The labels named by the connection instructions are pinned for all 14 languages 
 `scripts/test-workshop-discussions.sh`. It deliberately does not require the post to name every available
 connection method. The English translation links, localized discussion notices and sibling reporting links
 remain checked there too.
+
+### Windows firewall behaviour
+
+Checked on a stock Windows 11 install with the game installed through Steam:
+
+- **The permission is per program, not per port.** Answering the firewall prompt for the game once creates two
+  enabled inbound **Allow** rules for `SlayTheSpire2.exe`, scoped to the Domain, Private and Public profiles. They
+  cover every port the game opens, the seat ports included, which is why the post says "allow the program" rather
+  than "open a port". With no allow rule, the stock inbound default blocks.
+- **The host cannot see a block from the network side.** With an inbound Block rule for the game, the host still
+  reached its own LAN address while a phone or another PC timed out. Loopback and the host's own address are not
+  filtered, so "it opens on the host" says nothing about the firewall.
+- **The host asks its own firewall instead.** When no phone has connected for a while,
+  `WindowsFirewallProbe` reads the inbound rules for the game executable and the active networks' profiles once,
+  and the **Connections** panel names the result: an enabled Block rule, no enabled Allow rule (including rules
+  that exist but are switched off), or Allow rules that do not cover the profile of any active network. When the
+  game *is* allowed, the row says so, which points the player at the router, the phone or a security suite instead.
+  Any shape the query cannot read is reported as unknown rather than as a block.
 
 ### Localized menu names
 

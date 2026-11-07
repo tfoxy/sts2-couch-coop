@@ -53,13 +53,13 @@ public sealed class CouchCoopStaticBackgroundProvider(
     public const int RenderHeightPx = 1080;
 
     /// <summary>
-    /// The ENCODER half of that fixed policy: JPEG at q90, measured (Aug-22 round 2, see
-    /// <c>docs/agents/host-render-cost-aug22-round2.md</c>) against the whole browser-decodable field at this size.
+    /// The ENCODER half of that fixed policy: JPEG at q90, chosen by comparing the whole browser-decodable field at
+    /// this size.
     /// </summary>
     /// <remarks>
-    /// PNG cost <b>650 ms of encode and 2.1 MB</b>; jpg@0.9 costs <b>46 ms and 280 KB</b> — a 14x cheaper encoder
-    /// and 7.5x smaller bytes. webp@0.95 lands within 1% of jpg@0.9 on BOTH size (278 KB) and measured error
-    /// (MAE 266 vs 263) while costing 263 ms, so the only thing it buys is the alpha channel.
+    /// PNG costs hundreds of ms of encode and ~2 MB; jpg@0.9 costs tens of ms and ~280 KB — a far cheaper encoder
+    /// and several times smaller bytes. webp@0.95 lands within 1% of jpg@0.9 on BOTH size (~278 KB) and error
+    /// while costing several times the encode time, so the only thing it buys is the alpha channel.
     /// <para>
     /// Which we can afford to lose: the 2520x1080 render's alpha is exactly 39 fully-transparent columns at the
     /// LEFT edge (x 0-38, mean alpha 0.9848, nothing in the interior or on the right), and the RGB underneath is
@@ -187,7 +187,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
     // The EVENT family keys ride a `bg://events/` namespace — a brand-new key space (no older bytes to invalidate),
     // so it shares KeyVersion. `layers=` never appears there: event backdrops mount no layer variants.
     // `frame=` is the events COUNTERPART of the combat digest: the LIVE backdrop container transform the tracker
-    // probed (the recovered placement lerp has drifted from the shipped game — measured container y 99.4 vs the
+    // probed (the recovered placement lerp has drifted from the shipped game — the live container y was 99.4 vs the
     // lerp's 40 on Neow), qualifying a variant exactly the way a layer digest does. Frame-less = the
     // deterministic reference-lerp variant (what the prerender sweep bakes and the wire fallback asks for).
     public static string BuildCacheKey(StaticBackgroundFamily family, string id, string? layersDigest, string? eventFrame = null)

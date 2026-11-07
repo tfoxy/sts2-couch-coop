@@ -7,8 +7,8 @@
 // real rigs it is 2.2-4.2x smaller than the webp-q90 raster truth, and ~82x smaller for the SECOND animation of a
 // rig that has already paid for its pages.
 //
-// THIS MODULE is a TypeScript port of `scripts/geoclip-harness.html` — the standalone WebGL2 player the bake was
-// validated against — with the harness's tolerance rules kept verbatim, because those rules ARE the artifact
+// THIS MODULE is a TypeScript port of the standalone WebGL2 reference player the bake was
+// validated against — with that player's tolerance rules kept verbatim, because those rules ARE the artifact
 // contract. Couch reads one packed encoding: `geoclip/1` manifests reference
 // packed sheets and `verts.bin`; deforming slots carry a `vref` record ordinal.
 //

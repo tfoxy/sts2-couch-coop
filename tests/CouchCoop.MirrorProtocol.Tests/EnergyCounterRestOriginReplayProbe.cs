@@ -7,7 +7,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-3 (round 8, item 6) — RECORDING-DRIVEN regression probe for the vanishing combat energy orb.
+// RECORDING-DRIVEN regression probe for the vanishing combat energy orb.
 //
 // The defect: the headless decorative freeze used ProcessMode=Disabled, which in Godot 4.5.1 also pauses a node's
 // own TWEEN_PAUSE_BOUND tweens. The energy counter slides in from (-480,128) to its rest origin (0,0) over 600ms
@@ -21,11 +21,11 @@ namespace CouchCoop.MirrorProtocol.Tests;
 // signal that the slide-in actually played), so the assertion is on the FINAL transform each counter settles at.
 // It also checks each counter still carries its Label descendant, which is the "text-only vanish" shape.
 //
-// Against the PRE-FIX recording `.sts2/bench/combat-2026-07-15T16-40-09-999Z.ndjson` this probe FAILS as designed:
-// IroncladEnergyCounter (id 706773784578) is pinned at (-20.374207, 5.4331055) with a single transform emit
-// across all 1190 deltas — numerically exactly Expo-Out at t=0.273s of 0.6s, i.e. a paused tween.
+// Against a PRE-FIX recording this probe FAILS as designed:
+// the energy counter is pinned at a rest origin with a single transform emit
+// across the whole stream — numerically exactly Expo-Out part-way through its slide, i.e. a paused tween.
 //
-// Path-presence-gated (nothing is committed under .sts2/): default `.sts2/bench/energy-orb-4necro.ndjson`
+// Path-presence-gated (nothing is committed under .sts2/): reads a recording from the gitignored `.sts2/` directory
 // relative to the repo root, overridable via COUCHCOOP_ENERGY_ORB_NDJSON. Absent ⇒ one skip line and a pass.
 // Follows the BandResidencyReplayProbe recording-read pattern.
 internal static class EnergyCounterRestOriginReplayProbe

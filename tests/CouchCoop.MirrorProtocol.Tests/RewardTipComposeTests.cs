@@ -5,7 +5,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R6 (WS-TIP) pure truth table for the COMPOSED owner-follow forward-map (ViewScaleInputRegistry.MapThroughContainingStamps).
+// pure truth table for the COMPOSED owner-follow forward-map (ViewScaleInputRegistry.MapThroughContainingStamps).
 // The bug it fixes: on the card-reward screen a tip's owner-follow mapped the owner box through ONE stamp — the exact-id
 // per-card 1.15 (Center + NoClamp ⇒ centre-fixed ⇒ follow delta 0) — and never composed the outer 1.10 GROUP that
 // actually displaces an off-centre card by 0.10·(c−S). The fix composes EVERY containing stamp (group ∘ card), so the
@@ -27,7 +27,7 @@ internal static class RewardTipComposeTests
 
     // The core case: a SIDE card (centre c off the screen centre S) glued tip. group(card(box)) displaces the box
     // centre by exactly 0.10·(c−S) — the group-alone displacement (the per-card centre-scale contributes nothing) —
-    // where a SINGLE per-card map (the pre-R6 behaviour) gives displacement 0.
+    // where a SINGLE per-card map (the earlier behaviour) gives displacement 0.
     private static void SideCardFollowsGroupDisplacement()
     {
         var (state, applied, cardBox, groupStamp, cardStamp) = CardRewardScene();
@@ -43,7 +43,7 @@ internal static class RewardTipComposeTests
         Check.Close(mCy - cCy, 0.10 * (cCy - sY), "[tip-compose] composed Y displacement = 0.10·(c−S)");
         Check.That(Math.Abs(mCx - cCx) > 10, "[tip-compose] a side card's tip anchor genuinely MOVES (non-trivial follow)");
 
-        // The pre-R6 single per-card map (Center + NoClamp) leaves the centre fixed → delta 0: the bug the fix cures.
+        // The earlier single per-card map (Center + NoClamp) leaves the centre fixed → delta 0: the bug the fix cures.
         var cardOnly = ViewScaleInputRegistry.ScaledBox(cardBox, cardStamp);
         Check.Close((cardOnly.MinX + cardOnly.MaxX) / 2.0, cCx, "[tip-compose] per-card-only map is centre-fixed (the old bug)");
     }
@@ -125,7 +125,7 @@ internal static class RewardTipComposeTests
 
     // ANCESTRY-only invariant: an owner that is NOT a state-descendant of any stamped node (a TopBar relic / overlay
     // that the group does NOT scale) must NOT follow, even though its centre lands inside the full-viewport group box.
-    // This is the non-regression the R5 box-containment fallback got wrong (it would have spuriously mapped it).
+    // This is the non-regression the earlier box-containment fallback got wrong (it would have spuriously mapped it).
     private static void NonDescendantInsideGroupBoxDoesNotFollow()
     {
         var (state, applied, _, _, _) = CardRewardScene();

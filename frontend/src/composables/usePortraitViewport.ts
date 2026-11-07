@@ -1,6 +1,6 @@
 import { onScopeDispose, shallowRef, type ShallowRef } from "vue";
 
-// R19 WP-2 — ONE definition of "the viewport is portrait", shared by everything that branches on it.
+// ONE definition of "the viewport is portrait", shared by everything that branches on it.
 //
 // Two features ask the question and they must not be able to disagree: the "turn your phone sideways" nag
 // (composables/usePortraitNag) and the portrait chrome placement (MirrorApp — the settings gear + fullscreen

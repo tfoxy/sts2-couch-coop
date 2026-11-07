@@ -432,7 +432,7 @@ describe("placementBox / clipCornerRadius — the numeric placement inputs", () 
     expect(radius).toBe(6);
     expect(nodeStyle(item(capsule)).borderRadius).toBe(`${radius}px`);
 
-    // The half-box clamps are about the RENDERED box (R19 6c), so the override moves the number.
+    // The half-box clamps are about the RENDERED box, so the override moves the number.
     const wide = mkNode({
       ...capsule,
       ninePatchMargins: { left: 400, top: 400, right: 400, bottom: 400 },

@@ -5,7 +5,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R2 (WS-G2) view-scale input-remap GATE truth table for the pure ViewScaleInput.Remap. A design pointer is EXEMPT
+// View-scale input-remap GATE truth table for the pure ViewScaleInput.Remap. A design pointer is EXEMPT
 // from a stamp's inverse remap (→ identity, it belongs to an un-scaled neighbour) iff a neighbour rect contains it AND
 // (the stamp is a GROUP OR the point is outside the item's own OriginalBox). Otherwise a point inside the ScaledBox is
 // inverse-mapped; a point outside every ScaledBox is identity.
@@ -71,7 +71,7 @@ internal static class ViewScaleInputTests
         Check.That(Math.Abs(x - 193.333) < 0.01, "halo without neighbour → remapped (not exempt)");
     }
 
-    // A point in the halo band ON an un-scaled neighbour is EXEMPT → identity (the R2 fix: a tap aimed at the Skip
+    // A point in the halo band ON an un-scaled neighbour is EXEMPT → identity (the fix: a tap aimed at the Skip
     // button / banner sitting in a scaled card's halo lands where the game draws it).
     private static void ItemHaloOnNeighborIsExempt(
         HoverTipScaleMath.Stamp ch, DesignAabb original, DesignAabb scaled, DesignAabb neighbor)
@@ -85,7 +85,7 @@ internal static class ViewScaleInputTests
     // A GROUP stamp exempts an INTERIOR point covered by an OVERLAY neighbour. The neighbour here models an un-scaled
     // overlay drawn ON TOP of the scaled group (a TopBar deck/gold button) — ViewScaleInputRegistry guarantees the
     // registry only ever hands Remap such overlays as group neighbours, NEVER the group's ancestors/backdrops (which
-    // would exempt every interior tap → the R5 bug). Given a genuine overlay covering the point, the tap stays identity
+    // would exempt every interior tap → the bug). Given a genuine overlay covering the point, the tap stays identity
     // so the game hit-tests the overlay in place.
     private static void GroupInteriorOnOverlayNeighborIsExempt(
         HoverTipScaleMath.Stamp ch, DesignAabb original, DesignAabb scaled, DesignAabb overlayNeighbor)

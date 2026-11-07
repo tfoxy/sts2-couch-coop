@@ -13,9 +13,9 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF5 WS-3 — THE IDLE PRE-BUILD HATCHERY.
+// THE IDLE PRE-BUILD HATCHERY.
 //
-// WS-1 made a hidden subtree cost nothing to keep (no DOM at all under a `visible=false` root). That leaves ONE
+// Dormancy made a hidden subtree cost nothing to keep (no DOM at all under a `visible=false` root). That leaves ONE
 // regression risk: the reveal. MapScreen opens after every combat, and before dormancy its ~1,900 elements already
 // existed — so a reveal that has to build them synchronously would trade a background win for a foreground stall.
 // The hatchery closes that: every dormant marker is queued, and once the reconciles stop a budget drain re-enters
@@ -26,7 +26,7 @@ import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState }
 //      still hidden — and does it in paint order, one marker at a time;
 //   2. the budget is real and RESUMABLE: a slice that runs out re-queues the child it stopped at and the next one
 //      picks the DFS up there, so no subtree is ever half-forgotten;
-//   3. a reveal that lands mid-hatch builds the remainder synchronously and correctly (the WS-1 cascade, untouched);
+//   3. a reveal that lands mid-hatch builds the remainder synchronously and correctly (the dormancy cascade, untouched);
 //   4. a hatch build is NOT a reveal — separate counters, no `revealBuilds`/`revealBuildMs` contamination, and no
 //      pooled element spent on an invisible tree;
 //   5. an element built in the DARK re-anchors its WAAPI phase when it is finally shown (CSS animations don't run
@@ -215,7 +215,7 @@ afterEach(() => {
 describe("hatching a dormant subtree at idle", () => {
   it("builds the WHOLE hidden subtree, still display:none, with the reveal's child order", () => {
     const { stage, renderer } = mount(screenScene(false));
-    expect(nodeCount(stage)).toBe(VISIBLE_IDS.length); // WS-1: nothing under the closed screen
+    expect(nodeCount(stage)).toBe(VISIBLE_IDS.length); // nothing under the closed screen
 
     mirrorWalkStats.reset();
     hatchAll(renderer); // real 3ms slices — however many the host needs
@@ -370,7 +370,7 @@ describe("behindCount inside a hatch", () => {
   const LAYOUT = ["Behind1", "Behind2", "<self>", "Normal1"];
 
   it("counts the behind-children the hatch is ABOUT to build (a parent is built before them)", () => {
-    // The WS-1 rule — "count a hidden child only if it has an element TODAY" — is exactly wrong here: the hatch
+    // The dormancy rule — "count a hidden child only if it has an element TODAY" — is exactly wrong here: the hatch
     // builds `Panel` first, so at that moment neither behind-child has an element and the panel's own paint would
     // slot at index 0, rendering BEHIND children that are one instruction away from existing.
     const { stage, renderer } = mount(panelScene());
@@ -580,7 +580,7 @@ describe("the element-adoption pool", () => {
     renderer.reconcile(state);
 
     mirrorWalkStats.reset();
-    // The pooled-shell recycle, aimed INTO the closed dialog: WS-1 declines the adoption (never spend a real,
+    // The pooled-shell recycle, aimed INTO the closed dialog: dormancy declines the adoption (never spend a real,
     // styled element on an invisible tree), so `b` is a dormant add…
     structural(state, {
       removedIds: cardIds("a"),
@@ -637,7 +637,7 @@ describe("the strand guard against a PARTIALLY hatched subtree", () => {
   });
 });
 
-// --- 6. the re-arm coalesce (WS-6) -----------------------------------------------------------------------------
+// --- 6. the re-arm coalesce -----------------------------------------------------------------------------
 //
 // `scheduleHatchDrain` is called from the END OF EVERY RECONCILE (a pure debounce push-back), so a streaming scene
 // calls it dozens of times a second even though only the LAST one before quiet ever matters. These specs pin the

@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-REST rest-site "option description stuck invisible on quick refocus / cold first click" — client-side proof that
+// Rest-site "option description stuck invisible on quick refocus / cold first click" — client-side proof that
 // the held-restore short expiry + sweep self-heal cure the defect.
 //
 // The defect: when a faded option is re-focused the game re-shows the description as a PLAIN streamed resting-alpha
@@ -211,7 +211,7 @@ internal static class RestFocusReplayProbe
         Check.That(unstuck, "current latch: the description un-sticks over the real streamed alpha sequence");
     }
 
-    // WS-REST7 FIX 4 (producer prune-exemption + visible-neutralization) proof over a REAL streamed capture. Unlike
+    // Producer prune-exemption + visible-neutralization) proof over a REAL streamed capture. Unlike
     // the synthetic latch probes above (which model the CLIENT), this reconstructs the STREAMED scene from a fresh
     // POST-FIX audit-rest-refocus capture and asserts the description node's streamed modulate.a DIPS to ≈0 after an
     // unfocus and then LATER EXCEEDS 0.5 on the refocus fade-in — i.e. the producer now actually EMITS the reveal

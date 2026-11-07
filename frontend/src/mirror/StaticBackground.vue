@@ -159,9 +159,9 @@ const wireScenePath = computed<string | null>(() => wireFallback.value?.scenePat
 
 // What SHOULD be displayed right now.
 //
-// R12 — the descriptor no longer wins unconditionally. It rides the session envelope, which the host republishes
+// The descriptor no longer wins unconditionally. It rides the session envelope, which the host republishes
 // one deferred main-thread hop AFTER the scene delta that mounted the new room, so on a room change the NEW room's
-// bg root reaches the wire while `props.descriptor` still names the OLD one. Under the pre-R12 renderer that only
+// bg root reaches the wire while `props.descriptor` still names the OLD one. Under the previous renderer that only
 // cost a beat of the previous room's picture over the live scenery; under the build HOLD the live scenery is not
 // there, so a stale descriptor would leave the wrong room's artwork as the only thing on screen — and no decode
 // for the mounted room would even start.
@@ -371,7 +371,7 @@ watch(
   }
 );
 
-// R12: the renderer's build hold is a pure function of the wire + the settings, so a room can be HELD without this
+// The renderer's build hold is a pure function of the wire + the settings, so a room can be HELD without this
 // component having anything in flight (the target watcher may not have fired at all — e.g. a `target` that stayed
 // object-identical). Arm the watchdog on the wire edge too, so "held with nothing resolving" is always bounded —
 // on fire it enters the ladder against the CURRENT target (see armWatchdog), which is what turns a combat room

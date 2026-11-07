@@ -86,10 +86,10 @@
 // is why the flag is hard-coded here rather than levered: there is no arm of this module where a GPU-backed scratch
 // canvas is the right answer.
 //
-// "THE BYTES THE SOURCE ALREADY HAS" IS A PRECONDITION, NOT A GUARANTEE (Aug-28). This sentence used to say "the
-// bytes the `<img>` already has", and a Moto G86 combat trace showed the `<img>` frequently does NOT have them: an
-// element's decoded frame is a cache Chrome evicts under memory pressure, so `drawImage` re-decodes the 18 MB PNG
-// synchronously — 260-306 ms a time, seven times in 29.5 s, every one inside a rAF. `willReadFrequently` is still
+// "THE BYTES THE SOURCE ALREADY HAS" IS A PRECONDITION, NOT A GUARANTEE. This sentence used to say "the
+// bytes the `<img>` already has", but on a mid-range Android phone the `<img>` frequently does NOT have them: an
+// element's decoded frame is a cache Chrome evicts under memory pressure, so `drawImage` re-decodes the large PNG
+// synchronously — hundreds of ms a time, repeatedly, every one inside a rAF. `willReadFrequently` is still
 // right and still for the reason given above; it makes the COPY cheap, and it cannot make the DECODE not happen.
 //
 // Two things follow, and both are implemented. The caller should hand this module owned pixels wherever it has
@@ -99,7 +99,7 @@
 // The canvas ELEMENT is what goes to `cache.acquire`, never its bytes. A 2D canvas stores PREMULTIPLIED colour and
 // `acquireBytes` would be told to premultiply again — a grossly visible darkening of every semi-transparent edge.
 // Handing over the element lets gsw's `UNPACK_PREMULTIPLY_ALPHA_WEBGL` do the multiply exactly once, which is the
-// path `fxSurfaces` has been shipping since M2.
+// path `fxSurfaces` has been shipping for a while.
 
 import type { CanvasTextureCache, ExecutorTexture } from "@godot-scene-web/canvas";
 
@@ -127,7 +127,7 @@ export const REPACK_MAX_BYTES_DEFAULT = 24 * 1024 * 1024;
 
 /**
  * How slow ONE `drawImage` has to be before this module stops believing the crop is cheap — the DECODE-HOSTILE
- * threshold, and the repair for an assumption the Aug-28 phone trace falsified.
+ * threshold, and the repair for an assumption that real phone traces falsified.
  *
  * WHAT THE ASSUMPTION WAS. The bridge decodes a page with `img.decode()` before it is ever `ready`, so both
  * modules took the decode to be PRE-PAID and costed a crop as a memcpy — which is why the only budget in the
@@ -135,9 +135,9 @@ export const REPACK_MAX_BYTES_DEFAULT = 24 * 1024 * 1024;
  *
  * WHAT ACTUALLY HAPPENS. `decode()` resolves, and Chrome then DISCARDS the decoded frame under memory pressure,
  * because an `<img>`'s pixels are a cache and not a possession. The next `drawImage` re-decodes the whole PNG
- * synchronously. Measured on a Moto G86 over one 29.5 s combat trace: seven `Decode LazyPixelRef` re-decodes of
- * the 4032x4072 card sheets at 260-306 ms each, ~2.0 s of main thread, every one inside a rAF — against a byte
- * budget that thought it had spent 1.4 MB.
+ * synchronously. On a mid-range Android phone that showed up as repeated `Decode LazyPixelRef` re-decodes of
+ * the 4032x4072 card sheets, hundreds of ms each, every one inside a rAF — against a byte budget that thought it
+ * had spent 1.4 MB.
  *
  * THE FIX IS TO CROP FROM PIXELS NOBODY CAN DISCARD (`TextureBridgeOptions.decodedPageSource`, wired to
  * `atlasBaker`'s prefetched `ImageBitmap`s). THIS is the backstop for when that source is missing — a page
@@ -178,7 +178,7 @@ export interface RepackCrop {
 
 /**
  * The crop a source rect resolves to: whole texels, plus the apron, snapped out to {@link REPACK_QUANTUM}, clamped
- * to the page. PURE — the probe (`scripts/probe-canvas-atlas-vram.mjs`) calls it offline to count regions per page
+ * to the page. PURE — it can be called offline to count regions per page
  * without a browser anywhere.
  *
  * A page smaller than the rect it is asked about answers a clamped (possibly empty) crop rather than throwing; the

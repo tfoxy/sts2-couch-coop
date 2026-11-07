@@ -57,7 +57,7 @@ namespace CouchCoop.Mod.Session;
 /// bare.
 /// <see cref="ComputeDueNudgeActions"/> keeps the end-of-cycle signal and emitting-flag repair together.
 ///
-/// Spine license (<c>.ai/Spine-Runtimes-License-Agreement.txt</c>): the freeze here touches ONLY Godot base-Node
+/// Spine Runtimes License Agreement: the freeze here touches ONLY Godot base-Node
 /// APIs — it identifies spine by the native class string (<see cref="LooksLikeSpine"/> matches the "Spine" family:
 /// SpineSprite / SpineMesh2D / SpineSlotNode / SpineBoneNode) and flips <see cref="Node.ProcessMode"/>. It never
 /// calls any spine-godot method. (The producer's anim capture lives in spirectl and observes the game's own
@@ -1097,7 +1097,7 @@ public static class CouchCoopHeadlessVisualSuspender
     // _Ready plays a single non-looping clip and connects `animation_completed` → QueueFreeSafely, i.e. THE
     // NODE DELETES ITSELF WHEN THE CLIP ENDS. Freezing its SpineSprite (ProcessMode.Disabled) stops the spine
     // update that fires that signal, so the completion never arrives, the node is never freed, and the mirror
-    // keeps a dead attack overlay on screen replaying forever (round-8 item 10). These overlays are transient
+    // keeps a dead attack overlay on screen replaying forever. These overlays are transient
     // and tiny (one skeleton for well under a second), so leaving them simulating costs nothing measurable
     // next to the permanent creature/background skeletons the freeze exists for.
     private static readonly HashSet<string> SpineFreezeExemptScriptTypes =
@@ -1211,7 +1211,7 @@ public static class CouchCoopHeadlessVisualSuspender
     /// still renders. The freeze re-asserts on every rescan, so it is not a race a short render reliably wins.
     /// </para>
     /// <para>
-    /// This is NOT about making a <c>--headless</c> bake work. It was measured, and a windowless bake is dead for
+    /// This is NOT about making a <c>--headless</c> bake work. This was verified: a windowless bake is dead for
     /// an unrelated reason that no process mode can fix (the dummy renderer hands back each mesh surface's
     /// creation-time arrays forever, so the geometry never advances however the rig is posed). Anyone reading
     /// this later should not infer that the exemption enables headless extraction — it does not.

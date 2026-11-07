@@ -21,12 +21,12 @@ export interface MirrorWalkStats {
   bails: number;
   visits: number;
   skippedSubtrees: number;
-  // R20 item 5: skips the transform-pin gate would have taken that were converted into a
+  // Count of skips the transform-pin gate would have taken that were converted into a
   // paint-only visit because the inherited TINT moved under the pin (a dialog that slides AND fades in). Zero on
   // every screen without a fading tween; a non-zero value is the fade being applied instead of swallowed.
   pinPaintRepairs: number;
   fastPathVisits: number;
-  // R10-PERF6 WS-P1: visits that took the ANCESTOR-AFFINE fast path (placement re-derived, everything else reused).
+  // Visits that took the ANCESTOR-AFFINE fast path (placement re-derived, everything else reused).
   // On a map scroll this should carry essentially the whole subtree — with `styledNodes` staying near zero.
   affineFastPathVisits: number;
   styledNodes: number;
@@ -44,18 +44,18 @@ export interface MirrorWalkStats {
   geomPassRuns: number;
   geomPassSkips: number;
   interactiveRectRebuilds: number;
-  // R10-PERF6 WS-P1: how many times the GAME-space view-scale INPUT registry was actually assembled
+  // How many times the GAME-space view-scale INPUT registry was actually assembled
   // (buildViewScaleInputStamps — the interactive-rect fold + the neighbour/Z filtering). It is coordinate-only
   // and read exclusively by the input path, so on a replay with no pointer activity it must stay at 0 no matter
   // how much the scene animates. See viewScaleInputStamps.
   viewScaleRegistryBuilds: number;
-  // WS-B animation-loop scheduling instrumentation. `tickWakeups` = how many times the animation loop actually ran
+  // Animation-loop scheduling instrumentation. `tickWakeups` = how many times the animation loop actually ran
   // (with the old free-running poll this was one per rAF — ~60/s forever; deadline-scheduled it is one per DUE
   // deadline, and 0 while nothing is armed). `tickParkedMs` = wall-clock ms the loop spent ASLEEP on a scheduler
   // timer (zero JS on the main thread); with the poll it stays 0. Both are plain counters (no allocation).
   tickWakeups: number;
   tickParkedMs: number;
-  // WS-C occlusion-gating instrumentation (GAUGES, not counters — each reflects the state left by the LAST walk).
+  // Occlusion-gating instrumentation (GAUGES, not counters — each reflects the state left by the LAST walk).
   // `occludedRoots` = subtree roots currently gated (both tiers); `occlusionHiddenRoots` = the tier-1 subset that is
   // actually `display:none` (so `occludedRoots − occlusionHiddenRoots` are the paint-through tier-2 ones);
   // `occlusionTier` = 0 nothing gated / 1 at least one TIER-1 (opaque) cover engaged / 2 tier-2 only;
@@ -64,7 +64,7 @@ export interface MirrorWalkStats {
   occlusionHiddenRoots: number;
   occlusionTier: number;
   occlusionSuspendedAnimators: number;
-  // R10-PERF6 WS-B gauges (see BACKSTOP_COVER_MIN_ALPHA / FREEZE_CANVAS_SELECTOR). All three describe the state
+  // Backstop-cover and canvas-freeze gauges (see BACKSTOP_COVER_MIN_ALPHA / FREEZE_CANVAS_SELECTOR). All three describe the state
   // left by the LAST walk, so they fall back to 0 the moment the cover lifts.
   // `occlusionBackstopCovers` = qualifying covers this pass that are one of the game's own overlay BACKSTOPS (>0
   // means the backstop exception is what is holding the gate — the live 0.724 case reads 1 with the setting on
@@ -80,7 +80,7 @@ export interface MirrorWalkStats {
   // screen changes this with nothing on our side running (a published field would read 0 on exactly the state
   // being measured). READ-ONLY: see `setStaticStillGauge`.
   readonly staticStillCanvases: number;
-  // R17 — the RETAINED-STILL block, and every one of these is a LIVE GAUGE over gsw's own counters for exactly
+  // The RETAINED-STILL block, and every one of these is a LIVE GAUGE over gsw's own counters for exactly
   // `staticStillCanvases`' reason (gsw's timers move them with nothing on our side running). See
   // `setStaticStillCountersGauge` for where they come from.
   //
@@ -107,7 +107,7 @@ export interface MirrorWalkStats {
   readonly staticStillDonorsDropped: number;
   readonly staticStillRetainedEntries: number;
   readonly staticStillRetainedBytes: number;
-  // R10-B3 element-adoption instrumentation (COUNTERS, cumulative). `createEl` = elements actually constructed by
+  // Element-adoption instrumentation (COUNTERS, cumulative). `createEl` = elements actually constructed by
   // createEl (the cost adoption exists to remove: on a card play this used to spike by one whole card subtree, and
   // each new element under a shader node makes gsw build a fresh WebGL binding + its syncCanvasSize forced layout).
   // `adoptions` = condemned records re-keyed onto a NEW node id (element + canvases + style caches kept).
@@ -116,7 +116,7 @@ export interface MirrorWalkStats {
   createEl: number;
   adoptions: number;
   condemnedSwept: number;
-  // R10-PERF3 WS-4 texture-walk instrumentation. `fullWalkCauses` breaks `fullWalks` down by WHY the walk went
+  // Texture-walk instrumentation. `fullWalkCauses` breaks `fullWalks` down by WHY the walk went
   // full (the counters sum to fullWalks) — the metric that made the texture-load storm visible in the first place.
   // `textureDirtyIds` = ids handed to markTextureDirty (cumulative, before staleness filtering);
   // `textureRestyles` = ids a walk actually injected into its dirty set (i.e. the node still existed). On a healthy
@@ -124,7 +124,7 @@ export interface MirrorWalkStats {
   fullWalkCauses: Record<FullWalkCause, number>;
   textureDirtyIds: number;
   textureRestyles: number;
-  // R10-PERF4 WS-4 (item 2) BLEND CENSUS — measurement only (see noteBlendNode). A `mix-blend-mode` element forces
+  // BLEND CENSUS — measurement only (see noteBlendNode). A `mix-blend-mode` element forces
   // the compositor to promote everything painting above it, so an effectively-invisible blend is pure layer tax;
   // these say whether a mid-play MUTING pass would be worth building at all (the settled census only sees the last
   // frame). `blendNodes` / `blendLowAlpha` = the live counts at the end of the last walk; `blendLowAlphaPeak` = the
@@ -135,7 +135,7 @@ export interface MirrorWalkStats {
   blendLowAlphaPeak: number;
   blendLowAlphaSum: number;
   blendSampleWalks: number;
-  // R10-PERF5 WS-1 DORMANCY instrumentation. `dormantRoots` is a GAUGE — how many
+  // DORMANCY instrumentation. `dormantRoots` is a GAUGE — how many
   // dormant MARKERS exist right now, i.e. how many hidden subtree roots the renderer is currently declining to
   // build. Deliberately a live membership count, not a per-walk tally: a settled screen skip-cleans its dormant
   // roots without re-deriving them, so a per-walk tally would read 0 exactly when the bench census samples it.
@@ -148,7 +148,7 @@ export interface MirrorWalkStats {
   dormantSkippedBuilds: number;
   revealBuilds: number;
   revealBuildMs: number;
-  // R10-PERF5 WS-3 HATCHERY instrumentation. `hatchedBuilds` counts dormant
+  // HATCHERY instrumentation. `hatchedBuilds` counts dormant
   // MARKERS the idle hatchery built (one per queue entry realised — the descendants each one drags in show up in
   // `createEl`, like every other build); `hatchDrains` counts budget slices run; `hatchMs` accumulates their wall
   // time. Deliberately SEPARATE from `revealBuilds`/`revealBuildMs`: a hatch build is off the critical path by
@@ -156,7 +156,7 @@ export interface MirrorWalkStats {
   hatchedBuilds: number;
   hatchDrains: number;
   hatchMs: number;
-  // R10-PERF6 WS-P2 instrumentation. `atlasWarmedRegions` counts region bakes kicked off for a HIDDEN sprite by
+  // Hidden-sprite atlas-warm instrumentation. `atlasWarmedRegions` counts region bakes kicked off for a HIDDEN sprite by
   // the hatchery — the series that should drive `textureRestyles` on a map open to
   // ~0. `revealStaggerHolds` / `revealStaggerHeldNodes` count the subtree ROOTS a staggered reveal held back and
   // the wire nodes under them; `revealStaggerBatches` counts release slices run.
@@ -164,13 +164,13 @@ export interface MirrorWalkStats {
   revealStaggerHolds: number;
   revealStaggerHeldNodes: number;
   revealStaggerBatches: number;
-  // R10-PERF5 WS-4 RECLAIM instrumentation. Cumulative COUNTER of subtree
+  // RECLAIM instrumentation. Cumulative COUNTER of subtree
   // roots a FULL walk reclaimed — an effectively-hidden node whose already-built element was torn down and whose
   // record was demoted to a dormant marker. Its descendants show up in `removedRecords` (the post-walk prune tears
   // them down like any other unvisited record), and the re-grow shows up in `hatchedBuilds` / `revealBuilds`
   // depending on who got there first.
   reclaimedRoots: number;
-  // R12 STATIC-BG BUILD HOLD instrumentation.
+  // STATIC-BG BUILD HOLD instrumentation.
   // `staticBgHeldRoots` is a GAUGE — how many covered scenery roots the renderer is holding unbuilt RIGHT NOW
   // (re-derived per walk, the `dormantRoots` idiom, because a settled screen skip-cleans its held root).
   // `staticBgHoldSkippedBuilds` is the cumulative COUNTER of boundary returns caused by the hold: this is the
@@ -188,12 +188,12 @@ export interface MirrorWalkStats {
   spineStillDecodes: number;
   spineStillCommits: number;
   spineStillStale: number;
-  // Aug-25 SPINE SUBTREE PAINT CULL: how many spine nodes currently carry the `will-change: transform` promotion
+  // SPINE SUBTREE PAINT CULL: how many spine nodes currently carry the `will-change: transform` promotion
   // (see applySpinePromotionPass). A GAUGE, not a counter — this is the layer bill the fix runs up, and the whole
   // point of scoping it to "still + effect surfaces in the subtree" is that this number stays at ~1 rather than at
   // "every spine node on screen". Published once per walk, from a live count, for the reason dormantRoots is.
   spinePromotedNodes: number;
-  // R11 — CARD-FLIGHT + TRAIL instrumentation, the series the reshuffle round is measured on. Counters unless
+  // CARD-FLIGHT + TRAIL instrumentation, the series the reshuffle round is measured on. Counters unless
   // noted; the PEAKs are high-water marks over the measurement window (a reshuffle is ~1s inside a 20s recording,
   // so an average would dilute the only interesting second).
   //
@@ -211,11 +211,11 @@ export interface MirrorWalkStats {
   // a whole `nodeStyle` map (see `?flightPlacementSeam`), so this counts allocations NOT made.
   trailPaints: number;
   trailPathWrites: number;
-  // R15 — design px² of trail-path bbox actually REWRITTEN, × the bands rewritten with it: the re-raster FILL proxy
+  // Design px² of trail-path bbox actually REWRITTEN, × the bands rewritten with it: the re-raster FILL proxy
   // `trailPathWrites` cannot see (a write count says nothing about how much surface it dirtied). Only paints that
   // reach the `d` write guard add to it; the box is `TrailRibbon.bboxArea` (see cardTrail.ts). A plain double.
   trailPathBboxAreaSum: number;
-  // R16 — the other half of that story, and the one R15 named as the actual cost. `trailPathBboxAreaSum` is
+  // The other half of that story, and the one that names the actual cost. `trailPathBboxAreaSum` is
   // WRITTEN area: how much surface was re-rastered, integrated over the window, i.e. a FILL price. This is
   // STANDING area: the box every live stroke covers RIGHT NOW, summed across strokes, high-water-marked over the
   // window — i.e. how much blended surface the compositor is carrying per frame whether or not anything rewrote
@@ -237,7 +237,7 @@ export interface MirrorWalkStats {
   // A number climbing with no cards flying means something else is jumping a ribbon's head around.
   trailTeleportCuts: number;
   flightPlacementSeamHits: number;
-  // R12 WS-B — CARD-FLIGHT LIVENESS. A phone trace caught the whole declarative replay silently not running (a
+  // CARD-FLIGHT LIVENESS. A phone trace caught the whole declarative replay silently not running (a
   // stuck producer gate upstream meant no `cardFlights[]` ever reached the client) and NOTHING here could say so:
   // the only flight series was `flightsPeak`, which reads 0 both when the feature is idle and when it is broken.
   // These counters make each link of the chain — hint on the wire → hint matched to a record → flight armed →
@@ -257,7 +257,7 @@ export interface MirrorWalkStats {
   // …and it is scoped to the SHUFFLE mover's node type, which is the only one classified at element-build time; a
   // discard's mover is an ordinary card, indistinguishable in the walk from every other card on screen, so its
   // degraded path shows up as `discardFlightsArmed === 0` while cards are visibly being played instead.
-  // R13: `discardFlightsArmed` is the hand→discard SUBSET of `flightsArmed` (a shuffle count is the difference).
+  // `discardFlightsArmed` is the hand→discard SUBSET of `flightsArmed` (a shuffle count is the difference).
   // Read it to tell which kind a host is emitting: the two arrive on the same wire field and arm through the same
   // path, so a producer that has lost one of them looks exactly like an idle screen in every counter but this one.
   cardFlightHintsReceived: number;
@@ -276,7 +276,7 @@ export interface MirrorWalkStats {
   // (DOM diet / occlusion / a hint that beat the node); `noNode` = the record carries no wire node; `noWaapi` = the
   // browser has no `Element.animate` (jsdom, an ancient WebView); `degenerate` = a hint whose closed form has no
   // duration (the producer); `boxless` = the target node has no placement box of its own (its geometry).
-  // Failing is NOT a regression — the flight falls back to the stepped integrator, which is the pre-R11 shipped
+  // Failing is NOT a regression — the flight falls back to the stepped integrator, which is the previously shipped
   // behaviour. What matters is that it stops being invisible.
   flightCssAnimFailed: Record<FlightAnimFailReason, number>;
   // Why a flight left the per-frame set. `done` is the healthy terminal state (every armed flight should reach it);
@@ -367,7 +367,7 @@ export function setStaticStillGauge(read: (() => number) | null): void {
   staticStillGauge = read;
 }
 
-/** R17: the retained-still counters, as one reading. Field names are the gsw counters', minus the prefix — the
+/** The retained-still counters, as one reading. Field names are the gsw counters', minus the prefix — the
  *  mapping to `mirrorWalkStats.staticStill*` is meant to be obvious to whoever is diffing a bench cell against
  *  gsw's own source. */
 export interface MirrorStaticStillCounters {
@@ -448,7 +448,7 @@ export const mirrorWalkStats: MirrorWalkStats = {
   get staticStillCanvases(): number {
     return staticStillGauge?.() ?? 0;
   },
-  // R17 — the same read-time-gauge contract as `staticStillCanvases` above, one getter per gsw counter so the
+  // The same read-time-gauge contract as `staticStillCanvases` above, one getter per gsw counter so the
   // bench's flat `{...__mirrorWalkStats}` copy (and its `pickNum(key)` extraction) sees them without learning a
   // nested shape. Enumerable, like every other field here.
   get staticStillCacheHits(): number {
@@ -572,7 +572,7 @@ export const mirrorWalkStats: MirrorWalkStats = {
     this.occlusionBackstopCovers = 0;
     this.occlusionFrozenCanvases = 0;
     this.occlusionFrozenFallbacks = 0;
-    // `staticStillCanvases` — and the whole R17 `staticStill*` block below it — is deliberately absent: they are
+    // `staticStillCanvases` — and the whole `staticStill*` block below it — is deliberately absent: they are
     // read-time gauges over gsw's live swap state and its module-wide still pool, and a measurement-window reset
     // must not claim the fleet was handed back or the pool emptied. (gsw's counters are monotonic by ITS
     // contract; a bench window diffs them, exactly as it does for the effect-runtime stats.)
@@ -615,7 +615,7 @@ export const mirrorWalkStats: MirrorWalkStats = {
     this.trailPathBboxAreaSum = 0;
     // The peaks are high-water marks OVER THE WINDOW, so a window reset must clear them — otherwise every later
     // window inherits the reshuffle's number and reads as if it were shuffling too.
-    // R16: the PEAK only. The running sum behind it (`trailSurfaceAreaSum`) is STANDING STATE, not a window total —
+    // The PEAK only. The running sum behind it (`trailSurfaceAreaSum`) is STANDING STATE, not a window total —
     // the strokes it describes are still on screen — so zeroing it here would make the gauge report a negative
     // delta the moment one of them blanked. It re-latches into the peak on the very next paint, exactly as
     // `trailStrokesPeak` re-latches from a set whose members a reset does not evict.
@@ -659,7 +659,7 @@ export const mirrorWalkStats: MirrorWalkStats = {
   }
 };
 
-// --- R10-PERF4 WS-4 (item 2): blend census bookkeeping ---------------------------------------------------------
+// --- Blend census bookkeeping ---------------------------------------------------------
 //
 // Membership sets, NOT per-walk recomputation: a node's blend + own-opacity are recorded when it is styled and
 // remembered until it is re-styled or removed, so the counts describe the CURRENT scene at every walk boundary

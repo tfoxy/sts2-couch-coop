@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-ADDBAKE unit coverage for the PURE gdshader "bake-add premul" rewrite (ShaderBakeRewrite). Converts an
+// Unit coverage for the PURE gdshader "bake-add premul" rewrite (ShaderBakeRewrite). Converts an
 // Add-blend carrier so it renders into a static-bake SubViewport as an alpha-preserving additive clone
 // (blend_premul_alpha + a fragment epilogue that folds the additive contribution into RGB and zeroes alpha). Pins:
 // the whole-word blend swap, the epilogue injection point, bare-`return;` wrapping, containment (Ok=false) on

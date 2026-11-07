@@ -24,7 +24,7 @@ type WalkMode = "full" | "incremental" | "update";
 const BAIL_ORDER_CHURN_RATIO = 0.15;
 const BAIL_MIN_ORDER_CHURN = 8;
 
-// --- WS-C occlusion gating: tuning ---------------------------------------------------------------------------
+// --- occlusion gating: tuning ---------------------------------------------------------------------------
 //
 // DETECTION IS DATA-DRIVEN (no scene-file allowlist). A "cover" is any node the walk sees that
 //   (a) paints a FLAT FILL COLOUR of its own (`fillColor`, i.e. a Godot ColorRect/Panel-ish backdrop) and carries NO
@@ -51,7 +51,7 @@ const BAIL_MIN_ORDER_CHURN = 8;
 const COVER_OPAQUE_ALPHA = 0.996; // ≥ this composed alpha ⇒ the cover is opaque (tier 1 eligible)
 const COVER_MIN_ALPHA = 0.75; // below this a "cover" is just a flash/vignette — never gate behind it
 const COVER_EDGE_EPS = 1; // design-px slack when testing full-stage coverage (rounded producer boxes)
-// R10-PERF6 WS-B — THE BACKSTOP EXCEPTION (`?backstopOcclude=off` / the "Overlay backstops" panel toggle).
+// THE BACKSTOP EXCEPTION (`?backstopOcclude=off` / the "Overlay backstops" panel toggle).
 //
 // The generic 0.75 floor was set from the SHAPE of STS2's scrims (`#000000d9` = 0.851 fill). Live, three of them
 // also carry a `d9` MODULATE while their screen is open, so the composed alpha is 0.851 × 0.851 = 0.724 — just
@@ -86,7 +86,7 @@ export function backstopCoverPath(
   return BACKSTOP_COVER_PATHS.get(parentName) === name ? `${parentName}/${name}` : null;
 }
 
-// R10-PERF6 WS-B, piece 2 — CANVAS DE-PROMOTION UNDER A TIER-2 COVER.
+// CANVAS DE-PROMOTION UNDER A TIER-2 COVER.
 //
 // Tier 2 keeps the covered content PAINTED (the scrim shows it through) and only stops its time-driven work. The
 // occlusion-regime experiment measured what that leaves on the table: suspending the animators recovers ~0% of

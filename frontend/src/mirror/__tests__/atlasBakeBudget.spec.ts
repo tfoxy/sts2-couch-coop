@@ -1,12 +1,12 @@
-// The atlas region-bake DRAIN contract (Aug-11 phone regression).
+// The atlas region-bake DRAIN contract.
 //
 // A bake is asynchronous, so the old `while (queue) { bake(); if (over budget) break; }` drain measured ~0ms per
-// job and emptied the whole queue into ONE task — every `convertToBlob` then encoded concurrently and a Mali-G57
-// phone blocked its main thread for 3.1s on ~20 regions during map load. These specs pin the two rules that
+// job and emptied the whole queue into ONE task — every `convertToBlob` then encoded concurrently and a weak
+// phone blocked its main thread for seconds on ~20 regions during map load. These specs pin the two rules that
 // replaced it: exactly one bake in flight ON THE INLINE PATH (jsdom has no Worker, so that is what these run), and
 // a device whose bakes are pathological loses the mechanism instead of the frame rate.
 //
-// Aug-14: "pathological" is now MAIN-THREAD time (BAKE_SLOW_MS) with a much higher WALL backstop (BAKE_STALL_MS),
+// "Pathological" is MAIN-THREAD time (BAKE_SLOW_MS) with a much higher WALL backstop (BAKE_STALL_MS),
 // so the fixture below has to charge the two separately — `syncCostMs` is billed inside `drawImage`, i.e. inside
 // the bake's synchronous segment, and `settleOne`'s wall is billed while the encode is outstanding.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -197,7 +197,7 @@ describe("atlas bake drain", () => {
     expect(atlasBakeStats.slow).toBe(1);
   });
 
-  // R11 (Aug-14) — WHICH TIME IS THE DAMAGE. The phone that motivated this measured 4,502.6ms of bake WALL
+  // WHICH TIME IS THE DAMAGE. The phone that motivated this measured 4,502.6ms of bake WALL
   // against 385.3ms of main thread and tripped three times anyway, stranding 41 regions on the canvas path. Wall
   // is a wait (`convertToBlob` encodes as an idle task and a busy page starves it), so it may no longer strike on
   // its own — but a genuine multi-second stall still has to be able to trip the mechanism.
@@ -220,7 +220,7 @@ describe("atlas bake drain", () => {
     expect(atlasBakeStats.baked).toBe(BAKE_SLOW_LIMIT + 2);
   });
 
-  // Aug-14 (second revision): this is the INLINE path — jsdom has no Worker — and its wall backstop is unchanged.
+  // This is the INLINE path — jsdom has no Worker — and its wall backstop is unchanged.
   // There is no pool queue and no separate page decode here, so a bake's wall IS its encode's wall and 2,000ms is
   // still a fair reading of "stuck". The worker path's wall is three unrelated things added together and gets its
   // own, encode-only criterion instead (BAKE_WORKER_STALL_MS; see atlasBakeWorkers.spec.ts).

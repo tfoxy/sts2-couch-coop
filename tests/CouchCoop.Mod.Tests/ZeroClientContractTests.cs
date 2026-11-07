@@ -16,7 +16,7 @@ using Spirectl.Sts2.Embedding;
 
 // THE ZERO-CLIENT CONTRACT. The standing rule is that a host nobody is connected to does no recurring work:
 // no state capture, no scene or state subscription, no main-thread wake-up, no timer. It was broken once with no
-// test noticing: the Sep-13 hosting tracker built an always-on state subscription at mod init, and every suite
+// test noticing: an earlier hosting tracker built an always-on state subscription at mod init, and every suite
 // checked NAMED components (IdleHostCostTests, ConnectionHostingDemandTests) rather than the host as a whole, so
 // nothing failed while a preview-clone leak of ~450 MB/hour shipped for two releases.
 //
@@ -231,7 +231,7 @@ internal static class ZeroClientContractTests
         await using var rig = await Rig.StartAsync(root);
 
         // 1. STARTUP / MENU. Immediately after init, before any window: nothing subscribed and nothing read. This
-        //    is the Sep-13 failure exactly (a subscription built at mod init), so it is asserted with no settle time.
+        //    is that failure exactly (a subscription built at mod init), so it is asserted with no settle time.
         rig.AssertQuiet("startup", baseline: default, window: null);
         rig.AssertQuiet("menu, observed", baseline: rig.Snapshot(), window: QuietWindow);
 

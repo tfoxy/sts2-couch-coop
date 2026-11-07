@@ -55,7 +55,7 @@ const ENTRY_NAME = "CouchCoopPauseMenuQrEntry";
 const GIVE_UP_NAME = "GiveUp";
 const PAUSE_BUTTON_NAME = "PauseButton";
 const RESUME_NAME = "Resume";
-/** A run fixture is ALWAYS the singleplayer SetUpNewSingleplayer path -- see qa-recipes ss4. */
+/** A run fixture is ALWAYS the singleplayer SetUpNewSingleplayer path. */
 const FIXTURE_SINGLEPLAYER_RUN = "tests/fixtures/act1-last-boss.sts2.fixture.yaml";
 
 /** Rect tolerance in design units -- layout is integral, so this only absorbs float noise. */

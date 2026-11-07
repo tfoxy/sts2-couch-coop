@@ -1,4 +1,4 @@
-// THE EQUALITY TEST ITSELF — `paintGuard.ts`, in isolation (R21 B1).
+// THE EQUALITY TEST ITSELF — `paintGuard.ts`, in isolation.
 //
 // This module decides whether a frame gets painted, so the only interesting question about it is what it lets
 // through. A false "changed" costs one paint nobody needed; a false "unchanged" leaves a STALE PICTURE on screen

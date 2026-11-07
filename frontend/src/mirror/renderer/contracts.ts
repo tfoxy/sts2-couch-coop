@@ -70,7 +70,7 @@ export type FullWalkCause =
   | "stageFit";
 
 /**
- * R6 P6-A — the RECONCILE PULL, the app's scheduled walk offered to a backend that has its own frame loop.
+ * the RECONCILE PULL, the app's scheduled walk offered to a backend that has its own frame loop.
  *
  * The mirror runs TWO independent rAF loops on the canvas backend: the app's coalesced `scheduleRender` (booked
  * when a delta bumped `state.revision`) and the renderer's own animation frame (booked by a tween, a spine clip,
@@ -128,11 +128,11 @@ export interface MirrorRenderer {
    * it changed draws (`rustSkipUndrawnWire`), so the post-frame pipeline has nothing to react to.
    */
   reconcile(state: MirrorState, options?: { forceTextures?: boolean; reason?: FullWalkCause }): void | false | "applied";
-  // R6 P6-A — OPTIONAL, and absent on the DOM backend by design (see ReconcilePull). MirrorView hands this to the
+  // OPTIONAL, and absent on the DOM backend by design (see ReconcilePull). MirrorView hands this to the
   // renderer right after constructing it; a backend that keeps its own animation loop uses it to run the app's
   // pending reconcile in place of a build it would only have to throw away.
   setReconcilePull?(pull: ReconcilePull): void;
-  // R10-PERF3 WS-4: nodes whose provisional style depended on a texture natural size that has NOW arrived (see
+  // Nodes whose provisional style depended on a texture natural size that has NOW arrived (see
   // textureCache). They are injected into the next walk's dirty set exactly like wire-changed ids — an O(depth)
   // descent plus those nodes' own restyle — instead of the scene-wide `forceTextures` re-touch this replaced.
   // Ids accumulate until a walk consumes them (same lifecycle as `state.changedIds`); unknown ids are dropped.
@@ -219,7 +219,7 @@ export interface MirrorRenderer {
   // is effectively visible — a hand-card tap then single-taps (no arm-first) and the below-line unselect is
   // suppressed. Bounded scan over the retained nodes; valid between reconciles. Native twin: HandChoiceScan.IsActive.
   handChoiceActive(): boolean;
-  // R11 WS-M: is one of the MAP screen's drawing tools (quill / eraser) currently ARMED? While a tool is armed the
+  // Is one of the MAP screen's drawing tools (quill / eraser) currently ARMED? While a tool is armed the
   // game routes map input to the drawing surface and map points are not selectable, so a map-node tap must not be
   // routed as a travel action. The signal is the tool button's Icon TEXTURE swapping to its `*_glow.png` variant —
   // exact, unlike selfModulate (which also brightens on plain hover). Bounded scan over the retained nodes, read
@@ -228,16 +228,16 @@ export interface MirrorRenderer {
   // The visible mouse-visible (Stop/Pass) Control boxes of the CURRENT frame (game rect + spreadDx), topmost paint order LAST — for the
   // input side's near-miss / hit-consistency pass. Reads the retained records, so it's valid between reconciles.
   interactiveRects(): InteractiveRect[];
-  // FIX 3 (R7): the GAME-space view-scale input registry of the LATEST drain (twin of native ViewScaler's published
+  // FIX 3: the GAME-space view-scale input registry of the LATEST drain (twin of native ViewScaler's published
   // InputRegistry) — each enlarged item's inverse channel + ScaledBox + neighbour overlays, so inputCapture can map a
   // hover/tap over an enlarged option back onto its true hit box (viewScaleInverse.remapViewScaleInverse). Empty when
   // no view-scale screen is up (byte-identical input). Live read of the per-drain cache (rebuilt by applyViewScalePass).
   viewScaleInputStamps(): ViewScaleInputStamp[];
-  // R4 change 2 (touch.endTurnBoxAt): the END-TURN button's game-space AABB when the RESOLVED game point lands on
+  // touch.endTurnBoxAt: the END-TURN button's game-space AABB when the RESOLVED game point lands on
   // it, else null. Scene-file identity (end_turn_button.tscn) over the interactive-rect surface; read-only lookup,
   // only called on the tap-end of a block/empty tap. Native twin: EndTurnScan.BoxAt.
   endTurnBoxAt(gameX: number, gameY: number): { minX: number; minY: number; maxX: number; maxY: number } | null;
-  // R10 WS-E: the scroll containers the eager-scroll module may drive locally (the map's `TheMap`, a card grid's
+  // The scroll containers the eager-scroll module may drive locally (the map's `TheMap`, a card grid's
   // `ScrollContainer`), in paint order — each with its live streamed offset, game-space viewport, scroll limits, the
   // materialized-row band a virtualized grid must not be scrolled past, whether a tween owns it, and its scrollbar
   // thumb. Structure is epoch-cached; the values are read live (a scroll moves them every frame). Empty off a
@@ -246,7 +246,7 @@ export interface MirrorRenderer {
   // `id` IS `ancestorId` or descends from it, over the retained node tree — so the input side can ask whether a
   // touch target lives inside a given scroll container without walking the chain itself.
   isUnderNode(id: string, ancestorId: string): boolean;
-  // R10-PERF4 WS-2: has anything happened since the last call that gsw's shader / particle runtime reconcile could
+  // Has anything happened since the last call that gsw's shader / particle runtime reconcile could
   // possibly SEE? Reads AND clears, so each answer covers exactly one caller's window. MirrorView gates each
   // runtime's `reconcile()` on its bit instead of running both (two whole-stage querySelectorAll sweeps, plus the
   // shader pass's invalidateRects×2, which defeats gsw's rect TTL) after every rendered frame. Conservative: any
@@ -265,7 +265,7 @@ export interface MirrorRenderer {
   // (setting off / no descriptor / fetch or decode error / component unmount). The matching root goes
   // display:none at the ROOT only; applied immediately via direct display flips (a settled screen walks nothing).
   //
-  // R12 SPLIT OF DUTIES — this signal is no longer what keeps the subtree off the phone:
+  // SPLIT OF DUTIES — this signal is no longer what keeps the subtree off the phone:
   //   * the RENDERER owns the BUILD hold, derived from the WIRE plus `mirrorSettings` alone, so
   //     the very first walk that sees a new room's bg root already knows to hold it — no dependence on Vue flush
   //     ordering, on the session envelope's arrival, or on a decode;
@@ -279,12 +279,12 @@ export interface MirrorRenderer {
     source: { scenePath: string; url: string } | null,
     ready?: (ready: boolean) => void
   ): void;
-  // R10-PERF5 WS-3 TEST SEAM (never called in production): run ONE idle-hatchery slice synchronously with an explicit
+  // TEST SEAM (never called in production): run ONE idle-hatchery slice synchronously with an explicit
   // budget — `0` degenerates to exactly one marker per call, which is how a spec drives the resumable DFS — and
   // report whether anything is still queued. Deliberately does NOT re-arm the timer, so a spec steps the hatchery
   // deterministically without fake timers (the real scheduling is exercised separately, with them).
   __drainDormantHatchForTest(budgetMs?: number): boolean;
-  // R10-PERF6 WS-P2 TEST SEAM (never called in production): run ONE staggered-reveal release slice synchronously
+  // TEST SEAM (never called in production): run ONE staggered-reveal release slice synchronously
   // with an explicit node budget, and report how many hold roots are STILL held — so a spec can step the drain
   // (and assert the completeness contract: keep slicing and every node ends up shown).
   __drainRevealStaggerForTest(budgetNodes?: number): number;

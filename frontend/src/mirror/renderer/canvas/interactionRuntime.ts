@@ -137,11 +137,11 @@ export interface CanvasInteractionRuntimePorts {
   readonly armAnimation: () => void;
   readonly builds: () => number;
   readonly paintedFrames: () => number;
-  /** R2-P3 (`rustSceneIndex`/`rustFastVerify`): restrict `handPresent`/`coverAbove` to incrementally-maintained
+  /** (`rustSceneIndex`/`rustFastVerify`): restrict `handPresent`/`coverAbove` to incrementally-maintained
    *  type/style candidates instead of a full node scan. Both default off — only the Rust backend ever sets them. */
   readonly sceneIndex?: boolean;
   readonly sceneIndexVerify?: boolean;
-  /** WP4 (`rustRaiseIndexCache`/`rustFastVerify`): cache `scanRaiseIndex`/`createChildIndex` per `(state,
+  /** (`rustRaiseIndexCache`/`rustFastVerify`): cache `scanRaiseIndex`/`createChildIndex` per `(state,
    *  revision)` instead of rebuilding them from scratch on every hand-raise pass. Both default off — only the
    *  Rust backend ever sets them (see `canvas/handRaise.ts`'s cache block). */
   readonly raiseIndexCache?: boolean;
@@ -329,7 +329,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   const offsetRamps = createOffsetRamps();
   const rampSample: OffsetRampSample = { dx: 0, dy: 0 };
   const handHolderIds = new Set<string>();
-  // R2-P3 (`rustSceneIndex`): `coverAbove`'s candidate set — ids whose CURRENT node carries a `fillColor` — kept
+  // (`rustSceneIndex`): `coverAbove`'s candidate set — ids whose CURRENT node carries a `fillColor` — kept
   // exact the same incremental way `handHolderIds` already is (onNodePresent/onNodeRemoved/onRewrite, driven by
   // the reconciler's own changedIds). `fillColor` is a node's own field, never an ancestor's, so this is exact.
   const fillColorIds = new Set<string>();
@@ -411,7 +411,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
   let targetingRevision = -1;
   let targetingActive = false;
 
-  // WP4 (`rustRaiseIndexCache`): one slot per RUNTIME INSTANCE, not a module global — see the slot's own doc in
+  // (`rustRaiseIndexCache`): one slot per RUNTIME INSTANCE, not a module global — see the slot's own doc in
   // `canvas/handRaise.ts`. `dispose()` below clears it so this runtime's `MirrorState` reference does not outlive
   // the runtime, and two runtimes (an A/B bench, or two mirror instances) never evict each other's cache.
   const raiseIndexCacheSlot = createRaiseIndexCacheSlot();
@@ -547,7 +547,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
    * arms, by design, so by then only the destination is left to read.
    *
    * THE DEFECT THIS CLOSES — the canvas twin of live H10 (see `handController.noteTransformArmPose`, the DOM half
-   * fixed on 2026-09-19). One producer delta can carry a streamed STEP of an un-focus AND the tween hint for the
+   * fixed since). One producer delta can carry a streamed STEP of an un-focus AND the tween hint for the
    * rest of it. The step is painted immediately and the ease starts from it; the lift, meanwhile, was ramped from
    * whatever the retained offset still held — the value conjugate to the pose BEFORE the step — so one frame of
    * new pose composed with an old lift drew the card `step − (journey − lift)` PAST its own resting place, and the
@@ -831,7 +831,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
     return out;
   }
 
-  // R2-P3 (`rustSceneIndex`): both scans below are full `nodes.values()` walks whose predicate only needs ids
+  // (`rustSceneIndex`): both scans below are full `nodes.values()` walks whose predicate only needs ids
   // this module already tracks incrementally (`handHolderIds` / `fillColorIds`). `fullScan` stays the untouched
   // original walk — used outright when the switch is off, and as the TRUSTED answer under `ports.sceneIndexVerify`
   // (a mismatch only increments the counter; the candidate path never gets to produce a wrong answer).

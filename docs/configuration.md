@@ -1,0 +1,525 @@
+# Configuration
+
+CouchCoop is a local STS2 mod plus a hosted browser SPA. Machine-specific paths and generated artifacts stay outside version control.
+
+## Local STS2 Setup
+
+Local contributors must create `sts2.local.yaml` at the repo root. Local builds must read STS2/Godot assemblies from this file:
+
+```yaml
+game:
+  path: /absolute/path/to/SlayTheSpire2
+  assembliesDir: /absolute/path/to/SlayTheSpire2/data_sts2_linux
+```
+
+`game.path` identifies the local game install for developer tooling. `game.assembliesDir` is required and is the only source for compile-time STS2/Godot assembly resolution. Build bootstrap may pass it to MSBuild as `Sts2AssembliesDir` or generate ignored props under `.sts2/`, but it must not infer assemblies from `game.path`.
+
+Local developer builds default to `game.modsDir/couchcoop` when `game.modsDir` is set, otherwise `game.path/mods/couchcoop`. This deploy output includes the C# loader/mod assemblies and the hosted SPA at `frontend` inside the mod directory. Use `scripts/build-local-mod.sh --output <dir>`, `COUCHCOOP_FRONTEND_OUT_DIR=<dir>`, or `-p:CouchCoopBuildToLocalMods=false -o <dir>` when staging somewhere else.
+
+`scripts/build-local-mod.sh` also builds what "Use new renderer (Beta)" needs, from the sibling godot-scene-web checkout (`COUCHCOOP_GSW_ROOT` overrides it): the browser client's wasm core, the streaming seat's capture extension and its WebTransport net module. Each is rebuilt only when its sources changed (`scripts/build-render-stream.sh`; a first build takes about two minutes and needs cargo, wasm-bindgen 0.2.129 and cmake, a fresh one about 0.1 s), and the capture is deployed as `render-capture/` beside the assemblies, as a release lays it out. Set `COUCHCOOP_SKIP_RENDER_STREAM=1` to skip that step; the deploy then has no new renderer, and its settings panel says so.
+
+A local deploy stamps its own identity into the output directory, and the deploy prints the version it wrote. `couchcoop.json` gets `9999.0.0+dev.<short sha>` (plus `.dirty` for an unclean tree), because a game that has this mod installed **both** from the Workshop and in `mods/` resolves the duplicate by version on the `public-beta` branch — a dev deploy that declared its release version would silently lose to a published item, and every seat the host spawns would load that item instead. Only the DEPLOYED manifest is stamped; `src/CouchCoop.Mod.Loader/couchcoop.json` is never written, and every other field, `affects_gameplay` included, is preserved verbatim. `build-info.txt` beside it records the source commit, branch, dirty flag, detected STS2 API lane and the sibling checkouts the deploy was built from (`scripts/stamp-local-mod.sh`, self-test `scripts/test-stamp-local-mod.sh`). It declares `couchcoop-local-build-info/v1`, so the release-archive gate keeps rejecting it as the release payload it is not.
+
+`sts2 game deploy src/CouchCoop.Mod.Loader --build --restart --verify` uses the repo build script to stage artifacts and then lets `sts2` copy, restart, and verify through the configured local game.
+
+C# browser server iteration is a local-development feature. Local builds set `CouchCoopEnableHotReload=true` and expose the spirectl v0 hot-reload shell from `couchcoop.dll`, while retaining CouchCoop's implementation contract at `1`. After one normal deploy/restart, edit `src/CouchCoop.Mod.HotReload/CouchCoopHotLogic.cs` or the linked browser server/protocol sources and run `sts2 --json dev mod-reload --project . --build --wait`. The hot-reload profile builds `CouchCoop.Mod.HotReload.dll` into `.sts2/hot-reload`, the shell shadow-loads it, swaps the active browser server generation, closes active browser sockets with `server-reload`, and refreshes existing lobby overlays in place. Shell, runtime host, listener, Harmony, Godot lifecycle, and headless process changes still require normal deploy/restart.
+
+Published release archives set `CouchCoopEnableHotReload=false`. They contain the normal dynamic implementation loader but no hot-reload protocol, discovery methods, or `hot-reload/` payload; use a normal deploy/restart when changing a published installation.
+
+Frontend dev-loop commands are:
+
+```bash
+npm --prefix frontend run dev
+npm --prefix frontend run build:watch
+sts2 --json dev mod-reload --project . --build --wait
+```
+
+The reloadable boundary is narrow: `sts2 dev mod-reload` swaps `CouchCoop.Mod.HotReload` only. Anything outside
+that project — the browser listener, runtime/session state, the Godot lifecycle, the loader's protocol contract —
+still needs the normal deploy/restart loop, and the loader reports a `reload_contract_version_mismatch` rather
+than reloading across a contract change.
+
+## Two game installs on one machine (game branches)
+
+Testing against a beta or older game build needs a second install, and the whole difficulty is that
+CouchCoop finds the game **twice**, through two resolvers that never compare notes:
+
+- the `sts2` CLI's config stack — `sts2.config.yaml` + `sts2.local.yaml` read from one directory,
+  chosen by `SPIRECTL_CONFIG_DIR`, by `--config <file>`, or by walking up from the working directory;
+- this repo's own reader — `Directory.Build.props` regex-reads `sts2.local.yaml` for
+  `game.assembliesDir` / `game.modsDir` / `game.path` and honours `$(CouchCoopLocalConfigPath)`,
+  `STS2_ASSEMBLIES_DIR`, `COUCHCOOP_GAME_MODS_DIR` and `COUCHCOOP_LOCAL_MOD_DIR`; plus
+  `scripts/build-local-mod.sh`, which asks the CLI and falls back to its own sed reader.
+
+**`sts2 --config beta.yaml game deploy --build` silently builds the wrong binary.** The deploy exports
+`SPIRECTL_DEPLOY_OUTPUT_DIR`, `SPIRECTL_DEPLOY_PROJECT_ROOT` and `SPIRECTL_DEPLOY_MOD_NAME` to the
+build command and nothing else — never the assemblies dir. So the compile resolves STS2 references
+through the MSBuild reader, which still reads the repo-root `sts2.local.yaml` and hands it the
+**stable** assemblies, and the deploy then installs that binary into the **beta** install's mods dir.
+Build succeeds, deploy succeeds, verify succeeds, and you are measuring a mod compiled against the
+other game version.
+
+`scripts/with-game-branch.sh` is the one switch that feeds both resolvers, and the assertion that the
+install you got is the install you asked for:
+
+```bash
+scripts/with-game-branch.sh list
+scripts/with-game-branch.sh setup beta --game-path /path/to/the/second/install
+scripts/with-game-branch.sh beta -- sts2 game deploy src/CouchCoop.Mod.Loader --build --restart --verify
+```
+
+A branch is a **config directory**, not a config file, because `SPIRECTL_CONFIG_DIR` moves the whole
+stack there and every `sts2` call inside the wrapped command picks it up with no `--config` flag to
+forget. `stable` (or `default`) is the repo root itself — today's behaviour, unchanged. Any other name
+is `.sts2/branches/<name>/`, holding a real `sts2.local.yaml` with that install's paths plus symlinks
+back to the repo root's `sts2.config.yaml`, `sts2.profiles.yaml`, `sts2.hooks.yaml` and
+`sts2.hot-reload.yaml`. `.sts2` is gitignored, so a branch registry is local state only. An
+unregistered name is an error naming the `setup` command to run — it never falls through to stable.
+
+The wrapper exports `SPIRECTL_CONFIG_DIR`, `STS2_ASSEMBLIES_DIR`, `CouchCoopLocalConfigPath` (MSBuild
+surfaces an environment variable as a property, so no `-p:` flag is needed), `COUCHCOOP_LOCAL_MOD_DIR`
+and — for every branch except stable — `SPIRECTL_INSTANCE`. An already-set `SPIRECTL_INSTANCE` wins,
+and so does a scratch `COUCHCOOP_GAME_MODS_DIR`: `COUCHCOOP_LOCAL_MOD_DIR` outranks it in
+`Directory.Build.props`, so deriving the mod output from the install would otherwise defeat the
+scratch-directory valve every worktree build depends on.
+
+### Why the second install cannot live in Steam's directory
+
+Steam keeps exactly one install per appid per library folder, and switching a game's branch rewrites
+that install **in place**. There is no arrangement where Steam holds both branches at once, so the
+second install is a directory Steam does not manage — and it must be a **real copy, never a symlink
+farm**. Godot resolves its own executable through `/proc/self/exe`, which follows symlinks, so a
+symlinked `SlayTheSpire2` makes the game treat the *other* install's directory as its own and load
+that install's `mods/`. The branch then runs a build you did not deploy to it, and nothing in the log
+says so. `SlayTheSpire2.pck` may stay a symlink; the binary may not. The wrapper fails rather than run
+when it finds a symlinked binary.
+
+**`mods/` must never be shared between installs either.** `scripts/build-local-mod.sh` deletes the
+stale top-level DLLs in the output directory and regenerates `hot-reload/` and `frontend/` in place,
+so one shared `mods/` means each deploy silently re-points the other branch at the build it just
+made. The wrapper fails on a symlinked `mods/` too.
+
+An install root also has to satisfy the CLI's own test: a `data_sts2_*` subdirectory holding **both
+`sts2.dll` and `GodotSharp.dll`**. When it does not — a download still in progress looks exactly like
+this — the CLI does not fail. It falls back to **Steam autodiscovery** and quietly resolves the stable
+install instead, which is the same wrong-binary outcome arriving by a different route. The wrapper
+compares the install the CLI resolved against the one the branch configures, refuses a `gamePath` the
+CLI reports as `discovered`, and prints the build identity from `release_info.json` on stderr before
+running, so the operator always sees which build they just drove. `setup` records that identity, and
+the run form warns when it has drifted — that means the branch updated since registration.
+
+### Per-branch runtime state
+
+`SPIRECTL_INSTANCE` is the narrow knob: `sts2 --instance <name>` gives the game its own bridge socket
+and passes its own `--user-dir`, so two branches never share save state. Do **not** reach for
+`XDG_DATA_HOME` instead — it redirects far more than the game's user dir.
+
+`instances.symlinkUserDataDirs: [couch-coop]` in the repo-root `sts2.local.yaml` symlinks the shared
+`user://couch-coop` directory into each instance, and CouchCoop's caches live inside it. Sharing it
+across branches is **safe**: the caches are version scoped at `couch-coop/cache/<version>/`, so a beta
+instance and a stable one write to different directories even when the parent is shared. (It was not
+always: the namespace used to carry only a schema number, and two branches sharing the directory served
+each other bytes rendered by the other game build — a rendering bug with no visible cause. Scoping by
+branch fixed that but left the *layout* depending on branch detection, which is why it is now the version.
+See [Cache layout](#cache-layout).)
+
+The **decompile corpus** is the other piece of per-branch state, and the one it costs most to get
+wrong. `.sts2/toolchain` in this checkout is a symlink to `../../spirectl/.sts2/toolchain/` — a
+corpus shared with the spirectl repo and built from the stable game — and `sts2 project recover
+--kind decompile` rewrites `<toolchain.dir>/decompile/` wholesale. `toolchain.dir` defaults to a
+*relative* `.sts2/toolchain` anchored on whichever directory the CLI chose, which under
+`sts2 --config <file>` is the **working** directory. So a branch config that simply omits the key
+sends a beta recovery straight into spirectl's stable corpus: 154 MB, twenty minutes to rebuild, and
+nothing in the output names the game build that produced it, so the damage is invisible until
+somebody reads beta sources believing they are stable. `setup` therefore writes an absolute
+`toolchain.dir: <repo>/.sts2/toolchain-<branch>`, matching the `toolchain-public` /
+`toolchain-public-beta` corpora already on disk, and the run form warns on every command when a
+hand-written branch config omits the key or points it at the shared corpus. `stable` keeps
+`.sts2/toolchain` — that corpus *is* the stable game's — and the banner labels it as such.
+
+A branch's `sts2.local.yaml` also pins `project.profilesFile` and `project.hooksFile` at absolute
+repo-root paths, which looks redundant next to the symlinks and is not. `sts2` resolves a profile's or
+hook's relative command, its `cwd` and `${profileDir}` against the directory holding the
+profiles/hooks *file* — the branch directory, if that file is reached through the symlink. The hooks
+would load and then resolve `scripts/probe-…` to `.sts2/branches/<name>/scripts/probe-…`, which does
+not exist. Naming the repo-root files outright puts that base directory back where the scripts are.
+
+Nothing else from the repo-root `sts2.local.yaml` layers into a branch: the stack is exactly that
+directory's `sts2.config.yaml` plus its `sts2.local.yaml`. Machine setup the root file carries —
+`game.launchArgs`, `game.disableBackgroundThrottle`, `tools.gdrePath` — has to be copied into the
+branch file by hand if the branch needs it. `setup` will not overwrite a hand-edited branch file
+without `--force`, and `--force` rewrites it from scratch — every hand-added key is lost, so the
+previous file is kept beside it as `sts2.local.yaml.replaced` and a replaced `toolchain.dir` is
+called out by name.
+
+Self-test for the wrapper itself: `scripts/test-with-game-branch.sh`, which builds synthetic installs
+in a temp directory and needs no real game install.
+
+### Building for a branch
+
+**The mod builds, deploys and runs on both supported game builds.** `with-game-branch.sh public-beta
+-- <any build>` works: the API lane table in
+[`../spirectl/bridge-mod/Sts2GameApi.props`](../../spirectl/bridge-mod/Sts2GameApi.props) maps
+`v0.107.1` to lane `v107` and `v0.111.0` to lane `v111`, the repo root's `Directory.Build.props`
+imports that same table so CouchCoop's own sources are `#if`-split by game build exactly as the
+bridge's are, and the lane is **detected from the install being compiled against**, or passed
+explicitly when there is no install to detect from — never guessed. A game build with no row fails the
+build by name rather than compiling against the wrong declarations.
+
+Two consequences worth knowing before you build for a branch:
+
+- The lane follows `Sts2AssembliesDir`, so anything that changes which install you compile against
+  changes the lane with it. That is the whole reason `with-game-branch.sh` exists: `sts2 --config
+  <file>` alone moves the CLI and leaves the MSBuild reader pointing at the other install, and the
+  resulting binary is wrong in a way nothing downstream notices.
+- A **release** build has no install to detect from, so it is told the lane instead. It compiles
+  against a staged reference SDK — a bare assemblies directory with no `release_info.json` — and
+  `scripts/package-release.sh` therefore passes `-p:Sts2GameApi=` from
+  [`release_lane_game_api()`](../scripts/lib/release-lanes.sh). Adding a release lane is therefore a
+  reviewed set of rows in [`scripts/lib/release-lanes.sh`](../scripts/lib/release-lanes.sh) — the lane
+  name, its game API, the game build it is compiled against, its Steam branch, and its **game floor** —
+  plus a pinned reference SDK under
+  [`eng/Sts2.ReferenceSdk/<lane>/`](../eng/Sts2.ReferenceSdk/README.md) (project +
+  `packages.lock.json`, both tracked). All of them exist for
+  `public-beta` today — `FuYnAloft.Sts2.References 0.111.0-beta`, lane `v111` — so the beta packages
+  like stable does. A lane with no row fails the release by name rather than publishing an
+  undeclared one.
+
+  The floor is the row that is easy to forget and impossible to omit. One release archive carries every
+  lane under `lanes/<floor>/` and the mod picks one at load time, so the floor both **names** a lane's
+  directory and **orders** it against the others; a lane without one cannot be placed in that order.
+  The payload's own `min_game_version` is the lowest floor of the lanes it carries, which is what makes
+  a single download refuse a game older than anything it supports while still loading on everything
+  newer. See [commit-and-release.md](commit-and-release.md) for the packaging and publishing side.
+
+Some game members do not fail a build when they move. A Harmony target resolved by name, or a
+reflective read with a fallback, compiles clean and then degrades silently at runtime — which is why
+`HeadlessAudioMutePatch` now pins its per-act audio-bank target **per lane** and treats a target the
+lane claims but cannot resolve as a refusal that names it, rather than a log line and a half-muted
+seat. When adding a build, expect that class of change to be the expensive one and gate for it
+deliberately: the metadata gate is `dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets`
+(every Harmony patch target resolves) plus `sts2 code verify-references` on the shipped DLLs, and the
+behavioural gate is `tests/scenarios/steam-host-join.sts2.yaml`. Run both: neither one alone is
+enough, because a metadata gate cannot see a protocol step that was *added*.
+
+## Browser assets, audio and the cache
+
+### Seat audio
+
+The mirror's **Audio** setting starts off. When enabled, a seat viewer hears that seat's SFX, music,
+ambience, loops and debug MP3 sounds at its own in-game volumes. A host-view connection has no audio lane.
+`COUCHCOOP_AUDIO=off` disables the audio reporters and private renderer for the session while keeping the
+headless seat's existing FMOD mute and shutdown behavior. `COUCHCOOP_AUDIO_RENDER_WORKERS` selects one or two
+private SFX take workers (default one).
+
+The browser connects to the host's `/audio` render WebSocket and to the seat's relayed
+`/ws?seat=<route-id>&lane=audio` WebSocket. The seat route id is the opaque id the mirror connection already
+uses; it is not the player's id or a seat port. SFX takes are served immutably under `/audio/take/…`, with a
+ready-key index at `/audio/takes` and validated debug MP3 bytes under `/audio/tmpsfx/…`. SFX takes live in a
+64 MiB memory LRU and, when quota permits, in the on-disk cache below. Music and ambience are streamed and never
+written to disk.
+
+### Asset routes
+
+- `/res/{path}` serves a resource by its path relative to `res://` (never a scheme-prefixed key), as `raw` (the
+  default) or with an explicit `?format=png`; an unknown format is a client error. A `::{sub-resource-id}` request
+  is extracted from its parent's raw document and takes no `format`.
+- `/spines/` serves `application/vnd.couchcoop.spine-clip` bodies (the `SPCL` wire format). The one supported
+  escalation selector is `retry=1`.
+- `/bg/{id}`, `/bg/events/{id}` and `/bg/rooms/{id}` serve static backgrounds; the codec is identified by
+  `Content-Type`, not by a path extension, and a current URL is immutable.
+- Every asset route also accepts `b={token}`, the host's game build. It is a **cache-busting qualifier, never a
+  selector**: the host ignores it and a request with it is byte-identical to one without. Clients append the
+  `assetCacheToken` from the `session` envelope to every asset URL they mint, so a game update re-addresses the
+  assets instead of leaving one build's bytes cached under a URL the next build also asks for (asset answers are
+  `Cache-Control: public, max-age=31536000, immutable`).
+
+Consumers must not infer a representation from a filename or add their own resource aliases.
+
+### Prerendering Spine clips
+
+To populate the host's Spine clip cache before accepting browser play, pass `--prerender-spines` through the
+normal game launch command, or set `COUCHCOOP_PRERENDER_SPINES=1` in the game's environment:
+
+```bash
+sts2 game launch -- --prerender-spines
+```
+
+CouchCoop starts the browser server first and discovers clips in the background. Progress and the final
+`COUCHCOOP_SPINE_PRERENDER` JSON summary are written to `godot.log`; failures are per clip and do not stop
+lazy rendering or the remaining warmup work.
+
+### Cache layout
+
+Everything CouchCoop caches on disk is derived from the game's own content, so it is keyed by the installed game
+version:
+
+```
+user://couch-coop/cache/
+  <version>/                    one per game version ("v0.107.1", "v0.111.0"), at most two
+    .cache-identity.json        the stamp: game version, content hash, cache versions
+    assets/  geoclips/  astc/  pending/
+  .trash/                       purged trees, deleted in the background
+```
+
+- The directory is named after the version in the install's own `release_info.json`, so two installs on different
+  versions never share one, and switching branches back and forth keeps a directory per version.
+- On startup the stamp is compared with the running install. If the game version, its content hash or a cache
+  version moved, the directory is renamed aside before anything reads it and deleted in the background, so even a
+  large cache costs no startup time.
+- At most two version directories survive; the lowest version is retired first. Leftover branch-named directories
+  from an older layout (`public/`, `public-beta/`) are reclaimed outright.
+- An install that reports no usable game version runs uncached and logs `cache disabled: this install reported no
+  usable game version`. `release_info.json` is found by walking up from the mod assembly and then from the game
+  executable, which is what makes a Steam Workshop install work.
+- `COUCHCOOP_CACHE_ROOT` moves the whole cache.
+
+## Local network name (mDNS responder)
+
+The in-game QR dialog offers `http://<machine>.local:<port>/` as an explicit, manually selectable option after
+the literal-address and other link options. The mod publishes that name itself: a minimal RFC 6762 responder
+joins `224.0.0.251:5353` on every usable IPv4 interface and answers A (and ANY)
+queries for exactly one name — `Environment.MachineName` normalised by `QrHostOptions.ToMdnsHostName`, i.e.
+byte-identical to the string the dialog renders. It answers with the address of the interface the query
+arrived on, sends two announcements at startup and a goodbye (TTL 0) on shutdown, and publishes nothing else
+(no service/PTR/SRV records, IPv4 only).
+
+**A records only, deliberately.** An AAAA question is left unanswered even though clients ask for one: the
+browser server binds `IPAddress.Any`, which is AF_INET, so an AAAA answer would name an address nothing is
+listening on — and browsers prefer IPv6 when both resolve. Answering AAAA needs a dual-stack listener first.
+Measured on an Android client, the phone asks A and AAAA as separate datagrams over the IPv4 group and
+resolves fine from the A alone.
+
+This used to be left to the operating system, which is fine on Linux (avahi) and macOS (Bonjour) but not on
+Windows: a stock Windows install has no `.local` responder at all (it advertises over LLMNR/NetBIOS, which
+phones do not speak, and Bonjour only arrives bundled with other software), and `Environment.MachineName` is
+the NetBIOS name — uppercased and truncated to 15 characters — so even a machine that *does* run Bonjour can
+publish a different name than the QR shows.
+
+Where an OS responder is already running, both answer with the same address for the same name. RFC 6762 treats
+identical rdata as legal coexistence, not a conflict, so avahi does not conflict-rename the host.
+
+- Kill switch: `COUCHCOOP_MDNS_RESPONDER=0` (also `false`/`off`/`no`) disables the responder entirely. Unset
+  means the platform default, which is to publish **except on macOS** — see the macOS section below; `=1` (or
+  any other non-falsey value) publishes there too.
+- Related: `COUCHCOOP_ADVERTISED_HOST` pins the advertised address outright and wins the QR dialog's default row.
+- Startup logs one of `mdns-responder publishing name=… interfaces=…`, `mdns-responder-disabled`, or
+  `mdns-responder-unavailable detail=…`. Any socket failure (port 5353 denied, no multicast route, hostile
+  firewall) disables the responder only — the browser server and host UI are never affected.
+
+### Is the name actually reaching the network? (self-check)
+
+Binding the socket, joining the group and writing datagrams all succeed whether or not a firewall is silently
+dropping inbound 5353, so the responder cannot tell "working" from "mute" by return codes. Two observations
+can, and both are logged:
+
+- **the startup self-check** — a few seconds after start the responder asks the multicast group for its own
+  name from an ephemeral socket, over the real network, and reports whether its own address came back. An
+  answer from a *different* machine for our name is counted as a failure, not a success: that is a name
+  conflict, and defaulting the QR to it would send players to somebody else's box.
+- **per-interface answered counts** — how many address queries this responder has actually served, by arrival
+  interface. **Zero on every interface, on a host phones can otherwise reach, is the fingerprint of inbound
+  UDP 5353 being dropped before it arrives.**
+
+Both appear on one line:
+
+```
+[couchcoop] mdns-responder self-check selfCheck=Answered answered=3 byInterface=if2=3 name=living-room-pc.local
+```
+
+`selfCheck=Unanswered` **swaps the `.local` row's detail line for a "didn't answer" warning** and appends the
+same warning to its hover tip. It moves nothing: the mDNS row is ALWAYS last in the dialog (it is the least
+reliable method, so `QrHostOptions.Build` appends it after every address row regardless of the self-check), and
+it is never disabled or removed — the name may still resolve for a phone on a segment the probe could not
+reach, and a player who wants mDNS can still select it explicitly. The browser never switches to the `.local`
+origin automatically; if the selected mDNS code does not work, choose a literal IP row instead.
+`selfCheck=NotRun` never badges anything — `mdnsNameResolves` defaults to TRUE, because an unrun probe is not
+evidence.
+
+- Kill switch: `COUCHCOOP_MDNS_ROW_SELFCHECK=0` suppresses the "didn't answer" badge; it does not move the
+  `.local` row or make it the default.
+
+### Windows
+
+Publishing the name does not open the firewall, and the mod cannot open it (that needs admin). The host
+firewall must allow **inbound UDP 5353** for the game executable; Windows blocks it by default on the Public
+profile, and a firewall prompt answered for the game's TCP listener does not necessarily cover UDP. From an
+elevated prompt:
+
+```
+netsh advfirewall firewall add rule name="STS2 Couch Co-op mDNS" dir=in action=allow protocol=UDP localport=5353 program="C:\Path\To\SlayTheSpire2.exe"
+```
+
+Also check the network profile itself: a LAN marked **Public** blocks far more than a **Private** one, and
+couch co-op is by definition a private-network activity.
+
+Two more Windows-specific traps worth knowing:
+
+- **A Windows client connecting to a Windows host proves nothing about mDNS.** Windows resolves another
+  Windows machine's name over LLMNR/NetBIOS, which phones do not speak — so host-and-client-both-Windows can
+  work perfectly while every phone gets `ERR_NAME_NOT_RESOLVED`.
+- **Another process may already own 5353 exclusively.** Bonjour (bundled with iTunes, Adobe products and
+  others) and some Windows components bind it; if that binder did not allow port sharing our bind fails and
+  logs `mdns-responder-unavailable detail=bind:…`, which is the line to look for.
+
+If the `.local` row still fails on a phone, pick the literal IP row in the QR dialog's host selector — that
+path only needs the app's TCP port, which is already working if the game is reachable at all.
+
+To verify by hand on a machine with a working responder, run the responder standalone and query it with a raw
+mDNS probe:
+
+```bash
+dotnet run --project tests/CouchCoop.Mod.Tests -- mdns-harness 30            # publish <machine>.local
+dotnet run --project tests/CouchCoop.Mod.Tests -- mdns-harness 30 probe-name # publish probe-name.local
+```
+
+`dig @224.0.0.251 -p 5353 <name>.local A` is *not* a reliable check: dig discards a reply whose source address
+differs from the address it queried, which is true of every mDNS legacy-unicast reply (they come from the
+host's real IP). Use a raw UDP probe, `avahi-resolve -n <name>.local`, `getent ahostsv4 <name>.local`, or a
+phone on the same LAN instead. Publishing a name no OS responder owns (the second form above) is the way to
+prove the answer came from the mod rather than from avahi/Bonjour.
+
+### macOS
+
+**`.local` is the OS's job here, not ours, and on macOS we do not do it.** macOS runs Bonjour, which already
+publishes and answers for the machine's own name — the responder above exists for Windows, which has nothing
+equivalent (see the note under "Local network name"). So **the responder defaults to publishing nothing on
+macOS**: it binds no socket, joins no group, announces nothing, and logs
+`mdns-responder-disabled detail=macos-bonjour-owns-the-name`.
+
+That is a safety decision as much as a tidiness one. The coexistence argument under "Local network name" holds
+only while both responders answer identically, and it assumes we can never be wrong about the name. Bonjour is
+the authoritative owner: it *probed* for the name (RFC 6762 §8.1) and it *defends* it (§9), and we do neither —
+we would be writing A records with the cache-flush bit set for a name somebody else owns. Wherever our answer
+set differed from Bonjour's (an interface Bonjour excludes, an address that moved between our 30-second
+refreshes, a subnet we rank differently) that difference is a name conflict, and macOS resolves conflicts by
+**renaming the computer**, visibly, for the user. The upside would have been nil, because Bonjour publishes the
+name already.
+
+- `COUCHCOOP_MDNS_RESPONDER=1` publishes anyway, if you need to compare behaviour.
+- `COUCHCOOP_MDNS_RESPONDER=0` is still fully inert — no socket *and* no self-check.
+- The startup line carries `mode=` (`Publishing` / `SelfCheckOnly` / `Off`), and
+  `dotnet run --project tests/CouchCoop.Mod.Tests -- mdns-harness 30 "" selfcheck` runs just that mode by hand.
+
+**The self-check still runs**, because the QR dialog's `.local` row asks whether the NAME resolves, not whether
+we published it — and on a Mac the answer should be yes, via Bonjour. Which is the other thing to know here:
+**on macOS neither self-check signal attributes the answer to us.** The responder does no duplicate-answer
+suppression, so where it *is* publishing a phone's query is answered twice and `answered=` climbs normally; and
+`selfCheck=Answered` only ever means *some* responder returned one of our own addresses, which Bonjour does.
+Both readings are therefore about the NAME resolving, not about who published it. That is the right thing to
+care about, but never read a green self-check on macOS as evidence that this responder did any work — by
+default it did none. (Turning publishing off cannot make the row report failure by accident: with no verdict
+recorded at all, `mdnsNameResolves` stays unset and `MdnsRowTrusted()` reads that as "assume it works".)
+
+**What actually breaks a macOS host is inbound TCP to the browser server, and there are two separate gates for
+it.** Both fail the same way: the host binds and listens, the QR encodes a correct address, the phone scans it
+and then times out, and the host logs nothing — because `bind` succeeded and `accept` is simply never reached.
+
+- **The Local Network privacy permission** — System Settings → Privacy & Security → Local Network. macOS
+  prompts once per app, the first time it touches the local network. On a Steam-launched game that prompt is
+  easy to lose: it can be attributed to **Steam** rather than to the game, it may have been answered (either
+  way) long before CouchCoop was installed, and it can be drawn behind the fullscreen game window. Check that
+  both Steam and Slay the Spire 2 are switched on in that list.
+- **The application firewall** — System Settings → Network → Firewall → Options. When it is on, macOS asks
+  once whether to accept incoming connections for the game and remembers the answer; "Block all incoming
+  connections" overrides the per-app allowance entirely. The mod can open neither gate: the privacy permission
+  is the user's to grant and the firewall needs admin — the same rule as Windows above.
+
+Neither gate has anything to do with mDNS, so the fallback is not the usual one: a literal IP row does not
+route around them. If a phone cannot reach the host at all, check these two before touching anything in this
+section.
+
+**The host now says something when this happens.** Ninety seconds after a host lobby appears, if the browser
+listener has accepted no inbound TCP connection at all, the connections panel gains a warning-level **Host
+service** row (`host-no-inbound-connections`) whose technical detail names both gates by their settings path.
+The clock starts at the lobby, not at the bind — the listener is up from mod init, so a bind-anchored clock
+would warn every player who never wanted co-op — and any accepted connection, on either the plain or the secure
+listener, cancels the warning or withdraws a standing one.
+
+Read the row for what it says and no more. From inside the host, **"nobody has scanned the code yet" and
+"nothing can reach this port" are the same observation**: a blocked connection never reaches `accept`, so there
+is nothing to distinguish them by, and the copy deliberately does not pick one. It is a prompt to check, not a
+verdict. It will also appear on a host playing only with remote Steam friends over native clients, where no
+browser is expected to connect at all.
+
+- `COUCHCOOP_REACHABILITY_WARN_SECONDS` overrides the threshold. `0` (also `off`/`false`/`no`) disables the row;
+  anything else is clamped to 15–3600 seconds. Garbage falls back to the default rather than disabling it.
+- Startup logs `host-ui diagnostic code=host-no-inbound-connections detail=no-inbound-connection-in-90s` when it
+  fires, and one line when a connection clears it.
+
+**macOS profile isolation:** Godot has no macOS `--user-dir` or data-root variable, but it derives this game's
+custom `user://` from `$HOME/Library/Application Support/SlayTheSpire2`. A seat therefore receives a per-slot
+fake `$HOME`: ordinary home entries are symlinked back to the host, while `Library`, `Application Support`, and
+`SlayTheSpire2` are real directories ending at the seat's isolated profile. The macOS CI job runs both the
+game-free farm suite and stock Godot against that fake home. It does **not** prove a full STS2 session on a Mac.
+Steam, FMOD, or a native dependency that calls `getpwuid` can still select a path outside `$HOME`.
+
+If the farm cannot be prepared (for example, `HOME` is missing or a filesystem operation fails), the launcher
+falls back to the shared host profile and raises the existing `host-seat-profile-shared` warning. That warning is
+a real fallback, not the normal macOS path; the seat still receives an explicit per-slot log file so the host log
+is not truncated.
+
+## Streaming the new renderer over the LAN
+
+"Use new renderer (Beta)" streams a player's game from that player's streaming seat (a hidden game instance the host
+launches) to their browser, on the host computer and on phones and computers on the host's network alike. There is
+nothing to turn on: the stream listens on the LAN as the browser page and the player sockets already do. The host
+launches its streaming seat with:
+
+- the stream listening on every interface (`0.0.0.0`, as the browser server does) at the seat's hub port (the seat's
+  port band + 9: 13366 for the first seat), TCP for WebSocket and UDP for WebTransport, so a firewall must allow
+  both, as it already allows the browser port;
+- the token it always uses, which godot-scene-web's LAN exposure also requires;
+- an origin allow-list of the host's own pages: its loopback page, `http://` and `https://` on each LAN address and on
+  the `<machine>.local` name, and `https://` on each secure-origin host name (`192-168-0-5.my.local-ip.co`), all on
+  the host's browser port;
+- WebTransport with the capture's own self-signed certificate, pinned by its hash, which works from any https page in
+  Chrome and Edge (and from the host's loopback page);
+- wss through a certificate the host already has for its LAN pages: the Direct-IP HTTPS leaf when "Direct address
+  (HTTPS)" has been prepared, else the cached secure-origin certificate. The seat gets a copy of that PEM pair in its
+  private evidence directory;
+- plain WebSocket for the host's plain-http LAN pages, with or without a certificate (beside wss on the same port).
+
+Which page streams how: the host's https link (Direct address (HTTPS) or the secure origin) over WebTransport, or over
+wss when the host's certificate names that link's host; the host's plain-http link over plain WebSocket (unencrypted,
+like that page's own connection to the host; WebTransport needs a secure page, so never there). The public website
+link (`sts2-couch.pages.dev`) cannot: its origin carries no port, which the stream's origin allow-list cannot express,
+and Chrome's Local Network Access checks apply to it ([local-network-access.md](local-network-access.md)). A page that no offered
+carrier can serve says so in the settings panel.
+
+The exposure this adds is described in [security.md](security.md) ("New renderer over the LAN").
+
+## Artifact Policy
+
+Do not commit `.sts2/`, `sts2.local.yaml`, official STS2 assets, copied game DLLs, generated `__sts2_assets__`, screenshots, visual baselines, build output, frontend `dist/`, or `node_modules/`.
+
+Use ignored local paths such as:
+
+- `.sts2/` for generated MSBuild props, validation artifacts, screenshots, baselines, and asset extracts.
+- `.sts2/branches/<name>/` for a registered second game install (see "Two game installs on one machine").
+- `sts2.local.yaml` for machine-specific game paths.
+
+## Upstream Boundary
+
+CouchCoop owns co-op product behavior: browser DTO envelopes, URL layout, session identity, per-viewer state and state shaping, hosted SPA/server behavior, QR overlay, screen UX, frontend visual policy, and validation policy for the CouchCoop browser product.
+
+spirectl owns reusable STS2 tooling: runtime state, semantic actions, fixtures/scenarios, render snapshots, asset extraction, asset keys/bytes, fonts, screenshots, screenshot diff, diagnostics, and reusable validation helpers.
+
+More specifically, CouchCoop-specific browser envelopes, hosted URL layout, QR overlay behavior, and product visual policy stay in this repository. Generic STS2 assets, extracted bytes, key fonts, render snapshots, game screenshots, and screenshot diff tooling belong upstream in `../spirectl` and should be consumed through embedded `spirectl` libraries where runtime code needs them.
+
+The shipped mod must use embedded `spirectl` libraries and must not require players to install the `sts2` CLI.
+
+Missing reusable STS2 support belongs in ../spirectl; do not hide gaps with CouchCoop-local reflection, asset extraction, fixture, screenshot, or diff shims.
+
+## Direct-IP HTTPS
+
+Select **Direct address (HTTPS)** in the native QR dialog, then **Prepare host**. This optional method
+uses a persistent per-user local CA and a certificate for the selected IPv4 address. Export the public
+root and install trust on each client using [the platform setup instructions](direct-ip-https.md).
+No hostname, public DNS, certificate-provider download, or internet access is required. It uses the
+browser server's actual bound port, shared with HTTP, and leaves hostname HTTPS independently available.
+
+The `direct-https` QR preference remembers the method without creating identity. Re-selecting the method
+opens native setup, including the full CA fingerprint, expiry, public export and confirmed CA replacement.
+Trust storage is deliberately separate from disposable caches and mod files; do not delete or copy its
+private contents as part of normal mod updates. There is no custom certificate-import configuration.

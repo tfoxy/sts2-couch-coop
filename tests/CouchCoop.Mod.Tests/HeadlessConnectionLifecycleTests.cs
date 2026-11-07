@@ -50,7 +50,7 @@ internal static class HeadlessConnectionLifecycleTests
     /// The monitor's verdict reaching the host's OWN row — the wiring, not the pieces.
     /// </summary>
     /// <remarks>
-    /// The shape measured live on Sep-16 2026: the join completes, the browser is redirected, and the device
+    /// The shape seen live: the join completes, the browser is redirected, and the device
     /// cannot open the seat's port. The host's loopback probe of that seat SUCCEEDS, so nothing host-side is
     /// wrong and the only cause left is the network path — which before this round reached the phone and never
     /// the panel, where the row instead read <c>browser-transport-lost</c>. The settling delay is driven off an
@@ -501,7 +501,7 @@ internal static class HeadlessConnectionLifecycleTests
             because: "a silent seat the lobby never listed, with no port record of its own, is the cloud-isolation issue");
 
     /// <summary>
-    /// The false alarm in the Sep-23 field report's shape: a seat outside the lobby that DID record the port it
+    /// The false alarm in a field report's shape: a seat outside the lobby that DID record the port it
     /// bound. Only our browser server writes that record, and only after the cloud isolation guard has passed, so
     /// this seat is running CouchCoop with the saves protected — and was being told the opposite.
     /// </summary>
@@ -538,7 +538,7 @@ internal static class HeadlessConnectionLifecycleTests
             because: "a silent seat the lobby lists and the host cannot reach is a seat that joined and stopped");
 
     /// <summary>
-    /// The field shape from 2026-09-18: the seat joined, bound its port and was still answering — and the host
+    /// The field shape: the seat joined, bound its port and was still answering — and the host
     /// called it a startup timeout for 75 seconds because the ONE fact it needed was on the channel that was
     /// broken. It must now be a cause of its own, and must not carry either of the two wrong stories: that the
     /// seat stopped, or that another mod is at fault.
@@ -656,7 +656,7 @@ internal static class HeadlessConnectionLifecycleTests
         }
     }
 
-    // THE SHARED RELAY IS THE PATH EVERY REAL SEAT TAKES (since the Oct-5 shared browser port), and it used to skip
+    // THE SHARED RELAY IS THE PATH EVERY REAL SEAT TAKES (since the shared browser port), and it used to skip
     // the classifier above: a silent seat got a bare sentence with no evidence, so a field report could not say
     // whether CouchCoop had even run in it. Same two arms here — membership decides — with the control channel's
     // counts in the tail. The relay seat binds no port, so nothing is probed and the tail says why.

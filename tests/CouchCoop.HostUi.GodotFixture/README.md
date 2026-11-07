@@ -18,9 +18,8 @@ Success exits zero and prints `HOST_UI_GODOT_FIXTURE_PASS`. It checks both 1920ร
 wrapping, repeated help expansion/scrolling, bold headings, icon input pass-through, button-center
 activation, surrounding-space nonactivation, and keyboard acceptance on stock controls.
 
-For rendered evidence, use a private `gamescope --backend headless` compositor following
-`docs/agents/qa-recipes.md` ยง2.x. Remove inherited desktop display routes, verify compositor/GPU
-and private window ownership, and supervise process lifetime. Run the fixture without Godot's
-`--headless` and append `-- --shots-dir <scratch-directory>`. Never use the desktop or Xvfb.
+For rendered evidence, use a private `gamescope --backend headless` compositor. Remove inherited
+desktop display routes, verify compositor/GPU and private window ownership, and supervise process
+lifetime. Run the fixture without Godot's `--headless` and append `-- --shots-dir <scratch-directory>`. Never use the desktop or Xvfb.
 The screenshot option requires a rendering display; do not combine it with Godot `--headless`.
 Keep screenshots, runtime caches and logs out of git.

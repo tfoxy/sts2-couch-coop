@@ -88,7 +88,7 @@ function sceneNodes(rewards: boolean): Array<Record<string, unknown>> {
     node("orbitLabel", "orbit", "Label", [1, 0, 0, 1, 0, 40], { localRect: box(100, 30), ...label("Orbit") }),
     node("orbitDot2", "orbit", "ColorRect", [1, 0, 0, 1, 40, 0], { localRect: box(30, 30), fillColor: fill("#eeeeeeff") }),
     node("orbitHit", "orbit", "Control", I, { name: "Hitbox", localRect: box(70, 30), mouseFilter: 0 }),
-    // A hand holder, present on every step (R2-P3 `rustSceneIndex`): exercises `handPresent`'s candidate scan
+    // A hand holder, present on every step (`rustSceneIndex`): exercises `handPresent`'s candidate scan
     // on every tick, not just the reward steps below.
     node("hand", "stage", "NPlayerHand", I, { localRect: box(400, 300) }),
     node("holder", "hand", "NHandCardHolder", [1, 0, 0, 1, 700, 900], { localRect: box(200, 300) }),
@@ -101,7 +101,7 @@ function sceneNodes(rewards: boolean): Array<Record<string, unknown>> {
     node("rowB", "rewards", "NRewardButton", [1, 0, 0, 1, 0, 100], { localRect: box(400, 80), focused: true, fillColor: fill("#555555ff") }),
     node("rowBHit", "rowB", "Control", I, { name: "Hitbox", localRect: box(400, 80), mouseFilter: 0 }),
     // A full-stage opaque curtain painted AFTER the reward rows (a later `stage` child): exercises `coverAbove`'s
-    // candidate scan actually finding a cover (R2-P3 `rustSceneIndex`), not just agreeing on an empty miss.
+    // candidate scan actually finding a cover (`rustSceneIndex`), not just agreeing on an empty miss.
     node("coverCurtain", "stage", "ColorRect", I, { localRect: box(1920, 1080), fillColor: fill("#000000cc") }),
   );
   return nodes;
@@ -216,7 +216,7 @@ async function runScenario(query: string, script?: (context: ScenarioContext) =>
     // Asked twice: the second answer for an unchanged picture must equal the first.
     steps.push({ step, result, submissions: log.length, identity: diagnostics().frameIdentity,
       reward: [renderer.rewardFocusSnapshot(), renderer.rewardFocusSnapshot()], rects,
-      // handPresent/coverAbove (R2-P3 `rustSceneIndex`): the hand holder is present every step, the curtain only
+      // handPresent/coverAbove (`rustSceneIndex`): the hand holder is present every step, the curtain only
       // once rewards are on screen, so this exercises both a steady hit and a hit/miss transition.
       hand: renderer.handPresent(), cover: renderer.coverAbove("rowA") });
   };
@@ -1500,7 +1500,7 @@ describe("spread shifts across a refused full presentation (rustWireSpreadPatch)
 // wire already streams, so no landing delta follows; its glow then pulses (an idle loop) under it. The override the
 // settle left behind marked the glow's span as drawn-moved, so on a widened stage the glow's local-animation frame was
 // spread-rebased and the retained composition refused every patch: one full build per animation frame, until a
-// reload. Live, it was the idle combat after spending the last energy (`.sts2/bench/rust-rebuild-oct3/`).
+// reload. Live, it was the idle combat after spending the last energy.
 describe("a tween that settles on its streamed pose (widened stage)", () => {
   beforeEach(() => { document.body.replaceChildren(); });
   afterEach(() => {

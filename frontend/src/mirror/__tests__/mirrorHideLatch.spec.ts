@@ -57,7 +57,7 @@ function fadeOut(targetId: string, durationMs = 200): Partial<MirrorTweenHint> &
 describe("mirror tween hide-latch (Feature 2)", () => {
   let clock = 0;
   let rafCb: FrameRequestCallback | null = null;
-  // WS-B: the renderer's animation loop is DEADLINE-SCHEDULED — it parks on a `setTimeout` until the earliest live
+  // The renderer's animation loop is DEADLINE-SCHEDULED — it parks on a `setTimeout` until the earliest live
   // tween / held-restore deadline and only THEN requests the rAF that mutates. Model both halves against the same
   // fake clock so `flushRaf(atMs)` keeps its meaning ("let the renderer run at this wall-clock time").
   let timers: { id: number; at: number; cb: () => void }[] = [];
@@ -203,7 +203,7 @@ describe("mirror tween hide-latch (Feature 2)", () => {
     expect(el(stage, "p").style.opacity).toBe("1");
   });
 
-  // WS-REST — the rest-site refocus/first-click defect. The re-show arrives as a PLAIN resting-alpha write with NO
+  // The rest-site refocus/first-click defect. The re-show arrives as a PLAIN resting-alpha write with NO
   // fade-in hint (the fade-in tween was killed by the unfocus), so it looks value-identical to the pre-hide flash and
   // the latch clamps it to 0. With NO further delta to un-stick it, the rendererTick must release the latch at 150ms
   // and re-apply the streamed opacity.

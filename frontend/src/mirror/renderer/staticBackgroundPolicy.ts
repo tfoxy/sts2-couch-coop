@@ -11,7 +11,7 @@ export function viewScaleOn(): boolean {
   return uiScalingEnabled();
 }
 
-// WS-3: the map screen's DRAWING-TOOLS palette (map_screen.tscn :: DrawingTools), matched by SCENE IDENTITY — the
+// The map screen's DRAWING-TOOLS palette (map_screen.tscn :: DrawingTools), matched by SCENE IDENTITY — the
 // owning scene FILE plus the node's scene-relative path, exactly the (file, relPath) tuple the view-scale table keys
 // on and the walk stamps as data-scene-file / data-scene-node-path. Identity rather than geometry/type: a 208×68
 // 0/0-anchored NinePatchRect is indistinguishable from any ordinary bottom-left corner widget, and those must KEEP
@@ -31,7 +31,7 @@ function isDrawingTools(
   return scene != null && scene.file === MAP_SCREEN_SCENE_FILE && scene.relPath === DRAWING_TOOLS_NAME;
 }
 
-// R19 6b: the MAIN MENU's focus RIBBONS (main_menu.tscn :: ButtonReticleLeft / ButtonReticleRight), matched by the
+// The MAIN MENU's focus RIBBONS (main_menu.tscn :: ButtonReticleLeft / ButtonReticleRight), matched by the
 // same SCENE IDENTITY shape isDrawingTools uses. They are 40x40 TextureRects anchored 0/0 as DIRECT children of the
 // menu root, whose transform origins the game rewrites each frame to flank the focused option. Their sibling
 // `MainMenuTextButtons` (the option column) is a 0.5/0.5 VBox, so on a widened stage the column claims half the extra
@@ -59,7 +59,7 @@ function isMenuReticle(
   return scene != null && scene.file === MAIN_MENU_SCENE_FILE && scene.relPath === node.name;
 }
 
-// R20: the ONE-AXIS clip resolve — the third user of the same SCENE IDENTITY shape isDrawingTools / isMenuReticle
+// The ONE-AXIS clip resolve — the third user of the same SCENE IDENTITY shape isDrawingTools / isMenuReticle
 // use. A handful of clipping Controls must bound only their VERTICAL axis, because a readability transform in this
 // repo makes their subtree wider than the container the game sized for it (see clipAxis.ts for the table, the
 // measurement, and why `clip-path` rather than `overflow`). Returns the horizontal outset in design px, or undefined
@@ -80,7 +80,7 @@ export function clipAxisOutsetFor(
   return resolveClipAxisOutset(scene?.file ?? null, scene?.relPath ?? null) ?? undefined;
 }
 
-// R3-Q4: the leaf node types of the full-frame card-PREVIEW containers (a focused card's linked-card preview, e.g.
+// The leaf node types of the full-frame card-PREVIEW containers (a focused card's linked-card preview, e.g.
 // Infinite Blades → Shiv). The "Preview" subset of ECHO_CONTAINER — NARROWED to the three PREVIEW classes only, NOT
 // the HoverTip/Inspect echoes (those float/zoom differently and must not re-center). Twin of
 // SpreadIndex.PreviewContainerTypes.
@@ -89,7 +89,7 @@ function isPreviewContainer(node: MirrorNode): boolean {
   return PREVIEW_CONTAINER_TYPES.has(nodeTypeLeaf(node.nodeType));
 }
 
-// R10/R7: substrings that identify an EVENT background-scene root by its streamed `sceneFilePath` (twin of
+// Substrings that identify an EVENT background-scene root by its streamed `sceneFilePath` (twin of
 // SpreadIndex.BackgroundSceneFilePatterns). STS2 mounts each event backdrop as a single packed scene directly under
 // `res://scenes/events/background_scenes/<event>.tscn` (neow, darv, orobas, pael, tanx, vakuu, nonupeipe, tezcatara,
 // roomfullofcheese, the_city — confirmed from real streams). Matching that DIRECTORY segment re-centers EVERY event
@@ -127,7 +127,7 @@ export function spreadSceneIdentityEnv(
   return {
     isBackgroundSceneRoot,
     isPreviewContainer,
-    // WS-3 DRAWING-TOOLS and R19 6b MENU-RIBBON: two small
+    // DRAWING-TOOLS and MENU-RIBBON: two small
     // 0/0-anchored widgets the game re-positions each frame against 0.5-anchored content, matched by SCENE
     // IDENTITY (never geometry — an ordinary 0/0 corner widget must keep its corner). See isDrawingTools /
     // isMenuReticle for the measurement behind each. Twin of SpreadIndex's centerClaim.

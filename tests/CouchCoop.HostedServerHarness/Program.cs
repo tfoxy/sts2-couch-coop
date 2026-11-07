@@ -103,7 +103,7 @@ if (seatUri is not null) server.SyntheticSeatPort = seatUri.Port;
 Console.WriteLine(JsonSerializer.Serialize(new { baseUrl = baseUri.ToString(), exportedRoot, seatBaseUrl = seatUri?.ToString(), mode = options.Mode.ToString().ToLowerInvariant(), iphoneProfile = options.IphoneProfile.ToString().ToLowerInvariant(), artifactDirectory = options.ArtifactDirectory }));
 Console.Out.Flush();
 
-// M3 WS-T host-discovery leg: also answer UDP discovery probes on the same port the TCP server chose, so a
+// Host-discovery leg: also answer UDP discovery probes on the same port the TCP server chose, so a
 // no-args native client on the Connect screen can find this harness at 127.0.0.1:<port>.
 await using var discovery = new HostDiscoveryResponder(
     baseUri.Port,
@@ -163,7 +163,7 @@ internal sealed record HarnessOptions(string StaticRoot, int Port, HarnessMode M
                 case "-fastmp":
                 case "join":
                     break;
-                // WS-U (M3) disk-cache e2e leg: FakeAssetAdapter self-detects this flag from the process args and
+                // Disk-cache e2e leg: FakeAssetAdapter self-detects this flag from the process args and
                 // serves a deterministic 1x1 PNG for ANY res:// image key (so a full combat recording's ~N textures
                 // all resolve). Tolerated + ignored here (Parse rejects unknown flags); FakeAssetAdapter reads it.
                 case "--assets-fake-any":
@@ -269,7 +269,7 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
     private static readonly byte[] RawTestResource = System.Text.Encoding.UTF8.GetBytes(
         "[gd_resource type=\"AtlasTexture\" format=3]\n");
 
-    // WS-U (M3): when --assets-fake-any is on the process command line, serve a deterministic 1x1 PNG for ANY res://
+    // When --assets-fake-any is on the process command line, serve a deterministic 1x1 PNG for ANY res://
     // image key (so the disk-cache cold/warm e2e leg resolves a full combat recording's ~N textures identically).
     // Self-detected here (not threaded through HarnessOptions/StartAsync) to keep this edit confined to this adapter.
     private readonly bool _fakeAny = Array.IndexOf(Environment.GetCommandLineArgs(), "--assets-fake-any") >= 0;
@@ -338,7 +338,7 @@ internal sealed class FakeAssetAdapter : ICouchCoopAssetHttpAdapter
             return ServeSyntheticIphonePngAsync(opaqueKey, cancellationToken);
         }
 
-        // WS-U e2e fallback: any res:// image key → the deterministic 1x1 PNG (identical bytes cold + warm).
+        // E2e fallback: any res:// image key → the deterministic 1x1 PNG (identical bytes cold + warm).
         if (_fakeAny && opaqueKey.StartsWith("res://", StringComparison.Ordinal) && IsImageKey(opaqueKey))
         {
             return ServeFakeAnyAsync(cancellationToken);

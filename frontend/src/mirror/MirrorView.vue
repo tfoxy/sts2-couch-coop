@@ -32,7 +32,7 @@ import {
   setConfirmBelowOverlay
 } from "@/mirror/confirmTap";
 // Per-element text-scale overrides — a global (unscoped) sheet, since the mirror nodes are created imperatively
-// (not in this component's scoped template). R10-PERF4 WS-3 (item 4): the generated sheet is keyed on the
+// (not in this component's scoped template). The generated sheet is keyed on the
 // `mirror-ts-*` classes the renderer resolves once per element.
 import { installTextScaleSheet } from "@/mirror/textScaleClasses";
 import { onAtlasRegionsReady } from "@/mirror/atlasBaker";
@@ -150,8 +150,8 @@ watch(() => props.connected, (connected) => {
  * has a composited descendant, at layer space (CSS × devicePixelRatio); the canvas texture is then bilinearly
  * magnified into that surface and minified back out of it — net geometry 1.0, two resamples, a blurred stage on
  * every desktop whose dpr is not 1. DOM content in that subtree only gets supersampled, so the overlays keep the
- * scaled design box and the canvas alone leaves it. Mechanism, trace and byte-crisp identity arm:
- * `.sts2/canvas-blur-sep03/FINDINGS.md` (uncommittable, per checkout), and canvasRenderer's SIZING LAW.
+ * scaled design box and the canvas alone leaves it. Mechanism and byte-crisp identity arm: see
+ * canvasRenderer's SIZING LAW.
  *
  * DECIDED AT SETUP, from the REQUESTED backend — the template is built before `createMirrorRendererFor` runs, so
  * this cannot wait for the factory's answer. A failed canvas construction leaves this host empty,
@@ -202,7 +202,7 @@ let inputCapture: InputCapture | null = null;
 let keyPadInput: KeyPadInput | null = null;
 let rewardFocusCoordinator: RewardFocusCoordinator | null = null;
 let unsubscribePressModality: (() => void) | null = null;
-// R10 WS-E — the eager-scroll engine. Created alongside inputCapture (it needs the renderer AND the send path),
+// The eager-scroll engine. Created alongside inputCapture (it needs the renderer AND the send path),
 // so it is null in the read-only/no-input mode exactly like inputCapture is.
 let eagerScroll: EagerScroll | null = null;
 // gsw's live WebGL shader runtime: scans for `[data-godot-shader-webgl]` nodes (stamped by the reconciler) and
@@ -221,7 +221,7 @@ let adaptiveController: AdaptiveController | null = null;
 // `renderQuality()` is the immutable seed; adaptive quality mutates live runtimes without changing it.
 // Unsubscribe for the targeted texture-size listener (see onMounted).
 let unsubscribeTextureSizes: (() => void) | null = null;
-// Unsubscribe for the targeted atlas-region-blob listener (R10-PERF4 WS-4; see onMounted).
+// Unsubscribe for the targeted atlas-region-blob listener.
 let unsubscribeAtlasRegions: (() => void) | null = null;
 // Unsubscribe for this view's frame-pressure supplier (see onMounted).
 let unregisterRenderPressure: (() => void) | null = null;
@@ -331,7 +331,7 @@ function recomputeScale(): void {
     pendingRuntimeForce = true;
   }
   if (rescaled || resized) {
-    // R10 WS-F: the input path caches the stage's client rect and only dropped it on a window resize/scroll. The
+    // The input path caches the stage's client rect and only dropped it on a window resize/scroll. The
     // stage can move under BOTH of those: the widescreen stretch toggle rewrites design.w + scale from a computed,
     // and this ResizeObserver fires for a FRAME-only resize (a sibling panel) that no window event reports. A stale
     // rect is a silent LINEAR error on every mapped pointer. Invalidated on the next tick, once the new
@@ -340,13 +340,13 @@ function recomputeScale(): void {
     void nextTick(() => inputCapture?.invalidateStageRect());
   }
   if (resized) {
-    // WS-2: every shader/particle canvas box just moved (the stage re-fits), so both runtimes re-measure
+    // Every shader/particle canvas box just moved (the stage re-fits), so both runtimes re-measure
     // unconditionally — a re-layout the dirty bits deliberately don't track (it touches no marker).
     reconcileRuntimes("change");
   }
 }
 
-// R10-PERF4 WS-2 — EFFECTS-RECONCILE GATING. Reconciling every rendered frame is a whole-stage `querySelectorAll` sweep plus
+// EFFECTS-RECONCILE GATING. Reconciling every rendered frame is a whole-stage `querySelectorAll` sweep plus
 // per-binding attribute re-reads, and the shader one brackets itself in `invalidateRects()` — which defeats gsw's
 // 0.12s rect-cache TTL, so every SCREEN_UV binding pays a fresh `getBoundingClientRect` on the next tick. None of
 // that can find anything new unless the reconciler actually touched an effect marker, a self-layer, an element's
@@ -428,11 +428,11 @@ function armRuntimeSafety(): void {
 // accumulates across the coalesced deltas, so no change is missed). The render naturally throttles to the
 // device's frame rate while always showing the newest state — bounded latency, never a backlog.
 let renderRaf = 0;
-// R6 P6-A: inside `runScheduledRender`. Two entry points now reach that body (the coalesced rAF and the
+// Inside `runScheduledRender`. Two entry points now reach that body (the coalesced rAF and the
 // renderer's pull), so a re-entrant call is possible in principle and is REFUSED rather than nested.
 let renderRunning = false;
 let pendingForceTextures = false;
-// WS-2: a non-marker layout change (the spread re-layout) that must reach both gsw runtimes on the next rendered
+// A non-marker layout change (the spread re-layout) that must reach both gsw runtimes on the next rendered
 // frame, whatever the dirty bits say.
 let pendingRuntimeForce = false;
 // Why the pending force was asked for — pure observability (mirrorWalkStats.fullWalkCauses). Last writer wins when
@@ -471,7 +471,7 @@ function syncHandRaiseUi(): void {
 }
 
 /**
- * ONE RENDERED FRAME of the mirror pipeline — the body the coalesced rAF has always run, extracted (R6 P6-A) so
+ * ONE RENDERED FRAME of the mirror pipeline — the body the coalesced rAF has always run, extracted so
  * that the canvas backend can PULL it forward into its own animation frame instead of building a list against a
  * state this is about to replace. See `reconcileNow` below and mirrorRenderer's `ReconcilePull`.
  *
@@ -491,7 +491,7 @@ function runScheduledRender(): "presented" | "applied" | "pending" | "reentrant"
     const reasonForWalk = pendingForceReason;
     pendingForceTextures = false;
     pendingForceReason = undefined;
-    // R10 WS-E HARD RESET on a wire KEYFRAME (a reconnect, a stream re-gate, a host re-keyframe): the whole node map
+    // HARD RESET on a wire KEYFRAME (a reconnect, a stream re-gate, a host re-keyframe): the whole node map
     // was just re-established, so every eager offset is a claim about a tree that no longer exists — drop them and
     // adopt the streamed truth. Read BEFORE the reconcile, which is where the flag is consumed.
     if (props.state.sceneRewrite) {
@@ -534,7 +534,7 @@ function runScheduledRender(): "presented" | "applied" | "pending" | "reentrant"
     rewardFocusCoordinator?.afterReconcile(
       renderer?.rewardFocusSnapshot() ?? { screenId: null, rows: [] }
     );
-    // R11 WS-S — SINGLE-WRITER COMPOSITION. The walk just wrote every scroll container's base `matrix()`, one host
+    // SINGLE-WRITER COMPOSITION. The walk just wrote every scroll container's base `matrix()`, one host
     // lerp step further along than the frame before. Re-compose the eager translate against it NOW, before the
     // browser paints, so the composed position stays exactly where the player put it and the host's catch-up lands
     // inside the translate instead of on screen. Ordering-proof by construction: whichever of this and the engine's
@@ -594,7 +594,7 @@ function scheduleRender(forceTextures = false, reason?: FullWalkCause): void {
 }
 
 /**
- * R6 P6-A — run the pending coalesced reconcile RIGHT NOW, and drop the frame it was booked for.
+ * Run the pending coalesced reconcile RIGHT NOW, and drop the frame it was booked for.
  *
  * Handed to the renderer as `ReconcilePull.now`. The only caller is a backend whose own animation frame is about
  * to run in the same display frame as this one: rather than build a list from a state the reconcile is about to
@@ -652,7 +652,7 @@ function detachInput(silent = false): void {
 
 function attachInput(): void {
   if (props.sendInput && renderer && stage.value && !inputCapture) {
-    // R10 WS-E — EAGER SCROLLING. Built before inputCapture because the capture takes it as a collaborator: it
+    // EAGER SCROLLING. Built before inputCapture because the capture takes it as a collaborator: it
     // gets first refusal on a wheel tick over the map / a card grid, owns the one-finger pan there, and
     // compensates every resolved coordinate while the local offset runs ahead of the host's.
     const sender = props.sendInput;
@@ -699,7 +699,7 @@ function attachInput(): void {
         isHandCard: (id) => renderer?.isHandCard(id) ?? false,
         // Below-line drag-drop cancel: a HAND card dropped below its play-zone floor de-selects (right-click).
         playZoneThreshold: (d) => playZoneThreshold(MIRROR_DESIGN_HEIGHT, d),
-        // End-turn below-button un-hover (R4 change 2): resolved release point → the button's game-space box.
+        // End-turn below-button un-hover: resolved release point → the button's game-space box.
         endTurnBoxAt: (x, y) => renderer?.endTurnBoxAt(x, y) ?? null,
         // #12: a from-hand card-choice dialog (Survivor discard / exhaust / enchant) → single-tap selection.
         handChoiceActive: () => renderer?.handChoiceActive() ?? false,
@@ -708,12 +708,12 @@ function attachInput(): void {
         confirmTap: () => mirrorSettings.confirmTap,
         confirmTapAt: (x, y) => renderer?.confirmTapAt(x, y) ?? null
       },
-      // FIX 3 (R7): the live GAME-space view-scale input registry, so a hover/tap over an enlarged view-scale item
+      // The live GAME-space view-scale input registry, so a hover/tap over an enlarged view-scale item
       // (an ancient-event option, a reward/shop item) maps back onto its true hit box (viewScaleInverse). Empty off
       // a view-scale screen ⇒ the inverse is identity ⇒ input byte-identical.
       () => renderer?.viewScaleInputStamps() ?? [],
       eagerScroll,
-      // R11 WS-M — map-node travel. Wired only when the action channel exists (a receive-only mirror keeps plain
+      // Map-node travel. Wired only when the action channel exists (a receive-only mirror keeps plain
       // coordinate clicks); the router itself refuses while a drawing tool is armed.
       actionSender
         ? createMapNodeTapRouter({
@@ -784,7 +784,7 @@ watch(() => mirrorSettings.confirmTap, (on) => {
 });
 
 function mountScene(): void {
-  // R7 W1 fix (d): page-wide GL context-loss reporting, installed before anything creates a context. The stage
+  // Page-wide GL context-loss reporting, installed before anything creates a context. The stage
   // counts its OWN losses, but when the GPU process goes every context on the page goes with it — including the
   // gsw effect runtimes' canvases, which on the DOM arm are the only ones there are.
   installGlContextEventReporter();
@@ -812,7 +812,7 @@ function mountScene(): void {
     renderer = createMirrorRendererFor(stage.value, defs.value, canvasHost.value);
     rendererRef.value = renderer;
     if (!renderer || rendererRuntimeStatus.phase === "failed") return;
-    // R6 P6-A — offer the app's scheduled walk to a backend with its own frame loop (see ReconcilePull). Wired
+    // Offer the app's scheduled walk to a backend with its own frame loop (see ReconcilePull). Wired
     // HERE, after the renderer exists, and never between `attachStage` and `createMirrorRendererFor`: the
     // recorder has to be the last thing that touched the stage before the renderer is built. Optional method —
     // the DOM backend does not implement it, and this line is then a no-op.
@@ -836,7 +836,7 @@ function mountScene(): void {
       renderer?.markTextureDirty(ids);
       scheduleRender();
     });
-    // R10-PERF4 WS-4 — the SAME targeted seam for atlas region blobs: a sprite paints through its <canvas> until
+    // The SAME targeted seam for atlas region blobs: a sprite paints through its <canvas> until
     // its region is baked, then exactly the nodes that asked for that region are re-styled and swap to the
     // (uncomposited) background-image div. Subscribed here for the same reason as above — a bake completes on a
     // macrotask, so nothing can resolve before the first reconcile below.
@@ -851,12 +851,12 @@ function mountScene(): void {
     (window as unknown as Record<string, unknown>).__mirrorShopRemoval = () =>
       mirrorShopRemovalProbe(props.state.nodes, renderer?.interactiveRects() ?? []);
     // Same seam for the view-scale input registry (game-space channel/scaledBox/originalBox + the widened-space
-    // renderedBox the false-halo guard tests) — read-only; scripts/probe-viewscale-halo-input.mjs drives off it.
+    // renderedBox the false-halo guard tests) — read-only; for external probing tooling.
     (window as unknown as Record<string, unknown>).__mirrorViewScaleInputStamps = renderer.viewScaleInputStamps;
     // …and the three HIT-TEST seams, as one read-only probe. This is the only way to ask the two stage backends
     // the same question: the DOM backend answers `touchStackAt` out of `elementsFromPoint`, the canvas backend
     // out of its draw list's hit entries, and the input side never sees the difference. The parity gate
-    // (`bench-mirror-replay.mjs --hit-grid`) samples a grid through this on each backend and diffs the two — a
+    // (an offline replay harness) samples a grid through this on each backend and diffs the two — a
     // pure query, nothing is clicked and nothing is armed. A FUNCTION per call, like __mirrorShaderStats, so a
     // renderer swap cannot strand a stale binding.
     // `gameX`/`gameY` are the same point in the GAME's own 1920-space, which is what the confirm-tap
@@ -936,7 +936,7 @@ function mountScene(): void {
     // one of our passes would be stale on exactly the idle screen being measured). Same `typeof` guard as
     // __mirrorShaderStats: a runtime may not exist (mode Off) or predate the counter.
     setStaticStillGauge(staticSurfacesLive);
-    // R17: the same idiom for the retained-still block (`mirrorWalkStats.staticStill*`) — one reader, sampled at
+    // The same idiom for the retained-still block (`mirrorWalkStats.staticStill*`) — one reader, sampled at
     // read time, over BOTH runtimes' gsw counters.
     setStaticStillCountersGauge(staticStillCounters);
     renderer.setStretch(spreadFactor.value);
@@ -977,9 +977,9 @@ function mountScene(): void {
 // `dynamic` is full res, and `off` disposes the runtime (scale irrelevant).
 //
 // STATIC is the one exception, and it is a DEVICE decision, not a panel one (quality.ts' staticShaderScale /
-// staticParticleScale: 0.5 / 0.25 on a phone, 1 on a desktop). `static` briefly returned a flat 1 here; on the map
-// screen of a Mali-G57 phone that made the frozen shaders re-render full-screen per scene-delta and took
-// StartDrawToSwapStart p50 from 6.5ms to 126ms. The MODE still means the same thing everywhere (the real effect,
+// staticParticleScale: 0.5 / 0.25 on a phone, 1 on a desktop). `static` briefly returned a flat 1 here; on a weak
+// phone's map screen that made the frozen shaders re-render full-screen per scene-delta and multiplied the
+// draw-to-swap time by an order of magnitude. The MODE still means the same thing everywhere (the real effect,
 // rendered once) — only the backing store the phone can afford differs, exactly like the tier's renderScale.
 // `?staticScale=` / `?staticShaderScale=` / `?staticParticleScale=` A/B it live.
 function scaleForMode(mode: EffectMode, family: "shader" | "particle"): number {
@@ -1010,8 +1010,8 @@ function noteEffectRendered(node: HTMLElement, surface: HTMLCanvasElement, info:
 
 // LINK THE COMBAT SHADERS NOW, so the frame that first needs one does not.
 //
-// A cold link BLOCKS on a device without `KHR_parallel_shader_compile`, and the phone this round is gated on has
-// none — the Aug-28 trace carries a 90.3 ms `getProgramParameter` task mid-combat. Warming cannot make that link
+// A cold link BLOCKS on a device without `KHR_parallel_shader_compile`, and a typical mid-range phone has
+// none — a mid-range phone trace shows a ~90 ms `getProgramParameter` task mid-combat. Warming cannot make that link
 // cheaper; it only moves it here, where the runtime is created (join / effect-mode change), rather than onto the
 // frame a card is played. See `shaderWarmSpecs`.
 //
@@ -1140,7 +1140,7 @@ function staticSurfacesLive(): number {
   return (s?.staticImagesLive ?? 0) + (p?.staticImagesLive ?? 0);
 }
 
-// R17 — the RETAINED-STILL counters, read the same way and for the same reason (gsw's own timers, and its
+// The RETAINED-STILL counters, read the same way and for the same reason (gsw's own timers, and its
 // module-wide pool, move these with nothing on our side running). Installed as the reader behind the
 // `mirrorWalkStats.staticStill*` block; the `typeof`/`?? 0` guards are the `staticSurfacesLive` idiom, so a gsw
 // build predating any one counter reads 0 rather than throwing at a bench sample.
@@ -1183,7 +1183,7 @@ function pinEffects(): void {
 // applyShaderMode/applyParticleMode), and pin the effect quality so the adaptive controller steps aside.
 watch(effectiveShaderMode, (mode) => {
   applyShaderMode(mode);
-  // WS-2: a create/dispose/retune must re-attach to the markers already in the DOM. The "change" pass also hands
+  // A create/dispose/retune must re-attach to the markers already in the DOM. The "change" pass also hands
   // any standing frozen surfaces back — leaving Static must not leave a stale `<img>` over a re-animating canvas.
   reconcileRuntimes("change");
   // …and a FULL walk, because crossing between the STILL modes (`off`/`static`) and the dynamic ones changes what
@@ -1298,7 +1298,7 @@ function startAdaptiveQuality(): void {
 // so several revision bumps within a frame collapse into ONE reconcile of the latest state.
 watch(() => props.revision, () => scheduleRender());
 
-// R19 WP5 — hand the host's absolute-scroll answer to the engine. The app publishes a FRESH object per ack, so an
+// Hand the host's absolute-scroll answer to the engine. The app publishes a FRESH object per ack, so an
 // identity watch sees every one; the engine drops any that does not match a live send. Nothing schedules a render
 // here: the ack only steers the settle, which the engine's own rAF is already running.
 watch(
@@ -1319,11 +1319,11 @@ watch(design, recomputeScale);
 // unchanged nodes at the old spread.
 watch(spreadFactor, (f) => {
   renderer?.setStretch(f);
-  // R10 WS-E HARD RESET: the stretch toggle re-lays-out every node and re-fits the stage, so an eager offset (and
+  // HARD RESET: the stretch toggle re-lays-out every node and re-fits the stage, so an eager offset (and
   // the pan/wheel run behind it) is measured against geometry that is about to be replaced.
   eagerScroll?.reset();
   scheduleRender(true, "spread");
-  // WS-2: the forced FULL walk already dirties both runtimes, but a spread re-layout moves every canvas box, so
+  // The forced FULL walk already dirties both runtimes, but a spread re-layout moves every canvas box, so
   // say it outright rather than leaning on the walk's conservative bump.
   pendingRuntimeForce = true;
 });
@@ -1580,7 +1580,7 @@ const underlayStyle = computed(() => ({
   isolation: isolate;
   /* CouchCoop's OWN chrome (never a gsw/@spirectl presentation element): what shows through while the host-rendered
      static background is still decoding, in the ultra-wide strip the 2520-wide picture does not cover, and wherever
-     the live bg subtree is held unbuilt (R12). `.mirror-frame` stays #000 — that is the LETTERBOX; the stage is the
+     the live bg subtree is held unbuilt. `.mirror-frame` stays #000 — that is the LETTERBOX; the stage is the
      game's own box, and a near-black grey reads as "this room hasn't painted yet" rather than as a hole punched in
      the app. Safe under StaticBackground's most-negative z-index: CSS paints an element's own background below ALL
      its descendants, negative-z-index ones included.
@@ -1592,14 +1592,13 @@ const underlayStyle = computed(() => ({
      also clips StaticBackground's 2520-wide picture down to the stage (StaticBackground.vue:37-41). */
   /* This `overflow: hidden` makes the stage a SCROLL CONTAINER, and Chrome then promotes it — its compositing
      reasons really are "Is the document.rootScroller.; Is a scrollable overflow element using accelerated
-     scrolling." That looks alarming next to an 8374x3767 layer on a 2712x1220 phone screen, and it is NOT a
+     scrolling." That looks alarming next to a layer far larger than the phone's screen, and it is NOT a
      raster-scale bug: `Layer.width/height` is the layer's BOUNDS, which a device reports in PHYSICAL px
-     (2401 design px x 3.4876 dsf = 8374) because Chrome uses zoom-for-dsf. Measured with cc's own snapshots
-     (scripts/probe-stage-raster-scale.mjs, Aug-18-2026, Chromium 147, design 2399x1080 @dpr 3.4876): the stage
-     layer rasters at contents_scale 0.3260 == its ideal_contents_scale, tiling 2729x1229 == the presented
+     (design px x dsf) because Chrome uses zoom-for-dsf. Measured with cc's own snapshots: the stage
+     layer rasters at its ideal_contents_scale, and its tiling matches the presented
      screen. Replacing the clip with `clip-path: inset(0)` or `contain: paint`, or moving it to `.mirror-frame`,
-     was A/B'd and moved NOTHING (179 tiles / 9.93 Mpx in every arm; the frame variant was slightly worse at
-     183 / 10.08 and loosens the clip). Don't re-litigate this without a cc-snapshot number — the page's real
+     was A/B'd and moved NOTHING (the frame variant was slightly worse and loosens the clip). Don't re-litigate
+     this without a cc-snapshot number — the page's real
      raster surplus is `Overlap`-promoted near-full-screen node layers, not the stage. */
   overflow: hidden;
   /* A controlling client drags cards by holding the pointer; without this the browser starts a text selection
@@ -1751,7 +1750,7 @@ const underlayStyle = computed(() => ({
   pointer-events: none;
 }
 
-/* Atlas-sprite paint, DEFAULT mechanism (R10-PERF4 WS-4): the same box as .mirror-atlas-canvas, but painting the
+/* Atlas-sprite paint, DEFAULT mechanism: the same box as .mirror-atlas-canvas, but painting the
    region's BAKED BLOB as a background image instead of a <canvas>. Identical geometry (the renderer applies the
    same inset/size/placement styles to either element) — the difference is that this one is not a forced
    composited layer. `background-size: 100% 100%` reproduces the canvas's stretch-to-box exactly. */
@@ -1779,7 +1778,7 @@ const underlayStyle = computed(() => ({
   pointer-events: none;
 }
 
-/* R10-PERF6 WS-B: the still <img> standing in for a canvas that is de-promoted while a translucent overlay
+/* The still <img> standing in for a canvas that is de-promoted while a translucent overlay
    backstop covers it. It CARRIES THE CANVAS'S OWN CLASS as well (so `.mirror-atlas-canvas` /
    `.mirror-spine-canvas` supply the placement contract verbatim, and an <img>'s default `object-fit: fill`
    reproduces a canvas's stretch-to-box); this class only blockifies it and keeps it out of hit-testing. */
@@ -1788,7 +1787,7 @@ const underlayStyle = computed(() => ({
   pointer-events: none;
 }
 
-/* Enemy-intent glyph, COMPOSITOR path (R10-B1, see mirror/intentStrip.ts). The VIEWPORT stands exactly where the
+/* Enemy-intent glyph, COMPOSITOR path. The VIEWPORT stands exactly where the
    single-frame atlas canvas would (same box, same placement semantics) and clips to one cell; the STRIP canvas
    inside it holds every frame side by side and is stepped by a `translate` + `steps()` animation, so the glyph
    cycles without the renderer ever asking for a main-thread frame. */
@@ -1953,7 +1952,7 @@ const underlayStyle = computed(() => ({
   object-fit: fill;
 }
 
-/* Aug-25 SPINE SUBTREE PAINT CULL. On a high-DPR phone (measured: Moto G86 / Chrome 151 / dpr 3.4876) Blink stops
+/* SPINE SUBTREE PAINT CULL. On a high-DPR phone (dpr ~3.5, Chrome) Blink stops
    recording paint partway across a large `.mirror-spine-img`, and the stage background shows through the rest of
    it — a black rectangle over the shop. (Spine drives whole ROOM BACKGROUNDS here, not just creatures, which is
    why the symptom is scenery-sized.) The cull is SUBTREE-LOCAL (a ruler in stage space paints edge

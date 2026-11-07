@@ -3,7 +3,7 @@ using System.Text;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// PURE (Godot-free) gdshader source rewrite for the native client's "Static" effect mode (WS-EFFECTS-NATIVE).
+// PURE (Godot-free) gdshader source rewrite for the native client's "Static" effect mode.
 //
 // The native client cannot render an effect at a fraction of resolution (Godot has no per-canvas-item render scale),
 // so "Static" instead FREEZES the effect: it renders the shader once at a representative TIME and never advances.

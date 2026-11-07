@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// P2 (WS-select) discard-select flash — client-side proof that the producer fix cures the flash and the round-3
+// Discard-select flash — client-side proof that the producer fix cures the flash and the earlier
 // behaviour caused it. Runs the wire through the REAL client merge (SceneTreeApplier.ApplySceneDelta →
 // MergeNode) + the pure GlobalTransformIndex (the same gNode pass-through the native reconciler and the web
 // mirrorRenderer bake), so it asserts on the card's composed GLOBAL — what actually renders.
@@ -65,7 +65,7 @@ internal static class SelectFlashReplayProbe
     };
 
     // The reparent drain: the fresh Sel holder (scale 0.8) appears under Cont and the card re-attaches under it.
-    // `cardTransform` is the transition-start local (round-3) or null (the fix). The card upsert is Name-bearing
+    // `cardTransform` is the transition-start local (before the fix) or null (the fix). The card upsert is Name-bearing
     // (a reparent ships the static block), so MergeNode wholesale-adopts it — a null transform truly nulls the node.
     private static MirrorDelta Reparent(double[]? cardTransform) => new()
     {
@@ -130,7 +130,7 @@ internal static class SelectFlashReplayProbe
             $"settle resync lands the card at centre (960,540), got ({atSettle[4]:0.#},{atSettle[5]:0.#})");
     }
 
-    // Optional: replay the REAL discard-select capture (round-3 bridge) and prove the same story on live data —
+    // Optional: replay the REAL discard-select capture (earlier bridge) and prove the same story on live data —
     // the card node's composed global jumps to bottom-centre at the reparent, and nulling its transform there holds
     // it at the holder. Skips SILENTLY without the env var so the suite stays green in a plain checkout.
     private static void RealCaptureReplay_OptionalEnvGated()

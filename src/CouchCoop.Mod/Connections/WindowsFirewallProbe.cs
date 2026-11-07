@@ -58,7 +58,7 @@ internal sealed record WindowsFirewallReading(WindowsFirewallVerdict Verdict, st
 /// "nothing can get through" are the same observation from inside this process — but on Windows that is only
 /// true of the NETWORK evidence. The most common single cause of the second one is a local, readable fact:
 /// whether an enabled inbound rule for this executable exists, and whether it covers the profile of the
-/// network this PC is actually on. `docs/agents/windows-connection-fingerprints.md` §3 measured both halves of
+/// network this PC is actually on. <c>docs/workshop/phone-connection-troubleshooting.md</c> covers both halves of
 /// why that matters — a stock box's inbound default is block, and the game's permission is carried by
 /// per-PROGRAM allow rules, which is also why the advice everywhere is "allow the program, not a port".
 /// </para>

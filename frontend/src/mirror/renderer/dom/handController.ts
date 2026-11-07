@@ -315,7 +315,7 @@ export function createHandController<R extends HandRecord>(
    * is where the card is HEADED. The hand pass runs after the arm (that ordering is what gets both channels their
    * endpoints in one batch), so by then only the destination is left to read.
    *
-   * THE DEFECT THIS CLOSES (live H10, 2026-09-19). A producer delta can carry a streamed step of the un-focus AND
+   * THE DEFECT THIS CLOSES (live H10). A producer delta can carry a streamed step of the un-focus AND
    * the tween hint for the rest of it. The walk paints the step; the arm eases the transform on from there; the
    * hand pass wrote only the ENDPOINT's lift and let the browser ease it from whatever the element still had —
    * the lift conjugate to the FOCUS pose, one step stale. Both channels then ran the same duration and easing

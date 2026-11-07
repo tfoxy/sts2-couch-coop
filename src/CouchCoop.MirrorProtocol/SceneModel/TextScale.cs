@@ -59,14 +59,14 @@ public static class TextScale
     //                    `margin-top` (`--godot-rich-paragraph-spacing: <ratio>em`); native sets the RichTextLabel
     //                    `paragraph_separation` theme constant = round(ratio × fontPx). Godot & the web both treat `\n`
     //                    as a paragraph boundary, so this lands only between newline-separated runs.
-    //   MaxSizePx / Wrap — WS-TEXT v4 optional per-label fitting (default null / false = today's behavior). MaxSizePx
+    //   MaxSizePx / Wrap — optional per-label fitting (default null / false = today's behavior). MaxSizePx
     //                    CAPS the scaled font px at min(round(px×scale), MaxSizePx); Wrap turns on AutowrapMode.WordSmart
     //                    for that Label (overriding the global Off) so a capped-but-still-long string wraps within the
     //                    streamed box instead of overflowing. Both are HONORED only when the COUCHCOOP_MIRROR_TEXTSCALE_V4
     //                    switch is ON (the gate lives in TextBuilder — this table stays a pure, env-free data source).
     //   NudgeYPx — per-label vertical centring nudge (px, default 0 = neutral). TextBuilder.GrowthCenterPlain lifts
     //              the plain Label by −NudgeYPx (Top/Center streamed valign, ON TOP of the growth-centering), NEVER via
-    //              raw VerticalAlignment.Center. ROUND-5: retuned to 0 for every entry — the round-5 ink matrix proved
+    //              raw VerticalAlignment.Center. Retuned to 0 for every entry — an A/B ink matrix proved
     //              the counts were OVER-lifted, not low (see VerticalCenterNudgePx / PlacementLift). Honored only under
     //              COUCHCOOP_MIRROR_TEXTNUDGE. Web twin: a per-selector `translate: 0 -<n>px` in mirrorTextScale.css.
     private sealed record Entry(
@@ -74,7 +74,7 @@ public static class TextScale
         int? MaxSizePx = null, bool Wrap = false, int NudgeYPx = 0);
 
     // The resolved per-label text metrics: the font-size multiplier plus the optional line-spacing ratios above and the
-    // optional WS-TEXT-v4 cap / wrap flags and the R15 vertical nudge.
+    // optional cap / wrap flags and the vertical nudge.
     public readonly record struct TextMetrics(
         double Scale, double? LineHeight, double? ParagraphExtra, int? MaxSizePx = null, bool Wrap = false,
         int NudgeYPx = 0)
@@ -82,32 +82,32 @@ public static class TextScale
         public static readonly TextMetrics Neutral = new(1.0, null, null);
     }
 
-    // ---- WS-TXT card-description line-spacing tune (kept in lockstep with mirrorTextScale.css) ----------------------
+    // ---- Card-description line-spacing tune (kept in lockstep with mirrorTextScale.css) ----------------------
     // Card DescriptionLabel wrapped-line line-height ratio (× font size) and the extra em gap added at an explicit
     // `\n` paragraph break. Tuned against the real game's Choose-a-Card picker; see the DescriptionLabel entry below.
     public const double CardDescLineHeight = 0.88;
     public const double CardDescParagraphExtra = 0.14;
 
-    // ---- WS-text round-4 (P5-c): card-description +1px line height, the End-Turn precedent applied to WRAPPED rich
+    // ---- Card-description +1px line height, the End-Turn precedent applied to WRAPPED rich
     // text. Kept in lockstep with mirrorTextScale.css's `--godot-rich-line-height: calc(0.88em + 1px)`. TextBuilder.
     // ApplyRichLineSpacing adds this as a flat px addend to the computed line_separation (ratio×fontPx − natural),
     // exactly like WrappedLabelLineSpacingPx's `calc(1em + 1px)` idiom for the plain-Label End Turn wrap — the addend
-    // is measured PRE-block-scale (this label's font renders at scale 1.0 per R6; the 1.24 BlockScale transform then
+    // is measured PRE-block-scale (this label's font renders at scale 1.0; the 1.24 BlockScale transform then
     // visually enlarges the +1 authored px to ~+1.24 rendered px, same as every other authored metric here).
     public const int CardDescLineHeightAddendPx = 1;
 
-    // ---- WS-TEXT v4 end-turn font-size cap (px). Kept in lockstep with mirrorTextScale.css's `min(…, <cap>px)`. ----
+    // ---- End-turn font-size cap (px). Kept in lockstep with mirrorTextScale.css's `min(…, <cap>px)`. ----
     // Empirically tuned so EN "End Turn 3" just fits the 162×72 button box (the cap binds; ~one line) while a longer
     // locale ("Terminar turno") wraps to two lines within the same box. Only the end-turn entry carries it.
     public const int EndTurnMaxSizePx = 34;
 
-    // ---- WS-TEXT #16 / R8 item 12: wrapped-Label line spacing. Kept in lockstep with mirrorTextScale.css's end-turn
+    // ---- Wrapped-Label line spacing. Kept in lockstep with mirrorTextScale.css's end-turn
     // `line-height: calc(<WrappedLabelLineHeight>em + <WrappedLabelLineSpacingPx>px)`. -------------------------------
     // A two-line WordSmart-wrapped Label (only End Turn opts into Wrap today) needs a TIGHT line pitch: the game fits
     // the button's 162×72 box to ONE line at the locale's own font size, and the phone bump then has to lay two lines
     // inside that same box.
     //
-    // R8 fix — the two clients were measuring the gap against DIFFERENT baselines:
+    // Fix — the two clients were measuring the gap against DIFFERENT baselines:
     //   * web  : `line-height: calc(1em + 1px)` = fontPx + 1 (35px at the 34px cap).
     //   * native: `line_spacing` is EXTRA space added to Godot's NATURAL line box (ascent+descent), which for
     //     kreon_bold is ~1.3em — so the flat +1 gave a 45px pitch, ~10px looser per line than the web. Worse, Godot's
@@ -122,11 +122,11 @@ public static class TextScale
     // (`total_h > ceil(boxH + line_spacing)` breaks the loop), so TWO lines need pitch ≤ boxH − natural = 72 − 44 = 28,
     // i.e. ratio ≤ (28 − 1)/34 = 0.794. Anything looser silently drops the second line. A ONE-line label is completely
     // unaffected by the constant either way — Godot subtracts one line_spacing back out when centering, so the placement
-    // of the common EN "End Turn 3" is byte-identical to the pre-R8 build.
+    // of the common EN "End Turn 3" is byte-identical to the earlier build.
     public const double WrappedLabelLineHeight = 0.79;
     public const int WrappedLabelLineSpacingPx = 1;
 
-    // R8 item 12: the wrapped-Label line_spacing theme constant for a font whose natural line box is `naturalPx` at
+    // The wrapped-Label line_spacing theme constant for a font whose natural line box is `naturalPx` at
     // the rendered `fontPx`, inside a `boxHeightPx`-tall streamed box. Pure (Godot-free) so TextBuilder and the tests
     // share one implementation.
     //
@@ -145,10 +145,10 @@ public static class TextScale
         return Math.Min(target, (int)Math.Floor(boxHeightPx - (2 * naturalPx)));
     }
 
-    // ---- R5 vertical-centring nudge (px). Kept in lockstep with mirrorTextScale.css's `translate: 0 -Npx`. --------
-    // ROUND-5 RETUNE TO MEASURED 0. The R15/round-4 story ("counts read 1-2px BELOW centre, nudge them UP") was never
-    // pixel-measured (the comments said "tune live"). The round-5 A/B ink matrix over the 37-10 combat recording
-    // (verify-text-align.sh / scripts docs) MEASURED the opposite: the energy/pile count ink sat ~8-10px ABOVE its box
+    // ---- Vertical-centring nudge (px). Kept in lockstep with mirrorTextScale.css's `translate: 0 -Npx`. --------
+    // RETUNED TO MEASURED 0. The earlier story ("counts read 1-2px BELOW centre, nudge them UP") was never
+    // pixel-measured (the comments said "tune live"). An A/B ink matrix over a combat recording
+    // MEASURED the opposite: the energy/pile count ink sat ~8-10px ABOVE its box
     // centre on the shipped build, and ~0 with BOTH the growth-centering AND the nudge disabled — i.e. the compensation
     // OVER-lifted a label Godot's Center already places correctly. So the measured residual for these LOOSE-box Center
     // counts is 0: no nudge. Kept as named consts (value 0) so the (now-inert) mechanism + the mirrorTextScale.css
@@ -156,13 +156,13 @@ public static class TextScale
     // −NudgeYPx, so a non-zero here would lift as before. If this ever moves, the paired css `translate` MUST move too.
     public const int VerticalCenterNudgePx = 0;
 
-    // ROUND-5: was 4 (health-bar BlockLabel + draw/discard/exhaust pile Count). Measured residual = 0 (same loose-box
+    // Was 4 (health-bar BlockLabel + draw/discard/exhaust pile Count). Measured residual = 0 (same loose-box
     // Center story as VerticalCenterNudgePx). MP-HUD block copies this and can't be single-player-measured — LIVE-VERIFY.
     public const int BlockAndPileNudgePx = 0;
 
-    // ---- R5 growth-centering vertical alignment (streamed-Center plain Labels) ------------------------------------
+    // ---- Growth-centering vertical alignment (streamed-Center plain Labels) ------------------------------------
     // A per-label text-scale bump grows the font inside a box the GAME fitted to the ORIGINAL (unbumped) size. Godot's
-    // VerticalAlignment.Center then places the bumped glyph — and the round-5 pixel matrix proved this splits by
+    // VerticalAlignment.Center then places the bumped glyph — and a pixel matrix proved this splits by
     // whether the bumped glyph FITS the box:
     //   * LOOSE box (box >> glyph, e.g. the energy '3/3' 96x186 box, the 24x100 pile-count boxes): the bumped glyph
     //     still fits, so Godot Center lands it on the box centre EXACTLY as the game's unbumped glyph — no lift. The
@@ -187,7 +187,7 @@ public static class TextScale
     //   growAll  = max(0, GetHeight(scaledSize) − GetHeight(originalSize))  — the line-box growth from the bump (≥0).
     //   overflow = GetHeight(scaledSize) − boxHeight                        — how far the bumped line box exceeds the
     //                                                                          box (may be negative = fits ⇒ no lift).
-    //   nudge    = the per-entry NudgeYPx (0 after the round-5 retune).
+    //   nudge    = the per-entry NudgeYPx (0 after the retune).
     // Top → grow/2 (+nudge) unconditionally; Bottom/Fill → 0 (never centered/nudged — GrowthCenterPlain early-returns).
     public static float PlacementLift(PlacementValign valign, float growAll, float overflow, float nudge)
     {
@@ -233,7 +233,7 @@ public static class TextScale
             : new TextMetrics(e.Scale, e.LineHeight, e.ParagraphExtra, e.MaxSizePx, e.Wrap, e.NudgeYPx);
     }
 
-    // ---- WS-TEXT item 1: inline absolute [font_size=N] scaling ----------------------------------------------------
+    // ---- Inline absolute [font_size=N] scaling ----------------------------------------------------
     // A per-label bump (TextScale multiplier) rides the theme normal_font_size, so text authored at the theme size
     // scales — but an INLINE ABSOLUTE `[font_size=N]` bbcode run (e.g. a multiattack intent template
     // "3[font_size=18]x4[/font_size]": count at theme size, "xN" multiplier at an inline absolute size) is UNAFFECTED
@@ -260,7 +260,7 @@ public static class TextScale
     private static readonly Regex InlineFontSizeRegex =
         new(@"\[font_size=(\d+)\]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // ---- WS-TEXT item 2: scaled font-size with optional cap ------------------------------------------------------
+    // ---- Scaled font-size with optional cap ------------------------------------------------------
     // The final integer font px both clients apply: round(px × scale), then (when maxSizePx is set) capped at it —
     // min(round(px×scale), maxSizePx). Shared with TextBuilder.ApplyFont so the cap math has one home + a unit test;
     // maxSizePx null (or the v4 switch OFF, decided by the caller) → the plain round, i.e. today's behavior.
@@ -348,10 +348,10 @@ public static class TextScale
 
         // ---- Cards (card.tscn) — reusable component folded into many scenes; match the stable internal suffix
         // (VALID against every combat recording). No scene-file scope, works in hand / shop / rewards / deck view.
-        // The card description also carries the line-spacing tune (WS-TXT): tighter WRAPPED lines + a slightly larger
+        // The card description also carries the line-spacing tune: tighter WRAPPED lines + a slightly larger
         // gap at explicit `\n` breaks, to match the game. Values live here AND in mirrorTextScale.css (parallel).
         //
-        // R6 block-scale: the DescriptionLabel + TypeLabel FONT scales drop to 1.0 — the enlargement now rides a
+        // Block-scale: the DescriptionLabel + TypeLabel FONT scales drop to 1.0 — the enlargement now rides a
         // TRANSFORM scale (BlockScale table → MirrorNodeView.FoldCosmetic), so the font lays out at the game's REAL
         // size (byte-identical line breaks) and the glyphs are transform-scaled instead. The line-spacing ratios are
         // KEPT (they are font-relative, so they scale with the transform and stay tuned). Title / Energy / Star are
@@ -374,30 +374,30 @@ public static class TextScale
         new(Exact(TopBarDeckButton), [Exact("DeckCardCount")], 1.24),
 
         // ---- Energy counter (STALE #2 → per-character *_energy_counter.tscn :: Label). File SUFFIX covers every
-        // character variant (defect/ironclad/regent/silent); sample "3/3", a LOOSE box (96x186). ROUND-5: NudgeYPx
+        // character variant (defect/ironclad/regent/silent); sample "3/3", a LOOSE box (96x186). NudgeYPx
         // back to 0 (measured) — the growth-centering + nudge shoved it ~8px above centre; the overflow rule now leaves
         // this loose-box Center label on Godot's own centre (== the game).
         new(Suffix("_energy_counter.tscn"), [Exact("Label")], 1.24, NudgeYPx: VerticalCenterNudgePx),
 
         // ---- End turn (STALE #3 → end_turn_button.tscn :: Visuals/Label). css text-align:center NOT ported (native
-        // honors the game's real halign; live-verified no-op — see the class note above). WS-TEXT v4: the streamed
+        // honors the game's real halign; live-verified no-op — see the class note above). The streamed
         // FontSizePx is the game's per-LOCALE fitted size, so the 1.54 phone bump overshoots the 162×72 box (EN "End
         // Turn 3" fits at the game's 30 → 1.54 = 46 px, grossly overflowing). Cap at MaxSizePx and allow a two-line
         // WordSmart wrap: EN binds the cap and stays ~one line; a longer locale ("Terminar turno") wraps to two lines.
-        // MaxSizePx tuned empirically against the 40-09 combat recording's real button box — see the WS-TEXT report.
+        // MaxSizePx tuned empirically against a combat recording's real button box.
         new(Exact(EndTurnButton), [Exact("Visuals/Label")], 1.54, MaxSizePx: EndTurnMaxSizePx, Wrap: true),
 
-        // ---- Star counter (STALE #4 → star_counter.tscn :: MarginContainer/CountLabel). ROUND-5: NudgeYPx 0
+        // ---- Star counter (STALE #4 → star_counter.tscn :: MarginContainer/CountLabel). NudgeYPx 0
         // (shares VerticalCenterNudgePx). Absent from the settled 37-10 frame (no stars) — validated by analogy to
         // energy/piles (same loose-box Center regime) + LIVE-VERIFY on device.
         new(Exact(StarCounter), [Exact("MarginContainer/CountLabel")], 1.24, NudgeYPx: VerticalCenterNudgePx),
 
         // ---- Pile counts — draw/discard promoted to their own scenes (STALE #5/#6); exhaust already scene-scoped.
-        // ROUND-5: NudgeYPx back to 0 (BlockAndPileNudgePx). The round-5 ink matrix measured draw/discard ~-8.5px
+        // NudgeYPx back to 0 (BlockAndPileNudgePx). An ink matrix measured draw/discard ~-8.5px
         // (above centre) on the shipped build → ~0 with the compensation off; the overflow rule leaves these loose-box
         // Center counts on Godot's centre (== the game).
-        // R9 (WS-B) 1.24 → 1.16 (user decision): these three counts are the ONLY text-scale rules whose owning widget
-        // is ALSO view-scaled (ViewScale's 1.25 pile stamps — R8 for draw/discard, R9 for exhaust). The two multiply,
+        // 1.24 → 1.16: these three counts are the ONLY text-scale rules whose owning widget
+        // is ALSO view-scaled (ViewScale's 1.25 pile stamps — draw/discard and exhaust). The two multiply,
         // so a 1.24 count rendered 1.55× the game's size and overflowed the enlarged button; 1.16 · 1.25 ≈ 1.45 keeps
         // the digits inside the disc while still reading bigger than the game. NOTHING else moves — the star / energy /
         // deck counters stay at 1.24 (they are not view-scaled). Web twin: mirrorTextScale.css.
@@ -430,14 +430,14 @@ public static class TextScale
         new(Exact(Run), [Contains("MultiplayerPlayerContainer/"), Suffix("TopInfoContainer/StarCountContainer/StarCount")], 1.40),
         new(Exact(Run), [Contains("MultiplayerPlayerContainer/"), Suffix("TopInfoContainer/CardCountContainer/CardCount")], 1.40),
         new(Exact(Run), [Contains("MultiplayerPlayerContainer/"), Suffix("HealthBar/HpBarContainer/HpLabel")], 1.32),
-        new(Exact(Run), [Contains("MultiplayerPlayerContainer/"), Suffix("HealthBar/BlockContainer/BlockLabel")], 1.40, NudgeYPx: BlockAndPileNudgePx), // ROUND-5: block nudge 0 (lockstep with bare-suffix + web translate); MP-HUD unmeasurable single-player — LIVE-VERIFY
+        new(Exact(Run), [Contains("MultiplayerPlayerContainer/"), Suffix("HealthBar/BlockContainer/BlockLabel")], 1.40, NudgeYPx: BlockAndPileNudgePx), // Block nudge 0 (lockstep with bare-suffix + web translate); MP-HUD unmeasurable single-player — LIVE-VERIFY
         new(Exact(MultiplayerPlayerState), [Exact("TopInfoContainer/NameplateLabel")], 1.08),                        // LIVE-VERIFY
         new(Exact(MultiplayerPlayerState), [Exact("TopInfoContainer/EnergyCountContainer/EnergyCount")], 1.40),      // LIVE-VERIFY
         new(Exact(MultiplayerPlayerState), [Exact("TopInfoContainer/StarCountContainer/StarCount")], 1.40),          // LIVE-VERIFY
         new(Exact(MultiplayerPlayerState), [Exact("TopInfoContainer/CardCountContainer/CardCount")], 1.40),          // LIVE-VERIFY
 
         // ---- Health-bar HP/Block (VALID) — reusable health_bar.tscn folded into creatures; bare suffix covers all.
-        // ROUND-5: BlockLabel NudgeYPx back to 0 (BlockAndPileNudgePx). NOTE the HpLabel here is the round-5 TIGHT-box
+        // BlockLabel NudgeYPx back to 0 (BlockAndPileNudgePx). NOTE the HpLabel here is the TIGHT-box
         // control: its ×1.42 bump OVERFLOWS the ~31px bar box, so GrowthCenterPlain's overflow rule keeps its lift
         // (matches the shipped, correctly-centred HP) while dropping it for the loose-box counts. HP carries no nudge.
         new(null, [Suffix("HpBarContainer/HpLabel")], 1.42),

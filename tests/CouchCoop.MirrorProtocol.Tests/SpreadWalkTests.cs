@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// OWNER: WS-P (SpreadWalk). Pre-registered here by WS-O so WS-P never touches Program.cs. This ports the web
+// Wide-screen spread-walk suite. This ports the web
 // "wide-screen anchor re-layout (setStretch)" suite (frontend/src/mirror/__tests__/mirrorRenderer.spec.ts L546-1189,
 // ~30 assertions at F=1.3125, DELTA=600) re-expressed against SpreadIndex records:
 //   * web composed-matrix `tx`  ⇔  gNode.tx + rec.Dx   (ComposedTx below; the on-screen origin x)
@@ -14,7 +14,6 @@ namespace CouchCoop.MirrorProtocol.Tests;
 //   * plus F=1 ⇒ zero records (strict no-op) + an F-change determinism test.
 // The scene fixtures mirror the web ones verbatim in screen coordinates, then convert to the local parent-relative
 // contract before the pure index composes their globals.
-// WS-P touches ONLY SpreadIndex.cs + this file.
 internal static class SpreadWalkTests
 {
     // The widest stretch (web MIRROR_MAX_DESIGN_WIDTH / 1920 = 2520/1920) — the squeeze-field factor.
@@ -38,8 +37,8 @@ internal static class SpreadWalkTests
         OversizedCenterBackgroundStaysCentered();
         OwnerFloaterShiftsByOwnerAndRidesSubtree();
         OwnerFloaterUnshiftedWhenOwnerAbsent();
-        OwnerFloaterIgnoresOwnParentChainShift();       // R5 H1 repro: floater must ride ONLY the owner's Δ
-        OwnerFloaterFollowsZeroSizeOwnersVisualChild();  // R5 H2 repro: 0×0 holder → follow the painting card child
+        OwnerFloaterIgnoresOwnParentChainShift();       // Repro: floater must ride ONLY the owner's Δ
+        OwnerFloaterFollowsZeroSizeOwnersVisualChild();  // Repro: 0×0 holder → follow the painting card child
         GrabbedCardPlacedOnFieldMatchingHand();
         NormalInHandCardPlacedOnField();
         RenderedWidthOnWidenedBoxesOnly();
@@ -88,7 +87,7 @@ internal static class SpreadWalkTests
         MenuReticlesRideTheOptionColumn();
         MenuReticleMatchIsSceneIdentityScoped();
 
-        // WS-P2 incremental ApplySpread: the pre-resolved per-view stamp reproduces the reconciler's ApplySpread
+        // Incremental ApplySpread: the pre-resolved per-view stamp reproduces the reconciler's ApplySpread
         // math, and the per-drain dirty set narrows to exactly the changed/pruned nodes.
         ViewStampMatchesApplySpreadMath();
         DirtySetTracksChangesAcrossUpdates();
@@ -409,10 +408,10 @@ internal static class SpreadWalkTests
         Check.Close(ComposedTx(s, t, "tooltip"), 1700, "unknown owner → no shift (and not center-fallback)");
     }
 
-    // R5 H1 repro: the HoverTips container sits under a SHIFT-CLAIMING ancestor (a positional-claimer world layer), so
+    // Repro: the HoverTips container sits under a SHIFT-CLAIMING ancestor (a positional-claimer world layer), so
     // the tip's OWN parent chain contributes a non-zero ParentDx. A floater glued to its owner must ride ONLY the
     // owner's ABSOLUTE shift (Fact A: rec.Dx == ownerDx). The old `ctx.ParentDx + ownerDx` DOUBLE-COUNTS the parent
-    // chain and strands the tip far right — the R5-evidence symptom. RED against the pre-fix double-count.
+    // chain and strands the tip far right — the observed symptom. RED against the pre-fix double-count.
     private static void OwnerFloaterIgnoresOwnParentChainShift()
     {
         var (_, t, s) = Scene(
@@ -433,7 +432,7 @@ internal static class SpreadWalkTests
         Check.Close(ComposedTx(s, t, "tipLabel"), 1710 + Delta, "nested label rides the corrected tooltip");
     }
 
-    // R5 H2 repro: the owner is a 0×0 NHandCardHolder — a zero-size anchor node whose OWN pass-through claim rides its
+    // Repro: the owner is a 0×0 NHandCardHolder — a zero-size anchor node whose OWN pass-through claim rides its
     // ORIGIN, not the focused card's center. The tip must follow the holder's painting card CHILD (draw-order), so its
     // shift matches the card the user sees, not the holder origin. Plus a REPARENTED variant (card grabbed out of the
     // holder subtree → hit-test the holder origin over the interactive rects). RED against the pre-fix owner-origin ride.
@@ -673,7 +672,7 @@ internal static class SpreadWalkTests
     }
 
     // The SpreadIndex feeds InteractiveRectScan: a right-anchored Stop panel yields its TRUE (unshifted) game rect +
-    // its cumulative SpreadDx (+Δ). Non-Control / Ignore / hidden are excluded (frozen WS-O scan behavior).
+    // its cumulative SpreadDx (+Δ). Non-Control / Ignore / hidden are excluded (frozen scan behavior).
     private static void InteractiveRectsCarryGameRectAndSpreadDx()
     {
         var (state, t, s) = Scene(
@@ -847,7 +846,7 @@ internal static class SpreadWalkTests
         Check.Close(CenterX(s, t, "skip", 276), 960, "unfixed Skip center stays at 960 (off-center on the widened stage)");
     }
 
-    // WS-FPS walk bail: a drain whose every changed node carries only walk-IRRELEVANT flags (a spine track echo →
+    // Walk bail: a drain whose every changed node carries only walk-IRRELEVANT flags (a spine track echo →
     // None; text/effects volatile) skips the walk entirely — records/stamps stay last walk's, no views dirty, and
     // Bails increments. Any walk-relevant bit (Transform/Tint/Draw/Static/New/Removed), a ChangedIds/ChangeFlags
     // count mismatch (an unclassified change), or a factor change forces the full walk (fail-closed).
@@ -882,7 +881,7 @@ internal static class SpreadWalkTests
         Check.That(spread.Bails == 1 && spread.DirtyAll, "an F change walks with DirtyAll");
     }
 
-    // R11: a Region-only drain (a same-size atlas-FRAME swap — the Tezcatara flames) BAILS the wide-screen walk —
+    // A Region-only drain (a same-size atlas-FRAME swap — the Tezcatara flames) BAILS the wide-screen walk —
     // Region is deliberately absent from WalkRelevant, so the ~14ms/p50 spread walk no longer runs on every flame
     // frame (the 9-14fps driver). A SIZE-changing swap classifies Region|Draw (LocalRect derives from region size) and
     // Draw IS walk-relevant, so it still walks — the fail-closed guarantee.
@@ -944,7 +943,7 @@ internal static class SpreadWalkTests
         Check.That(Rec(s, "flameL").Dx < Rec(s, "flameR").Dx - 1, "the two flames get DIFFERENT shifts without the fix");
     }
 
-    // R7 FIX 1 truth table for IsBackgroundSceneRoot (exercised through the walk's re-center behavior, the observable
+    // Truth table for IsBackgroundSceneRoot (exercised through the walk's re-center behavior, the observable
     // proxy for the private predicate): every EVENT backdrop under `res://scenes/events/background_scenes/` — neow +
     // two siblings + the legacy tezcatara — is a matched root that re-centers on ½Δ (a boxless bg positioner would
     // otherwise strand at origin 0). A COMBAT bg (`scenes/backgrounds/<name>/<name>_background.tscn`) and a ROOM/MAP
@@ -978,7 +977,7 @@ internal static class SpreadWalkTests
         Check.Close(RootDx("res://scenes/rooms/combat_room.tscn"), 0, "combat room scene: NOT matched (stays pass-through)");
     }
 
-    // R7 FIX 1 core: a POINT-ANCHOR spine (a SpineSprite with a current anim + NO localRect, like neow's figure) under a
+    // Core: a POINT-ANCHOR spine (a SpineSprite with a current anim + NO localRect, like neow's figure) under a
     // MATCHED event-bg root inherits the root's rigid ½Δ re-center instead of taking its OWN origin-based positional
     // claim (clampGx(centerGx)·rate). The root CONSUMES the budget (childDeltaParentWidth=0 + childParentDx=½Δ), so the
     // spine — a DeltaParentWidth==0 rider — skips the whole spread body and rides ½Δ, landing over the re-centered
@@ -1114,8 +1113,7 @@ internal static class SpreadWalkTests
 
     // ---- Main-menu focus ribbons ----
 
-    // The main-menu tree the 6b legs share (shape taken from a live lobby recording, .sts2/bench/
-    // ws7-charselect-hostready.ndjson): the main_menu.tscn ROOT (0/1, so it hands its children the full anchor
+    // The main-menu tree the 6b legs share (shape taken from a live lobby recording): the main_menu.tscn ROOT (0/1, so it hands its children the full anchor
     // budget) → the 0.5/0.5 option COLUMN, the two 0/0-anchored 40x40 ribbon TextureRects the game re-positions each
     // frame to flank the focused option, and a genuine top-left corner widget (`ChangeProfileButton`, 0/0) that must
     // KEEP its corner. Node NAMES matter: the match is scene identity, not geometry.
@@ -1177,7 +1175,7 @@ internal static class SpreadWalkTests
         Check.Close(Rec(s, "nested").Dx, 0, "a NESTED ButtonReticleLeft (relPath 'Wrapper/…') does not match");
     }
 
-    // ---- WS-P2 incremental ApplySpread ----
+    // ---- Incremental ApplySpread ----
 
     // The SpreadViewStamp SceneReconciler.ApplySpread would derive for `id`, computed INDEPENDENTLY here from the
     // records (parent record Dx + parent global) — the ground truth the in-walk stamp must reproduce bit-for-bit.

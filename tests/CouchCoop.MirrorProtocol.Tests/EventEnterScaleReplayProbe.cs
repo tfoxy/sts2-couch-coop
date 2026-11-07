@@ -2,11 +2,11 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-SHOP (round 6) HEADLESS live-data verification of the REGULAR-event entry (item 2a) — env-gated on
+// HEADLESS live-data verification of the REGULAR-event entry — env-gated on
 // COUCHCOOP_MIRROR_EVENTENTER_PROBE_NDJSON (a recorder-running-BEFORE-entering-a-default_event capture, idle, then a
 // focus). Skips SILENTLY when unset. Asserts the OptionsContainer under default_event_layout.tscn resolves the event
 // OptionsContainer GROUP (1.20, TopCenter) — the stamp the entry trap (a per-drain gate deferring it until the first
-// focus) withheld until round-6's settle backstop. The "≤1 frame after the entry tween settles, WITHOUT any focus
+// focus) withheld until the settle backstop. The "≤1 frame after the entry tween settles, WITHOUT any focus
 // delta" TIMING is a native runtime property of the settle backstop (TweenReplayer transform-finish → one extra
 // ViewScaler.Apply pass); this pure replay proves the RESOLVE that pass will apply, and — when the entry tween is in
 // the capture — that a transform tween touches the options subtree (the trap's deferring family).

@@ -1,4 +1,4 @@
-// Pure geometry for the HoverTip 1.2× scale-up (Feature A / WS-VIEW). Given the per-direct-child paint-bearing
+// Pure geometry for the HoverTip 1.2× scale-up (Feature A). Given the per-direct-child paint-bearing
 // design-space AABBs of an NHoverTipSet root, produce a scale STAMP — a uniform factor `k` about a design-space
 // pivot P plus a clamp translation C that keeps the SCALED union inside the design viewport. The Godot-side
 // HoverTipScaler feeds the AABBs (each already spread-Dx-folded), converts the returned P/C into the root's parent
@@ -49,7 +49,7 @@ public static class HoverTipScaleMath
     // and anchors the vertical scale there (owner-less tips only), so the growth pushes up rather than off-screen.
     public const double EdgePad = 48;
 
-    // R5 non-overlap invariant (item 5): the design-px gap enforced between the SCALED tip box and its owner box. When
+    // Non-overlap invariant: the design-px gap enforced between the SCALED tip box and its owner box. When
     // the two overlap, the tip is translated (via the clamp channel) to the kind-preferred side (+SideGap), flipping /
     // vertical-falling-back on viewport overflow, so a focused hand card's keyword tip never covers the card.
     public const double SideGap = 12;
@@ -154,12 +154,12 @@ public static class HoverTipScaleMath
 
         var (cx, cy) = ClampOffset(union, px, py, scale, designWidth, designHeight);
 
-        // R5 owner-follow (item 6): a view-scaled owner (a reward/merchant item enlarged by the ViewScaler) moved from
+        // Owner-follow: a view-scaled owner (a reward/merchant item enlarged by the ViewScaler) moved from
         // its streamed rect; translate the whole tip by the owner's mapped-minus-raw centre so it stays glued.
         cx += ownerFollowX;
         cy += ownerFollowY;
 
-        // R5 non-overlap invariant (item 5): a SINGLE-BLOCK tip (straddle untouched) must not touch its owner box.
+        // Non-overlap invariant: a SINGLE-BLOCK tip (straddle untouched) must not touch its owner box.
         if (!straddle && ownerAabb is { } ob)
         {
             (cx, cy) = ApplySideClamp(union, px, py, scale, cx, cy, ob, ownerKind, designWidth, designHeight);
@@ -236,11 +236,11 @@ public static class HoverTipScaleMath
         return (cx, cy);
     }
 
-    // R7/R9 (WS-G2): the anchor a view-scale GROUP stamp grows FROM. Center keeps the box fixed at its centre;
+    // The anchor a view-scale GROUP stamp grows FROM. Center keeps the box fixed at its centre;
     // TopCenter pins the box TOP and grows DOWN (regular-event options); BottomCenter pins the box BOTTOM and grows UP
     // (ancient-event options, so the grow does not collide with the play area below). ComputeCenterStamp == Center.
     //
-    // R8 (WS-1) CORNER pivots — the first entries whose pivot X is NOT the box centre. A screen-CORNER widget must
+    // CORNER pivots — the first entries whose pivot X is NOT the box centre. A screen-CORNER widget must
     // grow INWARD from the corner it is anchored to, or the enlargement either walks off-screen or (with the clamp on)
     // gets shoved back in and visibly detaches from the edge the game aligned it to:
     //   BottomLeft  — pins the box's bottom-LEFT corner (draw pile at (15,985)).
@@ -248,7 +248,7 @@ public static class HoverTipScaleMath
     //                 already sits at 1996 > 1920 by design, so a centre pivot + AxisClamp would drag the whole panel
     //                 ~110px left off the right edge it is anchored to).
     //
-    // R9 (WS-B) EDGE pivot — an item anchored to a screen SIDE rather than a corner:
+    // EDGE pivot — an item anchored to a screen SIDE rather than a corner:
     //   MiddleRight — pins the box's RIGHT edge (pivot X = MaxX) but keeps pivot Y at the box CENTRE, so the widget
     //                 grows LEFT and splays symmetrically up/down. The combat EXHAUST pile lives mid-right at
     //                 (1830,800)-(1910,880): it is right-anchored like the discard pile but is NOT in a corner, so
@@ -263,27 +263,27 @@ public static class HoverTipScaleMath
         MiddleRight,
     }
 
-    // A CENTER-pivot scale stamp (WS-VIEW #19 general view-scale): scale `box` by `scale` about its own AABB centre,
+    // A CENTER-pivot scale stamp (general view-scale): scale `box` by `scale` about its own AABB centre,
     // then clamp the scaled box back inside [0,designWidth]×[0,designHeight]. Reuses the SAME ClampOffset channel as
     // the HoverTip pivot stamp so both features share one on-screen-clamp implementation (and the same Stamp shape,
     // so ViewScale.InverseMapPoint can invert either). Null for a degenerate (non-positive-extent) box.
     public static Stamp? ComputeCenterStamp(DesignAabb box, double scale, double designWidth, double designHeight) =>
         ComputeAnchoredStamp(box, scale, designWidth, designHeight, AnchorPivot.Center);
 
-    // R7/R9 (WS-G2) generalization of ComputeCenterStamp: scale `box` by `scale` about a per-PIVOT anchor (Center /
+    // generalization of ComputeCenterStamp: scale `box` by `scale` about a per-PIVOT anchor (Center /
     // TopCenter / BottomCenter / BottomLeft / BottomRight / MiddleRight), then add a design-space TRANSLATE
     // (translateX,translateY) into the clamp channel BEFORE the on-screen AxisClamp, and finally clamp the
     // translated+scaled box inside the viewport. The three *Center variants keep pivot X at the box centre (they grow
-    // symmetrically horizontally); the R8 CORNER variants move pivot X to the box's left/right edge so a
-    // corner-anchored widget grows inward; the R9 EDGE variant MiddleRight moves pivot X to the right edge while
+    // symmetrically horizontally); the CORNER variants move pivot X to the box's left/right edge so a
+    // corner-anchored widget grows inward; the EDGE variant MiddleRight moves pivot X to the right edge while
     // leaving pivot Y at the box centre (a side-anchored widget grows left and splays up/down).
     // A pure translate (scale==1) carries via the clamp channel — the ancient-event dialogue lift — and MirrorNodeView
     // FoldCosmetic (SCALE_SPREAD_ORDER) applies that clamp even at scale==1. Same Stamp shape → ViewScale.InverseMapPoint
     // inverts it (pivot-agnostic — the input inverse needs NO change for a new pivot). Null for a degenerate box.
     //
-    // R4-round4 NoClamp: when true the on-screen AxisClamp is SKIPPED (the clamp channel carries ONLY the requested
+    // NoClamp: when true the on-screen AxisClamp is SKIPPED (the clamp channel carries ONLY the requested
     // translate). The card-reward container (a full-viewport box scaled >1) always corner-pins under AxisClamp — the
-    // round-3 regression; an UNCLAMPED centre scale instead crops a symmetric border of edge content and keeps the
+    // earlier regression; an UNCLAMPED centre scale instead crops a symmetric border of edge content and keeps the
     // interior (cards + skip row) on-screen and centred. A per-card 1.15 uses NoClamp too so the composed inverse is
     // an exact centre scale (no clamp translation to compose).
     public static Stamp? ComputeAnchoredStamp(

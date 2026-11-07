@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.Assets;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-U (M3): the pure path + LRU-prune math the client disk cache turns into real IO. Sha keys are stable per url;
+// The pure path + LRU-prune math the client disk cache turns into real IO. Sha keys are stable per url;
 // tokens sanitize to a safe single-segment dir name; PrunePlan deletes oldest-write-first until under cap.
 internal static class AssetCachePathsTests
 {

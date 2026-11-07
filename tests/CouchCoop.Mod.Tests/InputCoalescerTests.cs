@@ -14,7 +14,7 @@ internal static class InputCoalescerTests
         NonHoverNeverDrops();
         EmptyTakeIsNull();
         GenerationsAndWatchEpochsNeverCoalesce();
-        // R10 WS-E — coalesced wheel runs.
+        // Coalesced wheel runs.
         AdjacentSameDirectionWheelTicksMerge();
         OppositeWheelDirectionsNeverMerge();
         AnythingBetweenTicksBreaksTheRun();

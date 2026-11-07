@@ -16,9 +16,9 @@
 // A browser repro recording uses that same header and works here unchanged: its `dir:"in"` lines have exactly
 // this shape, and its extra lines — the client's own
 // sends (`dir:"out"`) and its input events (`kind:"pointer"`/`"wheel"`/…) — are dropped by loadRecording. See
-// docs/agents/repro-recorder.md.
+// docs/repro-recorder.md.
 //
-// Semantics (matched to scripts/bench-mirror-replay.mjs's in-page fake WS + the record script):
+// Semantics (matched to the record script):
 //   * `server-reload` frames are stripped (dev-reload signal, never sent to the client).
 //   * If the recording lacks a directView session (a passive mirror recording never has one), a
 //     {"type":"session","directView":true} is synthesized on connect so the client renders the scene.
@@ -486,7 +486,7 @@ function handleConnection(conn, ctx) {
   // Synthesize a directView session up front, ALWAYS — even when the recording contains one of its own.
   //
   // Two reasons, and the second is now load-bearing. (1) A passive mirror recording never has one, so without this
-  // the client would sit on its pre-join screen. (2) WS-B stream gate: the client now connects with `?watch=0` and
+  // the client would sit on its pre-join screen. (2) stream gate: the client now connects with `?watch=0` and
   // DROPS scene-deltas until it decides it may watch, which for a replay target means "until a session grants
   // directView". A recording that carries its own directView session would deliver it at its RECORDED time —
   // potentially after the keyframe — and the client would have thrown that keyframe away. Sending it up front

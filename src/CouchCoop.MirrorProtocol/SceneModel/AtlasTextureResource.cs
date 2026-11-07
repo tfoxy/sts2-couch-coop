@@ -3,11 +3,11 @@ using System.Globalization;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// WS-ATLAS: the client-side crop of a standalone AtlasTexture `.tres` NODE texture (relic icons, intent icons).
+// The client-side crop of a standalone AtlasTexture `.tres` NODE texture (relic icons, intent icons).
 //
 // A Sprite2D/TextureRect whose texture is a standalone AtlasTexture `.tres` streams its `texture.resourcePath`
 // on the wire but NO textureRegion. Today the native client asks the host to crop it per-sprite
-// (`GET <x>.tres?format=png` → spirectl's cropped-region PNG). WS-ATLAS instead fetches the `.tres` TEXT (the
+// (`GET <x>.tres?format=png` → spirectl's cropped-region PNG). This instead fetches the `.tres` TEXT (the
 // Godot-native-first `/res` route serves `[gd_resource type="AtlasTexture" …]` raw by default), parses out the
 // atlas PAGE path + region + margin here, and lets the native client download the page ONCE (TextureStore,
 // decode-once) and crop each sprite client-side via TextureDrawer.DrawAtlasRegion — the SAME contract the web

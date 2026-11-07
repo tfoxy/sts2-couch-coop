@@ -929,7 +929,7 @@ describe("hidden-subtree memo on a widened stage", () => {
 
 // --- a recorded busy stream ---------------------------------------------------------------------------------------
 //
-// Replays the dense-VFX end-turn recording (`.sts2/bench/canvas-gpu-sep21/`, local and uncommitted; the PRIMARY
+// Replays the dense-VFX end-turn recording (local and uncommitted, found via `RECORDING_REL`; the PRIMARY
 // checkout's when this runs in a worktree) delivery by delivery, building after each one with no memo, the memo
 // with captures off and the memo with captures on, and logs the share of hidden-subtree nodes each replayed. Every
 // build carries the live renderer's capture ids (see `streamCaptureIds`), which is what kept the captures-off memo

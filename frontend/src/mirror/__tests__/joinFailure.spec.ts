@@ -12,7 +12,7 @@ import { reproRecorder } from "@/mirror/reproRecorder";
 // The defect these drills lock down: a throw inside the host's join handler was answered with an
 // `action-result` — a message type the mirror client ignores entirely — so the failure was delivered, discarded,
 // and the picker sat on "Joining…" forever with nothing in the host log either. That is exactly what a shipped
-// `KeyNotFoundException` did on 2026-08-15. Three defences are exercised here, in the order they fire:
+// `KeyNotFoundException` once did. Three defences are exercised here, in the order they fire:
 //   1. the host converts its own throw into `joinRejection: "join-failed"` + `joinRejectionDetail` (the channel
 //      the client already treats as TERMINAL);
 //   2. the client's `action-result` backstop, for a fault nobody remembered to convert;
@@ -94,7 +94,7 @@ describe("MirrorApp join-failure drills", () => {
   /**
    * "The join is over and the viewer has their form back."
    *
-   * R19 WP-2: a STEADY picker no longer renders the game's own screen name — that heading told the player
+   * A STEADY picker no longer renders the game's own screen name — that heading told the player
    * nothing about which control to use, and the <h1> is now reserved for the lifecycle words this file exists to
    * gate on ("Joining…", "Loading…", "Reconnecting…"). So the end of a join is asserted as the ABSENCE of both
    * the heading and the spinner, plus the roster being offered again — which is a stricter statement of the same

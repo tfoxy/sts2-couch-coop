@@ -2,7 +2,7 @@ using System;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// PURE (Godot-free) helper for the WS-PARTICLE `.tres` texture fix (kill switch COUCHCOOP_MIRROR_PARTICLE_TEXFIX,
+// PURE (Godot-free) helper for the `.tres` texture fix (kill switch COUCHCOOP_MIRROR_PARTICLE_TEXFIX,
 // read on the Godot side — this class is policy only, so the Exe suite covers it without a Godot host).
 //
 // THE BUG: particle textures (and shader sampler defaults) can reference an AtlasTexture `.tres`

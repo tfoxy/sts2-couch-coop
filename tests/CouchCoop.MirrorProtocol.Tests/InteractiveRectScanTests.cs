@@ -7,7 +7,7 @@ namespace CouchCoop.MirrorProtocol.Tests;
 // eligibility gate (visible + mouse-visible Stop/Pass + transform + box), the paint-order (OrderedIds, back-to-front)
 // output, the composed game-space global, the exclusion sets (remote follower / echo container / owner-anchored
 // floater / ancestor-hidden), and that the spread shift/width come from the SpreadIndex (0 with the F=1 stub, which
-// documents the WS-P seam). Node fixtures are re-expressed from the web pointerMap/mirrorRenderer scene shapes.
+// documents the seam). Node fixtures are re-expressed from the web pointerMap/mirrorRenderer scene shapes.
 internal static class InteractiveRectScanTests
 {
     public static void Run()
@@ -153,7 +153,7 @@ internal static class InteractiveRectScanTests
         Check.Close(childRect.LocalRect.Width, 100, "child localRect carried through");
     }
 
-    // With the F=1 SpreadIndex stub every record's SpreadDx/RenderedWidth is 0 (the WS-P seam — WS-P's SpreadWalkTests
+    // With the F=1 SpreadIndex stub every record's SpreadDx/RenderedWidth is 0 (the seam — SpreadWalkTests
     // exercise non-zero values). This pins the frozen contract: the scan reads the spread fields off the index.
     private static void SpreadFieldsComeFromIndexZeroWithStub()
     {

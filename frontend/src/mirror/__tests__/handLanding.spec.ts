@@ -131,7 +131,7 @@ describe("hand landing — one gesture, two backends, scored against the game", 
    * Distinct from `scoreLanding` above in the one way that matters: that pair of numbers is read after the
    * producer's re-emit has been adopted, and adopting it is what makes "drawn == game" true, so a client that eased
    * to the wrong place and was rescued by the re-emit passes it. This reads the decision itself. See
-   * `landingLog.ts`, and the round note in `docs/agents/`.
+   * `landingLog.ts`.
    */
   function expectPredicted(label: string, landings: LandingLogReport, spreadFactor: number): void {
     expect(landings.rows.length, `${label}: no hand tween was armed at all — the gate would be vacuous`).toBeGreaterThan(
@@ -410,7 +410,7 @@ describe("hand landing — one gesture, two backends, scored against the game", 
         if (spreadFactor !== 1) {
           it(`${gesture.name}: MID-FLIGHT, every claimed node is drawn on its own field (${mode})`, () => {
             // THE ASSERTION THE OTHER SEVEN CANNOT MAKE. Every gate above reads the HOLDER — a zero-size
-            // positioner that paints nothing — and reads it once the motion is over. The Aug-29 defect lived in
+            // positioner that paints nothing — and reads it once the motion is over. The original defect lived in
             // the holder's painted DESCENDANTS (`handNodes` grows a self-claiming `CardFx/Portrait` chain for
             // exactly this) and only while the producer was silent, so it was invisible to all of them.
             //

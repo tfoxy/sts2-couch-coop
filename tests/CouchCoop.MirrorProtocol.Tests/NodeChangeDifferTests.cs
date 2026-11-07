@@ -5,7 +5,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-P2 per-node change classification (NodeChangeDiffer) + the LOAD-BEARING completeness guard. The differ decides
+// Per-node change classification (NodeChangeDiffer) + the LOAD-BEARING completeness guard. The differ decides
 // which changed views can take the reconciler's light (transform/tint-only) apply; the guard reflects over
 // MirrorNode's public properties so a future wire field cannot silently become light-eligible.
 internal static class NodeChangeDifferTests
@@ -186,7 +186,7 @@ internal static class NodeChangeDifferTests
         Check.That(!NodeChangeDiffer.IsLightEligible(fx), "Effects is heavy");
     }
 
-    // R11 TextureRegion split. The single old TextureRegion→Draw rule became two: a null↔non-null transition stays
+    // TextureRegion split. The single old TextureRegion→Draw rule became two: a null↔non-null transition stays
     // Draw (a real crop appear/disappear), a same-size region↔region swap becomes the light-eligible Region flag (a
     // flip-book frame — the Tezcatara flames), and a SIZE-changing swap trips both Region and (via LocalRect) Draw so
     // it stays heavy.

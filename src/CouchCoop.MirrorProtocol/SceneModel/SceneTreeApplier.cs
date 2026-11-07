@@ -35,7 +35,7 @@ public static class SceneTreeApplier
             NodeChangeFlags flags;
             if (state.Nodes.TryGetValue(upsert.Id, out var existing))
             {
-                // WS-P2: MergeNode has old + new in hand — classify what actually changed (purely additive; the merged
+                // MergeNode has old + new in hand — classify what actually changed (purely additive; the merged
                 // node it returns is byte-identical to before, so replay parity is untouched).
                 var merged = MergeNode(existing, upsert);
                 state.Nodes[upsert.Id] = merged;
@@ -73,7 +73,7 @@ public static class SceneTreeApplier
             }
         }
 
-        // WS-3 card flights: same one-shot accumulate + bounded valve as the tween hints above. The bound is smaller
+        // Card flights: same one-shot accumulate + bounded valve as the tween hints above. The bound is smaller
         // because a flight is one per SHUFFLED CARD (a full reshuffle is tens, not hundreds) and a dropped flight
         // leaves its node frozen for its window rather than merely un-eased — so an unbounded backlog would be worse
         // here, not better.
@@ -90,7 +90,7 @@ public static class SceneTreeApplier
         state.Revision += 1;
     }
 
-    // WS-P2: OR-merge a node's change flags into the drain's accumulator (a node can be touched by several deltas in
+    // OR-merge a node's change flags into the drain's accumulator (a node can be touched by several deltas in
     // one drain — e.g. a move then a recolor).
     private static void AccumulateFlags(MirrorState state, string id, NodeChangeFlags flags)
     {

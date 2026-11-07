@@ -7,6 +7,12 @@
 # this script links or generates them from those committed files. A sibling repo's skills, listed in
 # EXTRA_SKILLS below, are linked in the same shape when that sibling is checked out next door.
 #
+# Maintainers also check the private companion repository out at the main checkout's private/
+# (gitignored). When it is there, every linked worktree gets a `private` link to it, its
+# private/agents/*.md and private/skills/* are linked in beside the public ones (a public agent or
+# skill of the same name wins), and the files named in PRIVATE_ROOT_LINKS are linked into the root.
+# A clone without it installs exactly as before.
+#
 #   Claude Code reads   .claude/agents/*.md, .claude/skills/*, .claude/settings*.json, /.mcp.json
 #   Codex CLI reads     .codex/agents/*.toml, .codex/config.toml, .codex/hooks.json, .agents/skills/*
 #   DeepSeek Harness    .dsh/profile.patch.yml (via scripts/dsh) and .agents/skills/*
@@ -37,7 +43,7 @@ REPO="$PWD"
 
 # Skills owned by sibling repos, linked in when that sibling is checked out next to this one.
 # Paths are relative to $REPO.
-EXTRA_SKILLS=(../spirectl/skills/spirectl ../godot-qa/skills/godot-qa ../godot-scene-web/skills/gsw-wgpu-renderer)
+EXTRA_SKILLS=(../spirectl/skills/spirectl ../godot-qa/skills/godot-qa ../godot-scene-web/private/skills/gsw-wgpu-renderer)
 
 DO_USER=0
 for arg in "$@"; do
@@ -55,25 +61,77 @@ link() { # link <target> <linkpath>
   ln -sfn "$1" "$2"
 }
 
-echo "==> agents"
-if compgen -G "$REPO/agents/*.md" > /dev/null; then
-  mkdir -p "$REPO/.claude/agents"
-  for f in "$REPO"/agents/*.md; do
-    link "../../agents/$(basename "$f")" "$REPO/.claude/agents/$(basename "$f")"
-    echo "    .claude/agents/$(basename "$f")"
-  done
+# --- private companion (begin) ---------------------------------------------------------------
+# The private companion repository lives at the MAIN checkout's private/ (gitignored). A linked
+# worktree reaches it through a `private` link, like the shared memory store below. A real
+# directory there is never replaced; a link pointing elsewhere is repaired. Root files listed in
+# PRIVATE_ROOT_LINKS are linked in from private/ when it has them; a real file is never replaced.
+PRIVATE_ROOT_LINKS=(.codex-orchestration.toml)
+echo "==> private companion"
+PRIVATE_MAIN="$(dirname "$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)")"
+if [ "$REPO" != "$PRIVATE_MAIN" ]; then
+  if [ -e "$REPO/private" ] && [ ! -L "$REPO/private" ]; then
+    echo "    (skipped: private is a real directory here, not a link to the main checkout)" >&2
+  elif [ -d "$PRIVATE_MAIN/private" ]; then
+    ln -sfn "$PRIVATE_MAIN/private" "$REPO/private"
+    echo "    private -> $PRIVATE_MAIN/private"
+  else
+    if [ -L "$REPO/private" ]; then rm -f "$REPO/private"; fi
+    echo "    (none: the main checkout has no private/)"
+  fi
+elif [ -d "$REPO/private" ]; then
+  echo "    private/ is checked out here"
+else
+  PRIVATE_ORIGIN="$(git -C "$REPO" remote get-url origin 2>/dev/null || true)"
+  PRIVATE_NAME="$(basename "${PRIVATE_ORIGIN:-$REPO}" .git)"
+  echo "    (none; maintainers: git clone git@github.com:tfoxy/$PRIVATE_NAME-internal.git private)"
 fi
+for f in "${PRIVATE_ROOT_LINKS[@]}"; do
+  if [ -e "$REPO/$f" ] && [ ! -L "$REPO/$f" ]; then
+    echo "    (kept the real /$f here — a real file is never replaced)"
+  elif [ -e "$REPO/private/$f" ]; then
+    ln -sfn "private/$f" "$REPO/$f"
+    echo "    /$f -> private/$f"
+  elif [ -L "$REPO/$f" ] && [ ! -e "$REPO/$f" ]; then
+    rm -f "$REPO/$f"
+    echo "    removed /$f (its private/ target is gone)"
+  fi
+done
+# --- private companion (end) -----------------------------------------------------------------
+
+# Public agents and skills first, then the private companion's; a private one named like a public
+# one is skipped (public wins).
+echo "==> agents"
+for src in agents private/agents; do
+  compgen -G "$REPO/$src/*.md" > /dev/null || continue
+  mkdir -p "$REPO/.claude/agents"
+  for f in "$REPO/$src"/*.md; do
+    n="$(basename "$f")"
+    if [ "$src" != agents ] && [ -e "$REPO/agents/$n" ]; then
+      echo "    (skipped $src/$n: a public agent of that name wins)" >&2
+      continue
+    fi
+    link "../../$src/$n" "$REPO/.claude/agents/$n"
+    if [ "$src" = agents ]; then echo "    .claude/agents/$n"; else echo "    .claude/agents/$n  ($src)"; fi
+  done
+done
 
 echo "==> skills"
-if compgen -G "$REPO/skills/*" > /dev/null; then
+for src in skills private/skills; do
+  compgen -G "$REPO/$src/*/" > /dev/null || continue
   mkdir -p "$REPO/.claude/skills" "$REPO/.agents/skills"
-  for d in "$REPO"/skills/*/; do
+  for d in "$REPO/$src"/*/; do
     name="$(basename "$d")"
-    link "../../skills/$name" "$REPO/.claude/skills/$name"
-    link "../../skills/$name" "$REPO/.agents/skills/$name"
-    echo "    .claude/skills/$name + .agents/skills/$name"
+    if [ "$src" != skills ] && [ -e "$REPO/skills/$name" ]; then
+      echo "    (skipped $src/$name: a public skill of that name wins)" >&2
+      continue
+    fi
+    link "../../$src/$name" "$REPO/.claude/skills/$name"
+    link "../../$src/$name" "$REPO/.agents/skills/$name"
+    if [ "$src" = skills ]; then tag=""; else tag="  ($src)"; fi
+    echo "    .claude/skills/$name + .agents/skills/$name$tag"
   done
-fi
+done
 
 # Sibling-repo skills. These used to be hand-made symlinks that no script recreated, so a fresh
 # clone or worktree silently lost them. A real directory here (a locally installed skill such as
@@ -220,7 +278,7 @@ echo "==> git hooks"
 # all to the main checkout's copy instead.
 git -C "$REPO" config core.hooksPath scripts/githooks
 git -C "$REPO" config commit.template .gitmessage
-echo "    core.hooksPath   scripts/githooks   (commit-msg; enforced on main only)"
+echo "    core.hooksPath   scripts/githooks   (commit-msg: enforced on main only; pre-push: public-tree check)"
 echo "    commit.template  .gitmessage"
 # Tags are what the release workflows trigger on, so they should be annotated and signed. Only
 # claimed when there is a key to sign with: setting it without one makes `git tag` fail outright.
@@ -363,5 +421,6 @@ next steps for DeepSeek Harness:
   - run \`scripts/install-agent-config.sh --user\` once to mirror ~/.claude/CLAUDE.md
     and ~/.claude/skills into the shared ~/.agents root.
 verify with: bash scripts/test-claude-guard.sh && bash scripts/test-install-agent-config.sh \\
-             && python3 scripts/test-gen-dsh-config.py && bash scripts/test-commit-msg-hook.sh
+             && python3 scripts/test-gen-dsh-config.py && bash scripts/test-commit-msg-hook.sh \\
+             && bash scripts/test-pre-push-hook.sh && bash scripts/test-check-public-tree.sh
 EOF

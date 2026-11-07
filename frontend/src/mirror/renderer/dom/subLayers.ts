@@ -240,7 +240,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
       spineTimeline.noteDomShapeChanged(); // an effect surface left
     }
 
-    // R10-B1: a multi-frame enemy-intent glyph on the COMPOSITOR path paints through its own strip viewport
+    // A multi-frame enemy-intent glyph on the COMPOSITOR path paints through its own strip viewport
     // instead of the single-frame atlas canvas, so the two are mutually exclusive (otherwise both would paint).
     // Resolved before the atlas branch and consumed by the intent branch below.
     const intentSpec = node.intentFrames;
@@ -252,7 +252,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     // Atlas-sprite paint: show the node's region out of a decode-once atlas (atlasBaker) instead of a CSS
     // `background-image: url(atlas)` crop of the whole PAGE (which re-decoded up to 16 MP per paint). Three
     // mechanisms, chosen per node on every walk (`record.atlasPaint` records which one is currently mounted):
-    //   DIV (default steady state, R10-PERF4 WS-4) — a `background-image` element over the region's BAKED BLOB.
+    //   DIV (default steady state) — a `background-image` element over the region's BAKED BLOB.
     //     Painted, not composited: this is what takes Canvas×38 down to single digits (and with it the Overlap
     //     promotions the canvases forced). Available only once the blob exists AND has decoded (Stage-C item 2:
     //     the swap is decode-gated, so a mechanism teardown can never leave blank frames while the blob rasters).
@@ -266,7 +266,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     // The element's own size/transform (the keep-aspect fit) is set by nodeStyle either way; the sprite element
     // (inset:0, 100%) fills it, or carries `atlasCanvasPlacement` when the node is INTERIOR — all mechanism-
     // agnostic, so a swap changes only WHAT paints, never WHERE.
-    // R10-PERF4 WS-3 (item 3) — THE structural win: under a hidden ancestor, warm the atlas PAGE and stop. 710 of a
+    // THE structural win: under a hidden ancestor, warm the atlas PAGE and stop. 710 of a
     // live scene's 734 atlas canvases were built inside closed dialogs / inactive screens. `preloadAtlas` is the
     // same decode-once request `drawAtlasRegion` would have made (idempotent, one per atlas url for the whole
     // session), so the reveal below is a synchronous `drawImage` — a deferral, never a cold fetch.
@@ -276,14 +276,14 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
       // STAGE-C item 1: the reveal's placeholder is a page-crop div now, and the page URL doubles as its display
       // source — warm it through the browser's own image cache too (and measure its natural size for the crop),
       // so the reveal's first placeholder frame paints instead of waiting on a CSS background fetch.
-      // …but ONLY for a page that will actually be page-cropped (Aug-19). A page over the size gate is never
+      // …but ONLY for a page that will actually be page-cropped. A page over the size gate is never
       // painted as CSS, so this warm would fetch and decode a second ~37MB copy of it — through the browser's
       // image cache this time — for an element that will mount a canvas. `warmImage`'s other job (measuring the
       // natural size for the crop) is moot for the same reason: there is no crop.
       if (atlasPlaceholderMechanism(node.textureUrl!, false) === "page") {
         warmImage(node.textureUrl!);
       }
-      // R10-PERF6 WS-P2: while the HATCHERY is pre-building this hidden element, also ask
+      // While the HATCHERY is pre-building this hidden element, also ask
       // for its region BLOB — with no waiter, so a landing bake never re-styles an invisible node. Gated on
       // `hatching` on purpose: that is the renderer's existing idle path (the hatch drain only runs after the
       // reconciles stop), so a live combat pays nothing, while the map that opens after it finds every region
@@ -355,7 +355,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
         if (record.atlasPaint === "div" && mechanism !== "div") {
           record.atlasCanvasReverts += 1; // a region change outran its bake (see ATLAS_STICKY_CANVAS_REVERTS)
         }
-        frozen.thaw(record.atlasCanvas); // WS-B: the outgoing canvas must not leave its stand-in behind
+        frozen.thaw(record.atlasCanvas); // The outgoing canvas must not leave its stand-in behind
         record.atlasCanvas?.remove();
         record.atlasCanvas = null;
         record.atlasRegionDiv?.remove();
@@ -403,7 +403,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
           sprite.style.transform = "";
           sprite.style.transformOrigin = "";
         }
-        frozen.syncStyle(record.atlasCanvas); // WS-B: the still has to move with the box it stands in
+        frozen.syncStyle(record.atlasCanvas); // The still has to move with the box it stands in
       }
       if (mechanism === "page") {
         // PAGE-CROP placeholder paint. The sprite element's own CSS box is the REGION box in both placement cases
@@ -439,7 +439,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
           record.atlasRegionDiv!.style.backgroundImage = `url("${blobUrl}")`;
         } else {
           const canvas = record.atlasCanvas!;
-          frozen.noteRepaint(canvas); // WS-B: a new region invalidates any still standing in for this canvas
+          frozen.noteRepaint(canvas); // A new region invalidates any still standing in for this canvas
           const w = Math.max(1, Math.round(region.width));
           const h = Math.max(1, Math.round(region.height));
           if (canvas.width !== w) canvas.width = w;
@@ -457,7 +457,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
             // Redraw once the atlas finishes decoding (first use), but only if this canvas still wants this region.
             drawAtlasRegion(ctx, url, region, () => {
               if (record.atlasKey !== key || !record.atlasCanvas) return;
-              frozen.noteRepaint(record.atlasCanvas); // WS-B: the atlas landed LATE — the still is now stale
+              frozen.noteRepaint(record.atlasCanvas); // The atlas landed LATE — the still is now stale
               const c = record.atlasCanvas.getContext("2d", { willReadFrequently: true });
               if (c) {
                 c.clearRect(
@@ -609,7 +609,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
         // The two authored profiles differ only by node name; the five per-character trail scenes share both
         // curves and both gradients and vary only in `modulate` (which streams).
         const profile = trailProfile(node.name);
-        // R11 B2: a reshuffle builds and tears down 60 of these trees. Take one from the free list when there is
+        // A reshuffle builds and tears down 60 of these trees. Take one from the free list when there is
         // one (see acquireTrailScaffold) — they differ only in what is WRITTEN into them.
         const scaffold = trails.acquire(profile.bands.length);
         record.trailDiv = scaffold.div;
@@ -636,7 +636,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
       }
     } else if (record.trailDiv) {
       trails.active.delete(record);
-      trails.release(record); // R11 B2: detaches it and files it for the next trail (see the pool)
+      trails.release(record); // Detaches it and files it for the next trail (see the pool)
       record.trailDiv = null;
       record.trailPaths = [];
       record.trailGradient = null;
@@ -680,7 +680,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     // + advances the frames itself off the live track-time signal).
     updateSpineLayer(record, node, deferHiddenLayers);
 
-    // Nine-patch-over-atlas slice spans. R19 6c: laid out across the RENDERED box — `record.spreadW` is this
+    // Nine-patch-over-atlas slice spans, laid out across the RENDERED box — `record.spreadW` is this
     // node's wide-screen `renderWidthOverride` (0 when it wasn't stretched), written by `visit` before this runs.
     ninePatch.sync(
       record,
@@ -803,7 +803,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
     if (record.textDiv) {
       paintEls.push(record.textDiv);
     }
-    // R10-PERF6 WS-B: a FROZEN canvas keeps its slot (it is only `display:none`) and its stand-in `<img>` rides
+    // A FROZEN canvas keeps its slot (it is only `display:none`) and its stand-in `<img>` rides
     // immediately behind it, so every ordering pass — this one, applyChildOrder, the targeted reorder — carries
     // the pair together and the still lands exactly where the canvas painted. Costs nothing while nothing is
     // frozen, which is every walk outside an open overlay.
@@ -865,7 +865,7 @@ export function createDomSubLayers(ports: DomSubLayerPorts): DomSubLayers {
       }
       paintGroup.push(...paintEls);
     }
-    // R10-B2: with a pinned rotation/glow loop on animSelf, the paint group nests INSIDE it (taking the group's own
+    // With a pinned rotation/glow loop on animSelf, the paint group nests INSIDE it (taking the group's own
     // backmost slot) so the loop actually moves/fades the pixels — an atlas-sprite node's paint is a <canvas>
     // sub-layer, which would otherwise be animSelf's untouched SIBLING. Unchanged (group and animSelf as siblings,
     // animSelf in FRONT) for the path-keyed bindings, whose paint rides animSelf as a CSS background instead.

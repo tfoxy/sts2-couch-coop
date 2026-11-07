@@ -1,4 +1,4 @@
-// R11 WS-M — MAP TRAVEL FROM THE MIRROR.
+// MAP TRAVEL FROM THE MIRROR.
 //
 // A coordinate click on a map point is accepted by the host and then IGNORED — the synthetic press/release pair
 // never satisfies the focus handshake a map point requires — so tapping a node on the mirror could never travel.
@@ -28,7 +28,7 @@ export const MAP_POINT_SCENE_FILE_SUFFIX = "map_point.tscn";
 // The semantic action id sent to the host. Kebab-case, matching the host's SemanticActionKind matcher.
 export const SELECT_MAP_NODE_ACTION_ID = "select-map-node";
 
-// WHERE THE ELEMENT LOOKUP LIVES (M0). "Which map point did you draw at this pixel" is a question about the
+// WHERE THE ELEMENT LOOKUP LIVES. "Which map point did you draw at this pixel" is a question about the
 // rendered frame, so it is the RENDERER's to answer — `mirrorRenderer.mapNodeAt`, whose DOM backend is the exact
 // z-stack walk that used to live here (mirrorRenderer.mapPointElementIdAt: top→bottom, matching
 // MAP_POINT_SCENE_FILE_SUFFIX on `data-scene-file`, reading `data-scene-root-id`, stopping at a

@@ -4,7 +4,7 @@ namespace CouchCoop.MirrorProtocol.Input;
 // `@spirectl/presentation/render` exposes to the web client (`playZoneThreshold`), restated here so the native
 // side and the browser side agree on one line. A dragged card counts as "in the play zone" when the finger's
 // design-Y is ABOVE it (numerically strictly below — see mirrorRenderer.applyHeldLift). Reused by
-// HeldCardLiftModel (the drag-lift hysteresis) and by WS-M for any "is this card being played?" decision, so it
+// HeldCardLiftModel (the drag-lift hysteresis) and by the input router for any "is this card being played?" decision, so it
 // is not duplicated per call site.
 public static class PlayZone
 {

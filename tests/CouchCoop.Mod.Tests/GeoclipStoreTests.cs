@@ -742,7 +742,7 @@ internal static class GeoclipStoreTests
     // stops covering the rig's own meshes: they land at recycled indices outside it and are never probed.
     // `meshesValidated` falls below the slots there are to fill, `unassociated` is DEFINED as that difference, and
     // the bake refuses — over an accident of allocator state at that instant, not over anything about the rig.
-    // Measured in .sts2/research/data/geoclip-driven-combat-20260909T002811Z: two kills alone refuse 3 of 4 rigs
+    // Measured over a driven combat run: two kills alone refuse 3 of 4 rigs
     // that bake clean in a virgin process.
     //
     // spirectl declines to pin one in its own memo, but that memo dies with the game. THIS store's receipt does

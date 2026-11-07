@@ -9,7 +9,7 @@ import {
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 import { mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 
-// R10-B3 ELEMENT ADOPTION across pooled-node recycling.
+// ELEMENT ADOPTION across pooled-node recycling.
 //
 // STS2 recycles its NCard visual pool by FREEING a card's shell and RE-INSTANTIATING it, so a card moving between
 // piles reaches the mirror as "remove ~28 Godot instance ids / add ~28 different ones" for what the viewer sees as
@@ -735,7 +735,7 @@ describe("full-walk parity", () => {
   });
 });
 
-// R10-PERF5 WS-1 — dormancy interaction, from this file's angle: the pool's teardown invariant ("no condemned
+// Dormancy interaction, from this file's angle: the pool's teardown invariant ("no condemned
 // element outlives its walk") must hold when the re-add lands somewhere DORMANT and therefore declines adoption.
 describe("a recycle whose destination is a dormant subtree", () => {
   it("declines the adoption, sweeps the pool, and leaves no detached element behind", () => {

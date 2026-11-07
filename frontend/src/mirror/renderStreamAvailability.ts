@@ -1,6 +1,6 @@
 // "Use new renderer (Beta)" — whether it can run for this viewer, and which renderer runs now.
 //
-// ONE computed availability (handoff-mirror-new-renderer.md §3 Q3). Its reasons, in precedence order, are what
+// ONE computed availability. Its reasons, in precedence order, are what
 // the settings panel shows under the checkbox:
 //
 //   core-build     the core wasm is missing, stale or unverifiable in this (dev) build, or failed to load; which one

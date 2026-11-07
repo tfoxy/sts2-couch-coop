@@ -16,7 +16,7 @@ import type { LoadedSpineClip } from "@/mirror/spineClip";
 //
 // The chest's spine has ONE meaningful clip, named "animation" (the lid opening), and the room sets it up as
 // SetAnimation("animation") + AddAnimation("shine_fade") + SetTimeScale(0): a CLOSED chest is that clip FROZEN at
-// t=0. The host's still bake, though, samples the MIDDLE of a clip (round-8 #14 — for most one-shots t=0 is a
+// t=0. The host's still bake, though, samples the MIDDLE of a clip (for most one-shots t=0 is a
 // near-empty wind-up frame), so the mirror rendered a half-open lid. And because the client's clip identity was
 // (anim, skin, mat, skel, stillMode), OPENING the chest changed nothing in the url — the producer only flips
 // `spinePaused` — so nothing ever re-fetched and the lid never moved either.

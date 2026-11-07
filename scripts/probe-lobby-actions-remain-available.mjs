@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// Live probe: the WS-2 QR host panel must not REPLACE or BLOCK the lobby's semantic actions.
+// Live probe: the QR host panel must not REPLACE or BLOCK the lobby's semantic actions.
 //
 // Structure is three legs -- available -> blocked -> available:
 //   A. dialog CLOSED : lobby semantic actions are advertised and execute, and a raw click on a lobby
@@ -14,7 +14,7 @@
 // to pick a character while the host happens to have the QR up. Only physical input is captured.
 //
 // Why the mouse filters are checked in SOURCE and not live: `dev scene node --properties` does not
-// expose `mouseFilter` at all (verified 2026-08-08 -- it exists only in spirectl's mirror scene
+// expose `mouseFilter` at all (it exists only in spirectl's mirror scene
 // WATCHER, never in the dev scene provider). The pre-2026-08 version of this probe "asserted" the
 // filter with `mouseFilter === undefined || ...`, which passed vacuously on every run. The real
 // behaviour is therefore asserted on the INPUT path below, and the declared filters are guarded by a

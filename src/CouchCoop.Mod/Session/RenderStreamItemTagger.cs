@@ -67,7 +67,7 @@ internal static class RenderStreamItemTagger
     private const string CardRewardScreenType = "NCardRewardSelectionScreen";
     private const string CardType = "NCard";
     private const string TreasureRelicType = "NTreasureRoomRelicHolder";
-    // CONFIRM TAP: the three confirm-eligible families the handoff asked to tag. The shop set is the whole merchant
+    // CONFIRM TAP: the three confirm-eligible families to tag. The shop set is the whole merchant
     // inventory (relic / potion / card / the card-removal service coin) because every one of them spends gold.
     private const string EventOptionType = "NEventOptionButton";
     private const string RestSiteType = "NRestSiteButton";

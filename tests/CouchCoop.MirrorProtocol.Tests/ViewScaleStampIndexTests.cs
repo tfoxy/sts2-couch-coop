@@ -4,9 +4,9 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R8 (WS-2) truth table for the PURE per-drain view-scale stamp index (ViewScaleStampIndex.Build) — the replacement
+// truth table for the PURE per-drain view-scale stamp index (ViewScaleStampIndex.Build) — the replacement
 // for the stateful native ViewScaler pass whose per-drain "drop to scale 1" branches were the event-option scale
-// flicker (reported after R4, R6 and R7 each patched one of them with a carry).
+// flicker (reported after successive patches each patched one of them with a carry).
 //
 // The load-bearing properties this file pins are the ones the old design could not state:
 //   * a node either resolves a stamp from THIS DRAIN'S wire state or it does not — there is no memory to carry and
@@ -110,7 +110,7 @@ internal static class ViewScaleStampIndexTests
     }
 
     // A GROUP whose own rect is momentarily degenerate (0×0 during a layout pass) falls back to the union of its
-    // paint-bearing subtree instead of dropping the stamp — the exact transient round-7's ViewScaleGroupCarry existed
+    // paint-bearing subtree instead of dropping the stamp — the exact transient the earlier ViewScaleGroupCarry existed
     // to paper over.
     private static void DegenerateGroupRectFallsBackToUnion()
     {

@@ -15,7 +15,7 @@ namespace CouchCoop.Mod.Tests;
 /// with translated copy on the phone (<c>MIRROR_SEAT_NOTICE_KEYS</c>) — but only down the REDIRECT path, where
 /// the join succeeded and the seat turned out to be unreachable afterwards. A join that was refused outright
 /// collapsed every one of them into <c>spawn-failed</c>, whose copy is "Couldn't start your game view — please
-/// try again": an invitation to retry the one thing a retry cannot fix. Measured Sep-15 2026: a pinned rejoin
+/// try again": an invitation to retry the one thing a retry cannot fix. Observed: a pinned rejoin
 /// onto a port another program owned failed in 606 ms and said exactly that, while
 /// "Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2" already existed in
 /// all 14 catalogs.

@@ -8,7 +8,7 @@ import { MIRROR_DESIGN_HEIGHT, MIRROR_DESIGN_WIDTH, MIRROR_MAX_DESIGN_WIDTH } fr
 // The stage is one <canvas>, re-uploaded and re-composited every frame. That composite is a 1:1 blit only when
 // the backing store equals the device-pixel box the compositor paints it into; at any other ratio — including a
 // ratio of 1920/1921 — a software compositor resamples the whole surface with a bilinear filter, every frame. A
-// Firefox profile of this stage on software WebRender (Sep-03) spent 7.2 ms/frame in exactly those paths.
+// Firefox profile of this stage on software WebRender spent 7.2 ms/frame in exactly those paths.
 //
 // The condition is BINARY, so this file is arithmetic and pins real numbers rather than tolerances. Everything
 // here is offline: a browser is needed to observe the cost, not to compute the sizes.

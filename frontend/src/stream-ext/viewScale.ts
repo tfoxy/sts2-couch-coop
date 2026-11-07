@@ -1,7 +1,7 @@
-// stream-ext/viewScale.ts — the render-stream client's READABILITY-SCALING module (TAG3).
+// stream-ext/viewScale.ts — the render-stream client's READABILITY-SCALING module.
 //
 // The old mirror's `uiScaling` table (`mirror/viewScale.ts`), applied as `scaleAbout` overrides instead of DOM
-// block-scale / font-size changes: **no text reflow** (the user's Q3 answer). Each widget the table enlarges is scaled
+// block-scale / font-size changes: **no text reflow**. Each widget the table enlarges is scaled
 // as one rigid subtree about its authored anchor, so labels grow and may overlap neighbours rather than re-laying out.
 // The table is matched over `(scene, path)`; the three leaf-detected entries (card-reward screen group + per-card,
 // the treasure relic holder) arrive as the mod's groups because scene + path are not enough for them.

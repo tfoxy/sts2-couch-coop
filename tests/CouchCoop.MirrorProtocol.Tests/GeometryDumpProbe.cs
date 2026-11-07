@@ -4,14 +4,14 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-G2 headless geometry/path DUMP probe (no Godot, no display, no live lock) for the R2/R3/R4/R7/R9/R19/R20
+// Headless geometry/path DUMP probe (no Godot, no display, no live lock) for the
 // blocking captures. Replays a recorded mirror stream into a MirrorState, runs the REAL GlobalTransformIndex +
 // SpreadIndex at a widened factor (F≠1, phone aspect), and prints per matching node: id, name, type-leaf, owning
 // scene file, parent id, LocalRect, and the design-space AABB (spread-Dx folded). Env:
 //   COUCHCOOP_GEOMDUMP_NDJSON  — recording path (required; skips silently when unset/absent).
 //   COUCHCOOP_GEOMDUMP_FILTER  — comma-separated substrings; a node matches if any hits its name/type/sceneFile/
 //                                relPath. Empty/unset = dump nothing (keeps the suite quiet).
-//   COUCHCOOP_GEOMDUMP_TWEENS  — "1" dumps every accumulated tween hint whose target matches the filter (R3 trace):
+//   COUCHCOOP_GEOMDUMP_TWEENS  — "1" dumps every accumulated tween hint whose target matches the filter:
 //                                target, property, durationMs, start/end transform 6-tuples + decomposed scale.
 //   COUCHCOOP_GEOMDUMP_F       — widen factor (default 2255/1920).
 // Env-gated, no assert; stays green in a plain checkout.

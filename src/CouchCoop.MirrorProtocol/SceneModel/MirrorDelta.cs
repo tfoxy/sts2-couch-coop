@@ -17,7 +17,7 @@ public sealed record MirrorTweenHint(
     double? StartOpacity,
     IReadOnlyList<double>? CancelTransform = null);
 
-// WS-3: a declarative CARD FLIGHT the client integrates locally (TS MirrorCardFlightHint) — the discard→draw
+// A declarative CARD FLIGHT the client integrates locally (TS MirrorCardFlightHint) — the discard→draw
 // shuffle sweep, or (`Kind`) the hand→discard fly that carries the card the player just played.
 // Unlike MirrorTweenHint this is NOT a Godot tween — the game animates NCardFlyShuffleVfx in a per-rendered-frame
 // async loop — so there is no CSS transition to arm: the client steps the game's own integrator per rAF and writes
@@ -65,7 +65,7 @@ public sealed class MirrorDelta
     public IReadOnlyList<string>? OrderedIds { get; init; }
     public MirrorOrderPatch? OrderPatch { get; init; }
     public IReadOnlyList<MirrorTweenHint> Hints { get; init; } = [];
-    // WS-3 declarative card flights started this tick (see MirrorCardFlightHint). Separate from Hints: these are
+    // Declarative card flights started this tick (see MirrorCardFlightHint). Separate from Hints: these are
     // integrated, not transitioned, and they come with the producer having STOPPED streaming their nodes.
     public IReadOnlyList<MirrorCardFlightHint> CardFlights { get; init; } = [];
 }
@@ -79,13 +79,13 @@ public sealed class MirrorState
     public List<string> OrderedIds { get; set; } = [];
     public int Revision { get; set; }
     public HashSet<string> ChangedIds { get; } = new(StringComparer.Ordinal);
-    // WS-P2 per-node change classification, accumulated (OR-merged) across a drain's deltas alongside ChangedIds and
+    // Per-node change classification, accumulated (OR-merged) across a drain's deltas alongside ChangedIds and
     // cleared in the same FinishDrain lifecycle. The reconciler reads it to take a light (transform/tint-only) apply
     // for an eligible existing view; identity-cache invalidation reads it for a Static-bearing drain. Purely additive
     // — never affects node merging, so cross-language replay parity is unchanged.
     public Dictionary<string, NodeChangeFlags> ChangeFlags { get; } = new(StringComparer.Ordinal);
     public List<MirrorTweenHint> PendingHints { get; } = [];
-    // WS-3: same one-shot accumulate/drain lifecycle as PendingHints, for declarative card flights.
+    // Same one-shot accumulate/drain lifecycle as PendingHints, for declarative card flights.
     public List<MirrorCardFlightHint> PendingCardFlights { get; } = [];
 
     public static MirrorState Create() => new();

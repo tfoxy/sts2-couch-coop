@@ -17,7 +17,7 @@ namespace CouchCoop.MirrorProtocol.Tests;
 // present). Skips SILENTLY when the env var is unset / the file is absent (nothing committed).
 internal static class TextOverlayPlanProbe
 {
-    // The user's flagged elements, by wire node NAME (see .ai/plans/trackz-diagnosis.md).
+    // The flagged elements, by wire node NAME.
     private static readonly string[] TargetNames = { "HpLabel", "AmountLabel", "BlockLabel", "WearsOff" };
 
     public static void Run()

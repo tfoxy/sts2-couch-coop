@@ -6,7 +6,7 @@
 // decode happens, never HOW MUCH decoding happens — a page is loaded once per session either way, `getAtlas` is
 // idempotent, and a page the demand path grabbed first is a plain map hit here.
 //
-// WHAT WARMING A PAGE COSTS, since Sep-18. A warm loads the page and records its size; it does NOT mint an
+// WHAT WARMING A PAGE COSTS. A warm loads the page and records its size; it does NOT mint an
 // `ImageBitmap` for it any more. It used to, and because this chain warms the whole list at mount that pinned
 // ~205 MB of page-owned pixels from the moment of join — on a phone, the least reclaimable thing on the page, and
 // the measured cause of iOS killing the web view on character select. Ownership is now earned by a real draw and
@@ -93,7 +93,7 @@ const PREFETCH_ATLASES = [
 
 // THE CREATURE STAND-IN (creaturePlaceholder.ts) IS WARMED FIRST — ahead of every atlas.
 //
-// LIVE-FOUND, 2026-09-21. On a first-ever page load the stand-in's own `<img>` mounted with `complete === false`
+// LIVE-FOUND. On a first-ever page load the stand-in's own `<img>` mounted with `complete === false`
 // and `naturalWidth === 0`: the element was there, and the creature's box was as empty as it had been without
 // the feature. The stand-in exists precisely for a cold load, so warming it BEHIND ~12 atlas pages of megabytes
 // made it late exactly when it was the whole point. It is 12 KB against those megabytes, so moving it to the
@@ -179,7 +179,7 @@ export interface MirrorImagePrefetchStats {
    * pixels. Published because the cost was an ESTIMATE for a whole round and estimates do not survive contact
    * with a device.
    *
-   * READ IT AS A PRICE LIST, NOT AS RESIDENCY — and that distinction cost a round (Sep-18). It is a CUMULATIVE
+   * READ IT AS A PRICE LIST, NOT AS RESIDENCY — and that distinction is easy to miss. It is a CUMULATIVE
    * counter over this chain's own 12-entry plan: it is written once per page as the walk passes it, it can never
    * fall, and nothing outside the walk can make it rise. A crash report quoting it as "what the page was
    * holding" is quoting the wrong number, and a session that showed it flat across a screen change was never
@@ -236,7 +236,7 @@ let prefetchParamOverride: string | null | undefined;
 // and 0 is a MEANINGFUL value rather than a half-disabled feature. Read per call, not at module load, so the test
 // seam works and a second mirror view sees the current URL.
 //
-// THE READ WAS MISSING (Sep-18). This returned `null` unconditionally, so the lever every comment in this file
+// THE READ WAS MISSING. This returned `null` unconditionally, so the lever every comment in this file
 // documents — and every device measurement quoted below was taken with — has been inert since the first public
 // release. Restored rather than deleted: it is the cheapest A/B a phone session has for this chain's cost, and
 // the iPhone round needed exactly it.

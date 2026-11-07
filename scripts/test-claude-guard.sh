@@ -93,6 +93,21 @@ else
   echo "  (skipped worktree rule: no linked worktree on this machine)" >&2
 fi
 
+echo "== must block: force-adding the private companion =="
+expect deny 'git add -f private'
+expect deny 'git add --force private/AGENTS.md'
+expect deny 'git add -fA ./private'
+expect deny 'git -C /tmp/x add -f -- private/docs'
+expect deny 'cd x && git add -f private/'
+expect deny "git add -f 'private/x y'"
+echo "== must allow: other adds =="
+expect allow 'git add private'
+expect allow 'git add -f privateer.md'
+expect allow 'git add -f docs/private/x'
+expect allow 'git -C private add -f .'
+expect allow 'git add -A'
+expect allow 'git commit -m "git add -f private"'
+
 echo "== must warn, not block =="
 if [ -L "$MAIN/frontend/node_modules" ] || [ -L "$MAIN/node_modules" ]; then
   expect warn 'git add -A'
@@ -129,7 +144,12 @@ expect allow 'xvfb-run -a npx vitest run browser.test.ts'
 expect allow 'rg -n Xvfb agents docs'
 expect allow 'cat docs/agents/qa-recipes.md'
 
-echo "== must allow: every shell line in the committed agent docs =="
+echo "== must allow: every shell line in the agent and contributor docs =="
+# The agent docs live in the private companion when it is checked out at private/; the public docs are always read.
+harvest_docs=()
+for doc in docs/*.md docs/workshop/*.md private/docs/agents/*.md private/docs/mirror-combat-bench.md; do
+  [ -f "$doc" ] && harvest_docs+=("$doc")
+done
 # Expected-deny: the docs quote these to forbid them. Anything else denied here is a false positive.
 expected_deny_re='(npm run build([^:]|$)|dotnet test|pkill -f <|sts2 game deploy)'
 harvested=0; flagged=0
@@ -143,7 +163,7 @@ while IFS= read -r line; do
     fi
   done
 done < <(
-  awk '/^```/{inblock=!inblock; next} inblock' docs/agents/*.md docs/mirror-combat-bench.md 2>/dev/null \
+  awk '/^```/{inblock=!inblock; next} inblock' "${harvest_docs[@]}" 2>/dev/null \
   | sed 's/^[[:space:]]*//' \
   | grep -E '^(node|npx|npm|pnpm|dotnet|sts2|scripts/|\.\./|python3|adb|git|cargo|mise|xvfb-run|COUCHCOOP_|REPEATS=|EFFECTS=)' \
   | sort -u

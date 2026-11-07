@@ -21,7 +21,7 @@ type FontRegistration = { family: string; url: string; weight: string | null; st
   loads: Array<{ font: string; text: string; loadedFaces: Array<{ family: string; weight: string; style: string;
     stretch: string; status: string }> }> };
 const diagnosticRegistrations = new Map<string, FontRegistration>();
-// Cached on `location.search` itself (R2-P3): this runs for every text node of every build via `semanticText` →
+// Cached on `location.search` itself: this runs for every text node of every build via `semanticText` →
 // `ensureNodeFonts`, and the search string only ever changes on a navigation, never between two calls in the same
 // build. Exact by construction — a stale cache is impossible because the key IS the value being cached against.
 //
@@ -99,7 +99,7 @@ export function ensureNodeFonts(node: {
 }
 
 /**
- * FILED, NOT FIXED (R8): the dedup key is the FAMILY ALONE, so a family's second face is never injected.
+ * FILED, NOT FIXED: the dedup key is the FAMILY ALONE, so a family's second face is never injected.
  *
  * If one family ever arrives with two different URLs — a bold and a regular resolving to different `.ttf`s under
  * one `font-family` — the second `@font-face` is dropped on the floor, and `document.fonts.check` for a shorthand

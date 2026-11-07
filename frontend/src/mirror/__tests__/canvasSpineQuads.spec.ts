@@ -20,7 +20,7 @@ import {
 import { createTextureBridge } from "@/mirror/canvas/textureBridge";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorNode, type MirrorState } from "@/mirror/sceneTree";
 
-// SPINE STILLS INTO THE CANVAS (M3 A2).
+// SPINE STILLS INTO THE CANVAS.
 //
 // A spine paints EARLY — ranks 41 to 630 on the gated recordings — and 40 to 576 later canvas commands overlap it:
 // HP bars, block outlines, the shop's slot plates. The overlay hoists every spine unconditionally, so an `<img>`
@@ -482,7 +482,7 @@ describe("the spine still registry", () => {
   });
 
   // OWNED PIXELS. A decoded `<img>` frame is a CACHE the phone throws away under memory pressure, after which
-  // `texImage2D(img)` re-decodes a 4-16 MB WebP INSIDE the build — 20-58 ms frame tasks on a Moto G86 trace.
+  // `texImage2D(img)` re-decodes a 4-16 MB WebP INSIDE the build — tens of ms per frame task on a mid-range phone.
   // These tests pin the discipline that fixes it without giving back what the bytes-only still path saved.
 
   it("refuses the build it starts a decode on, then uploads the pixels it OWNS", async () => {

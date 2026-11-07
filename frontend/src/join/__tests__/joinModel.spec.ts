@@ -152,7 +152,7 @@ describe("computeMirrorJoinMode", () => {
   });
 });
 
-// WS-B STREAM GATE. The user-facing rule: connecting to a host that has multiplayer active (lobby, saved
+// STREAM GATE. The user-facing rule: connecting to a host that has multiplayer active (lobby, saved
 // multiplayer game, or multiplayer run) must NOT stream/render the host's game in the background. It streams only
 // once the viewer chose to control the host (directView) or a seat (joined), or when the host is off the
 // multiplayer screens entirely. C# twin: JoinModel.ShouldWatchHostStream (JoinModelTests).
@@ -564,7 +564,7 @@ describe("iOS Add-to-Home-Screen install hint", () => {
   });
 });
 
-// R19 WP-2c — the multiplayer lobby picker's copy.
+// The multiplayer lobby picker's copy.
 //
 // The screen used to open with a "Mirror" kicker and the game's own screen name as an <h1>, above a name field
 // called "Add a player" and an unlabelled list of rows: three headings, none of which said which control did
@@ -610,7 +610,7 @@ describe("mirror picker copy", () => {
 
 });
 
-// R19 WP-2d — the character icon beside each roster row. This is what makes seats tellable apart in the
+// The character icon beside each roster row. This is what makes seats tellable apart in the
 // multiplayer SAVE lobby, where every row is otherwise just a name.
 describe("seatCharacterIconUrl", () => {
 

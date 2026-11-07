@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 namespace CouchCoop.MirrorProtocol.Tests;
 
 // Optional recording-replay smoke: point COUCHCOOP_MIRROR_REPLAY_NDJSON at an ndjson stream (e.g.
-// .sts2/bench/combat-baseline.ndjson) and every scene-delta line is parsed + applied, asserting no exceptions and a
+// a recorded combat session) and every scene-delta line is parsed + applied, asserting no exceptions and a
 // strictly monotonic revision. Skips SILENTLY when the env var is unset or the file is absent, so the suite stays
 // green in a checkout without a recording (nothing is committed).
 internal static class RecordingReplayTests

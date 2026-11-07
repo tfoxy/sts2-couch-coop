@@ -26,7 +26,7 @@ const DEFAULT_SELECTOR = ".game-cursor, .game-cursor body, .game-cursor #app, .g
 // It used to be a `game-cursor-pressed` class toggled on <html> with its own full
 // `.game-cursor-pressed *` rule set. `cursor` is applied per element, so that made every
 // pointerdown AND pointerup invalidate the style of every element in the document: on the
-// mirror's map screen (3,667 elements) an Aug-11 phone trace measured ~594ms of style
+// mirror's map screen (3,667 elements) a phone trace measured ~594ms of style
 // recalc per tap — 76% of a ~780ms tap INP.
 //
 // Every alternative that changes the cursor document-wide costs the same full recalc

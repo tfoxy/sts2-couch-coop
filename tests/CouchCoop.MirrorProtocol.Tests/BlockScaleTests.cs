@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R6 card block-scale table (a TextScale sibling): the identity-keyed TRANSFORM scale MirrorNodeView.FoldCosmetic
+// Card block-scale table (a TextScale sibling): the identity-keyed TRANSFORM scale MirrorNodeView.FoldCosmetic
 // folds about the node's own rect centre. Covers the two card blocks (description, type-plaque), the suffix match
 // across owning scenes (hand / picker / reward), that the type LABEL itself gets no block scale (it inherits its
 // parent TypePlaque's), and the neutral cases. Kept in lockstep with mirrorTextScale.css's transform-scale rules.
@@ -71,7 +71,7 @@ internal static class BlockScaleTests
         new[] { Math.Cos(r), Math.Sin(r), -Math.Sin(r), Math.Cos(r), 0.0, 0.0 };
 
     // The two card blocks: the description label (leaf; scales its own text) → 1.24; the type PLAQUE (bg+child unit)
-    // → 1.24 (WS-text round-4 (P5-b): bumped from 1.16 — the font itself stays pinned at 1.0, see TextScale.cs's
+    // → 1.24 (bumped from 1.16 — the font itself stays pinned at 1.0, see TextScale.cs's
     // TypeLabel entry, so byte-identical wrap is unaffected). Title/energy/star are NOT in the block table (they
     // keep font-size scaling) → neutral 1.0.
     private static void DescriptionAndTypePlaqueScale()

@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace CouchCoop.Mod.HostUi;
 
-// WS-F: which IPv4 address does the host advertise to phones/browsers (lobby QR, URL label, availability log, and
+// Which IPv4 address does the host advertise to phones/browsers (lobby QR, URL label, availability log, and
 // the LAN discovery reply — all four read the SAME value)?
 //
 // The old answer was "the first IPv4 on the first Up, non-loopback interface the OS happens to enumerate", i.e. no

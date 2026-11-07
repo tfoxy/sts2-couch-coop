@@ -471,7 +471,7 @@ export function createCanvasMirrorRenderer(
       scheduler.armAnimation(nowMs());
     },
 
-    // R6 P6-A. Accepted unconditionally and consumed only by the scheduler's
+    // Accepted unconditionally and consumed only by the scheduler's
     // animation callback; a pulled reconcile remains the sole build/paint/ack.
     setReconcilePull(pull: ReconcilePull): void {
       scheduler.setReconcilePull(pull);

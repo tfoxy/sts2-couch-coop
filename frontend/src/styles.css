@@ -163,8 +163,8 @@ h1 {
   margin: clamp(0.8rem, 2.8cqw, 1.25rem) 0 0;
 }
 
-/* R20 — NOTHING ABOVE ME, NOTHING TO CLEAR. The margin above separates the form from a kicker + <h1>, which used to
-   be unconditional; R19 drops both on the steady mirror picker, so on that screen the form leads the panel and its
+/* NOTHING ABOVE ME, NOTHING TO CLEAR. The margin above separates the form from a kicker + <h1>, which used to
+   be unconditional; both are dropped on the steady mirror picker, so on that screen the form leads the panel and its
    own top margin stacked on the panel's `padding` as dead space. `:first-child` is precisely the predicate "no
    preceding sibling" — and a Vue `v-if` that did not render leaves only a comment node, which `:first-child`
    ignores, so it reads the same shape the player sees. All four sides, not just the top: a UA default margin has to

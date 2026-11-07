@@ -13,7 +13,7 @@ namespace CouchCoop.Mod.Server;
 /// literal IPv4 over plain HTTP, gated by the browser's Local Network Access permission. That buys a secure
 /// context (PWA install, service worker, wake lock) without the <see cref="LocalIpCoCertificateProvider"/>
 /// trick of resolving a public name to a private address, which routers with DNS-rebinding protection
-/// refuse. See <c>docs/agents/local-network-access.md</c> for the measured browser behaviour.
+/// refuse. See <c>docs/local-network-access.md</c> for the measured browser behaviour.
 /// </para>
 /// <para>
 /// <b>Why it is configurable.</b> The shipped default is the origin this project publishes, but the value is

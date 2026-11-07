@@ -13,7 +13,7 @@ export interface AudioUnlockEnv {
 }
 
 function silentPrelude(): Blob {
-  const frames = 14_400; // 300 ms at 48 kHz, the prelude length measured on the Moto G31.
+  const frames = 14_400; // 300 ms at 48 kHz, the prelude length found to unlock reliably on a mid-range Android phone.
   const bytes = new Uint8Array(44 + frames * 2);
   const view = new DataView(bytes.buffer);
   const fourcc = (offset: number, value: string): void => {

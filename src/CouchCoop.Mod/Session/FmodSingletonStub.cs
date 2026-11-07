@@ -90,7 +90,7 @@ internal sealed record FmodProxyResult(string Where, FmodProxyOutcome Outcome, s
 /// and a Harmony patch only rewrites a method's own body, never a copy the JIT already inlined somewhere else.
 /// A mod that initializes BEFORE CouchCoop and patches a method gets that method's replacement JIT-compiled at
 /// patch time, optimized, with small callees — a vanilla audio forward included — inlined into it. That copy is
-/// frozen un-muted before our prefix exists. Measured 2026-09-22: a Windows seat whose mod order put CouchCoop
+/// frozen un-muted before our prefix exists. Seen live: a Windows seat whose mod order put CouchCoop
 /// last died at the Neow event with a native access violation inside the FMOD library, reached from another
 /// mod's postfix through an inlined ambient-loop forward into the audio manager's proxy. (Linux never hit it
 /// only because its mod order put CouchCoop first; load order is the variable, not the OS.) So
@@ -106,8 +106,8 @@ internal sealed record FmodProxyResult(string Where, FmodProxyOutcome Outcome, s
 /// to the old pointer. For the two vanilla forwarding nodes that is closed at the node, above. It stays open for
 /// any OTHER script or node that binds FMOD directly — a mod's own GDScript, a mod scene's FMOD node — which no
 /// fix on our side can enumerate. What this does cover is every caller that resolves the singleton per call
-/// (the documented shape, and the one the 2026-09-16 crash came through) plus every call routed through a
-/// vanilla proxy, inlined copies included (the one the 2026-09-22 crash came through).
+/// (the documented shape, and the one an observed crash came through) plus every call routed through a
+/// vanilla proxy, inlined copies included (the one a second observed crash came through).
 ///
 /// <see cref="BuildScriptSource(string, IEnumerable{ValueTuple{string, int}}, IEnumerable{string})"/> is
 /// deliberately a PURE, engine-free seam (strings in, GDScript source out) so the declaration rules that decide

@@ -37,7 +37,7 @@ describe("extended wire-fixture corpus", () => {
 
   // The bite attack overlay (res://scenes/vfx/vfx_bite.tscn). Its ONE-SHOT nature is carried entirely by
   // `spineLooping: false` in the message that STARTS the clip — the renderer clamps on the last frame, so the
-  // wire never needs an "animation finished" follow-up (round-8 item 10).
+  // wire never needs an "animation finished" follow-up.
   it("vfx_bite node: one-shot overlay ships spineLooping=false with its start message", () => {
     const state = applied("spine-vfx-bite-node.json");
     const bite = state.nodes.get("vfx-bite")!;
@@ -145,7 +145,7 @@ describe("extended wire-fixture corpus", () => {
     expect(loop.endOpacity).toBeNull();
   });
 
-  // WS-3: the declarative card flights, read from the bytes the server serializer actually produces. The C# leg
+  // The declarative card flights, read from the bytes the server serializer actually produces. The C# leg
   // (NewFixtureReaderTests.CardFlights) asserts the SAME fixture field-for-field. This matters more than a tween
   // hint's parity: the producer STOPS streaming a flight's node, so a field the client silently misreads leaves a
   // shuffled card frozen on the discard pile rather than merely un-eased.
@@ -181,7 +181,7 @@ describe("extended wire-fixture corpus", () => {
     expect(noTrail.kind).toBe("shuffle");
   });
 
-  // R13: the same array carrying the second kind. The C# leg (NewFixtureReaderTests.CardFlightKinds) asserts the
+  // The same array carrying the second kind. The C# leg (NewFixtureReaderTests.CardFlightKinds) asserts the
   // same three entries. The third is the load-bearing one: a kind this build has never seen must come out as the
   // shuffle motion, because the producer has stopped streaming that node and a dropped flight leaves it frozen —
   // whereas the wrong flavour of motion is merely wrong.
@@ -197,7 +197,7 @@ describe("extended wire-fixture corpus", () => {
     expect(discard.start).toEqual([960, 1180]);
     expect(discard.windowMs).toBe(3200);
 
-    // The producer omits BOTH keys for a shuffle, so this pins that the pre-R13 bytes still read as a shuffle.
+    // The producer omits BOTH keys for a shuffle, so this pins that the earlier bytes still read as a shuffle.
     expect(legacy.targetId).toBe("71");
     expect(legacy.kind).toBe("shuffle");
     expect(legacy.rot0).toBe(0);

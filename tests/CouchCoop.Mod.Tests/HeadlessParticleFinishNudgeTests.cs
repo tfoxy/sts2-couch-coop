@@ -4,7 +4,7 @@ using CouchCoop.Mod.Patches;
 using CouchCoop.Mod.Session;
 using Godot;
 
-// Regression guard for WS-1: the headless one-shot `finished` NUDGE and the ceremonial-beast DEATH-DELAY CAP.
+// Regression guard: the headless one-shot `finished` NUDGE and the ceremonial-beast DEATH-DELAY CAP.
 //
 // The problem. The headless suspender permanently freezes every particle node (ProcessMode=Disabled) because the
 // browser re-runs the particle sim itself. But five VFX only take themselves off screen once a particle node has

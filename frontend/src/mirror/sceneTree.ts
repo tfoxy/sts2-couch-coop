@@ -436,7 +436,7 @@ export interface MirrorTweenHint {
   transformAtArrival?: number[] | null;
 }
 
-// WS-3 — the discard→draw shuffle CARD FLIGHT, as a declarative description the client INTEGRATES per frame.
+// The discard→draw shuffle CARD FLIGHT, as a declarative description the client INTEGRATES per frame.
 //
 // Why it is not a MirrorTweenHint. `NCardFlyShuffleVfx` (one instance per shuffled card) is not a Godot `Tween`:
 // it animates in an async loop that steps once per rendered GAME frame, so there is no tweener for the producer's
@@ -457,7 +457,7 @@ export interface MirrorTweenHint {
 export interface MirrorCardFlightHint {
   // The `NCardFlyShuffleVfx` node (same id space as MirrorNode.id).
   targetId: string;
-  // Its `NCardTrailVfx` comet root. The client DRIVES this node for the flight's duration (R14c): it is the comet's
+  // Its `NCardTrailVfx` comet root. The client DRIVES this node for the flight's duration: it is the comet's
   // transform carrier, so writing the integrated pose onto its element places the whole trail scene — the sparks and
   // silhouettes that stream their poses relative to it, and the two `NCardTrail` strokes under it, whose synthesized
   // ribbon is fed from the same locally-integrated head instead of from their (suppressed) streamed motion. The id
@@ -532,7 +532,7 @@ export interface MirrorDelta {
   // when the delta carries a full orderedIds array (or no structural change).
   orderPatch: MirrorOrderPatch | null;
   hints: MirrorTweenHint[];
-  // WS-3 declarative card flights started this tick (see MirrorCardFlightHint). Separate from `hints`: these are
+  // Declarative card flights started this tick (see MirrorCardFlightHint). Separate from `hints`: these are
   // integrated per frame rather than eased, and they arrive with the producer having stopped streaming their nodes.
   cardFlights: MirrorCardFlightHint[];
 }
@@ -559,7 +559,7 @@ export interface MirrorState {
   // One-shot tween hints accumulated since the renderer last drained them (cleared each reconcile after it fires
   // the replays). Accumulates across deltas like `changedIds` so Vue coalescing several deltas loses no hint.
   pendingHints: MirrorTweenHint[];
-  // WS-3: one-shot declarative card flights, same accumulate/drain lifecycle as `pendingHints`.
+  // One-shot declarative card flights, same accumulate/drain lifecycle as `pendingHints`.
   pendingCardFlights: MirrorCardFlightHint[];
   // R-WPC: bumped ONLY when a node the static-background wire scan cares about (StaticBackground.vue's
   // `wireFallback`, see isSceneRootScanRelevant below) was added, removed, reparented, or had its sceneFilePath
@@ -668,7 +668,7 @@ export function parseSceneDelta(raw: unknown): MirrorDelta | null {
   };
 }
 
-// WS-3 declarative card flight. STRICT, unlike the tolerant node/hint normalizers: the producer has STOPPED
+// Declarative card flight. STRICT, unlike the tolerant node/hint normalizers: the producer has STOPPED
 // streaming the named nodes for `windowMs`, so a half-parsed flight would leave them frozen rather than merely
 // un-eased. Every required point/basis must be present with the right arity and finite, and every integrator scalar
 // must be usable (a non-positive duration/speed never advances, a zero spawn scale divides by zero in phase 2).
@@ -676,7 +676,7 @@ export function parseSceneDelta(raw: unknown): MirrorDelta | null {
 // the same `?cardFlight` lever the client is — see MirrorCardFlightHint.
 // 1:1 twin of SceneDeltaReader.NormalizeCardFlight (C#); the parse-parity suite replays fixtures through both.
 //
-// R12 WS-B: every rejection is COUNTED (see `cardFlightParseDrops`). A dropped hint never reaches the renderer, so
+// Every rejection is COUNTED (see `cardFlightParseDrops`). A dropped hint never reaches the renderer, so
 // none of its flight counters can see it — "the host is not sending" and "the host is sending malformed hints" look
 // identical from the renderer's side, and the two need different fixes.
 function normalizeCardFlight(entry: unknown): MirrorCardFlightHint | null {
@@ -885,7 +885,7 @@ export function applySceneDelta(state: MirrorState, delta: MirrorDelta): void {
     state.changedIds.add(id);
   }
 
-  // R10: did this delta INTRODUCE a node id the map had never held? See the late-node guard below.
+  // Did this delta INTRODUCE a node id the map had never held? See the late-node guard below.
   let introducedNode = false;
   for (const upsert of delta.upserts) {
     const existing = state.nodes.get(upsert.id);

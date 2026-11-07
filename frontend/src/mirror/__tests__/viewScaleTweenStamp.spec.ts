@@ -11,10 +11,10 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// WS-SHOP (round 6) web twin of the native ViewScaler endpoint-stamp fix: a GROUP (the shop SlotsContainer) parked
+// Web twin of the native ViewScaler endpoint-stamp fix: a GROUP (the shop SlotsContainer) parked
 // entirely off-stage while a client-replayed TRANSFORM tween slides it on-screen must render at the merchant group
 // scale for the WHOLE slide — applyViewScalePass re-measures it from the stashed tween ENDPOINT global. A parked group
-// with NO tween (the closed shop) must stay un-scaled (the P4 phantom fix).
+// with NO tween (the closed shop) must stay un-scaled (the phantom fix).
 
 const MERCHANT = "res://scenes/merchant/merchant_inventory.tscn";
 
@@ -126,11 +126,11 @@ describe("WS-SHOP view-scale endpoint tween-stamp (web twin)", () => {
     expect(firstFactor(t)).toBeCloseTo(1.1, 5);
   });
 
-  // WS6 — the reported defect: "the shop inventory often ends PARTIALLY closed, with the bottom of the panel visible
+  // The reported defect: "the shop inventory often ends PARTIALLY closed, with the bottom of the panel visible
   // at the TOP of the screen". The producer suppresses per-frame transforms for a tween's window, so during the CLOSE
   // slide the streamed box still holds the OPEN position while the element's base transform is already the CLOSED
   // (off-stage) endpoint. Measuring the streamed box produced a stamp for the OPEN position that was composed onto the
-  // CLOSED transform, dragging the panel back into view (with the pre-WS6 clamp, right to the top edge).
+  // CLOSED transform, dragging the panel back into view (with the earlier clamp, right to the top edge).
   it("a CLOSE slide is not stamped even though its STREAMED box is still on-stage", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
@@ -159,7 +159,7 @@ describe("WS-SHOP view-scale endpoint tween-stamp (web twin)", () => {
     const t = el(stage, "SlotsContainer").style.transform;
     expect(matrixCount(t)).toBe(2);
     expect(firstFactor(t)).toBeCloseTo(1.1, 5);
-    // noClamp (WS6) ⇒ pure scale about the ENDPOINT box centre (0 + 978/2 = 489), so the design-space translate is
+    // noClamp ⇒ pure scale about the ENDPOINT box centre (0 + 978/2 = 489), so the design-space translate is
     // pivotY·(1−k) = 489·(−0.1) = −48.9. Measured at the stale streamed box (80 + 489 = 569) it would be −56.9.
     const m = /matrix\(([^)]*)\)/.exec(t)!;
     expect(Number(m[1].split(",")[5])).toBeCloseTo(-48.9, 3);
@@ -180,7 +180,7 @@ describe("WS-SHOP view-scale endpoint tween-stamp (web twin)", () => {
   });
 });
 
-// M2 — THE CANVAS ARM reaches the same answer WITHOUT an endpoint substitution.
+// THE CANVAS ARM reaches the same answer WITHOUT an endpoint substitution.
 //
 // The DOM needs one because its stamp is PREPENDED onto an element whose base transform the pin already holds at
 // the tween's endpoint: measuring the streamed box there would mix two positions, and the shop CLOSE slide is the

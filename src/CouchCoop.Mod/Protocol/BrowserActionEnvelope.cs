@@ -71,7 +71,7 @@ public sealed record BrowserInputRequestEnvelope(
     string? Key = null,
     string? Modifiers = null,
     bool? Pressed = null,
-    // R10 WS-E — COALESCED WHEEL TICKS. How many identical ticks this message stands for (wheel buttons only, and
+    // COALESCED WHEEL TICKS. How many identical ticks this message stands for (wheel buttons only, and
     // only on a full click — a press/release is an edge, not a quantity). The eager-scroll client folds the wheel
     // notches it accumulated in one animation frame into ONE message rather than emitting up to a dozen, because the
     // host injects strictly one input per game-thread turn. Absent (the CLI, the pre-feature browser, `?eagerScroll=off`)

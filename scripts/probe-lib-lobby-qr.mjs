@@ -1,7 +1,7 @@
 // Shared helpers for the two live PC-host-lobby probes.
 //
 // Both probes drive the REAL game through `sts2`, so everything here is written against the live CLI
-// shapes verified on 2026-08-08:
+// shapes:
 //   * `dev scene tree [path]`  -> { screen: {id}, nodes: [ {name, nodePath, nodeType, properties?} ] }
 //     (FLAT node list -- not a nested tree; the pre-2026-08 probes walked `children` and found nothing)
 //   * `dev scene node <path>`  -> { node: { properties, computedTransform } }
@@ -84,7 +84,7 @@ export const ALERT_NAMES = {
 export const ALERT_TITLE_TEXT = "Heads up";
 export const ALERT_DISMISS_TEXT = "Continue";
 
-/** Button rect in design space -- the WS-2 layout contract (HostLobbyQrOverlayLayout.Default). */
+/** Button rect in design space -- the layout contract (HostLobbyQrOverlayLayout.Default). */
 export const BUTTON_RECT = { x: 226, y: 732, width: 352, height: 136 };
 
 export const BUTTON_TEXT = "Couch Co-Op QR Code";
@@ -159,7 +159,7 @@ export function assert(condition, message) {
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------------------------------------
-// live-session lock (docs/agents/qa-recipes.md section 1)
+// live-session lock (scripts/live-qa-lock.mjs)
 // ---------------------------------------------------------------------------------------------
 
 /**
@@ -533,7 +533,7 @@ export async function roiDiffRatio(baselinePath, actualPath, regionsPath) {
  * Connects to the hosted browser server as a passive client and scans the stream --
  * the first scene-delta is a full keyframe -- for any node name matching `CouchCoopQr*`.
  *
- * This is the WS-0 safety assertion: mirror clients drive the host with REAL injected input, so a
+ * This is the safety assertion: mirror clients drive the host with REAL injected input, so a
  * phone that can SEE the QR button can press it and open a dialog on the host's TV. The producer
  * side (spirectl `spirectl_stream_skip` metadata) must keep the whole subtree off the wire.
  *

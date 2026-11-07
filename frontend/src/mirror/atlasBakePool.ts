@@ -37,13 +37,13 @@
 // `keepBytes` share is given back once its demand stops (see DROPPING A FINISHED OVERSIZED PAGE in
 // atlasBakeWorker.ts), so residency between bursts falls back to
 //     poolSize × keepBytes    =  2 × 24MB    =  48MB     on that same phone — the budget, exactly.
-//   …AND THE SUSTAINED LEVEL IS THAT ONLY WHERE THE IDLE DROP IS ON (Aug-20). On the drop-off tier — 4GB up, and
+//   …AND THE SUSTAINED LEVEL IS THAT ONLY WHERE THE IDLE DROP IS ON. On the drop-off tier — 4GB up, and
 //   an unreported reading — nothing gives an oversized page back at all, so peak and sustained are the same
 //   number and always were: `poolSize × (keepBytes + largestPage)`, e.g. 2 × (32 + 62.6) = 189MB with memory
-//   unreported. What changed on Aug-20 is only whether that page is held HONESTLY (the hold slot) or by evicting
+//   unreported. What the hold slot changed is only whether that page is held HONESTLY (the hold slot) or by evicting
 //   the whole rest of the worker for it and re-decoding it afterwards — see THE HOLD SLOT below.
 //
-// WHY AFFORDABLE IS NOT ENOUGH (Aug-14 device follow-up: `atlasLoads: 9` against `atlasPages: 7`)
+// WHY AFFORDABLE IS NOT ENOUGH (a device run loaded 9 page copies for 7 distinct pages)
 // A page decode is ~590ms of worker time (fetch + decode + full readback); a region crop+encode is ~8.5ms — see
 // `PAGE_DECODE_MS` / `REGION_BAKE_MS` below. Byte-budget affordability alone says nothing about whether that
 // 590ms is worth paying: a worker alternating between two pages with only a handful of regions queued on each
@@ -66,7 +66,7 @@
 // is only same-page replication, which measured as a pure loss. If a future change ever lifts the drain cap,
 // the bar becomes live again and 70 is the number to argue with.
 //
-// DECODE AT MOST ONCE PER WINDOW (Aug-19). Everything above is about not decoding a page TWICE AT THE SAME TIME.
+// DECODE AT MOST ONCE PER WINDOW. Everything above is about not decoding a page TWICE AT THE SAME TIME.
 // The other way this pipeline paid twice was across TIME: a worker gave an oversized page back once its demand
 // stopped for 2s (`keepPage` ⇒ the idle drop in atlasBakeWorker.ts), and every demand GAP in this game — a new
 // hand of cards, a screen change — then cost ~590ms of worker time to decode the same card atlas again. So the
@@ -80,11 +80,11 @@
 //     no protocol of its own. The cap that gives is hard and device-independent: TWO decodes per page per window,
 //     everywhere. The first re-decode is the tier's price for the memory; a third would just be the same bet lost
 //     twice, on a page whose demand has now demonstrably come back.
-// Neither half touched the budget, the LRU or POOL_MAX. The budget ladder and POOL_MAX still stand on the Aug-14
-// sweep tables above. The LRU did NOT: it was re-litigated on Aug-20 against live evidence those tables never
+// Neither half touched the budget, the LRU or POOL_MAX. The budget ladder and POOL_MAX still stand on the
+// device sweep tables above. The LRU did NOT: it was re-litigated later against live evidence those tables never
 // covered — see below.
 //
-// THE HOLD SLOT (Aug-20). A fresh combat mount in a browser that reports no `navigator.deviceMemory` measured
+// THE HOLD SLOT. A fresh combat mount in a browser that reports no `navigator.deviceMemory` measured
 // `atlasLoads` 18 against `atlasPages` 10: eight second decodes inside ONE mount, on the tier where the idle drop
 // is already off, so none of them was a release. They were EVICTIONS. The worker's LRU asked
 // `total + incoming > keepBytes` over one flat set of pages, and a card page (62.6MB) is bigger than every share
@@ -99,7 +99,7 @@
 // off, the sweep byte-for-byte as it was). And the gauge for the whole question is `atlasLoads - atlasPages`, not
 // `atlasEvicted`: evicting a page whose regions have all baked is free, and only a re-decode is damage.
 //
-// WHY AN UNREPORTED `deviceMemory` IS STILL WORTH 4GB (Aug-20, re-examined and KEPT)
+// WHY AN UNREPORTED `deviceMemory` IS STILL WORTH 4GB (re-examined and KEPT)
 // The burst above happened on the unreported-memory tier, so the budget's fallback was the obvious suspect and is
 // worth writing down rather than leaving as a default nobody has looked at since it was typed. It stays, for the
 // same reason the other two unreported-memory rules do: iOS Safari and Firefox report no `deviceMemory` AT ALL, so
@@ -109,7 +109,7 @@
 // clamp) rather than on a desktop's 8GB. Guessing high there would hand an iPhone a 64MB share per worker.
 
 /**
- * Absolute cap. Was 4 on the reasoning that past four the encodes stop being the bottleneck; the Aug-14 device
+ * Absolute cap. Was 4 on the reasoning that past four the encodes stop being the bottleneck; a device
  * sweep measured that the bottleneck is already gone at ONE, and that the third and fourth workers are a net
  * loss. Two 45s arms per size, one build, palindrome order, `hiddenSamples: 0`, an identical 54-region workload
  * in every arm, on de-duplicated code (`atlasLoads == atlasPages == 8` at every size):
@@ -169,7 +169,7 @@ const BIG_PAGE_BYTES = KEEP_MIN_BYTES;
 
 /**
  * The amortization bar for a SECOND (or later) copy of a page — see "WHY AFFORDABLE IS NOT ENOUGH" above. Both
- * numbers are the Aug-14 device session's own measurement (`workerMsTotal`/`workerEncodeMsTotal` split): a page
+ * numbers are an on-device measurement (`workerMsTotal`/`workerEncodeMsTotal` split): a page
  * decode is ~590ms of worker time, a region crop+encode is ~8.5ms. `AMORTIZE_QUEUE_REGIONS` is the break-even
  * queue depth — the smallest number of a page's OWN pending regions that would cost at least as much to bake
  * through the worker that already holds the page as a fresh decode costs to start on a second one.
@@ -207,7 +207,7 @@ export function resolveAtlasPageDrop(memoryGb: number | undefined): AtlasPageDro
   return known !== null && known < PAGE_DROP_MIN_MEMORY_GB ? PAGE_DROP_IDLE_MS : "off";
 }
 
-/** The worker-side hold-slot line: a byte size, or `"off"` = no hold slot (one flat LRU, the pre-Aug-20 rule). */
+/** The worker-side hold-slot line: a byte size, or `"off"` = no hold slot (one flat LRU, the rule before the hold slot). */
 export type AtlasBigPageBytes = number | "off";
 
 /**
@@ -216,7 +216,7 @@ export type AtlasBigPageBytes = number | "off";
  * describing different policies:
  *   * drop OFF ⇒ this worker is keeping its big pages for the session, so it needs somewhere to keep them that is
  *     not the share they cannot fit in: the hold slot is armed at BIG_PAGE_BYTES.
- *   * drop ON  ⇒ a big page is given back on an idle timer instead, which is the small-device trade the Aug-19
+ *   * drop ON  ⇒ a big page is given back on an idle timer instead, which is the small-device trade that
  *     tier measured. The hold slot is off and the worker's sweep is exactly the one that tier shipped with.
  * Passing the resolved drop policy in (rather than the memory reading) is what makes that structural: there is no
  * ordering of arguments in which the two answers can disagree.
@@ -233,7 +233,7 @@ export interface AtlasBakePoolStats {
   cores: number;
   deviceMemoryGb: number | null;
   /**
-   * The pool-wide byte budget — which is NOT the pool's residency bound, and reading it as one is how the Aug-20
+   * The pool-wide byte budget — which is NOT the pool's residency bound, and reading it as one is how the
    * eviction defect stayed invisible for a round. It governs SECOND copies of a page and the size of a worker's
    * share; the actual bound is
    *     poolSize × (keepBytes + largestPage)   =   2 × (32MB + 62.6MB)   =   189MB on the unreported-memory tier
@@ -272,8 +272,8 @@ export interface AtlasBakePoolStats {
   workerSlowestEncodeMs: number;
   /**
    * How long jobs sat in THIS queue before a worker took them — pure waiting (64 regions through 4 workers, and
-   * the first copy of a page is exclusive until it reports its size). It is a diagnostic, never a strike: the
-   * Aug-14 device session tripped the old wall backstop on exactly this time.
+   * the first copy of a page is exclusive until it reports its size). It is a diagnostic, never a strike: an
+   * on-device session tripped the old wall backstop on exactly this time.
    */
   queuedMsTotal: number;
   slowestQueuedMs: number;
@@ -283,7 +283,7 @@ export interface AtlasBakePoolStats {
   atlasBytes: number;
   /**
    * …and how many DISTINCT pages those loads were, which is the only way to read `atlasLoads` honestly: a load is
-   * a fetch + decode + full readback (~590ms of worker time each in the Aug-14 device session, against ~8.5ms to
+   * a fetch + decode + full readback (~590ms of worker time each in an on-device session, against ~8.5ms to
    * encode a region), so `atlasLoads - atlasPages` is decode work the pool paid TWICE — a second copy the budget
    * allowed, a page the LRU evicted, or a page a worker RELEASED once its demand stopped (`atlasReleased`), each
    * of which had to be decoded again. 7 loads of 7 pages is the pipeline working; 7 loads of 5 pages is 1.2s of

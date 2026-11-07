@@ -3,7 +3,7 @@
 import { MAP_POINT_SCENE_FILE_SUFFIX } from "@/mirror/mapNodeTap";
 import type { SpreadPainter, TouchStack } from "@/mirror/renderer/contracts";
 
-// --- DOM-backend input probes (M0) -------------------------------------------------------------------------
+// --- DOM-backend input probes -------------------------------------------------------------------------
 //
 // The three z-stack walks the input modules used to run inline, moved here unchanged. They are module-level (not
 // closure) functions for two reasons: they read nothing but the DOM the walk stamped, and an unwired caller (a
@@ -34,7 +34,7 @@ export function domTouchStackAt(clientX: number, clientY: number): TouchStack {
     }
     const block = el.getAttribute("data-touch-block");
     if (block !== null) {
-      // R21: WHICH block — the renderer stamps a scrollbar's track "bar" and its handle "thumb", everything else
+      // WHICH block — the renderer stamps a scrollbar's track "bar" and its handle "thumb", everything else
       // "1" (see TOUCH_BLOCK_ATTR). The scan still STOPS here whatever the kind; the value only says what
       // stopped it.
       const kind = block === "bar" ? "bar" : block === "thumb" ? "thumb" : "button";

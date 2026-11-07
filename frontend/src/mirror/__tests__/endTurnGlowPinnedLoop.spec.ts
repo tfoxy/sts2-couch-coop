@@ -22,7 +22,7 @@ beforeAll(() => {
 
 afterEach(() => { document.body.innerHTML = ""; });
 
-// WS-A (idle-wire) — the END-TURN BUTTON glow pulse the R14 producer folds out of the wire (bridge-mod
+// The END-TURN BUTTON glow pulse the producer folds out of the wire (bridge-mod
 // `Sts2EndTurnGlowFold`), named on `RuntimeSceneNodeDelta.PinnedLoopAnim` and replayed here on the browser's clock.
 //
 // It matters out of proportion to its size: the End Turn button lights up exactly when it is your turn, you have
@@ -218,7 +218,7 @@ describe("endTurnGlow replay (renderer)", () => {
 
   // THE regression assertion, same shape as the top-bar fold's: the producer pinned only the loop's two channels
   // and keeps streaming everything else, so the token must not MOVE the node. A client-side write to the element's
-  // own transform is exactly the WS-D mispositioning bug. (The node's PAINT does move — into the animated layer,
+  // own transform is exactly the mispositioning bug. (The node's PAINT does move — into the animated layer,
   // asserted separately below — because otherwise the pulse would scale an empty box.)
   const PLACEMENT_KEYS = ["transform", "transformOrigin", "left", "top", "width", "height", "opacity"] as const;
 

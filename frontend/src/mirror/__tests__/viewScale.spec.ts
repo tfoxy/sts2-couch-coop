@@ -130,7 +130,7 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(viewScaleFor(null, null)).toBe(1.0);
   });
 
-  // ---- R8 (WS-1) scale pack — must stay in lockstep with the native ViewScaleTests of the same names -------------
+  // ---- Scale pack — must stay in lockstep with the native ViewScaleTests of the same names -------------
 
   it("R8: enlarges NORMAL map points 1.5× about their own centre, unclamped; ancient/boss untouched", () => {
     const r = resolveViewScale("res://scenes/ui/normal_map_point.tscn", "");
@@ -158,7 +158,7 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(viewScaleFor("res://scenes/screens/map/map_screen.tscn", "TheMap/Points")).toBe(1.0);
   });
 
-  // WS-3 twin of native ViewScaleTests.DrawingToolsMatchesCenterGroup. The map's draw/erase/clear palette is a plain
+  // Twin of native ViewScaleTests.DrawingToolsMatchesCenterGroup. The map's draw/erase/clear palette is a plain
   // child of the map screen root (relPath "DrawingTools", a NinePatchRect) → 1.35 GROUP about its own CENTRE, unclamped.
   it("WS-3: scales the map DrawingTools palette 1.35× as a GROUP about its own centre, unclamped", () => {
     const r = resolveViewScale("res://scenes/screens/map/map_screen.tscn", "DrawingTools");
@@ -224,7 +224,7 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(viewScaleFor("res://scenes/combat/draw_pile.tscn", "CountContainer/Count")).toBe(1.0);
   });
 
-  // R9 (WS-B) twin of native ViewScaleTests.ExhaustPileMatchesMiddleRightEdgePivot. The third combat pile is the only
+  // Twin of native ViewScaleTests.ExhaustPileMatchesMiddleRightEdgePivot. The third combat pile is the only
   // one that is NOT in a screen corner: its root box (1830,800)-(1910,880) is pinned to the RIGHT edge at mid height,
   // so it takes the new "middleRight" EDGE pivot (right edge pinned, vertical growth symmetric about the box centre).
   it("R9: scales the exhaust pile 1.25× from its RIGHT EDGE (middleRight), not from a corner", () => {
@@ -240,13 +240,13 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(VIEW_SCALE_ROOT_FILES.has("res://scenes/combat/exhaust_pile.tscn")).toBe(true);
   });
 
-  // R9 (WS-B) twin of native ViewScaleTests.DeckViewUpgradesMatchesBottomLeft. The deck dialog's "View Upgrades"
+  // Twin of native ViewScaleTests.DeckViewUpgradesMatchesBottomLeft. The deck dialog's "View Upgrades"
   // toggle is a MarginContainer (mouseFilter PASS) at (16,1012)-(212.5,1060), a direct child of the screen root
-  // (measured from .sts2/bench/wscrisp-deckdialog.ndjson) → R10 WS-F 1.35 (was 1.25) pinned at its BOTTOM-LEFT corner.
+  // (measured from a recorded deck dialog) → 1.35 pinned at its BOTTOM-LEFT corner.
   it("R9/R10: scales the deck dialog's View Upgrades toggle 1.35× from its bottom-left corner", () => {
     const r = resolveViewScale("res://scenes/screens/deck_view_screen.tscn", "ViewUpgrades");
     expect(r.scale).toBe(VIEW_SCALE_VIEW_UPGRADES_DECK);
-    // R10 WS-F: the deck dialog and the card-detail popup no longer share one factor — pin BOTH numbers here (and in
+    // The deck dialog and the card-detail popup no longer share one factor — pin BOTH numbers here (and in
     // the native twin, ViewScaleTests) so an edit to either constant has to come past this test.
     expect(r.scale).toBe(1.35);
     expect(VIEW_SCALE_VIEW_UPGRADES_DETAIL).toBe(1.4);
@@ -267,7 +267,7 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(viewScaleFor("res://scenes/screens/deck_view_screen/deck_view_sort_button.tscn", "")).toBe(1.0);
     expect(viewScaleFor("res://scenes/screens/map/map_screen.tscn", "ViewUpgrades")).toBe(1.0);
 
-    // The measured box, stamped at the R10 1.35 factor: bottom-left pinned at (16,1060), growth right/up to
+    // The measured box, stamped at the 1.35 factor: bottom-left pinned at (16,1060), growth right/up to
     // (281.3,995.2) — offsetX/offsetY 0 IS the "still wholly inside the 1920x1080 stage" assertion (a scaled box that
     // left the viewport would come back with a non-zero clamp offset). Twin of the native geometry checks.
     const s = computeAnchoredScaleStamp({ x: 16, y: 1012, w: 196.5, h: 48 }, r.scale, 1920, 1080, "bottomLeft")!;
@@ -279,7 +279,7 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(1060 - 1.35 * 48).toBeCloseTo(995.2, 6);
   });
 
-  // R9 (WS-B) twin of native ViewScaleTests.CardDetailViewUpgradesMatchesBottomCenter. Same control as the deck
+  // Twin of native ViewScaleTests.CardDetailViewUpgradesMatchesBottomCenter. Same control as the deck
   // dialog's but a different name/shape (relPath "Upgrade", the NUpgradePreviewTickbox itself) and a different anchor:
   // its box (816.5,990)-(1103.5,1054) is horizontally CENTRED on the screen, so it takes bottomCenter.
   it("R9/R10: scales the card-detail popup's View Upgrades toggle 1.40× from its bottom CENTRE", () => {
@@ -301,7 +301,7 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
     expect(viewScaleFor("res://scenes/screens/inspect_card_screen.tscn", "ViewUpgrades")).toBe(1.0);
     expect(viewScaleFor("res://scenes/screens/deck_view_screen.tscn", "Upgrade")).toBe(1.0);
 
-    // The measured box, stamped: centre X 960 held, bottom pinned at 1054, grown up to 964.4 at the R10 1.40 factor.
+    // The measured box, stamped: centre X 960 held, bottom pinned at 1054, grown up to 964.4 at the 1.40 factor.
     // offsetX/offsetY 0 IS the "still wholly on-stage" assertion — a scaled box that left the 1920x1080 viewport would
     // come back with a non-zero clamp offset.
     const s = computeAnchoredScaleStamp({ x: 816.5, y: 990, w: 287, h: 64 }, r.scale, 1920, 1080, "bottomCenter")!;
@@ -318,13 +318,13 @@ describe("resolveViewScale — view-scale table (WS-G2)", () => {
       "res://scenes/ui/normal_map_point.tscn",
       "res://scenes/combat/draw_pile.tscn",
       "res://scenes/combat/discard_pile.tscn",
-      // R9: the exhaust pile's ROOT carries its own entry.
+      // The exhaust pile's ROOT carries its own entry.
       "res://scenes/combat/exhaust_pile.tscn"
     ]) {
       expect(VIEW_SCALE_ROOT_FILES.has(f)).toBe(true);
     }
     expect(VIEW_SCALE_ROOT_FILES.has("res://scenes/ui/ancient_map_point.tscn")).toBe(false);
-    // R9: the two dialog screens are native-only presence gates — the web resolves their child by NAME instead.
+    // The two dialog screens are native-only presence gates — the web resolves their child by NAME instead.
     expect(VIEW_SCALE_ROOT_FILES.has("res://scenes/screens/deck_view_screen.tscn")).toBe(false);
     expect(VIEW_SCALE_ROOT_FILES.has("res://scenes/screens/inspect_card_screen.tscn")).toBe(false);
   });
@@ -403,7 +403,7 @@ describe("computeAnchoredScaleStamp — R7/R9 anchored + translate stamp", () =>
     expect(s.offsetX).toBe(0);
   });
 
-  // R8 (WS-1): the two CORNER pivots — the first whose pivot X is NOT the box centre. Same vectors as the native
+  // The two CORNER pivots — the first whose pivot X is NOT the box centre. Same vectors as the native
   // HoverTipScaleMathTests.AnchoredStampCornerPivots* so both clients place a corner widget identically.
   it("R8: bottomLeft/bottomRight pin the box's bottom corner (pivot X moves to the box edge)", () => {
     const draw = computeAnchoredScaleStamp(box(15, 985, 80, 80), 1.25, 1920, 1080, "bottomLeft")!;
@@ -419,7 +419,7 @@ describe("computeAnchoredScaleStamp — R7/R9 anchored + translate stamp", () =>
     expect(discard.offsetY).toBe(0);
   });
 
-  // R9 (WS-B): the EDGE pivot. Same vectors as native HoverTipScaleMathTests — the exhaust pile's real box.
+  // The EDGE pivot. Same vectors as native HoverTipScaleMathTests — the exhaust pile's real box.
   it("R9: middleRight pins the box's RIGHT EDGE but keeps pivot Y at the box CENTRE", () => {
     const exhaust = box(1830, 800, 80, 80); // exhaust_pile.tscn root, 80×80 mid-right
     const mr = computeAnchoredScaleStamp(exhaust, 1.25, 1920, 1080, "middleRight")!;
@@ -444,7 +444,7 @@ describe("computeAnchoredScaleStamp — R7/R9 anchored + translate stamp", () =>
     expect(fwd(discard, 1.25, 1906, 1065)).toEqual([1906, 1065]); // corner fixed
     expect(fwd(discard, 1.25, 1826, 985)).toEqual([1806, 965]); // grows left + up
 
-    // R9 middleRight: the right EDGE is fixed at every height and the box splays symmetrically about y=840 —
+    // middleRight: the right EDGE is fixed at every height and the box splays symmetrically about y=840 —
     // (1830,800)-(1910,880) → (1810,790)-(1910,890), the exhaust pile's measured geometry.
     const exhaust = computeAnchoredScaleStamp(box(1830, 800, 80, 80), 1.25, 1920, 1080, "middleRight")!;
     expect(fwd(exhaust, 1.25, 1910, 800)).toEqual([1910, 790]); // right edge fixed in X, splays UP

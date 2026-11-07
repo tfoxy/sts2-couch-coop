@@ -12,7 +12,7 @@ import { resolveRenderQuality, __setRenderQualityForTest } from "@/render/qualit
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 import type { LoadedSpineClip } from "@/mirror/spineClip";
 
-// Aug-25 SPINE SUBTREE PAINT CULL (see applySpinePromotionPass in mirrorRenderer.ts).
+// SPINE SUBTREE PAINT CULL (see applySpinePromotionPass in mirrorRenderer.ts).
 //
 // On a high-DPR phone Blink culls the paint recording of a spine node's SUBTREE, so a large still `<img>` stops
 // painting partway across and the stage background shows through the rest of it. The verified fix is a composited

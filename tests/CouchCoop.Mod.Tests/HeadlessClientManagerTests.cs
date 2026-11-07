@@ -768,7 +768,7 @@ internal static class HeadlessClientManagerTests
         var port = await h.Manager.EnsureHeadlessAsync(
             Guid.NewGuid(), "Bea", default, onSlotBound: h.RecordBinding, targetNetId: 1003);
         Assert(port == HeadlessClientManager.SlotToPort(3), "the netId-bound join is served on slot 3's port");
-        // WS-2's ordering contract holds on this path too: the display name is registered for the netId BEFORE the
+        // The ordering contract holds on this path too: the display name is registered for the netId BEFORE the
         // process launches, so it beats the host building that peer's nameplate.
         Assert(h.Events.Count == 2 && h.Events[0] == "bind:1003:Bea" && h.Events[1] == "launch:3",
             "the binding is reported before the launcher runs");
@@ -988,7 +988,7 @@ internal static class HeadlessClientManagerTests
                 "the netId-bound join completes once the probe returns"),
             "EnsureHeadlessAsync (netId-bound)");
 
-    // WS-1: a seat is launched with NO game CLI args — everything travels in the environment. The launch contract
+    // A seat is launched with NO game CLI args — everything travels in the environment. The launch contract
     // is what makes a normally-hosted (non -fastmp) session possible, so it is asserted explicitly.
     private static void SeatLaunchIsCommandLineFree()
     {
@@ -999,7 +999,7 @@ internal static class HeadlessClientManagerTests
             "a blank log path adds nothing — the argument list stays what it was");
 
         // A host started off Steam keeps its seats off Steam: a seat alone on Steam, with an empty steam profile,
-        // overwrote the account's remote store and loaded no mods (2026-10-29).
+        // overwrote the account's remote store and loaded no mods.
         Assert(HeadlessClientManager.SeatGameArguments(null, "off") == "--headless --force-steam off",
             "the host's --force-steam value is handed on");
         Assert(HeadlessClientManager.SeatGameArguments("/tmp/s.log", "off") == "--headless --force-steam off --log-file \"/tmp/s.log\"",

@@ -4,7 +4,7 @@ import { nextTick } from "vue";
 
 import type { RenderStreamClientOptions, RenderStreamStatus } from "@godot-scene-web/render-stream-client";
 
-// MirrorApp's stream branch with a fake render-stream client (handoff-mirror-new-renderer.md §6, MIR-2): the switch
+// MirrorApp's stream branch with a fake render-stream client: the switch
 // pushes the server overlay and then gates the node-geometry scene off (`watch:false`), mounts the stage instead of
 // MirrorView, never sends input, and falls back to the old renderer — watching again, saved choice kept — when the
 // stream fails.

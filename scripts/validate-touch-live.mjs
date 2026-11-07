@@ -16,7 +16,7 @@ import { localFixturePlayerId, installLocalFixtureJoin } from "./lib/touch-live-
 //     the next resolve sees different geometry -> it sends a different coordinate -> ...
 //
 // A replayed recording cannot exercise that loop: a recording is passive, so the boxes never answer
-// back. That is exactly why the round-1 identity/anchor targeting work passed every unit test and every
+// back. That is exactly why the earlier identity/anchor targeting work passed every unit test and every
 // replayed-recording probe and still regressed live (hovered cards not focusing, focus applying then
 // dropping, the targeting arrow riding a constant offset from the cursor, grabbed cards vanishing).
 // Those four symptoms are H1, H2, H3 and H4 below. This harness is the ANTI-CHURN mechanism: the same
@@ -96,9 +96,8 @@ import { localFixturePlayerId, installLocalFixtureJoin } from "./lib/touch-live-
 // `--observe` (BRING-UP WITHOUT GESTURES)
 // ---------------------------------------
 // Both `--checks` and `--combos` still RUN gestures — a subset is a smaller closed loop, not a quiet one.
-// Some work (the U3b live raise probe, `scripts/probe-raise-live.mjs`) needs the lifecycle and nothing
-// else: instance up, fixture loaded, a mirror page streamed and readable-hand mode on, then a second
-// tool opens its own pages. Round 7 had to reproduce that lifecycle by hand.
+// Some work needs the lifecycle and nothing else: instance up, fixture loaded, a mirror page streamed and
+// readable-hand mode on, then a second tool opens its own pages.
 //
 // `--observe` truncates to the FIRST selected combo and returns from `runCombo` between the
 // `__mirrorHandRaise` sanity read and `makePointer` — the first gesture-capable line. So the entire
@@ -236,7 +235,7 @@ const FOCUS_SETTLE_MS = 420;
 const ALL_CHECKS = ["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9", "H10", "H11", "H12", "H13", "H14", "H15", "H16", "H17"];
 
 /**
- * THE STAGE AXIS (2026-08-28).
+ * THE STAGE AXIS.
  *
  * This file used to say, in its header, that there is deliberately no `?stage=canvas` lever here, because every
  * check reads `[data-node-id]` geometry and the canvas stage hands out DOM elements for overlay records only.
@@ -669,7 +668,7 @@ const readHand = (page) =>
     const r = stage.getBoundingClientRect();
     const designW = stage.offsetWidth;
     const scale = r.width / designW;
-    // THE JOIN, off the shared seam rather than off DOM ancestry (2026-08-28). It used to be
+    // THE JOIN, off the shared seam rather than off DOM ancestry. It used to be
     // `rect → closest([data-node-type$=NHandCardHolder])`, which is why this whole harness was DOM-only: the
     // canvas stage emits no per-node elements for that to find. `__mirrorHandPoses()` publishes each holder's
     // own hitbox id — the id `interactiveRects()` keys the drawn card rect under — and whether the holder is
@@ -721,7 +720,7 @@ const readHand = (page) =>
         // exactly the case where the composed rect is wrong. So the box this rect PREDICTS the element will
         // occupy, against the box the element actually occupies, is a pose-independent check on the rect: it
         // needs no baseline, and it holds while a card is focused, scaled or mid-fan just as well as at rest
-        // (measured 2026-09-19: drift 0 on every card in every state, and ~160px on a stale one).
+        // (observed: drift 0 on every card in every state, and ~160px on a stale one).
         aimDriftPx: (() => {
           const el = document.querySelector(`[data-node-id="${rect.id}"]`);
           if (!el) return null;
@@ -927,7 +926,7 @@ async function handAtRest(page) {
  * Every sample point in this file is computed from `__mirrorInteractiveRects()`, the mirror's own hit surface,
  * and that surface is COMPOSED from a cached parent global. While a node is transform-tween pinned the walk skips
  * its descendants, so the cache can lag the pose the scene really has. Until the fix in `tweenController`'s
- * settle (2026-09-19) that lag could be permanent — measured 9 of 30 hover cycles leaving a hand card's hit box
+ * settle that lag could be permanent — measured 9 of 30 hover cycles leaving a hand card's hit box
  * up to 160 design px above the card that the game's poses, the DOM and the rendered frame all had at rest.
  * Aiming through one of those puts the pointer in empty board, the game answers nothing, and the check reports
  * the GAME for the harness's own bad aim. That single defect was behind the intermittent redness of H1, H3 and H6
@@ -986,7 +985,7 @@ async function livePoint(page, holders, key) {
   // `rested` is the rest wait's own verdict, carried out to the caller instead of being dropped. A hand that
   // never came back to a whole, still fan is an instrument in an unknown state: the previous gesture may have
   // left a card selected out of it, and a point resolved against that geometry aims somewhere the card is not.
-  // Scoring it reports the GAME for the harness's own leftovers — which is exactly how the 2026-08-26 armed-tap
+  // Scoring it reports the GAME for the harness's own leftovers — which is exactly how an earlier armed-tap
   // failures read before their cause was found.
   const { hand: live, stale, rested } = await awaitAimableHand(page, holders);
   if (!live) return null;
@@ -1067,7 +1066,7 @@ async function makePointer(page, kind) {
     // SAME widget COMMITS. `armedRootId` is client state that survives a whole sweep, so a check that dwells
     // five times on one card eventually re-taps the armed one and SELECTS it — the game then parks that
     // holder on the hand root and answers no hover-focus on the hand at all, and every remaining point
-    // reports the game for it (measured 2026-08-26: exactly the three surviving H6 touch failures, each one
+    // reports the game for it (observed: exactly the three surviving H6 touch failures, each one
     // immediately after a dwell whose release committed). A mouse never reaches that state because it has no
     // tap gesture, which is why only the touch leg saw it.
     //
@@ -1128,7 +1127,7 @@ function compressTimeline(samples) {
  * is actually disturbed.
  *
  * TWO disturbances, not one. An arrow up is the loud case. The quiet one — and the one that produced every touch
- * H6 failure on 2026-08-26 — is a card that was selected and needs no target: the game reparents its holder off
+ * H6 failure observed so far — is a card that was selected and needs no target: the game reparents its holder off
  * the hand CONTAINER onto the hand ROOT and parks it in the play position, where it is still a governed 300x422
  * hitbox and so still looks like a hand card to `readHand`. The sweep then aimed its next points at a card that had
  * left the hand and reported the game for not focusing it. `handRaise().holders[].localY` is null for exactly those
@@ -1199,11 +1198,11 @@ async function cancelArmedSelection(page, pointer) {
  * `localY` of null means the game has that holder parented to the hand ROOT rather than to the container —
  * it is selected, or in flight home from a cancel. The old test mapped null to 0 and read it as a stable
  * pose, so the wait returned immediately after a cancel and the next point was sampled into a state where
- * the game answers NO hover-focus on the hand at all (measured 2026-08-26: three H6 points reported the
+ * the game answers NO hover-focus on the hand at all (observed: three H6 points reported the
  * game for not focusing while a card the sweep's own two-step tap had committed was still out).
  */
 async function awaitFanRest(page, timeoutMs = 3000) {
-  // Delegated to the seam's own rest wait (2026-08-28). What it used to do — read
+  // Delegated to the seam's own rest wait. What it used to do — read
   // `__mirrorHandRaise().holders[].localY` plus `[data-node-type$=NHandCardHolder]` z-indexes — is DOM-only, and
   // this is the wait every hand check runs through. `awaitPoseRest` asks the same three questions of the shared
   // seam (the poses stopped, the fan is whole) and adds one the element read could not: no client-side channel is
@@ -1468,7 +1467,7 @@ async function findTargetedCard(page, pointer, hand) {
  * THE ARROW IS A SECOND ASSERTION, AND IT USED TO BE UNFALSIFIABLE. It was one read of `arrows` taken at the
  * end of the drag, reported as "the targeting arrow was gone by the end of the drag" — and it failed in every
  * combo on both stage-fit arms while the coordinate half read `errX: 0, errY: 0` on every sample. The saved
- * screenshot said why (`mouse-1920-H3-arrow.png`, 2026-09-19): the card being dragged was a DEFEND. An
+ * screenshot said why (`mouse-1920-H3-arrow.png`): the card being dragged was a DEFEND. An
  * untargeted skill raises no arrow, and it is correct not to. `findTargetedCard` qualifies a Strike or a Bash,
  * but nothing checked that the measured drag was holding the card it qualified — and the press was landing on a
  * neighbour, because the sample point came from a hit surface that had gone stale (see the harness doc).
@@ -1685,9 +1684,8 @@ async function checkH5(ctx) {
  * CORNER / EDGE (inside the hit box): H1's strict rule. The focus must be a card the point is really on.
  *
  * ART OVERHANG (just outside the box, on the frame/banner art that overhangs it): this used to require the
- * GAME to focus one of the two nearest cards, and that expectation was wrong. Measured against the game
- * itself on 2026-09-19 (`scripts/probe-hand-hitbox-live.mjs`, maps under
- * `.sts2/artifacts/touch-harness/hitmap-*`): with the readable-hand raise OFF, so the pointer maps to game
+ * GAME to focus one of the two nearest cards, and that expectation was wrong. Mapped against the game
+ * itself: with the readable-hand raise OFF, so the pointer maps to game
  * space 1:1 and no correction is in play, a point 4 local px INSIDE a card's top edge focuses it and a point
  * 4 local px OUTSIDE focuses nothing. The boundary is the hit box, to within the 4px step. At the overhang
  * sample's own 21px the game focuses nothing whether the coordinate is corrected or not. **The game
@@ -1977,7 +1975,7 @@ async function checkH8(ctx) {
   }, REWARD_CARD_NOMINAL);
 
   if (!reward2 || reward2.cards.length === 0) {
-    // KNOWN GAP, left as an honest SKIP rather than a fake pass. Measured Aug-25: three two-step taps
+    // KNOWN GAP, left as an honest SKIP rather than a fake pass. Observed: three two-step taps
     // on the "Add a card to your deck" row leave the Loot list up — the row highlights but never opens
     // its screen for a synthetic coordinate click, the same shape as the map-point tap that had to be
     // routed as a semantic action instead. Until that is understood, the reward card's 240x338 nominal
@@ -2005,7 +2003,7 @@ async function checkH8(ctx) {
  * H9 — a hand-card drag that is dropped back into the hand must CANCEL, and the hand must answer hover
  * again afterwards.
  *
- * THE REPORT THIS PINS (2026-08-27, from real play, mouse and phone): "drag a card at the side (e.g. the
+ * THE REPORT THIS PINS (from real play, mouse and phone): "drag a card at the side (e.g. the
  * 7th of 7) up onto the playable area, then drag down and release to not play → card focus stops
  * reproducing: hover or a single tap does nothing; clicking/tapping again produces a press on the game."
  *
@@ -2162,7 +2160,7 @@ async function checkH9(ctx) {
  * H10 — a focus HANDOFF must move each card straight to its new pose. No card may overshoot the pose it is
  * heading for and come back.
  *
- * THE REPORT THIS PINS (2026-08-27, from real play): "focus going back and forth between cards plays a
+ * THE REPORT THIS PINS (from real play): "focus going back and forth between cards plays a
  * transition of instantly going up then smoothly going down", and "a few frames of a card going up/down
  * more than it should".
  *
@@ -2362,7 +2360,7 @@ async function checkH10(ctx) {
 // selection is cancelled. Each is measured only once the fan has STOPPED (`awaitPoseRest`) — mid-motion
 // disagreement is H10's question, not this one.
 //
-// KNOWN HOLE IN THAT WAIT, measured 2026-09-19 and NOT closed — read this before filing what phase 1 reports.
+// KNOWN HOLE IN THAT WAIT, observed and NOT closed — read this before filing what phase 1 reports.
 // `awaitPoseRest` waits for the GAME's poses to stop changing, deliberately (the drawn pose is the thing under
 // test). But "stopped changing" is also true of a producer that is merely LATE, and on the canvas arm the trace
 // samples at ~310 ms, so its two quiet samples are ~600 ms — shorter than the lag actually observed. In
@@ -2977,7 +2975,7 @@ async function checkH12(ctx) {
 // ---------------------------------------------------------------------------------------------------------------
 //
 // H11 and H12 are both HAND-SHAPED: they read holders, which are zero-size positioners that paint nothing. The
-// Aug-29 defect lived one level below them — the card's own painted parts were drawn through a field claim
+// original defect lived one level below them — the card's own painted parts were drawn through a field claim
 // measured at the pose the producer had FROZEN, so the picture sat `travel · (F − 1)` off while both checks
 // reported 0.00px. This one asks the build itself, of every node it walks, on the frames it walks them:
 //
@@ -3689,7 +3687,7 @@ async function grabAndCancelH15FocusedSurvivor(page, pointer, holderId, retained
   }
   // FAR ENOUGH THAT NEITHER SIDE HAS TO GUESS. The travel used to be 48 design px, which is past both pointer
   // kinds' slop but still close enough to the press that the gesture reads as a tap once it returns to `start` —
-  // and the game then SELECTS the card instead of cancelling it. Measured 2026-09-19 on touch-2400: the survivor
+  // and the game then SELECTS the card instead of cancelling it. Observed on touch-2400: the survivor
   // stayed out of the fan in 1 run of 4, with the press resolving correctly to the target every time, so the
   // check was straddling the game's own tap/drag classification rather than measuring the cancel it names. The
   // travel is now unambiguously a drag (the same lane H9's off-grab drop uses), while the release still returns

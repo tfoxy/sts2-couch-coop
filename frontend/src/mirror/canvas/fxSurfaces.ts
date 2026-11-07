@@ -1,173 +1,75 @@
 // EFFECT SURFACES FOR THE SINGLE-CANVAS STAGE — a gsw-owned <canvas> in, an uploaded GL texture out.
 //
-// The sibling of `textureBridge`, and its exact opposite in lifecycle. The bridge maps a URL to an IMMUTABLE
-// texture: one load, one upload, done forever. This maps a NODE ID to a MUTABLE one — a shader or particle
-// surface whose pixels the gsw runtime repaints whenever it likes, and which therefore has to be re-uploaded,
-// possibly on every frame, for as long as the effect is alive. Everything below follows from that one difference:
-// the key space is per node rather than per url, the upload is `cache.update` (replace the pixels, keep the
-// refcount) rather than `cache.acquire`, and the budget is spent over and over instead of once.
+// The sibling of `textureBridge`, and its opposite in lifecycle. The bridge maps a URL to an IMMUTABLE texture: one
+// load, one upload, done forever. This maps a NODE ID to a MUTABLE one — a shader or particle surface whose pixels
+// the gsw runtime repaints whenever it likes, and which therefore may be re-uploaded on every frame for as long as
+// the effect is alive. The key space is per node rather than per url, the upload is `cache.update` (replace the
+// pixels, keep the refcount) rather than `cache.acquire`, and the budget is spent repeatedly instead of once.
 //
-// WHY THIS EXISTS AT ALL. Today shader and particle surfaces ride a DOM overlay ABOVE the whole stage canvas, so
-// anything the game paints over them would be painted UNDER them instead — hence `overlay.ts`'s HOIST RULE, which
-// withholds any covered surface and leaves 24/26 combat effects simply invisible. A surface uploaded as a texture
-// can be drawn as a quad at the node's own paint index, where "above" and "below" are just command indices and
-// nothing has to be withheld. This module is the pixel half of that; the quad half is `paintSpec.emitFxQuad`.
+// WHY IT EXISTS. A surface on a DOM overlay above the stage canvas would paint over anything the game draws on top
+// of it, which is why `overlay.ts` has a HOIST RULE that withholds covered surfaces. A surface uploaded as a
+// texture is drawn as a quad at the node's own paint index, so "above" and "below" are just command indices and
+// nothing is withheld. This module is the pixel half; the quad half is `paintSpec.emitFxQuad`.
 //
-// ---------------------------------------------------------------------------------------------------------------
-// THE KEY SPACE — `fx://<nodeId>`, or `fx://k<n>` for a SHARED frozen frame.
+// KEY SPACE — `fx://<nodeId>`, or `fx://k<n>` for a SHARED frozen frame. Effect textures live in the same
+// per-context `CanvasTextureCache` as the bridge's page textures (one white texel, one byte total, one reset on
+// context loss). The prefix keeps the populations apart — a bridge key is always a page URL — and is the whole of
+// `textureBridge`'s fx seam: a key starting with `fx://` is delegated here. What follows the prefix is opaque to
+// the bridge.
 //
-// Effect textures live in the SAME per-context `CanvasTextureCache` as the bridge's page textures, because a
-// second cache would mean a second white texel, a second byte total and two things to reset on context loss. The
-// prefix is what keeps the two populations from colliding: a bridge key is always a page URL (`/res/...`, `blob:`,
-// `data:`), never a node id, and the prefix says which registry owns a key when the draw list hands one back. It
-// is also the whole of `textureBridge`'s fx seam: a key starting with `fx://` is delegated here instead of being
-// treated as an image to load. What follows the prefix is OPAQUE to the bridge — it slices the prefix off and
-// hands the rest back to `handleFor`/`sizeOf`, which is why the two shapes below need nothing from it.
+// SHARING. In a frozen effect mode gsw renders one frame per binding and serves identical bindings from a
+// static-frame cache. A surface that reports a `staticKey` ({@link FxRenderInfo.staticKey}) is therefore keyed by
+// that frame instead of by its node: the first holder uploads, later holders attach to the same cache entry and
+// upload nothing. Quads are unaffected — each node keeps its own quad, placement and alpha, they just name one
+// texture. This is safe because gsw's key IS the frame's identity (the same string the static-frame cache and the
+// image swap dedupe by). Where a frame is not content-addressed (live mode, SCREEN_UV, a decoding texture, a
+// stepped particle state) gsw reports no key and the surface keeps its private `fx://<nodeId>` entry. A key that
+// churns moves the surface to the new key's entry and drops its hold on the old one.
 //
-// ---------------------------------------------------------------------------------------------------------------
-// ONE TEXTURE PER FROZEN FRAME, NOT PER NODE.
+// BOX. The quad comes from the CANVAS ELEMENT, not the node. gsw sizes and places its canvas itself: a shader
+// canvas in percent of the node's self-layer, a particle canvas in px with negative left/top (a travel margin so
+// particles outside the emitter's box are not clipped; the emitter's own box is 0x0). The geometry is read off
+// `canvas.style.{left,top,width,height}` against the record's box, so a runtime that re-places its canvas needs no
+// extra plumbing.
 //
-// In a frozen effect mode — the product default on every device — gsw renders one frame per binding and then
-// serves IDENTICAL bindings from a module-scoped static-frame cache: one real draw, then a blit of those same
-// pixels into every twin's canvas. A hand of cards is seven `card_ripple` glows that are, pixel for pixel, the
-// same picture; the combat fleet is dozens of emitters across two or three distinct specs.
+// PACING. `cache.update` calls `texImage2D` on the calling thread, so an upload is a synchronous main-thread cost.
+// A real GPU charges a fixed per-call term that dominates a pixel term for typical mirror surfaces, so a byte
+// budget alone cannot bound a build: the plan carries a COUNT cap as well, and the byte cap binds only for large
+// surfaces. Both stop the plan on the same rule (see `openBuild`), and always-allow-one wins over both.
+//   * LRU-FIRST, not paint order. An fx surface is dirty again next frame, so paint order would hand the budget to
+//     the same earliest-painted surfaces forever. Rotating least-recently-uploaded first shares it out; never-
+//     uploaded surfaces sort first (upload sequence 0), so a new effect gets pixels before an old one refreshes.
+//   * ALWAYS-ALLOW-ONE. A budget smaller than one surface must not deadlock it: the first candidate of a build is
+//     admitted unconditionally. One oversized `texImage2D` is indivisible; the budget only keeps it alone.
+//   * A DEFERRED SURFACE KEEPS ITS LAST PIXELS. The quad still draws from an earlier upload, so deferral looks like
+//     a lower frame rate and never a transparent hole. `stale` on the returned record says which a caller is
+//     looking at. A surface that has never uploaded has nothing to paint: `acquire` answers null and no quad is
+//     emitted.
 //
-// Uploading each of those separately is what a per-node key space forces, and it is not a rounding error: the
-// measured live combat page carried ~10 MB per shader surface, so a seven-card hand is ~70 MB of GPU memory
-// holding seven copies of one image, against a 48 MB resident ceiling that the named-recently exemption makes
-// unenforceable while every one of them is on screen.
+// THE THREE PARK GUARDS. A settled screen stays idle by PARKING: `armAnimation` takes the min of its demand
+// sources' deadlines and stops the loop when none is finite. This registry is one such source, so a bug here shows
+// up as a stage that never stops rendering rather than as a wrong pixel. Each guard has its own unit spec.
+//   1. `endBuild` CLEARS THE DIRTY BIT of any surface the just-finished build did not name (an off-screen effect
+//      keeps rendering in the DOM). `acquire` re-arms it when a build names the node again (see the epoch check).
+//   2. `noteRendered` FIRES `onDirty` ONLY FOR IDS THE LAST BUILD NAMED, so a frame from a surface no one is drawing
+//      cannot wake a parked stage.
+//   3. THE BUDGET PUMP TERMINATES. Every build uploads at least one dirty surface or has none to upload, and every
+//      upload attempt — success, refusal, empty backing store — clears the bit it was called for.
 //
-// So a surface that reports a `staticKey` (see {@link FxRenderInfo.staticKey}) is keyed by THAT frame instead of
-// by its node: the first holder uploads, every later holder attaches to the same cache entry and uploads nothing.
-// The quads are unaffected — each node still gets its own quad, its own placement and its own alpha — they simply
-// name one texture, which also collapses them into fewer texture binds in the executor's batching.
+// REFUSALS (not withholdings). MAX_TEXTURE_SIZE: a source longer than the context's limit cannot be uploaded —
+// `texImage2D` answers INVALID_VALUE and leaves the texture INCOMPLETE, which samples as opaque BLACK — so it is
+// refused before the upload, counted, and never retried. SCREEN_TEXTURE: a shader that reads the screen is
+// refused, because gsw's screen capture approximates the DOM composite, which on this stage lacks the game (it
+// lives in the canvas); painting nothing beats painting something confidently wrong. Both land in
+// `stats.declined`, deliberately NOT in `overlayCounts.withheld`, which counts only what the hoist rule hides.
 //
-// WHY IT IS SAFE, stated once: gsw's key IS the frame's identity. It is the same string the static-frame cache
-// stores the bitmap under and the same one the image swap dedupes by, and both of those already hand one
-// binding's pixels to another on the strength of it. Sharing the texture is therefore exactly as correct as the
-// blit that is already happening — and where a frame is NOT content-addressed (live mode, SCREEN_UV, a decoding
-// texture, a stepped particle state) gsw reports no key at all and the surface keeps its private `fx://<nodeId>`
-// entry, byte for byte as before.
-//
-// A surface whose key CHURNS — `card_ripple` re-keys on its `width` uniform — simply moves to the new key's
-// entry and drops its hold on the old one. The worst case is the per-node cost we used to pay unconditionally;
-// the common case is one upload for the whole hand, because the twins churn together.
-//
-// ---------------------------------------------------------------------------------------------------------------
-// THE BOX COMES FROM THE CANVAS ELEMENT, NOT THE NODE.
-//
-// A surface's quad is NOT the node's box. gsw sizes and places its canvas itself, and the two runtimes do it
-// differently: a shader canvas is placed in PERCENT of the node's self-layer (full-bleed for the common
-// full-window case, a sub-rect when the shader's UV window is smaller), while a particle canvas is placed in PX
-// with NEGATIVE left/top — a travel margin so particles that fly outside the emitter's box are not clipped. A
-// particle emitter's own node box is 0x0, so reading the node would produce an empty quad and no effect at all.
-//
-// So the geometry is read off `canvas.style.{left,top,width,height}`, resolved against the record's box: percents
-// against the box, pixels verbatim. That also means a quad follows a runtime that re-places its canvas (a UV
-// window change, a bigger travel margin) with no extra plumbing.
-//
-// ---------------------------------------------------------------------------------------------------------------
-// PACING — the same currency as the bridge, a different rotation, and TWO caps because the cost curve is not the
-// bridge's.
-//
-// `cache.update` calls `texImage2D` on the calling thread, so an upload is a synchronous main-thread cost. A
-// combat screen carries ~29 Mpx of true WebGL surface — 19 fire systems at 2048x768, two water reflections, a
-// transition — which at dpr 1 with every surface animating is ~140 MB of upload per frame. That number is what the
-// governor exists for.
-//
-// WHAT A REAL GPU CHARGES (measured on this project's RTX 2060 through the headed pixel-test harness, canvas
-// sources, `update` streaming and re-spec both):
-//
-//     cost(one upload) ≈ 0.164 ms FIXED  +  0.0245 ms per Mpx
-//
-// The FIXED term dominates every surface a mirror screen actually carries: a 2048x768 fire is 1.6 Mpx, i.e. 0.04
-// ms of pixels against 0.164 ms of call overhead. A BYTE BUDGET ALONE THEREFORE CANNOT BOUND A BUILD — thirty
-// small surfaces are ~5 ms of fixed cost and barely register against any megabyte figure — so the plan carries a
-// COUNT CAP as well, and the byte cap only starts binding once the surfaces get large. At the defaults
-// ({@link FX_PACE_BYTES_DEFAULT} 32 MB = 8 Mpx, {@link FX_PACE_COUNT_DEFAULT} 8) the worst admitted build is
-// 8 × 0.164 + 8 × 0.0245 ≈ 1.5 ms, under a tenth of a 60 Hz frame.
-//
-// The two caps STOP the plan on the same rule (see `openBuild`), and always-allow-one wins over both.
-//
-// It is only the WORST case: the product default is `shaderMode`/`particleMode` = STATIC, where gsw draws each
-// effect ONCE and the steady-state upload is zero. The budget is what keeps the dynamic tiers (and `--effects on`
-// in the bench, which maps to dynamic) from turning one frame into a whole second.
-//
-// LRU-FIRST, NOT PAINT-ORDER. This is the one place the bridge's policy would be wrong. The bridge spends its
-// budget in paint order because a url is uploaded ONCE: everything gets its turn within a few builds, and earliest
-// -painted is the most useful order to get there in. An fx surface is dirty AGAIN next frame, so paint order would
-// hand the whole budget to the same earliest-painted surfaces forever — the 19 combat fires paint before the hand,
-// so a card glow behind the hand would never refresh at all. Rotating LEAST-RECENTLY-UPLOADED first shares the
-// budget out: every dirty surface refreshes at 1/N of the frame rate instead of a few refreshing at full rate and
-// the rest never. Never-uploaded surfaces sort first for free (their upload sequence is 0), so a new effect gets
-// its first pixels before an old one gets its next.
-//
-// ALWAYS-ALLOW-ONE. A budget smaller than a single surface must not deadlock it, so the first candidate of a build
-// is admitted unconditionally. A 2765x1296 water reflection is one indivisible `texImage2D` (~14 MB) and no budget
-// can split it; what the budget does is guarantee it never shares a task with another one.
-//
-// A DEFERRED SURFACE KEEPS ITS LAST PIXELS. This is the property that makes deferral invisible. The quad still
-// draws — from the texture uploaded on some earlier build — so a surface the governor is holding back looks like
-// an effect running at a lower frame rate, which is exactly what it is. It NEVER becomes a transparent hole, and
-// `stale` on the returned record says which of the two a caller is looking at. The one case with nothing to paint
-// is a surface that has never uploaded at all; `acquire` answers null there, and the build emits no quad, which is
-// the same picture as before this module existed.
-//
-// ---------------------------------------------------------------------------------------------------------------
-// THE THREE PARK GUARDS. The stage is >90% idle on a settled screen and stays that way by PARKING: `armAnimation`
-// takes the min of its demand sources' deadlines and stops the loop when none of them is finite. This registry is
-// a third demand source, so a bug here does not show up as a wrong pixel — it shows up as a phone that never stops
-// rendering. Each guard has its own unit spec.
-//
-//   1. `endBuild` CLEARS THE DIRTY BIT of any surface the just-finished build did not name. An effect that scrolls
-//      off screen keeps rendering in the DOM (gsw's loop gates on its own dormancy attributes, not on visibility),
-//      so without this its dirty bit would stay up and `nextDeadline` would never return Infinity again. What was
-//      lost is re-armed by `acquire` the moment a build names the node again (see the epoch check there).
-//   2. `noteRendered` FIRES `onDirty` ONLY FOR IDS THE LAST BUILD NAMED. A frame from a surface no one is drawing
-//      must not wake a parked stage; the bit is still recorded, but nothing is scheduled.
-//   3. THE BUDGET PUMP TERMINATES. Every build either uploads at least one dirty surface (always-allow-one) or has
-//      none to upload, and every upload attempt — success, refusal, or an empty backing store — clears the bit it
-//      was called for. So the "hold some back, ask for another frame" loop always drains.
-//
-// ---------------------------------------------------------------------------------------------------------------
-// WHAT IS REFUSED, AND WHY IT IS NOT A WITHHOLDING.
-//
-// MAX_TEXTURE_SIZE: a source longer than the context's limit cannot be uploaded at all — `texImage2D` answers
-// INVALID_VALUE rather than throwing and leaves the texture INCOMPLETE, which samples as opaque BLACK. That is the
-// same trap the bridge documents, and the same answer: refuse before the upload, count it, and never retry.
-//
-// SCREEN_TEXTURE: a shader that reads the screen is refused. gsw's screen capture is a throttled
-// approximation of the DOM composite, and on this stage the DOM composite contains only the overlay's text and
-// effects — not the game, which lives in the canvas. Feeding that to a 2765x1296 water reflection would paint
-// something confidently wrong; painting nothing is the honest answer until a real framebuffer copy exists.
-//
-// Both land in `stats.declined`, which is DELIBERATELY not folded into `overlayCounts.withheld`. That counter has
-// one job — how many surfaces the hoist rule is hiding — and it is the acceptance number for M2. A policy refusal
-// here is a different fact and gets a different counter.
-//
-// ---------------------------------------------------------------------------------------------------------------
-// THE FPS CAP — A CAP ON WAKEUPS, NOT ON UPLOADS (M3).
-//
-// M2 shipped with a measured residual: in a DYNAMIC effect mode the stage never parks. An idle combat room with
-// two live surfaces booked 25.07 animation frames a second and 50 uploads a second, because every gsw frame set a
-// dirty bit and `nextDeadline` answered `now` to any dirty bit at all. That is not a spin — it is one stage
-// rebuild per gsw frame — but it is a whole rebuild + paint of a screen where nothing the GAME owns has moved.
-//
-// So the deadline is the surface's LAST UPLOAD plus one capped frame. What that caps is how often the STAGE wakes
-// for effects; it does not cap gsw (which keeps drawing at its tier's rate) and it does not cap `acquire`, which
-// still uploads the freshest pixels of any build that runs — a build the tween loop or a scene delta was going to
-// run anyway costs nothing extra and must not be given stale pixels on purpose.
-//
-// TWO RULES MAKE IT SAFE:
-//
-//   * A NEVER-UPLOADED dirty surface is due NOW. A new effect's first pixels are not something to be late with,
-//     and delaying them would also make the first frame of every screen slower to complete.
-//   * NOTHING SUPPRESSES `onDirty`. A throttle that only swallowed the notification would leave a permanent dirty
-//     bit, so `nextDeadline` could never answer Infinity again and PARK GUARD 3 would be dead — strictly worse
-//     than the frame rate it fixed. The bit is set exactly as before; only the timestamp moves.
-//
-// The cap must sit BELOW gsw's own rate to do anything: the quality tiers all say 30 fps and the measured idle was
-// already 25. The fixed rate is 15, which is also the spine bake's rate.
+// THE FPS CAP — A CAP ON WAKEUPS, NOT ON UPLOADS. In a dynamic effect mode every gsw frame sets a dirty bit, and
+// `nextDeadline` answering `now` for any dirty bit would keep the stage rebuilding at gsw's rate even when nothing
+// the game owns has moved. So the deadline is the surface's LAST UPLOAD plus one capped frame. It does not cap
+// gsw, and it does not cap `acquire`, which still uploads the freshest pixels of any build that runs anyway. Two
+// rules keep it safe: a NEVER-UPLOADED dirty surface is due NOW, and NOTHING SUPPRESSES `onDirty` (swallowing the
+// notification would leave a permanent dirty bit and kill park guard 3; only the timestamp moves). The cap must
+// sit below gsw's own rate to bind; the fixed rate is 15, the spine bake's rate.
 
 import {
   BLEND_ADD,
@@ -183,13 +85,11 @@ import type { GodotEffectRenderInfo } from "@godot-scene-web/html/runtime";
 export const FX_KEY_PREFIX = "fx://";
 
 /**
- * Default per-build upload BYTE budget.
+ * Default per-build upload BYTE budget (32 MB = 8 Mpx).
  *
- * 32 MB is 8 Mpx, i.e. ~0.2 ms of the measured per-pixel term (see the header's cost model). It is deliberately
- * generous next to the count cap, because on a real GPU the pixels are the cheap half: what this number is for is
- * the case the count cap cannot see — a handful of very large surfaces (a 2765x1296 water reflection is 14 MB on
- * its own) arriving in the same build. Eight of THOSE would be 112 MB and ~2.8 ms of pixel cost on top of the
- * fixed floor, so the byte cap cuts that build at two and lets the rest ride the next one.
+ * Deliberately generous next to the count cap: on a real GPU the pixels are the cheap half. What this number is for
+ * is the case the count cap cannot see — a handful of very large surfaces (a 2765x1296 water reflection is 14 MB on
+ * its own) arriving in the same build, which the byte cap cuts after two so the rest ride the next one.
  */
 export const FX_PACE_BYTES_DEFAULT = 32 * 1024 * 1024;
 
@@ -197,9 +97,9 @@ export const FX_PACE_BYTES_DEFAULT = 32 * 1024 * 1024;
  * Default per-build upload COUNT cap — and, unlike the bridge's, the cap that USUALLY BINDS.
  *
  * The bridge's count cap is a secondary guard on a cost that is essentially linear in bytes. Here the fixed
- * per-upload term (~0.164 ms) is larger than the pixel term for every surface a mirror screen carries, so the
- * number of uploads IS the cost. Eight is ~1.3 ms of that floor per build; a 30-effect combat screen in a dynamic
- * mode therefore rotates its refreshes across four builds instead of spending ~5 ms in one.
+ * per-upload term is larger than the pixel term for every surface a mirror screen carries, so the number of
+ * uploads IS the cost. A 30-effect combat screen in a dynamic mode therefore rotates its refreshes across several
+ * builds instead of paying for all of them in one.
  */
 export const FX_PACE_COUNT_DEFAULT = 8;
 
@@ -209,39 +109,29 @@ export const FX_EVICT_AFTER_BUILDS = 120;
 /**
  * THE RESIDENT FX-BYTE CAP, default 48 MB.
  *
- * The sibling of the texture bridge's page ceiling, and the second of the two populations round 7's ledger found
- * with no resident budget at all. What this registry had was an upload PACE (32 MB per build, which shapes when
- * bytes arrive rather than how many stay) and a 120-build age-out (a clock, not a budget) — the same pair, and
- * the same gap, as the pages before their cap.
+ * The sibling of the texture bridge's page ceiling. The registry otherwise has only an upload PACE (which shapes
+ * when bytes arrive rather than how many stay) and a 120-build age-out (a clock, not a budget).
  *
- * MEASURED, on the host at the device's geometry (dpr 3.4876, viewport 703x281), fx bytes alone:
+ * 48 MB is placed by the observed spread of resident fx bytes rather than by symmetry with the page cap. The
+ * product default is STATIC on both effect families, where residency stays far below it, so on the shipped
+ * configuration the ceiling is never approached and `evictedByCap` staying at 0 is the check that says so. What it
+ * bounds is the DYNAMIC worst case, where one flight-heavy screen can hold hundreds of MB in a population nothing
+ * else governs.
  *
- *   combat-modern / audit-shop-open, effects STATIC    0 MB      (nothing live to hold)
- *   combat-modern with the live background             4.2 MB
- *   r13-discard-10, effects STATIC                     3.0 MB
- *   r13-discard-10, effects DYNAMIC                  209.2 MB
- *
- * 48 MB is placed by that spread rather than by symmetry with the page cap. The product default is STATIC on both
- * effect families, and every static reading is under 5 MB — so on the configuration that ships this ceiling is
- * never approached, and `evictedByCap` staying at 0 is the check that says so. What it bounds is the DYNAMIC
- * worst case, where one flight-heavy screen puts 209 MB into a population nothing was governing.
- *
- * The recovery is cheaper here than it is for a page, and that is why a cap is defensible at this size: an
- * evicted fx texture is re-uploaded with ONE `texImage2D` from the runtime's own live canvas, which is still
- * mounted and still drawing. There is no fetch and no decode — unlike a page, which at worst has to go back to
- * the network.
+ * The recovery is cheaper here than for a page, which is why a cap is defensible at this size: an evicted fx
+ * texture is re-uploaded with ONE `texImage2D` from the runtime's own live canvas, which is still mounted and
+ * still drawing. There is no fetch and no decode.
  *
  * `0` is the documented OFF switch, matching the pace budgets beside it.
  */
 export const FX_RESIDENT_BYTES_DEFAULT = 48 * 1024 * 1024;
 
 /**
- * Default STAGE-WAKEUP cap for effect surfaces, in frames per second — see the header's cap section.
+ * Default STAGE-WAKEUP cap for effect surfaces, in frames per second — see the header's FPS CAP section.
  *
- * 15, for two reasons. It has to be BELOW the rate gsw is already drawing at or it cannot bind: every quality tier
- * sets `shaderFps`/`particleFps` to 30, and the measured idle wakeup rate in a dynamic mode was 25.07 — a cap at
- * 30 would have been a no-op. And it is the rate the spine bake already runs at, so the two demand sources that
- * can hold a settled screen awake now agree on what "a frame" means.
+ * 15, for two reasons. It has to be BELOW the rate gsw already draws at or it cannot bind: every quality tier sets
+ * `shaderFps`/`particleFps` to 30, so a cap at 30 would be a no-op. And it is the rate the spine bake already runs
+ * at, so the two demand sources that can hold a settled screen awake agree on what "a frame" means.
  */
 export const FX_FPS_DEFAULT = 15;
 
@@ -338,11 +228,11 @@ export interface FxSurfaceStats {
    * cost.
    *
    * `texImage2D(canvas)` records a pending copy and returns; the driver does the work later, and only a read
-   * (`readPixels`, `finish`) synchronises with it. Measured that way an upload costs ~0.005 ms here, i.e. about
-   * 3% of the ~0.164 ms the header's cost model charges — the difference is entirely work this timer cannot see.
+   * (`readPixels`, `finish`) synchronises with it. Measured that way an upload costs a small fraction of the real
+   * bill — the difference is entirely work this timer cannot see.
    * These three fields are useful for spotting a submit-side stall (a driver validating a huge source inline);
-   * they are NOT the number the governor is sized against, and a bench that prints them as "upload ms" is
-   * reporting a thirtieth of the real bill.
+   * they are NOT the number the governor is sized against, and printing them as "upload ms" would under-report the
+   * real cost by more than an order of magnitude.
    */
   uploadMs: number;
   /** The longest single upload SUBMIT, ms. See {@link FxSurfaceStats.uploadMs} for what this does not measure. */
@@ -477,8 +367,8 @@ export interface FxSurfaceRegistry extends FxTextureSource {
    * When the stage should next wake FOR EFFECTS, or Infinity when no named surface is waiting on an upload — the
    * stage's third demand source.
    *
-   * Since M3 this is a real timestamp: the oldest dirty surface's last upload plus one capped frame (see the
-   * header). `nowMs` for a surface that has never uploaded, and `nowMs` when the cap is disabled.
+   * This is a real timestamp: the oldest dirty surface's last upload plus one capped frame (see the header's FPS
+   * CAP section). `nowMs` for a surface that has never uploaded, and `nowMs` when the cap is disabled.
    */
   nextDeadline(nowMs: number): number;
   /** The node is gone (unmounted, or its effect attributes went null): drop the record and the texture. */
@@ -504,12 +394,12 @@ export interface FxSurfaceOptions {
   paceBytes?: number;
   /**
    * Per-build upload COUNT cap. `0` (or a non-finite value) turns the COUNT cap off. Defaults to
-   * {@link FX_PACE_COUNT_DEFAULT}, and it is the cap that usually binds — see the header's cost model.
+   * {@link FX_PACE_COUNT_DEFAULT}, and it is the cap that usually binds — see the header's pacing section.
    */
   paceCount?: number;
   /**
    * How often the STAGE may wake to draw new effect pixels, in fps. `0` (or a non-finite value) turns the cap off,
-   * which is the pre-M3 behaviour. Defaults to {@link FX_FPS_DEFAULT}.
+   * which disables the cap entirely. Defaults to {@link FX_FPS_DEFAULT}.
    */
   fps?: number;
   /**

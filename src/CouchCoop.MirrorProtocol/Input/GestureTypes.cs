@@ -1,12 +1,12 @@
-// The FROZEN M1e gesture seam. Pure, zero-dependency data contract (enums + options + callbacks) that:
-//   - WS-L IMPLEMENTS (a coordinate-only gesture engine — press/move/release + a per-frame PumpFrame — that turns
-//     pointer/touch events into upstream InputMessages, held-card lifts, peeks, taps, and two-finger cancels), and
-//   - WS-M CONSUMES (the native InputRouter constructs a GestureOptions + GestureCallbacks and feeds the engine).
+// The FROZEN gesture seam. Pure, zero-dependency data contract (enums + options + callbacks) that:
+// the GESTURE ENGINE IMPLEMENTS (a coordinate-only gesture engine — press/move/release + a per-frame PumpFrame — that
+//     turns pointer/touch events into upstream InputMessages, held-card lifts, peeks, taps, and two-finger cancels), and
+// the INPUT ROUTER CONSUMES (the native InputRouter constructs a GestureOptions + GestureCallbacks and feeds the engine).
 //
-// This file defines only the SHARED vocabulary; the engine class itself lives in WS-L's own file so it can evolve
-// without touching this contract. The gate ships this frozen — the two downstream workstreams program against it.
+// This file defines only the SHARED vocabulary; the engine class itself lives in its own file so it can evolve
+// without touching this contract. The contract is frozen — the engine and the router program against it.
 //
-// CONTRACT NOTES (the behaviour WS-L must honour and WS-M relies on):
+// CONTRACT NOTES (the behaviour the engine must honour and the router relies on):
 //   * COORDINATES ARE PRE-MAPPED DESIGN SPACE. Every x/y crossing this seam (TargetsAt, OnHeldCard, and the CoordX/
 //     CoordY the engine writes into an InputMessage) is in the 1920x1080 design space — the InputRouter has already
 //     inverted the letterbox/anchor mapping before calling in. The engine never sees raw window pixels.
@@ -59,9 +59,9 @@ public enum TouchInfoKind
 public readonly record struct TouchInfo(TouchInfoKind Kind, string? Id);
 
 /// <summary>
-/// A resolved 1920×1080 GAME-space coordinate — the output of the M2 coordinate seam (see the resolver callbacks on
+/// A resolved 1920×1080 GAME-space coordinate — the output of the coordinate seam (see the resolver callbacks on
 /// <see cref="GestureCallbacks"/>). On a 16:9 stage the resolvers are identity, so this equals the incoming design
-/// point; on a widened stage WS-Q's resolvers invert the visual-anchor field / replay a frozen affine before it is
+/// point; on a widened stage the widened-input resolvers invert the visual-anchor field / replay a frozen affine before it is
 /// written into an upstream <c>InputMessage</c>. The engine only ever emits values in this resolved space.
 /// </summary>
 public readonly record struct ResolvedCoord(double X, double Y);
@@ -79,8 +79,8 @@ public readonly record struct EndTurnBox(double MinX, double MinY, double MaxX, 
 
 /// <summary>
 /// Tunable gesture thresholds. The <c>Default*</c> constants are the canonical (web-ported) design-space values and
-/// the names WS-L references; each matching instance property defaults to its constant and is the URL-param-style
-/// override WS-M sets. The three toggle getters are read LIVE per gesture (see the file header).
+/// the names the engine references; each matching instance property defaults to its constant and is the URL-param-style
+/// override the router sets. The three toggle getters are read LIVE per gesture (see the file header).
 /// </summary>
 public sealed class GestureOptions
 {
@@ -101,10 +101,10 @@ public sealed class GestureOptions
     public const double DefaultPeekMs = 100;
 
     /// <summary>
-    /// R1: milliseconds a still hold on a NON-hand card (reward / shop card / card-grid card) must persist before it
+    /// milliseconds a still hold on a NON-hand card (reward / shop card / card-grid card) must persist before it
     /// promotes to the #13 long-press RIGHT-CLICK leg — a separate, longer threshold than <see cref="DefaultPeekMs"/>
     /// so an ordinary reward-screen tap (which lingers longer than a deliberate hand-card peek) can't accidentally
-    /// register as a long-press right-click. R6 (user request): retuned 500→300ms for a snappier long-press; still
+    /// register as a long-press right-click. Retuned 500→300ms for a snappier long-press; still
     /// comfortably longer than the 100ms hand-card peek. Web twin: <c>LONG_PRESS_MS</c>.
     /// </summary>
     public const double DefaultLongPressMs = 300;
@@ -116,7 +116,7 @@ public sealed class GestureOptions
     public const double DefaultUnselectZoneY = 846;
 
     /// <summary>
-    /// R16: milliseconds after a widget ARMS within which a re-tap of the SAME widget is treated as an accidental
+    /// milliseconds after a widget ARMS within which a re-tap of the SAME widget is treated as an accidental
     /// double-tap and swallowed (no click sent; the widget stays armed) rather than committing. Web twin:
     /// <c>TAP_ARM_DEBOUNCE_MS</c>.
     /// </summary>
@@ -143,7 +143,7 @@ public sealed class GestureOptions
 
 /// <summary>
 /// The host hooks the gesture engine calls out through. All delegates default to safe no-ops so a partially wired
-/// instance still compiles/runs; WS-M sets the live implementations. Coordinates are pre-mapped design space.
+/// instance still compiles/runs; the router sets the live implementations. Coordinates are pre-mapped design space.
 /// </summary>
 public sealed class GestureCallbacks
 {
@@ -169,13 +169,13 @@ public sealed class GestureCallbacks
     /// Whether <c>id</c> is a HAND card (a card under an NHandCardHolder/NPlayerHand ancestor). The gesture engine
     /// treats a card as peek/drag-lift/unselect-eligible only when <see cref="IsCard"/> AND this are true, so a
     /// deck-dialog / reward card falls through to a plain native click. Defaults to <c>true</c> (an unwired engine
-    /// is unrestricted, preserving the IsCard-only behaviour the older tests prove); WS-M wires the live predicate.
+    /// is unrestricted, preserving the IsCard-only behaviour the older tests prove); the router wires the live predicate.
     /// </summary>
     public Func<string, bool> IsHandCard { get; set; } = static _ => true;
 
-    // ---- M2 coordinate resolvers (the widened-stage seam; OWNER of the live impls: WS-Q) ----
+    // ---- coordinate resolvers (the widened-stage seam; the live impls are the widened-input resolvers') ----
     // All FOUR default to IDENTITY and <see cref="ClearFreeze"/> to a no-op, so an unwired (16:9) engine emits the
-    // incoming design coord verbatim — the byte-identical no-op the existing GestureMachineTests prove. WS-Q's
+    // incoming design coord verbatim — the byte-identical no-op the existing GestureMachineTests prove. The
     // InputRouter assigns the real resolvers (map + near-miss + press-freeze + hover-memo). Named after the web
     // inputCapture.ts functions they port (resolveSent / freezeAt / frozenCoord / hoverCoord / clearFreeze).
 
@@ -195,7 +195,7 @@ public sealed class GestureCallbacks
     public Action ClearFreeze { get; set; } = static () => { };
 
     /// <summary>
-    /// The LIVE widened design width (16:9 == 1920; up to the max on an ultra-wide stage) — the same source WS-M
+    /// The LIVE widened design width (16:9 == 1920; up to the max on an ultra-wide stage) — the same source the router
     /// feeds the resolvers. The peek-release un-focus routes the RAW design center (<c>DesignWidth/2</c>, 540)
     /// through <see cref="ResolveFresh"/> so a WIDENED stage maps it correctly.
     /// Defaults to 1920 (an unwired 16:9 engine), matching the web <c>designWidth</c> param default MIRROR_DESIGN_WIDTH.
@@ -204,10 +204,10 @@ public sealed class GestureCallbacks
 
     /// <summary>
     /// End-turn hit-test (change 2): given a RESOLVED game-space point, returns the END-TURN button's game-space box
-    /// when the point lands on it (matched by node-type leaf / <c>end_turn_button.tscn</c> scene file — WS-M owns the
+    /// when the point lands on it (matched by node-type leaf / <c>end_turn_button.tscn</c> scene file — the router owns the
     /// match), else null. Drives the below-button un-hover after a tap so the button's long-press HoverTip doesn't pop
     /// when the enemy turn ends. <c>null</c> (default) = the feature is unwired (an unwired engine never un-hovers), so
-    /// the existing GestureMachineTests stay byte-identical; WS-M wires the live hit-test. Web twin: <c>touch.endTurnBoxAt</c>.
+    /// the existing GestureMachineTests stay byte-identical; the router wires the live hit-test. Web twin: <c>touch.endTurnBoxAt</c>.
     /// </summary>
     public Func<double, double, EndTurnBox?>? EndTurnBoxAt { get; set; } = null;
 
@@ -216,7 +216,7 @@ public sealed class GestureCallbacks
     /// design-Y threshold below which the drop is treated as a de-select (the game's cancel → a right-click). Maps
     /// to <c>PlayZone.Threshold(1080, dragStartY)</c> (web twin: <c>playZoneThreshold(MIRROR_DESIGN_HEIGHT, …)</c>).
     /// <c>null</c> = the feature is OFF (an unwired engine never right-clicks on a below-line drop, so the existing
-    /// GestureMachineTests stay byte-identical); WS-M wires the live predicate.
+    /// GestureMachineTests stay byte-identical); the router wires the live predicate.
     /// </summary>
     public Func<double, double>? PlayZoneThreshold { get; set; } = null;
 
@@ -225,7 +225,7 @@ public sealed class GestureCallbacks
     /// <see cref="HandChoiceScan"/>) is currently active. When true, a tap on a HAND card selects it with a SINGLE
     /// tap (no arm-first double tap) and the below-line unselect right-click is suppressed. Defaults to <c>false</c>
     /// (an unwired engine never treats a dialog as active, so the existing GestureMachineTests stay byte-identical);
-    /// WS-M wires <c>() =&gt; HandChoiceScan.IsActive(store.State)</c>. Read LIVE per touch-up. Web twin:
+    /// The router wires <c>() =&gt; HandChoiceScan.IsActive(store.State)</c>. Read LIVE per touch-up. Web twin:
     /// <c>touch.handChoiceActive</c>.
     /// </summary>
     public Func<bool> HandChoiceActive { get; set; } = static () => false;

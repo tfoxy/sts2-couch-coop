@@ -3,7 +3,7 @@ using System.Net.Sockets;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.MirrorProtocol.Discovery;
 
-// M3 WS-T: real-UDP loopback round-trip against the server responder. Binds the responder on an ephemeral port
+// Real-UDP loopback round-trip against the server responder. Binds the responder on an ephemeral port
 // (127.0.0.1), fires a probe from a throwaway UdpClient, and asserts one unicast reply decoding to the expected
 // connect-ready host:port. Assert-or-throw, matching the repo's custom Exe runner.
 internal static class HostDiscoveryResponderTests

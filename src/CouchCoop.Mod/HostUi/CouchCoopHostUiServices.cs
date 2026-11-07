@@ -236,11 +236,11 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
         _discoveryStarted = true;
         _discoveryStop = new CancellationTokenSource();
 
-        // M3 WS-T: answer LAN host-discovery probes on the SAME numeric port the TCP listener chose (port-walk
+        // Answer LAN host-discovery probes on the SAME numeric port the TCP listener chose (port-walk
         // parity). The reply is connect-ready — the advertised LAN IPv4 the QR already computed + the real port
         // + this machine's name. A bind failure logs `host-discovery-unavailable` and leaves the host unharmed.
         //
-        // WS-F: the fallback host used to be `listenerBaseUri.Host`, which in this branch is ALWAYS the
+        // The fallback host used to be `listenerBaseUri.Host`, which in this branch is ALWAYS the
         // wildcard the listener bound ("0.0.0.0"/"::") — joinBaseUri is only null when the listener is
         // wildcard-bound and no LAN address was found. The Godot client uses reply.Host verbatim as a connect
         // target (ConnectScreen fills "{Host}:{Port}" into the address field), so we were advertising a
@@ -567,7 +567,7 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
     }
 
     // The address-selection diagnostics — and only those — also go to godot.log through STS2's logger so the
-    // lines carry the [INFO] tag and remain available after launcher-side stdio capture ends. WS-F shipped a
+    // lines carry the [INFO] tag and remain available after launcher-side stdio capture ends. A
     // ranked-candidate log precisely so that "it shows the wrong IP" is
     // falsifiable from a user's log, and it was unreadable in the field.
     //
@@ -608,7 +608,7 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
         return FindLanIpv4Address()?.ToString();
     }
 
-    // WS-F: was "first IPv4 on the first Up, non-loopback interface" — pure enumeration order, which on a Windows
+    // Was "first IPv4 on the first Up, non-loopback interface" — pure enumeration order, which on a Windows
     // box with a mesh VPN installed advertises the unreachable 100.64/10 CGNAT address. Now ranked (see
     // LanAddressRanking): default gateway first, then ethernet > wifi > other, then range penalties.
     private IPAddress? FindLanIpv4Address()

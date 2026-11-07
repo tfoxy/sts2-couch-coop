@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// PURE (Godot-free) gdshader `#include` resolution for the native mirror client (WS-SHINC).
+// PURE (Godot-free) gdshader `#include` resolution for the native mirror client.
 //
 // A Godot `.gdshader` may pull util code with a preprocessor line:  #include "res://.../foo.gdshaderinc"
 // Godot's ShaderInclude system resolves those at compile; the native ShaderStore compiles a `new Shader { Code = … }`

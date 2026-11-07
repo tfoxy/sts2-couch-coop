@@ -272,7 +272,7 @@ interface StatsShape {
     };
   } | null;
   /**
-   * M3's two arm modes, counted — see the scheduler section at the bottom of this file — plus R6 P6-A's `pulled`
+   * The two arm modes, counted — see the scheduler section at the bottom of this file — plus `pulled`
    * (animation frames spent running MirrorView's pending reconcile; canvasReconcilePull.spec owns that contract).
    */
   schedule: { rafs: number; parks: number; parkWakeups: number; pulled: number; rampFrames: number };
@@ -316,7 +316,7 @@ interface StatsShape {
     fxDeclined: number;
     /** M4: text records still riding the overlay because the draw list did not paint them. */
     textHoisted: number;
-    /** R2 — surfaces the game covered and withheld from the DOM overlay. */
+    /** Surfaces the game covered and withheld from the DOM overlay. */
     backstopWithheld: number;
   };
   /** M4's label-raster block, or null when unavailable. */
@@ -331,7 +331,7 @@ interface StatsShape {
     digestCollisions: number;
     /** T12's simple-rich block, or null with `?textRich=off` — the only observable that parse has. */
     rich: { accepted: number; refusals: Record<string, number> } | null;
-    /** R10's `?textStepRest` — which raster-step tier a settled label got, and the reason `uploads` reads high. */
+    /** The `?textStepRest` — which raster-step tier a settled label got, and the reason `uploads` reads high. */
     stepRest: boolean;
   } | null;
   textures: {
@@ -341,7 +341,7 @@ interface StatsShape {
     resident: number;
     bytes: number;
     paceBytes: number;
-    /** R6 P6-B1's tiny-page exemption: the ceiling in force, the grants, and what they cost. */
+    /** The tiny-page exemption: the ceiling in force, the grants, and what they cost. */
     paceTinyLimit: number;
     paceExempt: number;
     paceTinyBytes: number;
@@ -382,7 +382,7 @@ interface StatsShape {
     batchFallbacks: number;
   };
   animActive: number;
-  /** R5 T-DR4 — card flights that placed their comet root. */
+  /** Card flights that placed their comet root. */
   trailRootDrives: number;
   /** The paint order of the last stage-spanning opaque fill, or -1. See `DrawListBuild.backstopOrder`. */
   backstopOrder: number;
@@ -989,7 +989,7 @@ describe("the frame", () => {
   it("repaints when a texture resolves, on its own rAF and without a reconcile", () => {
     const { raf } = mount();
     renderer!.reconcile(paintableScene());
-    // THE WITNESS IS `builds`, NOT `frames` — R21 B1. `frames` counts executes that really ran, and this scenario
+    // THE WITNESS IS `builds`, NOT `frames`. `frames` counts executes that really ran, and this scenario
     // pokes the seam WITHOUT a texture having actually arrived, so the rebuilt list is identical and the paint is
     // correctly skipped. What this case is about is the SCHEDULING (its own rAF, no reconcile), and a build is
     // what says the frame ran. A real arrival moves the texture cache's counters and does paint; that is
@@ -1480,7 +1480,7 @@ describe("text into the canvas (M4)", () => {
     expect(stats().fx!.underResolved).toBe(0);
   });
 
-  // --- `?textRich`, DEFAULT `simple` since round 9 -----------------------------------------------------------
+  // --- `?textRich`, DEFAULT `simple` -----------------------------------------------------------
   //
   // The census `rich` block is null exactly when the lever is off, which is the only observable this parse has
   // from outside — it exists when the canvas text runtime built a registry, so every arm here rides
@@ -1494,7 +1494,7 @@ describe("text into the canvas (M4)", () => {
 
 });
 
-// R7 W3-B — THE BACKSTOP, END TO END AT THE RENDERER.
+// THE BACKSTOP, END TO END AT THE RENDERER.
 //
 // `canvasBackstopWithhold.spec` owns the two halves in isolation: the walk's predicate against a hand-built state,
 // and the overlay's decision against a hand-built order. Neither can answer the question this block does — does a
@@ -1579,7 +1579,7 @@ describe("the stage backstop", () => {
   // --- THE DEFAULT, PINNED AT THE RENDERER ---------------------------------------------------------------------
   //
   // `canvasBackstopWithhold.spec` proves the overlay withholds when it is HANDED an order. That is a different
-  // claim from "the shipped renderer hands it one", and only the second is what a player gets. The round-6 flip
+  // claim from "the shipped renderer hands it one", and only the second is what a player gets. The flip
   // turned this on and left the fact recorded in a comment; a comment does not fail when someone changes the
   // parse, and the parse is one `!== "off"` away from silently reinstating the bug the flip fixed.
 
@@ -1740,7 +1740,7 @@ describe("the retained method table", () => {
   });
 });
 
-// --- M3 WS-D: EAGER SCROLL ----------------------------------------------------------------------------------
+// --- EAGER SCROLL ----------------------------------------------------------------------------------
 //
 // The canvas stage's half of eager scrolling. The SNAPSHOT is `@/mirror/eagerScrollLayout`, which
 // `eagerScrollTargets.spec` pins against the DOM backend to the last decimal — so what is asserted here is what
@@ -2015,7 +2015,7 @@ describe("confirm tap", () => {
     expect(renderer!.confirmTapAt(450, 270)).toEqual({ id: "Removal", kind: "shop", retapActivates: true });
   });
 
-  // R1 — THE CONFIRM BOX IS A GLOBAL, and the wire's matrix is not one.
+  // THE CONFIRM BOX IS A GLOBAL, and the wire's matrix is not one.
   //
   // `confirmTapAt` is handed an already-resolved GAME point, so every box it tests has to be in game space. This
   // backend read `node.transform` straight off the wire and used it as one — but that matrix is the node's pose
@@ -2060,7 +2060,7 @@ describe("confirm tap", () => {
     // The nominal 240x338 box is centred on the card's TRUE global (500,500).
     expect(renderer!.confirmTapAt(500, 500)).toEqual({ id: "Card", kind: "reward" });
     expect(renderer!.confirmTapAt(560, 620)).toEqual({ id: "Card", kind: "reward" });
-    // …and NOT on the raw local matrix (100,100), which is where the pre-R1 read placed it.
+    // …and NOT on the raw local matrix (100,100), which is where the earlier read placed it.
     expect(renderer!.confirmTapAt(100, 100)).toBeNull();
     // Just outside the nominal box on the true global: 500 + 120 = 620 is the edge.
     expect(renderer!.confirmTapAt(640, 500)).toBeNull();
@@ -2587,7 +2587,7 @@ describe("cosmetic offsets", () => {
     expect(after.style.transform).toBe("matrix(1, 0, 0, 1, 800, 900)");
   });
 
-  // --- R6 M4: a targeting card is never lifted ------------------------------------------------------------------
+  // --- a targeting card is never lifted ------------------------------------------------------------------
   //
   // The DOM backend has had this branch since the lift existed; the canvas shipped with two (peek, play-zone) and a
   // header claiming byte-for-byte parity. The user's report is the difference: a card being AIMED sits raised above
@@ -2723,7 +2723,7 @@ describe("cosmetic offsets", () => {
     );
   });
 
-  // M3 WS-D — THE PRICE OF LEADING. Each write is a full rebuild here, and a gesture frame makes two statements
+  // THE PRICE OF LEADING. Each write is a full rebuild here, and a gesture frame makes two statements
   // about the same pixel (the compose seam right after the reconcile, then the engine's own frame). One build a
   // frame is the budget; the first write of a frame keeps its build, because a gesture's first motion must not
   // wait one.
@@ -2777,7 +2777,7 @@ describe("cosmetic offsets", () => {
     expect(stats().offsetBuilds).toBe(after.offsetBuilds);
   });
 
-  // M3 WS-D — THE CAPTURE SEED. `scrollRenderedY` answers out of the build's captured globals, and the eager
+  // THE CAPTURE SEED. `scrollRenderedY` answers out of the build's captured globals, and the eager
   // engine asks it on the FIRST frame of a gesture, before it has ever written an offset. Seeding the capture set
   // from the offsets alone therefore answered "I don't know" exactly when it mattered (and again after every
   // settle, since a zero offset deletes its entry), which is the 233px first-gesture dip.
@@ -3221,7 +3221,7 @@ describe("card trails into the canvas (M3 A4)", () => {
     expect(lines.filter((l) => l.startsWith("O ") && l.includes(" trail ")).length).toBe(2);
   });
 
-  // --- R5 T-DR1: the authored page carries the cross-section ----------------------------------------------------
+  // --- the authored page carries the cross-section ----------------------------------------------------
 
   it("asks for the trail pages — nothing else on this backend would", () => {
     const m = mount();
@@ -3262,7 +3262,7 @@ describe("card trails into the canvas (M3 A4)", () => {
     }
   });
 
-  // --- R5 T-DR4: the comet root follows the flight ---------------------------------------------------------------
+  // --- the comet root follows the flight ---------------------------------------------------------------
   //
   // This client votes `trailDrive` on its socket, so the producer stops streaming the comet root's transform. On
   // this backend nothing was placing it, and the root's decorative branch — sprites that stream their own poses
@@ -3360,7 +3360,7 @@ describe("card trails into the canvas (M3 A4)", () => {
     expect(stats().trailRootDrives).toBe(1);
   });
 
-  // --- R5 T-DR5: the phase probe ---------------------------------------------------------------------------------
+  // --- the phase probe ---------------------------------------------------------------------------------
 
   it("publishes the comet's PHASE for snapshot consistency checks", () => {
     const m = mount("/?stage=canvas&paintDump=1");
@@ -3751,7 +3751,7 @@ describe("the animation scheduler's two arm modes (M3)", () => {
   it("the park's repaint NEVER ACKS — it returns into no one, exactly like the plain animation rAF", async () => {
     const { raf, timers } = mount();
     await withPlayingSpine(spineScene());
-    // `animFrames`, not `frames` — R21 B1: this case is about the park's wakeup reaching the animation frame and
+    // `animFrames`, not `frames`: this case is about the park's wakeup reaching the animation frame and
     // NOT reaching the ack, and a wakeup whose picture is unchanged now legitimately paints nothing. The
     // scheduler's own counter is what says the frame ran.
     const framesBefore = stats().animFrames;
@@ -3765,7 +3765,7 @@ describe("the animation scheduler's two arm modes (M3)", () => {
   });
 });
 
-// --- the headless capture seam (R5 T0) -------------------------------------------------------------------------
+// --- the headless capture seam -------------------------------------------------------------------------
 //
 // A page screenshot of this backend on a headless box captures the DOM overlay and NONE of the stage's pixels,
 // because the context carries no `preserveDrawingBuffer` and a capture is always a LATER TASK than the paint that
@@ -3847,7 +3847,7 @@ describe("__mirrorCanvasSnapshot — reading the stage inside the painting task"
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// R6 M5 — THE RAISE HAS A TIME DIMENSION
+// THE RAISE HAS A TIME DIMENSION
 // ---------------------------------------------------------------------------------------------------------------
 //
 // The DOM raises a hand card by writing a CSS `translate` on its element, and `.mirror-hand-raisable` carries

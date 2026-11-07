@@ -96,7 +96,7 @@ describe("rewardFocusSnapshotFromScene", () => {
     });
   });
 
-  // `candidates` (R2-P3, `rustSceneIndex`): a superset restricting the two `orderedIds` scans. A caller passes it
+  // `candidates`: a superset restricting the two `orderedIds` scans. A caller passes it
   // only as a HINT — every candidate is still re-checked against the node, so a candidate set with extra, wrong
   // members changes nothing about the answer, only how many ids get looked at.
   describe("candidates", () => {

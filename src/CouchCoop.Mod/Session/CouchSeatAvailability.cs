@@ -15,8 +15,8 @@ namespace CouchCoop.Mod.Session;
 /// WHY THIS EXISTS. <c>MaySpawnCouchSeat</c> already gates the launch, and
 /// <see cref="HeadlessClientManager"/>'s launcher returns <see langword="null"/> when it is false — but a null
 /// carries no reason, so the viewer's report said "The process launcher returned no process handle. No further
-/// cause is available." while the host had known the actual cause since it started hosting. Measured Sep-22
-/// 2026 during release validation: an orphaned game process from an earlier session still owned UDP 33771, the
+/// cause is available." while the host had known the actual cause since it started hosting. Seen
+/// during release validation: an orphaned game process from an earlier session still owned UDP 33771, the
 /// couch ENet side could not bind, and every phone join failed in 141 ms with that sentence. The host's own
 /// <c>godot.log</c> had 32 <c>[couchcoop]</c> lines for the session and not one of them mentioned the
 /// transport.

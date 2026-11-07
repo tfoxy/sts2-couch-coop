@@ -3,7 +3,7 @@ using D = CouchCoop.MirrorProtocol.SceneModel.HideLatchPolicy.Decision;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Unit tests for HideLatchPolicy.Decide — the tween hide-latch state machine (Feature B / WS-VIEW). Full
+// Unit tests for HideLatchPolicy.Decide — the tween hide-latch state machine. Full
 // hold/cancel/expire matrix, including a non-1 resting alpha (0.75).
 internal static class HideLatchPolicyTests
 {
@@ -77,7 +77,7 @@ internal static class HideLatchPolicyTests
         Eq(HideLatchPolicy.Decide(true, 0.75, 0.0, true, Mid, null), D.Hold, "resting 0.75, incoming ≈0 → Hold");
     }
 
-    // WS-REST held-restore short expiry (the 6th `heldRestoreElapsedMs` argument). The rest-site refocus/first-click
+    // Held-restore short expiry (the 6th `heldRestoreElapsedMs` argument). The rest-site refocus/first-click
     // re-show is a resting-valued write with no fade-in hint; once it has been HELD ≥ HeldRestoreGraceMs (150ms) it is
     // a genuine reveal → Expire (release). Block-badge parity: a ≈0 write never expires on the held clock, a not-visible
     // hide still Cancels first, and a null clock describes the first hold.

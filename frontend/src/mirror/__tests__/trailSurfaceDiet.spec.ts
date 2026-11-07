@@ -14,9 +14,9 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// R16 — THE TRAIL-SURFACE DIET.
+// THE TRAIL-SURFACE DIET.
 //
-// R15 measured, on a phone, what a 3+-card flight actually costs: each comet paints TWO SVG ribbon strokes, each
+// Phone measurements showed what a 3+-card flight actually costs: each comet paints TWO SVG ribbon strokes, each
 // hosted in an element carrying `mix-blend-mode: plus-lighter`, so each is its own compositor render surface sized
 // to the arc it paints. The per-frame compositing of those surfaces (AREA × COUNT) is the dominant term, and the
 // paint-rate / band / point diets do not touch it — they make a surface cheaper to FILL, which is not the bill.
@@ -359,11 +359,11 @@ describe("trail surface diet — the threshold is SIX strokes", () => {
 
 describe("trail surface diet — current path", () => {
   it("three cards arm it: strokes de-blend and the comet shortens — the R16 contract amendment", () => {
-    // The R11 contract said 1-3 cards look exactly as authored; R16 moves that window to 1-2 BY DECISION (the
+    // The earlier contract said 1-3 cards look exactly as authored; the current one moves that window to 1-2 BY DECISION (the
     // measured lag onset IS three cards). This is the pin that makes the new boundary explicit: at 3 cards the
     // shipped default is ARMED — both strokes still paint (no `single`), but composite un-blended and shorter.
     // 40 frames = 640ms: past the 400ms shipped lifetime (so `short` has points to expire) and well inside the
-    // fixture flight's ~1120ms safe sampling window (see the WP-A timing note).
+    // fixture flight's ~1120ms safe sampling window (see the timing note).
     const armed = runShuffle(3, 40);
     settle(armed.state, armed.renderer);
     expect(blendOf(armed.stage, "t0-outer"), "outer stroke host de-blended").toBe("");
@@ -406,7 +406,7 @@ describe("trail surface diet — `short` (the surface AREA)", () => {
 
 describe("trail surface diet — `noblend` (the surfaces themselves)", () => {
   it("de-blends the STROKE hosts and leaves the decor's blending alone", () => {
-    // The orthogonality pin. R11's decor diet covers the sparkle branch and explicitly exempts the strokes; this
+    // The orthogonality pin. The decor diet covers the sparkle branch and explicitly exempts the strokes; this
     // one covers exactly the strokes. Three flights is below the decor diet's own threshold of six, so the sparks
     // here are un-dieted — and stay blended, which is what makes the two id sets provably disjoint.
     const { stage, state, renderer } = runShuffle(3, 12);

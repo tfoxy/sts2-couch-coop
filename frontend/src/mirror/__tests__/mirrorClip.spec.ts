@@ -59,12 +59,12 @@ describe("MirrorView clip groups", () => {
   });
 });
 
-// R20 — the two `clip_contents` regressions from R19 WP-4, proved through the REAL walk (the clip-axis table is
+// The two `clip_contents` regressions, proved through the REAL walk (the clip-axis table is
 // keyed on scene identity, which only `computeSceneInfo` can resolve, so a nodeStyle-level test cannot cover the
 // plumbing).
 describe("MirrorView clip_contents exceptions (R20)", () => {
   it("clips the ancient event's ContentContainer on the VERTICAL axis only", () => {
-    // The real shape (measured from .sts2/bench/audit-mprun.ndjson): the layout root carries the scene file, and
+    // The real shape (measured from a recorded ancient-event stream): the layout root carries the scene file, and
     // ContentContainer is a 1160x720 plain child at design (380,320) whose subtree this repo enlarges by 1.2.
     const state = stateWith(
       [
@@ -93,7 +93,7 @@ describe("MirrorView clip_contents exceptions (R20)", () => {
     const el = wrapper.find('[data-node-id="content"]');
     expect(el.exists()).toBe(true);
     const style = el.attributes("style") ?? "";
-    // Vertical clip kept (it is what hides the parked options mid-dialogue — the R19 WP-4 fix); horizontal outset
+    // Vertical clip kept (it is what hides the parked options mid-dialogue — the fix); horizontal outset
     // to the full design stage, so the 1.2x-enlarged 1000px option rows are no longer cut 20px on each side.
     expect(style).toContain("clip-path: inset(0px -380px)");
     expect(style).not.toContain("overflow: hidden");

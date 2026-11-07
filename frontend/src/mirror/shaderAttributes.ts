@@ -43,7 +43,7 @@ import {
 //
 // WHY: `Game/GameTransitionRect` (see `TRANSITION_NODE_TYPE`) is the single biggest surface in the fleet — a
 // 2560×1200 design-px full-bleed node — and it is INVISIBLE except while a screen change is actually fading.
-// Measured over the 37 recorded mirror sessions in `.sts2/bench`: the node is present in every one, is upserted
+// In recorded mirror sessions the node is present in every one, is upserted
 // exactly once, and its `threshold` uniform is 0 in every single upsert — it was never once anything else. Yet
 // today it costs, on every screen: one WebGL binding + a full-screen backing store (2048×832 = 6.5 MB under the
 // static pin; `designBox × dpr × renderScale` unpinned), one GL draw producing zero pixels, a promoted
@@ -57,7 +57,7 @@ import {
 // The low-HP vignette is likewise parked while effectively transparent.
 //
 // WHY: `Run/GlobalUi/vfx_low_hp_border` (see `LOW_HP_BORDER_NODE_TYPE`) is a 2048×922 full-screen shader surface.
-// Across the recorded benches it renders `meanAlpha 0` while streaming `alpha_multiplier: 0.0025295` — it costs a
+// In recorded sessions it renders `meanAlpha 0` while streaming `alpha_multiplier: 0.0025295` — it costs a
 // binding, a full-screen backing store, a GL draw and a promoted compositor layer while being literally invisible.
 // Unlike the transition gate, whose "invisible" rests on the shader writing alpha 0 exactly, this one rests on a
 // PROVEN UPPER BOUND plus the destination's precision — see `lowHpBorderEffectivelyOff`.
@@ -298,7 +298,7 @@ function hasAncestorType(node: MirrorNode, nodes: Map<string, MirrorNode>, type:
 
 // Memoize the full shader binding keyed on the node OBJECT (only for actual shader nodes — see below). Building it
 // — synthesizing the material doc, gsw's resolveResource walk, and the shader-signature JSON.stringify inside
-// assignMaterialAttributes — was a measured combat hotspot (~160ms over a 24s trace on a mid-range phone), yet the
+// assignMaterialAttributes — was a combat hotspot on mid-range phones, yet the
 // result is a pure function of the node: the reconciler swaps in a FRESH node object whenever a node's data
 // changes (uniforms, texture, modulate, …), so a STABLE object across walks — an incremental-structural re-style,
 // or a node dragged only by a parent-transform tween (own object unchanged, inherited ctx moved) — has an
@@ -307,7 +307,7 @@ function hasAncestorType(node: MirrorNode, nodes: Map<string, MirrorNode>, type:
 // the map self-bounds.
 let shaderBindingCache = new WeakMap<MirrorNode, MirrorShaderBinding | null>();
 
-// --- L2: the CONTENT-keyed memo (R10-B3) --------------------------------------------------------------------
+// --- L2: the CONTENT-keyed memo ------------------------------------------------------------------------------
 // L1 above is keyed on the node OBJECT, so it busts on ANY field change — and the reconciler swaps in a fresh
 // node object for a node whose modulate, transform, text or visibility moved, none of which the shader binding
 // depends on. On a card play the pooled shells are re-instantiated wholesale, so EVERY shader node under the
@@ -495,7 +495,7 @@ function computeShaderAttributes(node: MirrorNode, nodes?: Map<string, MirrorNod
   // card_ripple with width ≈ 0 = the game's HIDDEN ripple. Either way the node stays a shader-INPUT node
   // (isWebglShaderNode / isShaderInputNode are unchanged), so nodeStyles keeps suppressing its raw SDF paint and
   // nothing renders the degenerate-smoothstep sliver:
-  //   * DEFAULT (R10-B3): keep the full attribute set and add `data-godot-shader-dormant`, so gsw PARKS the
+  //   * DEFAULT: keep the full attribute set and add `data-godot-shader-dormant`, so gsw PARKS the
   //     binding (canvas hidden ⇒ nothing painted) instead of disposing it. A hand's playability flips constantly;
   //     parking makes the next flip a one-attribute wake instead of a rebuild + forced layout per card.
   const rippleOff = CARD_RIPPLE_SHADER_IDS.includes(node.shaderId) && rippleEffectivelyOff(node);

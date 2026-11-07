@@ -65,7 +65,7 @@ internal static class CouchCoopSceneObserverTests
             "a rejected upstream transform contract is diagnosed");
     }
 
-    // R10 KEYFRAME SELF-CONSISTENCY. The producer's order array used to include nodes it had never emitted (a
+    // KEYFRAME SELF-CONSISTENCY. The producer's order array used to include nodes it had never emitted (a
     // subtree born hidden is registered but pruned from every incremental capture), so the retained order held ids
     // with no retained node — and the keyframe shipped them in OrderedIds while silently dropping them from
     // Upserts. The client's ONLY structural-walk trigger is an orderedIds CHANGE, so having the id already in the
@@ -94,7 +94,7 @@ internal static class CouchCoopSceneObserverTests
 
     private static void KeyframeOrderKeepsTheRetainedSequence()
     {
-        // A complete order (the normal case with the R10 producer) is untouched — same ids, same order, same count.
+        // A complete order (the normal case with the producer) is untouched — same ids, same order, same count.
         var nodes = new Dictionary<string, RuntimeSceneNodeDelta>
         {
             ["a"] = Node("a"),
@@ -514,7 +514,7 @@ internal static class CouchCoopSceneObserverTests
             "ToVolatile ships the retained IntentFrames when dirty (intent changed this window)");
     }
 
-    // R13 CONTENT KEY: the pooled-card content identity (`nc:{entry}#{serial}`) is STATIC — the producer emits it
+    // CONTENT KEY: the pooled-card content identity (`nc:{entry}#{serial}`) is STATIC — the producer emits it
     // with the static block only, so a volatile-only upsert must KEEP the retained key or a card node loses its
     // identity one tick after it appears (and a client keying DOM elements on it would re-create them every frame).
     // ToVolatile must DROP it, so the per-tick projection never re-ships a key the client already holds.

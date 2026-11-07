@@ -9,9 +9,9 @@ namespace CouchCoop.MirrorProtocol.Input;
 //   * <see cref="TargetsAt"/> emulates the z-stack scan — topmost-first DISTINCT hover-first widget ids under a
 //     design-space point, truncated at the first blocking button (the block id is NOT included).
 //   * <see cref="ComputeTouchInfo"/> is the per-node classification walk (echo/decorative/target/block), exposed
-//     for tests + WS-M debug dumps.
+//     for tests + debug dumps.
 //
-// This maps to GestureCallbacks.TargetsAt / GestureCallbacks.IsCard after WS-M curries the live state + transforms.
+// This maps to GestureCallbacks.TargetsAt / GestureCallbacks.IsCard after the gesture layer curries the live state + transforms.
 public static class TouchTargetScan
 {
     // Hover-first TOUCH target widget types (mirrorRenderer TOUCH_TARGET_TYPES). Keyed by the Godot type LEAF.
@@ -29,7 +29,7 @@ public static class TouchTargetScan
         "NMerchantCard",
         "NTreasureRoomRelicHolder",
         "NRewardButton",
-        // R20: the shop's CARD REMOVAL SERVICE coin (NMerchantCardRemoval, from
+        // The shop's CARD REMOVAL SERVICE coin (NMerchantCardRemoval, from
         // res://scenes/merchant/merchant_card_removal.tscn, with an NClickableControl "Hitbox" child — the same shape
         // as every other shop slot). Neither leaf ends in "Button", so it was classified as neither a target nor a
         // block: ComputeTouchInfo answered None, and the gesture machine's "no target" guard runs BEFORE the
@@ -39,7 +39,7 @@ public static class TouchTargetScan
         "NMerchantCardRemoval",
     };
 
-    // R8: the end-of-event "Proceed" option is displayed through the SAME reusable NEventOptionButton wrapper as a
+    // The end-of-event "Proceed" option is displayed through the SAME reusable NEventOptionButton wrapper as a
     // regular option (so it isn't statically distinguishable by node-type leaf), but keeps the
     // res://scenes/ui/proceed_button.tscn (NProceedButton) SCENE IDENTITY — SceneIdentity.Resolve reads a node's own
     // SceneFilePath before any leaf-type check, so this tells the two apart even though both report the
@@ -172,7 +172,7 @@ public static class TouchTargetScan
                 // still only for peek / drag-lift / tap-unselect semantics.
                 if (TouchTargetTypes.Contains(leaf))
                 {
-                    // R8: EXCEPT the end-of-event Proceed option — same leaf, but its owning SCENE stays
+                    // EXCEPT the end-of-event Proceed option — same leaf, but its owning SCENE stays
                     // proceed_button.tscn (see ProceedButtonSceneFileSuffix) — press it immediately (Block), never
                     // arm-first.
                     var (file, _) = SceneIdentity.Resolve(cur.Id, state);
@@ -181,7 +181,7 @@ public static class TouchTargetScan
                         return new TouchInfo(TouchInfoKind.Block, cur.Id);
                     }
 
-                    // R8 (live-verified leg): a resolved event's final "Continue" is a REGULAR
+                    // A resolved event's final "Continue" is a REGULAR
                     // event_option_button.tscn / NEventOptionButton (live QA capture — the proceed_button.tscn key
                     // never fires for it), so the scene file cannot tell it apart. What can: it is the ONLY
                     // effectively-visible event option on screen (an ended event offers no choice to weigh, so
@@ -221,7 +221,7 @@ public static class TouchTargetScan
             : new TouchInfo(TouchInfoKind.Target, targetId);
     }
 
-    // R19: what counts as a CARD for the gesture machine's card semantics (<see cref="IsCard"/>) — the predicate that,
+    // What counts as a CARD for the gesture machine's card semantics (<see cref="IsCard"/>) — the predicate that,
     // with <see cref="IsHandCard"/>, splits a touch target into a HAND card (peek / drag-lift / tap-unselect) and a
     // NON-hand card (the long-press right-click that opens the item's detail dialog). It used to be the single leaf
     // "NCard", which is why a sustained touch on a SHOP card did nothing: a shop item's touch target resolves to
@@ -393,7 +393,7 @@ public static class TouchTargetScan
         return false;
     }
 
-    // R8 lone-option leg: how many effectively-visible NEventOptionButton widgets are on screen. An event screen has
+    // How many effectively-visible NEventOptionButton widgets are on screen. An event screen has
     // ONE options list, so a count of exactly 1 means "no choice left — just a Continue" and the option presses
     // immediately (see ComputeTouchInfo). Bounded by the node map (touch-time only, never per-frame). Web twin:
     // countVisibleEventOptions in mirrorRenderer's computeTouchInfo.

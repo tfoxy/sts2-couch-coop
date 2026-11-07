@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.Input;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// R5 (H2): resolve a HoverTip's VISUAL owner id — the on-screen thing the tip points at — from its streamed
+// Resolve a HoverTip's VISUAL owner id — the on-screen thing the tip points at — from its streamed
 // AnchorOwnerId. STS2 anchors a hand-card tip to the card's NHandCardHolder, a ZERO-SIZE node whose own wide-screen
 // claim rides its transform ORIGIN, not the focused card's center. A floater glued to the holder therefore drifts
 // from the card at F≠1. This pure resolver maps the anchor owner to the card the user actually sees so both the

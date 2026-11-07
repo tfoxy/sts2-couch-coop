@@ -699,7 +699,7 @@ describe("randomized mixed delta sequence (seeded)", () => {
   });
 });
 
-// R10-PERF5 WS-1 — DORMANT HIDDEN SUBTREES, from this file's angle: the composed-matrix parity oracle must hold
+// DORMANT HIDDEN SUBTREES, from this file's angle: the composed-matrix parity oracle must hold
 // for a subtree the renderer never built until the reveal walk. (The boundary itself is specced in
 // mirrorRendererDormant.spec.ts; this pins that a revealed subtree is geometrically indistinguishable from one
 // that was always on screen.)

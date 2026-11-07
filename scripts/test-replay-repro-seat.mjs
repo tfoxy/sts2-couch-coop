@@ -2,7 +2,7 @@
 // Unit tests for --as-seat's browser-free half: the host/seat socket split and the session the quiet HOST
 // socket answers with. The in-page mechanics (the fake WebSocket class, the `couchcoop-synthetic-seat` meta
 // insertion, the CDP input driver) only run inside a real page and are exercised by actually running
-// replay-repro.mjs --as-seat against a dev server (see docs/agents/repro-recorder.md) — this file checks the
+// replay-repro.mjs --as-seat against a dev server (see docs/repro-recorder.md) — this file checks the
 // pure decisions that drive that page-side code, the same way scripts/test-replay-repro-session.mjs checks
 // session synthesis.
 

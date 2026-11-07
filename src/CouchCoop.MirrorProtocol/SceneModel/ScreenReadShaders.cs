@@ -5,7 +5,7 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 
 // PURE (Godot-free) classification + approximation math for gdshaders that sample the framebuffer (Godot 4
 // `hint_screen_texture` / the Godot 3 `SCREEN_TEXTURE` built-in). The native mirror client has no BackBufferCopy,
-// so that screen sample is undefined (white on the target Mali GPU) and such a shader is unrenderable natively.
+// so that screen sample is undefined (white on the target mobile GPU) and such a shader is unrenderable natively.
 // The native renderer handles it three ways, all consulting this one classifier so nothing diverges:
 //   - ShaderAttachment.EnsureMaterial never mounts the ShaderMaterial (and never pins on-demand rendering),
 //   - PaintGates never paints the node's raw base fill/texture (the opaque white ColorRect must not paint),

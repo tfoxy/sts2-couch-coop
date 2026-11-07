@@ -15,7 +15,7 @@
 //
 // Self-contained per the mirror decoupling rule: `@/mirror/*` only.
 //
-// --- R10-PERF4 WS-4: REGION BLOBS (the per-node <canvas> → <div> swap) ----------------------------------------
+// --- REGION BLOBS (the per-node <canvas> → <div> swap) ----------------------------------------
 //
 // The decode-once win above cost one COMPOSITED LAYER per sprite: every `<canvas>` in the tree is unconditionally
 // promoted, and each promoted layer also forces `Overlap` promotions on whatever paints above it. A phone trace of
@@ -34,7 +34,7 @@
 // styling node against the region key on a miss, and the bake's completion hands exactly those ids to the listener
 // (MirrorView → renderer.markTextureDirty + a NORMAL coalesced render → an O(depth) descent + one node's restyle).
 
-// --- R11 (Aug-14): THE ENCODE MOVES OFF THE MAIN THREAD -------------------------------------------------------
+// --- THE ENCODE MOVES OFF THE MAIN THREAD -------------------------------------------------------
 //
 // A phone session measured 4,502.6ms of bake WALL against 385.3ms of main thread (91.4% of a bake's life is not
 // main-thread time) and still tripped the self-disable three times, stranding 41 regions on the canvas path. The
@@ -48,13 +48,13 @@
 // of each atlas page, a whole page decode — so the wall backstop had to be re-derived per path. See WHICH WALL IS
 // THE DAMAGE in the drain below for the device session that proved it and the arithmetic that replaced it.
 
-// --- Aug-15: STRIPS, the same pipeline with N crops in one job -------------------------------------------------
+// --- STRIPS, the same pipeline with N crops in one job -------------------------------------------------
 //
 // The enemy-intent glyph shows N atlas frames in turn. The mirror cycles them on the COMPOSITOR — every frame side
 // by side in ONE strip image, walked by a `translate` + `steps(N)` animation (frontend/src/mirror/intentStrip.ts)
 // — so what it needs from this module is not N region blobs but one STRIP blob, and it needs it built the same way
 // for the same reason: composing N cells into a canvas and `convertToBlob`-ing it on the main thread is exactly
-// the idle-task-starved encode the R11 round moved off this thread.
+// the idle-task-starved encode the worker-pool encode moved off this thread.
 //
 // So a strip rides this file's whole pipeline verbatim: one queue entry, one drain slot, the same strike/suspend
 // machinery, the same never-revoked `regionBlobs` cache and the same `regionWaiting` → `onAtlasRegionsReady`
@@ -171,7 +171,7 @@ function getAtlas(url: string): AtlasEntry {
     entry!.listeners.clear();
     for (const cb of waiting) cb();
   };
-  // A FAILED page still SETTLES, and settling has to wake its waiters (Aug-19). This used to clear `listeners`
+  // A FAILED page still SETTLES, and settling has to wake its waiters. This used to clear `listeners`
   // without invoking them, which silently stranded everyone waiting on a page that 404'd or failed to decode:
   // startRegionBake's callback never ran, so its region stayed in `regionBaking` forever (never baked, never
   // failed), and drawAtlasRegion's onReady never re-checked. Both registrants already handle `source === null`
@@ -225,7 +225,7 @@ export function atlasPageSize(url: string): { width: number; height: number } | 
  * The DECODED PIXELS of an atlas page — the thing `getAtlas` is holding alive — or null when this module has none
  * (never requested, still loading, or failed). A PURE READ, for the same reason `atlasPageSize` is one.
  *
- * WHY THIS IS EXPORTED, and it is the whole point of the accessor (Aug-28 phone trace).
+ * WHY THIS IS EXPORTED, and it is the whole point of the accessor.
  *
  * The canvas stage's re-packer crops its regions out of the decoded page with `drawImage`. It was handed the
  * TEXTURE BRIDGE's own `<img>`, and a `<img>`'s decoded frame is a CACHE: Chrome discards it under memory
@@ -590,7 +590,7 @@ const regionBaking = new Set<string>();
 // … and keys whose bake CANNOT succeed (no OffscreenCanvas/toBlob/createObjectURL, a failed atlas, a tainted or
 // zero-sized draw). Those nodes stay on the canvas mechanism forever — correct, just one layer each.
 //
-// GENUINE FAILURE ONLY (Aug-12). This set used to double as the dumping ground for regions dropped because the
+// GENUINE FAILURE ONLY. This set used to double as the dumping ground for regions dropped because the
 // slow-bake revert had fired, which is what made that revert unrecoverable in practice: flipping `disabled` back
 // would not have helped, because every region the session had already asked for was parked in here permanently
 // and `atlasRegionBlobUrl` answers null for anything in it without re-requesting. A live re-arm probe on the
@@ -638,7 +638,7 @@ export function atlasRegionBlobUrl(url: string, region: AtlasRegion, nodeId: str
       regionWaiting.set(key, ids);
     }
     ids.add(nodeId);
-    // R10-PERF6 WS-P2 — URGENT BEATS SPECULATIVE. A waiter means a node is on screen RIGHT NOW painting through
+    // URGENT BEATS SPECULATIVE. A waiter means a node is on screen RIGHT NOW painting through
     // its canvas and waiting for this blob; a no-waiter request (the hidden-sprite warm-up) is speculation about
     // a screen nobody has opened. The drain is strictly one-at-a-time and FIFO, so without this promotion a map
     // that opens while a ~700-deep warm queue is still draining puts every one of its own regions BEHIND that
@@ -751,17 +751,15 @@ function startStripBake(spec: AtlasStripSpec): void {
 // TIME: each node is already painting correctly through its canvas, so a bake is never on a critical path, and
 // spreading them costs nothing but a slightly later swap.
 //
-// --- WHY ONE AT A TIME (Aug-11) — STILL TRUE FOR THE INLINE PATH ONLY (Aug-14) ---------------------------------
-// The rule this comment shipped, quoted verbatim so the update is auditable:
-//
-//   "The drain used to be a `while` loop with a 3ms budget checked AFTER each `bakeRegion`. But a bake is
-//    ASYNCHRONOUS: `bakeRegion` only KICKS OFF `convertToBlob` and returns in ~0ms, so the budget check measured
-//    nothing, the loop emptied the whole queue in one task, and every encode ran concurrently. On a Mali-G57 phone
-//    loading the map that measured 3.1s of blocked main thread across ~20 regions (≈0.33 MP total — the cost is
-//    the per-encode GPU readback/stall, not the pixels), 53.3% of the screen's whole load CPU."
+// --- WHY ONE AT A TIME — STILL TRUE FOR THE INLINE PATH ONLY -------------------------------------------------
+// The drain used to be a `while` loop with a 3ms budget checked AFTER each `bakeRegion`. But a bake is
+// ASYNCHRONOUS: `bakeRegion` only KICKS OFF `convertToBlob` and returns in ~0ms, so the budget check measured
+// nothing, the loop emptied the whole queue in one task, and every encode ran concurrently. On a weak phone
+// loading the map that blocked the main thread for seconds across ~20 regions (the cost is the per-encode GPU
+// readback/stall, not the pixels), a large share of the screen's whole load CPU.
 //
 // Every word of that is still correct ABOUT THE INLINE PATH, and the inline path still obeys it when a worker is
-// and every fallback below drain strictly one at a time. But note WHAT the 3.1s was made of — "the per-encode GPU
+// and every fallback below drain strictly one at a time. But note WHAT that blocked time was made of — "the per-encode GPU
 // readback/stall", i.e. work done ON THE MAIN THREAD on behalf of the encode. When the encode runs in a worker
 // that owns the atlas (atlasBakeWorker.ts), the main thread does neither the readback nor the encode: a bake
 // costs it one `postMessage`. The serial rule was protecting the main thread from work that is no longer on it,
@@ -774,24 +772,21 @@ function startStripBake(spec: AtlasStripSpec): void {
 // layer saving with seconds of jank. Mirrors mirrorRenderer's ATLAS_STICKY_CANVAS_REVERTS idiom, one level up:
 // there a NODE stops thrashing, here the MECHANISM does.
 //
-// --- WHY THE BACKOFF DECAYS (Aug-12) ---------------------------------------------------------------------------
+// --- WHY THE BACKOFF DECAYS ------------------------------------------------------------------------------------
 // That backoff used to be a SESSION-DEATH LATCH: three slow urgent bakes and no region was ever baked again. A
-// real phone (moto g86, Mali-G615) tripped it on its very first screens — `{"baked":20,"slow":3,"slowestMs":3762,
-// "disabled":true}` — and the consequence was permanent and catastrophic, far worse than the jank the latch was
-// protecting against:
-//   * the map then opened with 941 <canvas> sprites / 1,888 compositor layers / 1.48 Gpx of layer area, versus
-//     34 layers on the same device when the bakes land;
-//   * 2 of 3 combat traces recorded 2,029ms and 2,705ms main-thread tasks holding only ~100ms of CPU — the
-//     renderer BLOCKED ON THE GPU PROCESS (GpuImageDecodeCache::UploadImage, 490ms self time). That is the
-//     steady-state price of the canvas-fallback regime, paid every frame, forever.
-// So the arithmetic that matters is: even a 3.7s bake is cheaper than one session of that. Exposure control is
+// real phone tripped it on its very first screens, and the consequence was permanent and catastrophic, far worse
+// than the jank the latch was protecting against:
+//   * the map then opened with ~1,000 <canvas> sprites and ~2,000 compositor layers, versus a few dozen when the
+//     bakes land;
+//   * combat showed multi-second main-thread tasks holding almost no CPU — the renderer BLOCKED ON THE GPU
+//     PROCESS. That is the steady-state price of the canvas-fallback regime, paid every frame, forever.
+// So the arithmetic that matters is: even a multi-second bake is cheaper than one session of that. Exposure control is
 // still legitimate — a burst of pathological encodes should not fight a user who is waiting — but it has to HEAL.
 //
 // The shape: a DECAYING STRIKE WINDOW plus an ESCALATING, TIME-BOUNDED suspension.
 //   * A strike = one slow URGENT bake (unchanged criterion, see the drain). Strikes older than
 //     BAKE_STRIKE_DECAY_MS stop counting, so the trip means "this device's encode path is pathological RIGHT
-//     NOW", not "three slow bakes happened at some point this session" — which is literally what the phone's
-//     baseline was: 3 slow bakes scattered across a whole session of 20.
+//     NOW", not "three slow bakes happened at some point this session".
 //   * On the trip, baking suspends for a bounded window instead of forever, and every queued region is PARKED
 //     (not failed) so a re-arm can put it straight back on the queue with its waiters intact.
 //   * The suspension DOUBLES per consecutive trip up to BAKE_SUSPEND_MAX_MS, because a slow device's re-arm is
@@ -811,7 +806,7 @@ type BakeJob = {
   strip: AtlasStripSpec | null;
 };
 const bakeQueue: BakeJob[] = [];
-// R10-PERF6 WS-P2: speculative (no-waiter) bakes — drained only when nothing urgent is pending. See enqueueBake.
+// Speculative (no-waiter) bakes — drained only when nothing urgent is pending. See enqueueBake.
 const warmQueue: BakeJob[] = [];
 /** Bakes started and not yet settled, and drain tasks scheduled but not yet run. Together they are the drain. */
 let bakeInFlight = 0;
@@ -821,47 +816,43 @@ const BAKE_SLOW_MS = 50;
 /** …and this many of them (inside BAKE_STRIKE_DECAY_MS) suspend the div/blob mechanism. */
 const BAKE_SLOW_LIMIT = 3;
 /**
- * INLINE-PATH wall backstop (Aug-14). A bake whose encode blocks *here* for this long has stalled behind something
+ * INLINE-PATH wall backstop. A bake whose encode blocks *here* for this long has stalled behind something
  * we cannot see from script — a saturated GPU process, an idle-callback queue that never runs — and that is damage
- * even when the main thread was free, so it keeps its own strike count. 2,000ms is chosen against three measured
- * points: the honest cost of a region on an IDLE page on this phone is ~36ms; a BUSY page pays ~188ms for the same
- * encode (a wait, not work); and the pathological session that motivated this round had a 2,962ms worst bake. So
- * the backstop sits ~55× above healthy, ~10× above busy-but-fine, and below the real pathology — it cannot fire on
- * a device that is merely slow, and it still fires on the one that is stuck.
+ * even when the main thread was free, so it keeps its own strike count. 2,000ms sits far above the honest cost of a
+ * region on an IDLE page, well above a BUSY page's inflated (but fine) encode, and below the real pathology — it
+ * cannot fire on a device that is merely slow, and it still fires on the one that is stuck.
  *
  * It is measured from the moment the INLINE encode starts, not from the moment the region was dequeued, so a
  * region that reached this path after a worker refused it is judged on what it cost HERE (see WHICH WALL IS THE
- * DAMAGE below). On the inline path those two stamps are the same instant, so this is exactly the pre-Aug-14
- * number for the path it still governs.
+ * DAMAGE below). On the inline path those two stamps are the same instant.
  */
 const BAKE_STALL_MS = 2_000;
 /**
- * WORKER-PATH stall backstop (Aug-14, revised). The worker path's wall is `queue wait + (maybe) a whole atlas page
+ * WORKER-PATH stall backstop. The worker path's wall is `queue wait + (maybe) a whole atlas page
  * decode + crop + encode`, and only the last of those is evidence about this device's encode path — so the
- * backstop reads the worker's own `encodeMs` instead. See WHICH WALL IS THE DAMAGE below for why, and for the
- * device session that made a wall threshold here indefensible.
+ * backstop reads the worker's own `encodeMs` instead. See WHICH WALL IS THE DAMAGE below for why a wall threshold
+ * here is indefensible.
  *
- * 1,000ms, argued the same way as the inline number above but from the worker path's OWN measurements (moto g86,
- * 60s of recorded combat, pool of 4, `workerEncodeMsTotal` 544.9ms over 64 regions):
- *   * healthy is ~8.5ms per region (544.9 / 64), so this sits ~118× above healthy;
- *   * the measured idle→busy inflation factor for a PNG encode on this phone was 188/36 ≈ 5.2×, which puts a
- *     "busy but fine" worker encode at ~44ms — still ~23× under the threshold;
+ * 1,000ms, argued the same way as the inline number above but from the worker path's OWN encode times:
+ *   * a healthy worker encode is on the order of ~10ms per region, so this sits two orders of magnitude above it;
+ *   * a "busy but fine" worker encode is a few times that — still more than an order of magnitude under the
+ *     threshold;
  *   * three of them inside BAKE_STRIKE_DECAY_MS is 3s of a background core spent on three small sprites.
- * The margins are deliberately wider than the inline path's ~55×/~10×, for two reasons. (a) We have a MEAN, not a
- * maximum: 64 mixed-size regions, and the biggest atlas region in this game (a full card face) is an order of
+ * The margins are deliberately wider than the inline path's, for two reasons. (a) We have a MEAN, not a
+ * maximum: the biggest atlas region in this game (a full card face) is an order of
  * magnitude more pixels than the median icon, so one legitimate region can honestly cost many times the mean.
  * (b) The asymmetry is worse here than inline: a slow worker encode costs the main thread nothing (that damage is
  * BAKE_SLOW_MS's job and it reads syncMs), while tripping strands every un-baked sprite on the canvas path — the
- * regime this file's Aug-12 block prices at 1,888 compositor layers and 2-second GPU-blocked tasks.
- * `workerSlowestEncodeMs` is published so the next device probe can replace this reasoning with a measured
+ * regime the backoff block above prices at thousands of compositor layers and multi-second GPU-blocked tasks.
+ * `workerSlowestEncodeMs` is published so a device probe can replace this reasoning with a measured
  * maximum and tighten the number with data.
  */
 const BAKE_WORKER_STALL_MS = 1_000;
 /** …and this many of THOSE (same decay window, shared between the two paths) suspend it. */
 const BAKE_STALL_LIMIT = 3;
 /**
- * How long one slow-bake strike counts for. 15s is chosen against the phone baseline: the three slow bakes that
- * killed that session were spread across it, while a device that is ACTUALLY struggling produces them back to
+ * How long one slow-bake strike counts for. 15s is chosen so that slow bakes scattered across a session do not
+ * accumulate into a trip, while a device that is ACTUALLY struggling produces them back to
  * back (the drain is one-at-a-time, so three slow bakes in a burst complete inside a few seconds of each other).
  */
 const BAKE_STRIKE_DECAY_MS = 15_000;
@@ -889,7 +880,7 @@ export interface AtlasBakeStats {
   /**
    * The slowest single bake's WALL time, and the session total. Wall, not main-thread: the timing spans the async
    * `convertToBlob`, so it includes time the page spent doing other things and time the bake spent queued behind
-   * a saturated GPU process — or, as the Aug-13 phone session showed, behind an idle-callback queue that a busy
+   * a saturated GPU process — or, as a phone session showed, behind an idle-callback queue that a busy
    * main thread never lets run. So a 2,962ms sample is NOT 2.9s of blocked script.
    * ON THE WORKER PATH IT IS PURELY DIAGNOSTIC: a bake's wall there is `pool queue wait + (maybe) a whole atlas
    * page decode + crop + encode`, three unrelated quantities, so NO criterion reads it. Split it with
@@ -935,7 +926,7 @@ export interface AtlasBakeStats {
    * path (no Worker support or every worker died); `workerFailed` counts regions a worker
    * could not finish and the inline path re-baked.
    *
-   * The three timing pairs are the whole point of the Aug-14 revision: `queuedMsTotal`/`slowestQueuedMs` is
+   * The three timing pairs are the whole point of this revision: `queuedMsTotal`/`slowestQueuedMs` is
    * WAITING for a free worker, `workerMsTotal - workerEncodeMsTotal` is WAITING for a page decode, and
    * `workerEncodeMsTotal`/`workerSlowestEncodeMs` is WORK — the only one the stall backstop is allowed to judge.
    */
@@ -1251,74 +1242,62 @@ function scheduleBakeDrain(delayMs: number): void {
       if (inlineMs > atlasBakeStats.slowestInlineMs) {
         atlasBakeStats.slowestInlineMs = inlineMs;
       }
-      // R10-PERF6 WS-P2 — ONLY AN URGENT BAKE CAN TRIP THE STICKY REVERT. The revert's job is to stop bakes from
+      // ONLY AN URGENT BAKE CAN TRIP THE STICKY REVERT. The revert's job is to stop bakes from
       // janking a user who is waiting; a SPECULATIVE bake (the hidden-sprite warm-up) runs at idle for a screen
       // nobody has opened, so a slow one is evidence about the device rather than damage to anyone. This is
-      // EXPOSURE CONTROL, not a measured win: the warm-up takes a session from ~54 bakes to ~780, and under the
-      // old rule every one of those extra 726 was a fresh chance to trip a SESSION-WIDE kill switch whose failure
-      // mode is catastrophic for exactly the screen being warmed (mechanism off ⇒ the map's ~715 sprites each
-      // mount a <canvas> ⇒ a 1,535-layer open). Honest measurement on this box: it changed nothing either way,
-      // because here the slow bakes that trip the switch are the URGENT combat ones (SwiftShader's convertToBlob
-      // runs 350-400ms per region, so the revert is a coin flip on this host with or without the warm-up). What
-      // it buys is that shipping the warm-up does not make that coin flip worse. Urgent bakes count exactly as
-      // before, so the protection the switch was added for is untouched.
+      // EXPOSURE CONTROL, not a measured win: the warm-up multiplies the number of bakes in a session many times
+      // over, and under the old rule every extra one was a fresh chance to trip a SESSION-WIDE kill switch whose
+      // failure mode is catastrophic for exactly the screen being warmed (mechanism off ⇒ the map's hundreds of
+      // sprites each mount a <canvas> ⇒ a thousand-layer open). On a software-rendered host the slow bakes that
+      // trip the switch are the URGENT combat ones either way; what the rule buys is that shipping the warm-up does
+      // not make that worse. Urgent bakes count exactly as before, so the protection the switch was added for is
+      // untouched.
       //
-      // --- WHICH TIME IS THE DAMAGE (Aug-13 device probe; the Aug-12 note above asked for exactly this) ---------
-      // The comment this replaces read: "The criterion stays WALL time … the phone's pathology is GPU-process
-      // contention, where the bake's cost lands on the compositor rather than on script, and a 3.7s wall bake is
-      // exactly a bake fighting the frames for the GPU. The main-thread share is now measured alongside it
-      // (`syncTotalMs`/`slowestSyncMs`) so a device probe can revisit this with data." THIS IS THAT REVISIT, and
-      // the data says wall was the wrong trigger — but it does NOT retire the GPU-contention argument.
+      // --- WHICH TIME IS THE DAMAGE ---------------------------------------------------------------------------
+      // The criterion used to be WALL time on the argument that the phone's pathology is GPU-process contention,
+      // where the bake's cost lands on the compositor rather than on script. Measuring the main-thread share
+      // alongside it (`syncTotalMs`/`slowestSyncMs`) on a real phone showed wall was the wrong trigger — but it does
+      // NOT retire the GPU-contention argument.
       //
-      // The measurement (moto g86, real recorded combat over a real WebSocket, own visible tab, 106 samples,
-      // hiddenSamples 0): totalMs 4,502.6 against syncTotalMs 385.3 — 91.4% of bake wall time was NOT main-thread
-      // time — slowestMs 2,962.3 against slowestSyncMs 93.6, mean sync ~16ms per bake against a 50ms threshold.
-      // Three trips (15s → 30s → 60s) ended with 41 regions stranded on the canvas path. A bake-probe on the same
-      // phone then priced a region at ~36ms wall on an IDLE page vs ~188ms on a BUSY one with sync unchanged
-      // (~20ms vs ~16ms): `convertToBlob` runs its encode as an IDLE TASK, so a busy main thread starves it. The
-      // self-disable was firing on the page being busy — the one condition under which turning the mechanism off
-      // does the most harm.
+      // Most of a bake's wall time was NOT main-thread time. `convertToBlob` runs its encode as an IDLE TASK, so a
+      // busy main thread starves it: the same region priced several times higher on a BUSY page than an IDLE one
+      // with the main-thread share unchanged. The self-disable was firing on the page being busy — the one
+      // condition under which turning the mechanism off does the most harm.
       //
-      // So the two criteria now guard different things, and nothing about the GPU argument is deleted: this
-      // session proved the MAIN THREAD was idle, it proved nothing about the GPU PROCESS.
-      //   * BAKE_SLOW_MS (50ms) now reads `syncMs` — time this bake provably OWNED the main thread. That is the
+      // So the two criteria guard different things, and nothing about the GPU argument is deleted: that evidence
+      // proved the MAIN THREAD was idle, it proved nothing about the GPU PROCESS.
+      //   * BAKE_SLOW_MS (50ms) reads `syncMs` — time this bake provably OWNED the main thread. That is the
       //     jank the switch was added to prevent, and it is the only part a busy page cannot inflate.
       //   * BAKE_STALL_MS (2,000ms) keeps reading wall, with its OWN strike count, so a genuine pathology that
-      //     lands off-thread (the Aug-12 blocked-on-GPU tasks: 2,029ms and 2,705ms of wall on ~100ms of CPU) can
-      //     still trip the mechanism. It is a backstop, not the trigger. [REVISED the same day — that wall rule
-      //     survives for the INLINE path only; see WHICH WALL IS THE DAMAGE immediately below.]
+      //     lands off-thread (blocked-on-GPU tasks with seconds of wall on almost no CPU) can
+      //     still trip the mechanism. It is a backstop, not the trigger. That wall rule survives for the INLINE
+      //     path only; see WHICH WALL IS THE DAMAGE immediately below.
       // Urgent-only is unchanged for both. On the worker path `syncMs` is one `postMessage`, which is the point:
       // a device whose encodes are slow no longer loses its layers for it, only one whose MAIN THREAD is.
       //
-      // --- WHICH WALL IS THE DAMAGE (Aug-14 device probe, workers ON; the revision above asked for this too) ----
-      // The syncMs half above worked exactly as designed: slow 0, syncTrips 0, slowestSyncMs 106.3 → 7.0,
-      // syncTotalMs 483.5 → 108.2, parked 31 → 0. The WALL backstop then tripped anyway — `stallTrips: 1`, a 15s
-      // suspension — which is the SAME category error, reintroduced on the wall axis:
-      //   {"baked":64,"slow":0,"stalled":3,"slowestMs":2725.3,"totalMs":12532.2,"syncTotalMs":108.2,
-      //    "trips":1,"requeued":34,"syncTrips":0,"stallTrips":1,"poolSize":4,"workerBaked":64,
-      //    "workerMsTotal":4680.7,"workerEncodeMsTotal":544.9,"workerSlowestMs":1837.4,"atlasLoads":7}
+      // --- WHICH WALL IS THE DAMAGE (workers ON) --------------------------------------------------------------
+      // With workers on, the syncMs half worked as designed (no slow bakes, no sync trips, nothing parked), yet the
+      // WALL backstop still tripped — the SAME category error, reintroduced on the wall axis.
       // Read the wall of a worker bake as the sum of three unrelated things:
-      //   1. POOL QUEUE WAIT — slowestMs 2,725.3 against the worker's own slowestMs 1,837.4: ~888ms of the worst
-      //      bake was spent pending in atlasBakePool's queue. With 64 regions, 4 workers, and the first copy of a
-      //      page held exclusive until it reports its size, that wait is normal, expected and harms nobody.
-      //   2. A ONE-OFF PAGE DECODE — workerEncodeMsTotal 544.9 of workerMsTotal 4,680.7, i.e. ~88% of all worker
-      //      time was fetching + decoding the 7 atlas pages (140MB of RGBA). The FIRST job for a page pays that in
-      //      full and every later job for it pays nothing, so charging it to a region is charging one arbitrary
-      //      sprite for a cost the whole page owes — 7 of the session's 64 bakes start pre-loaded with a verdict
-      //      they did not earn.
-      //   3. THE ENCODE — 544.9ms over 64 regions, ~8.5ms each. Only this is evidence about the device's bake path.
+      //   1. POOL QUEUE WAIT — time spent pending in atlasBakePool's queue. With dozens of regions, a handful of
+      //      workers, and the first copy of a page held exclusive until it reports its size, that wait is normal,
+      //      expected and harms nobody.
+      //   2. A ONE-OFF PAGE DECODE — most of all worker time is fetching + decoding the atlas pages (tens of MB of
+      //      RGBA each). The FIRST job for a page pays that in full and every later job for it pays nothing, so
+      //      charging it to a region is charging one arbitrary sprite for a cost the whole page owes.
+      //   3. THE ENCODE — a few ms per region. Only this is evidence about the device's bake path.
       // So the stall backstop now measures WORK, not waiting, per path: the inline encode's own wall against
-      // BAKE_STALL_MS (no queue and no separate decode exist there, so wall is still fair — that path is
-      // unchanged), and the worker's reported `encodeMs` against BAKE_WORKER_STALL_MS. A wall threshold on the
-      // worker path is not merely mis-tuned, it is uncalibratable: its floor would be set by a 62.6MB page decode
+      // BAKE_STALL_MS (no queue and no separate decode exist there, so wall is still fair), and the worker's
+      // reported `encodeMs` against BAKE_WORKER_STALL_MS. A wall threshold on the
+      // worker path is not merely mis-tuned, it is uncalibratable: its floor would be set by a multi-MB page decode
       // that is amortised over that page's regions, so any value low enough to catch a real encode pathology fires
       // on the first bake of a big page and any value high enough to clear a decode is above every real encode by
-      // three orders of magnitude. Both halves stay URGENT-ONLY, share one strike window, and trip as "stall".
+      // orders of magnitude. Both halves stay URGENT-ONLY, share one strike window, and trip as "stall".
       //
       // Still true, and still not covered by either criterion: a bake that never settles at all cannot strike.
-      // That was equally true of the wall rule this replaces (both criteria run in the settle), so nothing changed;
-      // a worker watchdog would be a different mechanism. If the PAGE DECODE ever turns out to be the pathology,
-      // it needs its own criterion keyed on the pool's per-page `loadMs`/`atlasLoads` — per page, not per region.
+      // Both criteria run in the settle; a worker watchdog would be a different mechanism. If the PAGE DECODE ever
+      // turns out to be the pathology, it needs its own criterion keyed on the pool's per-page
+      // `loadMs`/`atlasLoads` — per page, not per region.
       if (urgent && syncMs >= BAKE_SLOW_MS) {
         atlasBakeStats.slow += 1;
         const live = recordStrike(strikeTimes, now());
@@ -1342,7 +1321,7 @@ function scheduleBakeDrain(delayMs: number): void {
       }
       // PACING, not damage. This picks how long to wait before starting the NEXT bake, and what it has to react
       // to is how much of the main thread the last one ate — a bake that waited 900ms on an idle callback cost
-      // this thread nothing and there is no reason to hold the queue back for it. (Before Aug-14 this read
+      // this thread nothing and there is no reason to hold the queue back for it. (This used to read
       // `elapsedMs`, which on the phone meant almost every bake took the 16ms yield for time it never spent.)
       pumpBakeDrain(syncMs >= BAKE_BUDGET_MS ? BAKE_YIELD_MS : 0);
     });
@@ -1515,7 +1494,7 @@ function bakeRegion(job: BakeJob, settled: (timing: BakeTiming) => void): void {
   // Draw the region into a throwaway canvas and encode it here. The draw mirrors the per-node canvas path EXACTLY
   // (rounded backing store, unrounded destination rect) so the two mechanisms produce the same pixels.
   //
-  // WHEN THIS RUNS AT ALL, given the pool exists (Aug-19 audit — the list, so nobody has to re-derive it):
+  // WHEN THIS RUNS AT ALL, given the pool exists (the list, so nobody has to re-derive it):
   //   1. no pool: no `Worker` global, or the constructor threw (CSP),
   //   2. a page that FAILED to load in a worker — the pool marks it dead and refuses every later region of it
   //      (`deadPages` in bakeAtlasRegionInWorker), so that page bakes here for the rest of the session,
@@ -1531,8 +1510,8 @@ function bakeRegion(job: BakeJob, settled: (timing: BakeTiming) => void): void {
   // encodes on a TIMER ~1s after a surface's own draws go quiet (`STATIC_SURFACE_QUIET_MS` in
   // mirror/shaderResources.ts, `deferHead: true` ⇒ every encode on a `TimerFire`) — the timing that lines up with
   // a card's VFX settling, and a readback because those surfaces are GPU-backed. The same fleet was already
-  // caught this way once (its `toBlob` + `createObjectURL` measured 52.8 + 17.1ms inside a `TimerFire` on a moto
-  // g86, Aug-18), and `window.__mirrorShaderStats()`'s `staticImageEncodes` is what confirms it on a device. It
+  // caught this way once (its `toBlob` + `createObjectURL` ran inside a `TimerFire`), and
+  // `window.__mirrorShaderStats()`'s `staticImageEncodes` is what confirms it on a device. It
   // lives in gsw, so its cost is a gsw-side question — this module is not where it gets a workaround.
   const inlineBake = (): void => {
     if (!source) {

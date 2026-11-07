@@ -2,7 +2,7 @@
 // real shaders + particles running) and auto-tunes the GPU-fill knobs until the device holds a smooth rate.
 //
 // Why this exists: the static `quality.ts` heuristic can only ever GUESS a device's tier from coarse signals
-// (it mis-judged a Moto G86 to `low` when it needed `min`/`off`). Empirical phone testing established the
+// (it mis-judged a mid-range Android phone to `low` when it needed `min`/`off`). Empirical phone testing established the
 // levers: renderScale = big GPU impact / barely visible (a blurrier glow) → the thing to drive DOWN; shader/
 // particle FPS = nearly free on GPU but very visible (choppiness) → keep HIGH (>= a 25 floor). This controller
 // replaces the guess with a measurement: after load settles it samples the rAF cadence (a sound GPU-throughput
@@ -29,7 +29,7 @@
 // outer lifecycle (mount/unmount, or a permanent halt like `exhausted`); in between, the loop itself idles and
 // re-arms with zero cost while dormant.
 //
-// DUTY CYCLE (R10-PERF4 WS-2): being "active" still meant a third always-on rAF loop for as long as the mirror
+// DUTY CYCLE: being "active" still meant a third always-on rAF loop for as long as the mirror
 // kept rendering — on a phone mid-combat that is a per-frame wakeup competing with the reconcile and the gsw
 // runtimes, for a controller whose only possible output is a downgrade decided from ONE `windowMs` window. So
 // after each window ENDS — evaluated, or discarded because the gate was closed — the loop parks on a
@@ -80,7 +80,7 @@ export interface AdaptiveConfig {
    *  stops (and pauses the network probe) rather than sampling an idle screen forever. Re-arms instantly on
    *  the next `notifyActivity()`. Default 4x `windowMs`. */
   lingerMs: number;
-  /** DUTY CYCLE (R10-PERF4 WS-2): how long (ms) the sampler PARKS after each measurement window ends — one that
+  /** DUTY CYCLE: how long (ms) the sampler PARKS after each measurement window ends — one that
    *  completed (and was evaluated) or one the gate discarded. 0 keeps rAF sampling for deterministic
    *  low-level tests. See the file banner. */
   cooldownMs: number;
@@ -375,7 +375,7 @@ export function createAdaptiveController(options: AdaptiveControllerOptions): Ad
     schedule(timestampMs, windowEnded);
   };
 
-  // DUTY CYCLE (R10-PERF4 WS-2). A window just ended, so park the rAF loop on a timer instead of sampling every
+  // DUTY CYCLE. A window just ended, so park the rAF loop on a timer instead of sampling every
   // frame until the next one can complete: this sampler can only ever LOWER quality, and a downgrade decision is
   // made from ONE `windowMs` window — sampling the whole `cooldownMs` gap in between buys nothing and costs a rAF
   // (plus a push + four gate calls) on every frame of a busy screen. `lastFrameMs` is reset so the sleep gap is

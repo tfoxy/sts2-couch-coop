@@ -113,7 +113,7 @@ public sealed class CouchCoopBrowserServer(
     private CouchCoopAnimationHintCollector? _mirrorHintCollector;
     private int _mirrorConnectionCount;
     private long _browserDemandGeneration;
-    // WS-B stream gate: how many of the mirror connections above currently WANT the scene stream. The scene
+    // Stream gate: how many of the mirror connections above currently WANT the scene stream. The scene
     // observer (the producer's whole-tree walk — by far the most expensive thing this host does) is driven by
     // THIS number, not by _mirrorConnectionCount: while every viewer sits on the join picker the walk stops
     // entirely. The remainder (_mirrorConnectionCount - _streamingMirrorConnectionCount) is the GATED count,
@@ -412,7 +412,7 @@ public sealed class CouchCoopBrowserServer(
         }
     }
 
-    // WS-B: one mirror connection's scene stream was gated on (true) or off (false). The connection guarantees the
+    // One mirror connection's scene stream was gated on (true) or off (false). The connection guarantees the
     // calls are balanced (it reports `false` on teardown if it was still streaming), so the total is exact across
     // gate flips and disconnects alike.
     private void RegisterSceneStreaming(bool streaming)
@@ -1166,7 +1166,7 @@ public sealed class CouchCoopBrowserServer(
         var withHints = AttachMirrorHints(delta);
         foreach (var connection in _connections.Values)
         {
-            // WS-B stream gate: a mirror viewer that has NOT asked to watch (it is sitting on the join picker,
+            // Stream gate: a mirror viewer that has NOT asked to watch (it is sitting on the join picker,
             // or it is the host socket a joined viewer kept open after its headless redirect) is skipped here —
             // no fold, no queue, no bytes.
             if (connection.WantsSceneStream)
@@ -1217,7 +1217,7 @@ public sealed class CouchCoopBrowserServer(
         ResendSessions();
     }
 
-    // WS-3: forward the declarative card flights the producer started this tick, keyed to mirror nodes by exact
+    // Forward the declarative card flights the producer started this tick, keyed to mirror nodes by exact
     // instance id like the tween hints below. Drained from the SAME collector (they ride the tween-hint hub) on the
     // same single scene-observer thread, so the two stay in the order the game produced them.
     private static List<CardFlightHintDelta>? CollectCardFlights(
@@ -1272,7 +1272,7 @@ public sealed class CouchCoopBrowserServer(
         List<TweenHintDelta>? hints = null;
         foreach (var hint in pending)
         {
-            // WS-3 flights are carried on their own array (CollectCardFlights above) — they are integrated, not
+            // Flights are carried on their own array (CollectCardFlights above) — they are integrated, not
             // eased, and their synthetic `property` is not a Godot property the client could map.
             if (hint.CardFlight is not null)
             {
@@ -1997,7 +1997,7 @@ public sealed class CouchCoopBrowserServer(
             var resourceFormat = string.Equals(formatValue, "png", StringComparison.OrdinalIgnoreCase)
                 ? CouchCoopResourceFormat.Png
                 : CouchCoopResourceFormat.Raw;
-            // Bound the extraction await (missing-textures fix 2026-07-19): asset extraction runs on the game's MAIN
+            // Bound the extraction await (missing-textures fix): asset extraction runs on the game's MAIN
             // thread, so while the game loads a run / churns a transition this await can stall indefinitely — which
             // used to hang the client's untimed HttpRequests and silently wedge its fetch pipeline. A busy host now
             // answers 503 asset-busy instead; clients treat 5xx as transient and retry (AssetFetchPolicy).
@@ -3424,7 +3424,7 @@ public sealed class CouchCoopBrowserServer(
             retry = true;
         }
 
-        // `t` (R10): the animation time a STILL should sample, in seconds. The mirror sends it only for a node the
+        // `t`: the animation time a STILL should sample, in seconds. The mirror sends it only for a node the
         // GAME has PAUSED (SetTimeScale(0)) — the closed treasure chest frozen at t=0 of its lid-opening
         // "animation" — where the producer's mid-clip still heuristic renders a half-open chest. Honoured ONLY for
         // a still (an animated clip renders every frame, so a sample time there would fragment the cache for

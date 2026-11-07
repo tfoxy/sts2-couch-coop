@@ -1,13 +1,13 @@
-// DON'T REPAINT A PICTURE THAT DID NOT CHANGE (R21 B1).
+// DON'T REPAINT A PICTURE THAT DID NOT CHANGE.
 //
 // THE PROBLEM. `canvasRenderer.paint()` is unconditional and total: `executor.execute(list, projection,
 // { clear: true })` clears the whole framebuffer and re-issues every command, on every wire delta and on every
 // animation frame — including the tier-3 patch frames, which deliberately skip only `runBuild`.
 //
 // THE COMPOSITOR-SIDE MOTIVATION THIS WAS SCOPED FROM NO LONGER MEASURES — read this before quoting it. The
-// scoping capture (Sep-3 Firefox, software WebRender) measured the maximal picture-cache tile count discarded on
+// scoping capture (Firefox, software WebRender) measured the maximal picture-cache tile count discarded on
 // 37 of 44 frames, i.e. the browser re-rasterising the whole screen for a picture identical to the one already
-// on it. A controlled ABBA re-measurement on `a525ca9` (Track A, R21), same software-WebRender condition, found
+// on it. A controlled ABBA re-measurement on a later commit, same software-WebRender condition, found
 // that gone: the canvas stage invalidates **1** tile with **4** draw calls and composites in 8-15 ms, while the
 // DOM stage invalidates 3-5 tiles with ~161 draw calls and composites in 76-144 ms. On current code the canvas
 // stage is the CHEAP compositor path, not the expensive one. The likely fix is `a21db1a` (stage canvas out of

@@ -7,7 +7,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R6 (WS-TIP) HEADLESS live-data verification of the COMPOSED tip owner-follow over recorded mirror streams — no Godot,
+// HEADLESS live-data verification of the COMPOSED tip owner-follow over recorded mirror streams — no Godot,
 // no display, no live lock. It reconstructs, purely from the retained MirrorState, the SAME view-scale stamps the native
 // ViewScaler publishes (the 1.10 card-reward GROUP + each per-card 1.15, the reward-LIST 1.2 items), then exercises
 // ViewScaleInputRegistry.MapThroughContainingStamps — the exact map HoverTipScaler.MeasureOwner uses to glue a tip to a
@@ -66,7 +66,7 @@ internal static class RewardTipComposeReplayProbe
             Check.That((mapped.MaxX - mapped.MinX) > (groupOnly.MaxX - groupOnly.MinX) + 1,
                 $"[rewardtip-probe] side card {side}: composed box larger than group-only (per-card folded in)");
 
-            // The pre-R6 single per-card map is centre-fixed (the bug): a genuinely off-centre side card must show a
+            // The earlier single per-card map is centre-fixed (the bug): a genuinely off-centre side card must show a
             // non-trivial follow that the old exact-id map would have missed.
             if (Math.Abs(cCx - sX) > 50)
             {

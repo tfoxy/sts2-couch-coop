@@ -16,7 +16,7 @@ import { __setStillDecoderForTest } from "@/mirror/stillDecode";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { resolveRenderQuality, __setRenderQualityForTest } from "@/render/quality";
 
-// R11 WS-F — DECODE-GATED ATOMIC STILL SWAP.
+// DECODE-GATED ATOMIC STILL SWAP.
 //
 // THE BUG these specs pin: a still swap wrote a freshly-minted blob url straight onto the LIVE <img> (and its
 // placement styles with it), so the element dropped the old bitmap the instant the request completed and painted

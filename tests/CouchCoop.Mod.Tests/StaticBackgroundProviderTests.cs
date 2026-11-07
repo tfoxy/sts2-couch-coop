@@ -57,9 +57,9 @@ internal static class StaticBackgroundProviderTests
             "ids are the lowercase directory names; anything else is rejected");
     }
 
-    // R21 codec switch. jpg@0.9 was chosen from a measured table (docs/agents/host-render-cost-aug22-round2.md):
-    // 46ms encode / 280KB against PNG's 650ms / 2.1MB, at a body MAE of 263 on a scene whose own frame-to-frame
-    // noise floor is 25-29. The constants ARE the policy, so they are pinned here rather than left implicit.
+    // jpg@0.9 was chosen from a measured table of candidate codecs: roughly 46ms encode / 280KB against PNG's
+    // 650ms / 2.1MB, at a body MAE well above the scene's own frame-to-frame
+    // noise floor. The constants ARE the policy, so they are pinned here rather than left implicit.
     private static void ShippedCodecIsJpegQ90AndIsTheReportsBareKey()
     {
         Assert(CouchCoopStaticBackgroundProvider.RenderCodec == "jpg", "the shipped encoder is JPEG");
@@ -255,7 +255,7 @@ internal static class StaticBackgroundProviderTests
         Assert(
             CouchCoopStaticBackgroundProvider.BuildCacheKey("underdocks", null) == "bg://underdocks?w=2520&h=1080&v=1",
             "the digest-less key is the deterministic-fallback variant");
-        // R21: no file extension. The encoder is a policy (RenderCodec), so pinning it into the path would force
+        // No file extension. The encoder is a policy (RenderCodec), so pinning it into the path would force
         // every future codec change to move the URL, the client fallback and the route grammar in lockstep.
         //
         // TWO VERSIONS, AND THE KEY CARRIES ONLY ONE OF THEM. `v` is the URL GRAMMAR's version, asserted

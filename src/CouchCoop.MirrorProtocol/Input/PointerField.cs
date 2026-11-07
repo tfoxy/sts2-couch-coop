@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// M2 WS-Q (widened input). The native port of frontend/src/mirror/pointerMap.ts `mapPointerToGame` L58-122 — the ONE
+// Widened input. The native port of frontend/src/mirror/pointerMap.ts `mapPointerToGame` L58-122 — the ONE
 // bidirectional VISUAL ANCHOR MAP. On a wider-than-16:9 stage the mirror re-lays-out content horizontally on a single
 // squeeze field (renderedX = gameX·designW/1920): a node authored at game-x is drawn at `gameX + spreadDx`, so the
 // game coordinate under a pointer is NOT `fraction·designWidth` — it's that value minus the shift of whatever is
@@ -17,8 +17,8 @@ namespace CouchCoop.MirrorProtocol.Input;
 // short-circuits to the pure fraction with ZERO scene work.
 //
 // The record source is a `Func<string, SpreadRecord?>` so the InputRouter can pass the live <see cref="SpreadIndex"/>
-// while unit tests inject hand-built records directly (SpreadIndex is WS-P's; keeping the lookup abstract decouples
-// WS-Q's tests from WS-P's walk — see the SpreadIndex overload below).
+// while unit tests inject hand-built records directly (keeping the lookup abstract decouples
+// these tests from the SpreadIndex walk — see the SpreadIndex overload below).
 public static class PointerField
 {
     // The headless viewport the game hit-tests in (16:9 base). Design width widens up to MirrorMaxDesignWidth; the
@@ -34,7 +34,7 @@ public static class PointerField
     // The resolved game coordinate, the field affine used to get there, the SHIFT (`designX − coordX`; the web keeps
     // it for cursor-follower stamping — unused native but carried for parity), the pointer's design-space X (so the
     // input side runs the near-miss pass without re-deriving it), and whether the coordinate came from the UNIFORM
-    // SQUEEZE rather than a specific painter's own translation (R19 6a — twin of the web PointerMapping.squeezed;
+    // SQUEEZE rather than a specific painter's own translation (twin of the web PointerMapping.squeezed;
     // <see cref="PointerResolver"/> freezes it at a press so a held drag's replayed frames can be rendered-box
     // gated. Defaulted so every existing construction stays source-compatible).
     public readonly record struct PointerMapping(

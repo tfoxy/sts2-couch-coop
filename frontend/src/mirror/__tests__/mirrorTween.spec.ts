@@ -122,7 +122,7 @@ function selfOpacityHint(targetId: string, endOpacity: number, durationMs = 200)
 describe("mirror declarative tween replay (Part C, Stage 1)", () => {
   let clock = 0;
   let rafCb: FrameRequestCallback | null = null;
-  // WS-B: the renderer's animation loop is DEADLINE-SCHEDULED — it parks on a `setTimeout` until the earliest live
+  // The renderer's animation loop is DEADLINE-SCHEDULED — it parks on a `setTimeout` until the earliest live
   // tween deadline and only THEN requests the rAF that mutates. Model both halves against the same fake clock so
   // `flushRaf(atMs)` keeps its meaning ("let the renderer run at this wall-clock time").
   let timers: { id: number; at: number; cb: () => void }[] = [];
@@ -256,7 +256,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
 
     reflow.mockClear();
 
-    // R10-PERF6 WS-P1: the SAME hint carrying a declared start no longer forces the layout engine at all. The prime
+    // The SAME hint carrying a declared start no longer forces the layout engine at all. The prime
     // lands (and PINS the channel) inside the reconcile; the arm rides the next frame, where the browser has
     // already committed the primed start as the transition's implicit "from".
     hintsOnly(state, [{ ...transformHint("r", [1, 0, 0, 1, 272, 80], 250), startTransform: [1, 0, 0, 1, 300, 80] }]);
@@ -282,7 +282,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();
 
-    // R10-PERF6 WS-P1: the pre-arm state is now observable directly — the prime lands in the reconcile and the arm
+    // The pre-arm state is now observable directly — the prime lands in the reconcile and the arm
     // rides the NEXT frame, with no forced reflow between them.
     const target = (): HTMLElement => el(stage, "btn");
     const reflow = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(0);
@@ -300,9 +300,9 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     expect(tx(target())).toBe(1983); // armed endpoint → the browser animates 1583 → 1983
     expect(target().style.transition).toBe("transform 800ms cubic-bezier(0.33, 1, 0.68, 1)");
 
-    // Same fold, but a START-LESS hint (an old mod, or the kill-switch off): no prime — so (R10-PERF4 WS-3 item 1)
+    // Same fold, but a START-LESS hint (an old mod, or the kill-switch off): no prime — so
     // there is no pre-arm reflow AT ALL, and the element stays at the folded 1983, i.e. the "animation" collapses
-    // (arms straight to 1983). Same pre-WS-ANIM visual outcome, one forced layout cheaper.
+    // (arms straight to 1983). Same visual outcome as before priming existed, one forced layout cheaper.
     reflow.mockClear();
     full(state, [node("btn", null, 1983, 764)], ["btn"]);
     renderer.reconcile(state);
@@ -334,7 +334,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     renderer.reconcile(state);
 
     const r = el(stage, "ret");
-    // R10-PERF6 WS-P1: no reflow at all, and BOTH channels sit at their primed starts until the deferred arm.
+    // No reflow at all, and BOTH channels sit at their primed starts until the deferred arm.
     expect(reflow.mock.calls.length).toBe(0);
     expect(tx(r)).toBe(300);
     expect(r.style.opacity).toBe("0");
@@ -360,7 +360,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     hintsOnly(state, [{ ...opacityHint("ret", 1, 50), startOpacity: 0 }]);
     renderer.reconcile(state);
     const r = el(stage, "ret");
-    expect(r.style.opacity).toBe("0"); // PINNED at the primed start until the deferred arm (WS-P1)
+    expect(r.style.opacity).toBe("0"); // PINNED at the primed start until the deferred arm
     flushRaf(clock);
     expect(r.style.transition).toBe("opacity 50ms cubic-bezier(0.33, 1, 0.68, 1)");
     expect(r.style.opacity).toBe("1"); // armed at the end alpha (the prime-to-0 is the transition's implicit from)
@@ -736,7 +736,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     expect([tx(el(stage, "c")), ty(el(stage, "c"))]).toEqual([30, 20]);
   });
 
-  // R10-B1 — the post-settle DERASTER SCALE GATE. Tearing the will-change layer down after a settle re-rasters the
+  // The post-settle DERASTER SCALE GATE. Tearing the will-change layer down after a settle re-rasters the
   // element at its final transform (the fix for blurry card text after a zoom), but it costs a second
   // Layerize+Commit echo per settle group. A translation-only tween cannot change the rasterization scale, so those
   // settles skip it; anything that changes the 2×2 linear part still derasters.
@@ -769,7 +769,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
 
   });
 
-  // WS-4 HAND-LAYOUT APPROACH HINTS. The hand's card-layout motion is not a Godot tween — the producer derives it
+  // HAND-LAYOUT APPROACH HINTS. The hand's card-layout motion is not a Godot tween — the producer derives it
   // analytically and ships it as an ORDINARY tween hint per card slot (Expo/Out, transform endpoint, NO declared
   // start) while suppressing that slot's per-frame transforms for the hint's duration. That makes MID-FLIGHT
   // RE-TARGETING the normal case, not an edge case: every newly drawn card re-lays-out the whole hand, so each slot
@@ -1089,8 +1089,8 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
         expect(gauge.entries.some((e) => e.kind === "post-settle")).toBe(false);
     });
 
-    // Aug-20 — THE GAUGE'S OWN PREDICATES. On a live run the post-settle counters read +8 snaps over a focus sweep
-    // and 28 (max 489px) over an end-turn discard, while sampling the elements directly showed 0.0px of visible
+    // THE GAUGE'S OWN PREDICATES. On a live run the post-settle counters counted snaps over a focus sweep
+    // and over an end-turn discard, while sampling the elements directly showed 0.0px of visible
     // discontinuity. Every one of those was the gauge scoring a move it had no business attributing to the settle.
     // The three tests below are the three mechanisms, and they only ever tighten what COUNTS — the replay behaviour
     // (where the elements actually end up) is untouched, which each test also asserts.
@@ -1203,7 +1203,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
     });
   });
 
-  // WS-C — THE ENDPOINT'S OWN PLACE ON THE WIDE-SCREEN FIELD.
+  // THE ENDPOINT'S OWN PLACE ON THE WIDE-SCREEN FIELD.
   //
   // On a wider-than-16:9 stage the world sits on one horizontal squeeze field: a node that claims its own place on
   // it shifts by a function of its OWN rendered X. The walk derives that shift once per node per walk, from the
@@ -1406,7 +1406,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
   // (same node object, unchanged context, not dirty), so the descendants keep that pose indefinitely.
   //
   // That is not cosmetic. `interactiveRects()` composes every hit box out of its record's cached parent global, so
-  // a stale one is the box the mirror hit-tests against. Measured live on the touch fixture (2026-09-19): 9 of 30
+  // a stale one is the box the mirror hit-tests against. Seen live on the touch fixture: several of the
   // hover cycles left a hand card's hit box at a pose the game's own poses, the DOM and the rendered frame all
   // disagreed with — up to 160 design px above the card — and several never recovered. Every pointer resolved
   // through such a box missed the card, which is what made three separate live checks intermittently red.
@@ -1486,7 +1486,7 @@ describe("mirror declarative tween replay (Part C, Stage 1)", () => {
   });
 });
 
-// R10-PERF5 WS-1 — dormancy interaction, from this file's angle. `applyTweenHints` runs AFTER the walk, so a hint
+// Dormancy interaction, from this file's angle. `applyTweenHints` runs AFTER the walk, so a hint
 // can name a node the walk just declined to build. Every arm/prime except ONE bails on `!record.el`:
 // `armTweenSelfOpacity` has no such guard — it writes the DURABLE `tweenSelfOpacity*` pin and only touches the DOM
 // `if (record.selfLayer)`. A dormant record can never own a selfLayer (the layer is created inside the paint block
@@ -1536,7 +1536,7 @@ describe("tween hints against a DORMANT (never-built) target", () => {
 // produces a number in a space that does not exist and the tween plays the node out at the design corner.
 //
 // Every case here uses START-LESS hints, which arm SYNCHRONOUSLY inside `reconcile` (a primed batch defers its arms
-// a frame — see the WS-P1 case above), so the assertions are on the element right after the call. And the DOM
+// a frame — see the primed case above), so the assertions are on the element right after the call. And the DOM
 // NESTS: an element's own `transform` is its matrix relative to its parent element, so these read the LOCAL number
 // and the lift/re-base round trip is what turns the endpoint back into one.
 describe("tween hints whose endpoint SPACE is gone (S2/D2)", () => {

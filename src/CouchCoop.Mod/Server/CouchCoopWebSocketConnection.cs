@@ -69,7 +69,7 @@ public sealed class CouchCoopWebSocketConnection
     // every re-enable of the stream gate below); incremental deltas accumulated meanwhile are drained, coalesced,
     // AFTER it — never before.
     private bool _sceneReady;
-    // WS-B STREAM GATE. Whether this connection currently wants scene bytes at all. Set from the required canonical
+    // STREAM GATE. Whether this connection currently wants scene bytes at all. Set from the required canonical
     // `?watch=0|1` selector on connect and flipped live by the
     // `{"type":"watch","on":bool}` control message. While false the fan-out skips this connection entirely, nothing
     // is folded, nothing is queued, and the server stops counting us as a STREAMING mirror connection — which is
@@ -210,7 +210,7 @@ public sealed class CouchCoopWebSocketConnection
     }
 
     /// <summary>
-    /// True when this connection currently wants the `scene-delta` stream (the WS-B watch gate). The scene fan-out
+    /// True when this connection currently wants the `scene-delta` stream (the stream watch gate). The scene fan-out
     /// consults this per connection, so a viewer parked on the join picker receives ZERO scene bytes.
     /// </summary>
     public bool WantsSceneStream => !_closing && _sceneStreaming && AllowsWork(_streamAccessGeneration, _streamWatchEpoch);
@@ -481,8 +481,8 @@ public sealed class CouchCoopWebSocketConnection
     /// conditions, each with its own fix, and each already has translated copy on both the host panel and the
     /// phone (<c>MIRROR_SEAT_NOTICE_KEYS</c>). But a join that is REFUSED used to collapse all of them into
     /// "spawn-failed", whose copy is "Couldn't start your game view — please try again": an invitation to retry
-    /// something no retry can fix. Measured Sep-15 2026, a pinned rejoin onto a port another program owned
-    /// failed in 606 ms and told the player exactly that — while the sentence it needed
+    /// something no retry can fix. In one observed case a pinned rejoin onto a port another program owned
+    /// failed within a second and told the player exactly that — while the sentence it needed
     /// ("Nothing to change on this device — ask whoever is hosting to restart Slay the Spire 2") already existed,
     /// translated, in all 14 catalogs, reachable only down the redirect path.
     /// </para>
@@ -1538,7 +1538,7 @@ public sealed class CouchCoopWebSocketConnection
     }
 
     /// <summary>
-    /// Turn this connection's scene stream on or off (the WS-B watch gate). Idempotent.
+    /// Turn this connection's scene stream on or off (the stream watch gate). Idempotent.
     /// <para>
     /// OFF is a hard stop: the fan-out predicate stops reaching us, the pending accumulator AND the order baseline
     /// are dropped (never hold a stale coalesced delta — or a stale order to diff against — across a gap), the pump

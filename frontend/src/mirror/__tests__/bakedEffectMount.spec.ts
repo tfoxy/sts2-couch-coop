@@ -11,7 +11,7 @@
 // which no unit test of `bakedEffects` alone could see.
 //
 // So the node below is NOT hand-made: it is the `UncommonGlow` emitter lifted verbatim out of a recorded live
-// session (`.sts2/bench/audit-cardreward-open.ndjson`, the card-reward screen), including its real modulate,
+// session (the card-reward screen), including its real modulate,
 // transform, material and `canvasBlendMode`. The pixels of the stills themselves are a separate question,
 // answered by the bake (`scripts/bake-effect-stills.py`) and by `frontend/src/assets/effects/README.md`.
 

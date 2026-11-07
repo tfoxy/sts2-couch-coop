@@ -125,6 +125,33 @@ class GenDshConfigTest(unittest.TestCase):
         repo_role = next(a for a in agents if a.name == "repo-role")
         self.assertIn("Do the thing.", repo_role.body)
 
+    def test_private_agents(self) -> None:
+        link_body = "# Role\n\nSee [doc](../docs/x.md).\n"
+        write_agent(self.repo / "agents" / "pub-role.md", "pub-role", link_body)
+        write_agent(self.repo / "private" / "agents" / "priv-role.md", "priv-role", link_body)
+        write_agent(self.repo / "private" / "agents" / "pub-role.md", "pub-role", "# Shadow\n")
+        warnings: list[str] = []
+        old_warn = g.warn
+        g.warn = warnings.append
+        try:
+            agents = {a.name: a for a in g.collect_agents(str(self.repo), str(self.home))}
+        finally:
+            g.warn = old_warn
+        self.assertEqual(sorted(agents), ["priv-role", "pub-role"])
+        # Each body is inlined at the repo root, so `../` resolves against its own tree.
+        self.assertIn("](docs/x.md)", agents["pub-role"].body)
+        self.assertIn("](private/docs/x.md)", agents["priv-role"].body)
+        # A private agent never shadows a public one of the same name, and says so.
+        self.assertNotIn("Shadow", agents["pub-role"].body)
+        self.assertTrue(any("duplicates" in w for w in warnings))
+
+    def test_private_agents_absent_changes_nothing(self) -> None:
+        write_agent(self.repo / "agents" / "pub-role.md", "pub-role")
+        before = [a.body for a in g.collect_agents(str(self.repo), str(self.home))]
+        (self.repo / "private").mkdir()
+        after = [a.body for a in g.collect_agents(str(self.repo), str(self.home))]
+        self.assertEqual(before, after)
+
     def test_real_preset_if_available(self) -> None:
         preset = g.find_preset_file()
         if preset is None:

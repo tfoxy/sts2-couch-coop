@@ -110,7 +110,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// seat routinely takes 20-30s on a desktop, and a Steam Deck (4 cores / 8 threads at a 15W TDP shared with
     /// the GPU, already running the host game) is exactly the machine that runs past it while starting normally.
     /// The 15s of headroom that is left is not spare: the phone's clock starts at its join message, ahead of ours
-    /// (slot bookkeeping, the roster write, the process spawn), and the S11 timeout line then has to reach the
+    /// (slot bookkeeping, the roster write, the process spawn), and the timeout line then has to reach the
     /// panel and the rejection reach the phone while it is still listening. Failing visibly beats failing silently,
     /// so the host must always lose the race to the browser rather than tie it.
     /// </para>
@@ -158,17 +158,15 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// nothing installed to keep it out — the exposure this deadline exists to cut short.
     /// </para>
     /// <para>
-    /// 35 AND NOT 20, AND NOW THERE IS A MEASUREMENT BEHIND THAT. Live leg 2026-09-17, dev desktop (12 threads),
-    /// host on the default profile: first contact at 4121 ms and 4296 ms on an idle machine, and <b>9901 ms with
-    /// every core saturated</b>. The loaded figure is the one this default has to survive — a host is never idle
-    /// at the moment it spawns a seat — and at ~9.9s the fastest machine available already reaches the point
-    /// `docs/agents/qa-recipes.md` §7 calls "too tight", so 20 would have left a 2x margin there and less than
-    /// that on a 15W handheld, which has still reported no figure at all. The asymmetry that picked the safe
+    /// 35 AND NOT 20. On a desktop with the host on the default profile, first contact arrives within a few
+    /// seconds on an idle machine, and roughly <b>twice that with every core saturated</b>. The loaded figure is
+    /// the one this default has to survive — a host is never idle at the moment it spawns a seat — and 20 would
+    /// leave only a ~2x margin there and less than that on a 15W handheld. The asymmetry that picked the safe
     /// direction has not changed either: killing a HEALTHY seat breaks a join that works today, while waiting
     /// longer to kill an unmodded one costs almost nothing, because by the paragraph below that seat has already
     /// written. Every seat's figure is logged once as <c>seat first contact slot=N afterMs=…</c> — stderr only,
-    /// so it is in the host's stdio capture and never in <c>godot.log</c> — and §7 makes reading it a step of the
-    /// live recipe. An operator can still raise it for their own machine with the env var, which is why this is a
+    /// so it is in the host's stdio capture and never in <c>godot.log</c> — so an operator can read it off a
+    /// live run. An operator can still raise it for their own machine with the env var, which is why this is a
     /// default and not a constant.
     /// </para>
     /// <para>
@@ -176,7 +174,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// sync at its normal startup time, which is INSIDE these 35 seconds — so a seat killed here may already have
     /// written. The window is also wider than this number: a process with none of our code in it cannot answer
     /// the graceful stop either, so it lives for this deadline PLUS the five-second shutdown deadline before the
-    /// forced exit (measured on the same leg, from the copied report:
+    /// forced exit (the cleanup report shows:
     /// <c>cleanup: Forced exit after the five-second graceful shutdown deadline</c>). What actually covers that
     /// case is <see cref="HostProfileBackup"/>, the host-side copy taken before any seat of the session can
     /// exist. Do not read this deadline as a guarantee.
@@ -1896,8 +1894,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// the machine talking to Steam, with a profile seeded from the host's <c>default/</c> one and an EMPTY
     /// <c>steam/&lt;id&gt;/</c>: the game then treats its empty local saves as newer and overwrites the account's
     /// Steam remote store with them — and with no "mods warning seen" in that empty profile it loads no mods, so
-    /// nothing of CouchCoop (its cloud isolation guard included) is there to stop it. Observed on a QA host,
-    /// 2026-10-29. Handing the host's value on keeps the seat on the host's profile and off the cloud.
+    /// nothing of CouchCoop (its cloud isolation guard included) is there to stop it. Observed on a QA host.
+    /// Handing the host's value on keeps the seat on the host's profile and off the cloud.
     /// </para>
     /// <para>
     /// Read through the game's own <c>CommandLineHelper</c>, i.e. exactly the value the host's game acted on (the
@@ -2017,7 +2015,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// these are TUNING, not contract: the seat joins and plays identically without them, and a profiling run
     /// overrides any of them by exporting its own value on the host (see the apply rule in <c>LaunchReal</c>).
     ///
-    /// <para><b>Why these two.</b> A measured live seat (1374MB RSS) had spread its native heap across 42 glibc
+    /// <para><b>Why these two.</b> A live seat observed at ~1.4GB RSS had spread its native heap across 42 glibc
     /// thread arenas holding 283MB, of which 62MB was free-but-retained slack — arenas are per-thread and the
     /// game runs 32 threads, so the default cap (8 * ncores) buys throughput we do not need in a process whose
     /// hot path is one main thread plus a few IO threads. Capping arenas collapses that slack. The CLR side was
@@ -2349,8 +2347,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     private LanOfferCache? _lanOffer;
 
     /// <summary>
-    /// What a streaming seat launched now would offer the page at <paramref name="pageOrigin"/> (CAR7b): WebTransport,
-    /// wss with a host certificate that names that page's host, and plain ws (CAR9), which the seat always serves to
+    /// What a streaming seat launched now would offer the page at <paramref name="pageOrigin"/> WebTransport,
+    /// wss with a host certificate that names that page's host, and plain ws, which the seat always serves to
     /// LAN pages (beside wss when the host has a certificate); null when no capture is configured. The host's
     /// certificates are re-read at most once a minute (it can prepare HTTPS while it runs). Plain values, not the DTO:
     /// the hot-reload assembly compiles its own copy of the browser DTOs.
@@ -2771,7 +2769,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             var reachability = ct.IsCancellationRequested
                 ? new SeatPortProbe(SeatPortReachability.NotProbed, "not probed: the attempt was cancelled")
                 // ClassificationProbeTimeout, NOT the survey's 250 ms: telling a refusal from a dropped packet
-                // is the entire job here, and on Windows a refusal takes ~2 s to arrive (measured — see that
+                // is the entire job here, and on Windows a refusal takes ~2 s to arrive (see that
                 // constant). Under the shorter budget every Windows "nothing is listening" read as a dropped
                 // packet and was reported to the operator as their firewall.
                 : await SeatPortAvailability

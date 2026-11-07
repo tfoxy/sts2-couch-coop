@@ -1,16 +1,14 @@
 #!/bin/bash
 # Run a GPU-needing (headed) bench/probe command on a VIRTUAL display.
 #
-# This box is somebody's workstation: a headed Chrome opened for a bench run lands on their screen. A
-# headed run needs a window, not the user's monitor — ANGLE/vulkan reaches the real GPU from any X
-# display (gsw's real-GPU `test:canvas-pixel` gate is the precedent) — so every `--headed --gpu vulkan`
-# bench and every `PROBE_HEADED=1` probe goes through here. See docs/mirror-combat-bench.md ("Headed
-# runs go under xvfb").
+# A headed Chrome opened by a script must not land on the user's screen. A headed run needs a window,
+# not the user's monitor — ANGLE/vulkan reaches the real GPU from any X display (gsw's real-GPU
+# `test:canvas-pixel` gate is the precedent) — so every `--headed --gpu vulkan` run and every
+# `PROBE_HEADED=1` probe goes through here.
 #
 # The screen is sized above the largest viewport any run asks for (2520x1080 wide-screen probes), and
 # `-a` picks a free display so sequential runs never collide.
 #
-#   scripts/run-gpu.sh node scripts/bench-mirror-replay.mjs --headed --gpu vulkan ...
 #   scripts/run-gpu.sh env PROBE_HEADED=1 PROBE_CHROME_ARGS="--use-angle=vulkan" node scripts/probe-....mjs ...
 set -euo pipefail
 if [ $# -eq 0 ]; then

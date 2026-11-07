@@ -274,7 +274,7 @@ internal static class SceneDeltaCoalescerTests
         Assert(taken.OrderPatch!.Parents.Any(p => p.ParentId == "g0" && p.ChildIds.SequenceEqual(["y0", "x0"])), "patch reorders g0's children");
     }
 
-    // WS-B stream gate: Reset() drops BOTH halves of the coalescer's carried state.
+    // Stream gate: Reset() drops BOTH halves of the coalescer's carried state.
     //  - the pending accumulator, so a delta folded before the gap is never resolved and shipped after it;
     //  - `_lastSentOrder`, so the first structural send after the gap ships the FULL array instead of a patch
     //    diffed against an order the client no longer holds (which would render as a scrambled tree). This is the

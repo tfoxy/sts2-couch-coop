@@ -8,7 +8,7 @@ import {
 } from "@/mirror/canvas/cardTrailState";
 import type { MirrorCardFlightHint, MirrorNode } from "@/mirror/sceneTree";
 
-// M3 WS-C A3 — the canvas backend's trail INTEGRATOR, on its own, with no renderer around it.
+// The canvas backend's trail INTEGRATOR, on its own, with no renderer around it.
 //
 // What the module owns is the retained half of a comet: whose motion feeds which point history, which space that
 // history is measured in, and when it drains. The strip geometry is `cardTrail.spec`'s; the quads are the build's.
@@ -30,7 +30,7 @@ interface FakeNode {
  *
  * `pages` STARTS EMPTY on purpose — it is the texture bridge's "this url is ready" answer, and an empty one is
  * the state every ribbon is born in (the page has been asked for and has not decoded yet). So the default arm
- * here is the BANDED fallback, which is also the pre-R5 shape every spec below the T-DR1 block was written
+ * here is the BANDED fallback, which is also the earlier shape every spec below the textured-ribbon block was written
  * against. The texture specs populate it explicitly.
  */
 function scene(): {
@@ -242,7 +242,7 @@ describe("cardTrailState — the frame latch", () => {
     const frame = trails.latchedFrames().get("outer")!;
     expect(frame).toEqual([1, 0, 0, 1, 0, 0]);
 
-    // The producer now re-poses the STROKE itself (the two-writer case the DOM's R14f round was about). The
+    // The producer now re-poses the STROKE itself (the two-writer case the DOM backend also handles). The
     // history must not be re-interpreted: the walk is told to keep placing the stroke at the latched frame, so
     // the stored points still mean what they meant.
     s.nodes.get("outer")!.global = [1, 0, 0, 1, 640, 480];
@@ -399,7 +399,7 @@ describe("cardTrailState — the strip", () => {
   });
 });
 
-// --- R5 T-DR1: the texture decision, and the fallback that makes it safe ----------------------------------------
+// --- the texture decision, and the fallback that makes it safe ----------------------------------------
 //
 // A textured ribbon is only drawable against a page the bridge has READY: an unready url is pushed as an
 // invisible quad, so a strip built in hope would blank the comet for as long as the load takes. These pin the

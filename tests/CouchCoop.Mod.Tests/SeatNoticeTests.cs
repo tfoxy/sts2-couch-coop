@@ -276,7 +276,7 @@ internal static class SeatNoticeTests
     /// The host panel and the phone say the same thing at the same moment, because they are fed by ONE decision.
     /// </summary>
     /// <remarks>
-    /// Measured Sep-16 2026, and the reason this exists: with a phone-scoped block the phone was correctly told
+    /// Observed in the field, and the reason this exists: with a phone-scoped block the phone was correctly told
     /// its network path was blocked while the host's row read <c>browser-transport-lost</c> — "reload the browser
     /// and select the same player" — because the verdict only ever rode the seat-notice channel and the panel
     /// inferred a cause of its own. This replays the monitor's exact code shape (<c>Notice.Observe(verdict)</c>,

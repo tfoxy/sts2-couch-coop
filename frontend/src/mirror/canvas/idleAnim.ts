@@ -1,4 +1,4 @@
-// THE IDLE-ANIMATION VOCABULARY AS NUMBERS — the missing half of the canvas stage's loop support (R3).
+// THE IDLE-ANIMATION VOCABULARY AS NUMBERS — the missing half of the canvas stage's loop support.
 //
 // The mirror replays two families of decorative animation on the browser's own clock, because the headless
 // instance freezes them game-side to stop the wire churning: the PATH-KEYED folds (`animAttributes.nodeAnimBinding`

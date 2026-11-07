@@ -4,7 +4,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 namespace CouchCoop.MirrorProtocol.Tests;
 
 // Unit tests for HoverTipScaleMath.ComputeStamp — the recording-derived HoverTip 1.2× anchor + clamp geometry
-// (Feature A / WS-VIEW). Vectors are stated as (x, y, w, h) design-space child boxes (→ DesignAabb).
+// Vectors are stated as (x, y, w, h) design-space child boxes (→ DesignAabb).
 internal static class HoverTipScaleMathTests
 {
     private const double W = 1920, H = 1080, K = 1.2;
@@ -31,13 +31,13 @@ internal static class HoverTipScaleMathTests
         KindRewardItemGrowsLeft();
         NoneOverflowFlipsToMaxX();
         OwnerKindResolution();
-        // R5 (item 5) non-overlap invariant — the enforceable side-clamp matrix.
+        // Non-overlap invariant — the enforceable side-clamp matrix.
         SideClampPushesHandCardTipRight();
         SideClampPushesCreatureTipLeft();
         SideClampFlipsOnViewportOverflow();
         SideClampSkipsStraddle();
         OwnerFollowTranslatesTip();
-        // R8 (WS-1) — the two CORNER anchor pivots on ComputeAnchoredStamp. R9 (WS-B) extends each leg with the new
+        // The two CORNER anchor pivots on ComputeAnchoredStamp. Each leg is extended with the new
         // MiddleRight EDGE pivot (right edge pinned, vertical growth symmetric about the box centre).
         AnchoredStampCornerPivots();
         AnchoredStampCornerPivotsAreCornerFixedPoints();
@@ -46,7 +46,7 @@ internal static class HoverTipScaleMathTests
         AnchoredStampCenteredAxesUnchangedByCornerAndEdgePivots();
     }
 
-    // R8: BottomLeft pins the box's bottom-LEFT corner (pivot = MinX/MaxY) and BottomRight the bottom-RIGHT corner
+    // BottomLeft pins the box's bottom-LEFT corner (pivot = MinX/MaxY) and BottomRight the bottom-RIGHT corner
     // (MaxX/MaxY) — the first pivots whose X is NOT the box centre. Vectors are the two real combat piles.
     private static void AnchoredStampCornerPivots()
     {
@@ -66,7 +66,7 @@ internal static class HoverTipScaleMathTests
         Check.Close(br.ClampX, 0, "discard pile grows inward from the right corner (no X clamp)");
         Check.Close(br.ClampY, 0, "discard pile grows inward from the right corner (no Y clamp)");
 
-        // R9 MiddleRight: the exhaust pile's real box — right-anchored like the discard pile, but mid-height. Pivot X
+        // MiddleRight: the exhaust pile's real box — right-anchored like the discard pile, but mid-height. Pivot X
         // is the RIGHT edge (same as BottomRight); pivot Y is the box CENTRE (NOT the bottom — that is the whole
         // difference between the edge pivot and the corner pivot).
         var exhaust = new DesignAabb(1830, 800, 1910, 880); // exhaust_pile.tscn root, 80×80 mid-right
@@ -110,7 +110,7 @@ internal static class HoverTipScaleMathTests
         Check.Close(ix, 1850, "inverse round-trips X through a BottomRight stamp");
         Check.Close(iy, 1000, "inverse round-trips Y through a BottomRight stamp");
 
-        // R9 MiddleRight: the pinned RIGHT edge is fixed in X at every height, while the box splays symmetrically
+        // MiddleRight: the pinned RIGHT edge is fixed in X at every height, while the box splays symmetrically
         // about its vertical centre — the exhaust pile's exact measured geometry (1830,800)-(1910,880) → (1810,790)-(1910,890).
         var exhaust = new DesignAabb(1830, 800, 1910, 880);
         var mr = HoverTipScaleMath.ComputeAnchoredStamp(
@@ -141,7 +141,7 @@ internal static class HoverTipScaleMathTests
             box, 1.5, W, H, HoverTipScaleMath.AnchorPivot.BottomRight)!.Value;
         Check.Close(br.ClampX, 0, "bottom-right grows inward → no clamp needed");
 
-        // R9 MiddleRight shares the horizontal behaviour (pinned right edge → grows inward, no X clamp) but its
+        // MiddleRight shares the horizontal behaviour (pinned right edge → grows inward, no X clamp) but its
         // VERTICAL clamp is live: splaying about the centre near the bottom edge overflows and is pushed back up.
         // Box y∈[900,1000] centre 950; scaled bottom = 950 + 1.5·50 = 1025 ≤ 1080 → still fits.
         var mr = HoverTipScaleMath.ComputeAnchoredStamp(
@@ -176,7 +176,7 @@ internal static class HoverTipScaleMathTests
         Check.Close(Fwd(pinned, 1656, 289).X, 1588, "legend grows LEFT: 1996 − 1.2·340 = 1588");
         Check.Close(Fwd(pinned, 1656, 289).Y, 198.2, "legend grows UP: 743 − 1.2·454 = 198.2");
 
-        // R9 contrast — the exhaust entry deliberately does NOT copy the legend's NoClamp. Its real box sits wholly
+        // Contrast — the exhaust entry deliberately does NOT copy the legend's NoClamp. Its real box sits wholly
         // inside the viewport, so the clamp is already a no-op and the clamped/unclamped stamps are IDENTICAL; keeping
         // the clamp on leaves the on-screen backstop in place if the game ever re-anchors the pile.
         var exhaust = new DesignAabb(1830, 800, 1910, 880);
@@ -188,8 +188,8 @@ internal static class HoverTipScaleMathTests
             "exhaust pile: the on-screen clamp is a no-op on its real box → no NoClamp needed (unlike the legend)");
     }
 
-    // Regression guard: adding the corner pivots (R8) and the MiddleRight edge pivot (R9) must not move pivot X for
-    // the three *Center variants (which every pre-R8 shipped entry uses), and MiddleRight must keep pivot Y CENTRED —
+    // Regression guard: adding the corner pivots and the MiddleRight edge pivot must not move pivot X for
+    // the three *Center variants (which every previously shipped entry uses), and MiddleRight must keep pivot Y CENTRED —
     // the one axis that distinguishes it from BottomRight, and the twin-drift hazard if a future pivot is folded into
     // the bottom arm of the `py` switch by mistake.
     private static void AnchoredStampCenteredAxesUnchangedByCornerAndEdgePivots()

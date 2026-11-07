@@ -6,7 +6,7 @@
  * then composited to the screen every frame. If the backing store and the device-pixel box the compositor draws
  * it into are the same size, that composite is a 1:1 blit; if they differ AT ALL — by one pixel on a 1920-wide
  * surface is enough — it is a resample of the whole surface, every frame. On a GPU that is free. On a SOFTWARE
- * compositor it is not: a Firefox profile of this stage (Sep-03, software WebRender, no GPU process) spent
+ * compositor it is not: a Firefox profile of this stage (software WebRender, no GPU process) spent
  * **7.2 ms/frame** in SWGL's scaled-bilinear paths — `linear_blit` + `linear_row_blit` 3.57 ms and
  * `blendTextureLinearFallback` 3.64 ms — because SWGL only takes `blendTextureNearestFast` when the
  * source→destination factor is exactly 1. There is no "close enough" arm. The condition is binary, so the law

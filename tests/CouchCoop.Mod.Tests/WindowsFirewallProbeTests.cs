@@ -2,8 +2,8 @@ using CouchCoop.Mod.Connections;
 
 // The host asking Windows why nothing has arrived. `HostReachabilityWatch` is honest that "nobody scanned yet"
 // and "nothing can get through" are one observation from inside this process — but the most common cause of the
-// second is a LOCAL fact this machine can just read, and `docs/agents/windows-connection-fingerprints.md` §3/§5
-// measured why it matters: a stock box blocks inbound by default, the game's permission is carried by
+// second is a LOCAL fact this machine can just read, and `docs/workshop/phone-connection-troubleshooting.md`
+// explains why it matters: a stock box blocks inbound by default, the game's permission is carried by
 // per-PROGRAM rules, and every host-side network check passes while a real phone is being dropped.
 //
 // What this suite pins:
@@ -169,7 +169,7 @@ internal static class WindowsFirewallProbeTests
     private static void AnAllowedHostIsToldSoOutright()
     {
         // The measured stock shape: two per-program allow rules scoped to all three profiles, both adapters
-        // Private (windows-connection-fingerprints.md §3).
+        // Private.
         var reading = WindowsFirewallProbe.Classify(
             Facts(
                 [

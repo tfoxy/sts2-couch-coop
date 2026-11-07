@@ -172,7 +172,7 @@ internal static class HostTransportAlertTests
 
     // The OTHER degraded transport, and the reason this alert now has two producers. A Steam lobby can come up
     // while the couch side fails to bind its port — the exact mirror of Steam-offline: remote friends can join
-    // and nobody in the room can. Until Sep-22 2026 that condition armed nothing at all, so the first anyone
+    // and nobody in the room can. Previously that condition armed nothing at all, so the first anyone
     // heard of it was a phone failing to join with "No further cause is available".
     private static void TheCouchSideFailingToBindAlsoOpensTheAlert()
     {

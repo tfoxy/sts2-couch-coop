@@ -308,7 +308,7 @@ public sealed class PaintOrderTables
         return new Rgba(r, g, b, a);
     }
 
-    // WS-CRISP R17 fade-in override: identical to the chain product above, EXCEPT for a node whose id is in
+    // Fade-in override: identical to the chain product above, EXCEPT for a node whose id is in
     // `fadeInAlpha` the endpoint alpha there is used in place of the node's streamed Modulate alpha. The producer
     // PINS a tween-owned fade-IN channel's streamed modulate at its pre-tween ≈0 for the whole fade (it withholds the
     // tweened channel's deltas until SettleTween), so the plain product reads ≈0 and the text-overlay eligibility's

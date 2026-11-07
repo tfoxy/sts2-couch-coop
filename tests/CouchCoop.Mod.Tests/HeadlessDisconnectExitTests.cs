@@ -5,7 +5,7 @@ using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
 
-// WS-8: a headless mirror instance whose host connection is permanently gone must EXIT instead of parking behind
+// A headless mirror instance whose host connection is permanently gone must EXIT instead of parking behind
 // STS2's network-error / "report a bug" modal forever. Two halves are covered here:
 //   * the Harmony TARGETS still resolve against the installed STS2 assemblies — including the `NErrorPopup.Create`
 //     OVERLOAD discrimination, which is the one thing a name-based lookup would silently get wrong (three static

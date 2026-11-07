@@ -194,7 +194,7 @@ describe("webLinkBlockedByBrowser", () => {
   const ANDROID = "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36";
   const LAN = ["http://192.168.1.5:13337"];
 
-  // Measured 2026-09-17 (docs/agents/local-network-access.md): WebKit blocks every insecure private-IP
+  // Measured (docs/local-network-access.md): WebKit blocks every insecure private-IP
   // subresource of an https page, so this link can never work here however the network is set up.
   it("is true for an iPhone on the public origin", () => {
     expect(webLinkBlockedByBrowser({ pageProtocol: "https:", userAgent: IPHONE }, LAN)).toBe(true);

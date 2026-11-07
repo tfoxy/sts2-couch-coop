@@ -75,7 +75,7 @@ declare module "@spirectl/presentation/render" {
     alphaFrom?: number;
     alphaTo?: number;
     delayMs?: number;
-    // `pivotPulse` (WS-E map-point pulse): the sweep's scale extrema, and the node's PIVOT expressed in the space
+    // `pivotPulse` (map-point pulse): the sweep's scale extrema, and the node's PIVOT expressed in the space
     // its baked `matrix()` maps INTO (bakedMatrix · pivotLocal, px). The pulse composes `scale:` + `translate:`
     // individual properties onto an element that already carries the baked matrix; the translate is what anchors
     // the scale at the pivot instead of at the matrix origin (see animations.ts PIVOT_PULSE). `pivotX`/`pivotY`

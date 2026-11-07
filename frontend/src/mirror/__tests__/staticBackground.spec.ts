@@ -32,9 +32,9 @@ import {
 } from "@/mirror/sceneTree";
 
 // "Static background": the host-rendered PNG of the combat room's background, and what the renderer does with the
-// LIVE bg subtree while it is on screen. Two contracts live here, and R12 split them apart deliberately:
+// LIVE bg subtree while it is on screen. Two contracts live here, and they are split apart deliberately:
 //
-//   * the BUILD HOLD (R12, renderer-owned) — while the setting is on and this room's picture is unconfirmed OR
+//   * the BUILD HOLD (renderer-owned) — while the setting is on and this room's picture is unconfirmed OR
 //     shown, the combat bg scene root is folded into `visit`'s `hidden`, so it is never built at all: no elements,
 //     no atlas/spine canvases, no gsw shader/particle bindings, nothing queued for the idle hatchery. Derived from
 //     the WIRE plus mirrorSettings, so the very first walk that sees a new room's root already holds it.
@@ -186,7 +186,7 @@ describe("isCombatBackgroundSceneRoot — the matching rule", () => {
 });
 
 // ================================================================================================================
-// R12 — THE BUILD HOLD. The contract this round inverted: the subtree the picture replaces is never BUILT, rather
+// THE BUILD HOLD. The contract: the subtree the picture replaces is never BUILT, rather
 // than built and then hidden. Everything below runs with the shipped defaults (hold ON, dormancy ON).
 // ================================================================================================================
 describe("static-background BUILD HOLD", () => {
@@ -1069,7 +1069,7 @@ describe("StaticBackground.vue — decode gate + shown-signal ordering", () => {
     wrapper.unmount();
   });
 
-  // R12 — the descriptor rides the session envelope, which the host republishes one deferred hop AFTER the delta
+  // The descriptor rides the session envelope, which the host republishes one deferred hop AFTER the delta
   // that mounted the new room. Under the build hold a stale descriptor would leave the PREVIOUS room's artwork as
   // the only thing on screen, with no decode for the mounted room ever starting.
   it("a STALE descriptor loses to the wire: the mounted room's URL is what gets decoded", async () => {
@@ -1548,7 +1548,7 @@ describe("event backdrops — build hold + suppression", () => {
   });
 
   // …but an EVENT room's own confirmed still must NOT release a newly-arriving event backdrop (event→event room
-  // change keeps the R12 first-walk hold; the stale-shown guard clears the signal a flush later).
+  // change keeps the first-walk hold; the stale-shown guard clears the signal a flush later).
   it("an event→event room change keeps the new backdrop held while the OLD event image is still up", () => {
     const { stage, renderer } = harness();
     const state = createMirrorState();

@@ -43,7 +43,7 @@ internal static class NativeLogLatchTests
     {
         var before = ConnectionArrivalLog.Shared.ViewerArrivalCount;
 
-        // The exact call the Sep-15 round recorded as fatal from a test process: the PROCESS-WIDE log, its
+        // The exact call the earlier run recorded as fatal from a test process: the PROCESS-WIDE log, its
         // default sink, a non-loopback address so it counts as a viewer arrival and the Console.Error half of
         // the sink definitely runs.
         ConnectionArrivalLog.Shared.Record(IPAddress.Parse("192.0.2.7"), "/", "served", userAgent: "latch-test");

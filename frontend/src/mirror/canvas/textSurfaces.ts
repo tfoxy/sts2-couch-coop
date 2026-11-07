@@ -12,13 +12,12 @@
 //     clip url.
 //
 // ---------------------------------------------------------------------------------------------------------------
-// WHY A REGISTRY AT ALL, measured rather than assumed (scripts/probe-text-census.mjs).
+// WHY A REGISTRY AT ALL.
 //
-// It is NOT cross-node sharing. That is real but small: 1.00-1.29x on the six standard screens, because a screen's
-// labels mostly say different things. The argument is CROSS-BUILD reuse. Those screens carry 15-52 labels that are
-// re-drawn on EVERY build, while their pixels change 0-64 times per THIRTY SECONDS — the shop, the map and the
-// removal screen change zero times. So the digest is what turns a per-build raster into a per-change one, and the
-// hit rate on a settled screen is ~100%.
+// It is NOT cross-node sharing. That is real but small, because a screen's labels mostly say different things. The
+// argument is CROSS-BUILD reuse. A screen's labels are re-drawn on EVERY build while their pixels change rarely —
+// a settled shop, map or removal screen changes not at all. So the digest is what turns a per-build raster into a
+// per-change one, and the hit rate on a settled screen is ~100%.
 //
 // That also decides where the cache check goes: the caller computes the digest from the SPEC, which needs no
 // measurement, and a hit skips line breaking entirely. Laying the text out first and then discovering it was
@@ -39,21 +38,16 @@
 // the DOM overlay keeps its element, and the label paints exactly as it does today.
 //
 // ---------------------------------------------------------------------------------------------------------------
-// ATLAS PACKING (R6 P6-D2). The promotion criterion this module wrote for itself has been MET, so labels now share
-// pages by default.
+// ATLAS PACKING. Labels share pages rather than each owning a texture.
 //
-// The criterion was: pack when `flushes.textureSlots` rises by more than 8 per build, when more than 128 labels
-// are resident, or when acquires are paced at the count cap for 3 consecutive builds. The first of those was
-// measured at +20 and +45 per build against the +8 budget, and it is the one that matters: gsw's batcher holds 16
-// textures per batch and NEVER reorders, so once a screen's labels exceed the slot table the batcher flushes
-// mid-list and the text arm costs more draw calls than it saves.
+// The reason is texture-slot pressure: gsw's batcher holds 16 textures per batch and NEVER reorders, so once a
+// screen's labels exceed the slot table the batcher flushes mid-list and the text path costs more draw calls than
+// it saves. Packing labels onto a few pages keeps a screen's text in one or two binds.
 //
-// THE PAGE IS 1024x1024, and the number is measured (`scripts/probe-text-census.mjs --raster-hist`, R6 P6-D1):
-// across the six standard screens at every raster scale a device actually picks (1-1.5; the stage transform
-// divides by DPR while `rasterScaleFor` multiplies by it, so they largely cancel and scale 3 is the pathological
-// arm, not the operating point) a whole screen's labels fit ONE page with ZERO oversize rects. 512 spills to 2-4
-// pages and starts producing oversize rects at scale 1.5; 2048 always fits but carries 1.7-37% ink, i.e. a 16 MB
-// allocation for under a megabyte of glyphs.
+// THE PAGE IS 1024x1024. At the raster scales a device actually picks (1-1.5; the stage transform divides by DPR
+// while `rasterScaleFor` multiplies by it, so they largely cancel and scale 3 is the pathological case, not the
+// operating point) a whole screen's labels fit ONE page with no oversize rects. 512 spills to several pages and
+// starts producing oversize rects; 2048 always fits but is a 16 MB allocation for under a megabyte of glyphs.
 //
 // THE KEY SPACE IS UNCHANGED, which is what keeps this change confined to this file plus two lines in
 // `emitTextQuad`. A label is still `text://<digest>` to everything outside — the bridge, the draw list, a paint
@@ -74,32 +68,24 @@
 // stays spent until its whole page goes. `pageLiveFraction` is the instrument for whether that matters.
 //
 // ---------------------------------------------------------------------------------------------------------------
-// PARTIAL-PAGE RECLAMATION (R6 P6-D3's second half): MEASURED, DECIDED AGAINST, AND FILED — with the number, so
-// re-opening it is a matter of the number changing rather than of somebody's taste.
+// PARTIAL-PAGE RECLAMATION: DECIDED AGAINST, with the condition under which to reopen it.
 //
-// The proposal was: a page under 50% live gets RETIRED AND REFILLED — it takes no new allocations, a couple of
-// labels per build are told their box is gone, and the callers re-lay-out onto a fresh page. It is not built, and
-// the reason is that the measurement says there is nothing to migrate.
-//
-// `scripts/probe-text-census.mjs --raster-hist` runs the shelf allocator offline over the six standard screens.
-// At the shipped 1024 page and the scale a desktop actually picks, EVERY screen fits ONE page with ZERO oversize
-// rects, and that page is 7.0-17.7% live; at the 1.5 a phone picks, still one page, 15.3-38.6% live. So the low
-// live fraction is not a symptom of ghosts accumulating — it is the page being an order of magnitude larger than
-// one screenful of glyphs needs, which is the same fact that made 1024 the right choice in the first place.
+// The idea: a page under 50% live gets RETIRED AND REFILLED — it takes no new allocations, a couple of labels per
+// build are told their box is gone, and the callers re-lay-out onto a fresh page. It is not built because there is
+// nothing to migrate: on the standard screens every screen fits ONE page, and that page is simply low-fraction
+// live. The low live fraction is not ghosts accumulating — it is the page being far larger than one screenful of
+// glyphs needs, which is the same fact that made 1024 the right choice in the first place.
 //
 // Which turns the cure into the disease. Reclaiming means retiring a page while its survivors re-acquire onto a
-// new one, so the peak is TWO pages — a transient +4 MB — spent to reclaim under 4 MB of a 24 MB ceiling that the
-// measurement says is never approached (one page, always). And +4 MB transient is exactly the currency that has
-// been shown to matter: renderer memory is what kills the arm on a device, and a spike is worse than a plateau.
+// new one, so the peak is TWO pages — a transient +4 MB — spent to reclaim under 4 MB of a ceiling that is never
+// approached. And renderer memory is what kills the arm on a constrained device, so a spike is worse than a plateau.
 //
-// RE-OPEN WHEN, precisely: `pages >= 3` with `pageLiveFraction < 0.5` on a SETTLED screen, or `atlasFull > 0` at
-// all. The first says pages really are accumulating ghosts rather than just being roomy; the second says the byte
-// ceiling has started binding, which the design does not expect and which would make the trade different.
+// RE-OPEN WHEN: `pages >= 3` with `pageLiveFraction < 0.5` on a SETTLED screen, or `atlasFull > 0` at all. The
+// first says pages really are accumulating ghosts rather than just being roomy; the second says the byte ceiling
+// has started binding, which the design does not expect and which would make the trade different.
 //
-// A SMALLER FIRST PAGE (512, growing to 1024 on spill) is filed and NOT built for a separate reason: at 512 the
-// same screens need 1-4 pages and start producing oversize rects at the phone's own raster scale, so it trades a
-// measured "one page, one bind" for an unmeasured multi-page path — while the thing under measurement is the flip.
-// Never move the thing under measurement.
+// A SMALLER FIRST PAGE (512, growing to 1024 on spill) is also not built: it would trade "one page, one bind" for
+// a multi-page path that produces oversize rects at higher raster scales.
 
 import type { CanvasTextureCache, ExecutorTexture } from "@godot-scene-web/canvas";
 
@@ -118,20 +104,20 @@ export const TEXT_KEY_PREFIX = "text://";
 /**
  * Default RESIDENT byte ceiling for label rasters.
  *
- * 24 MB. The offline census puts a whole screen's final-state text under 0.7 MB at scale 1 (box-bound, so the real
- * figure is lower), and the worst case this has to survive is scale 3 on the busiest screen — 52 labels at 9x the
- * area, still an order of magnitude inside this. The ceiling is therefore not expected to bind at all; it is here
- * so that a pathological screen degrades to "some labels stay on the overlay" instead of to an OOM.
+ * 24 MB. A whole screen's final-state text is under a megabyte at scale 1 (box-bound, so the real figure is
+ * lower), and the worst case this has to survive is scale 3 on the busiest screen — about 9x the area, still an
+ * order of magnitude inside this. The ceiling is therefore not expected to bind at all; it is here so that a
+ * pathological screen degrades to "some labels stay on the overlay" instead of to an OOM.
  */
 export const TEXT_PACE_BYTES_DEFAULT = 24 * 1024 * 1024;
 
 /**
  * Default per-build upload COUNT cap.
  *
- * Eight. Unlike a spine still (11.76 MB at p90, ~40 ms of submit), a label raster is a few KB and its upload is
- * dominated by the fixed ~0.164 ms call overhead — so the cap is about not paying for a whole screen's first
- * paint in one build, not about bytes. Eight lands a 52-label screen over ~7 builds, and every label not yet
- * landed is still drawn by the overlay in the meantime.
+ * Eight. Unlike a spine still (megabytes per upload), a label raster is a few KB and its upload is dominated by
+ * the fixed per-call overhead — so the cap is about not paying for a whole screen's first paint in one build, not
+ * about bytes. A 52-label screen lands over several builds, and every label not yet landed is still drawn by the
+ * overlay in the meantime.
  */
 export const TEXT_PACE_COUNT_DEFAULT = 8;
 
@@ -142,17 +128,17 @@ export const TEXT_EVICT_AFTER_BUILDS = 240;
 const INK_MARGIN_PX = 1;
 
 /**
- * ROUND 7's scratch-probe selection band, in device px — the default for {@link TextSurfaceOptions.scratchMaxTexW}.
+ * The scratch probe's default selection band, in device px — the default for
+ * {@link TextSurfaceOptions.scratchMaxTexW}.
  *
- * Named rather than inlined because a committed photograph is scored against it: `?textScratchProbe=1` has to keep
- * producing round 7's sample exactly, and a band that drifted would quietly re-select the population under a name
- * that says it did not.
+ * Named rather than inlined so that `?textScratchProbe=1` keeps selecting the same population from run to run;
+ * a band that drifted would quietly re-select it under an unchanged name.
  */
 export const SCRATCH_MAX_TEX_W_DEFAULT = 24;
 
 /**
- * The label atlas page, square, in device pixels — 4 MB of RGBA. Measured, not guessed: see the header, and
- * `scripts/probe-text-census.mjs --raster-hist` for the distribution it was chosen against.
+ * The label atlas page, square, in device pixels — 4 MB of RGBA. Chosen so a whole screen's labels fit one page;
+ * see the header.
  */
 export const TEXT_PAGE_DIM = 1024;
 
@@ -210,9 +196,9 @@ export interface TextRasterBox {
   /**
    * How many LINES the label broke into — retained purely so the parity gate can read it off a cache hit.
    *
-   * The bench's `T` records report a line count per label, and on the DOM arm it is measured from the element
-   * (`scrollHeight / lineHeight`). A canvas-drawn label has no element, so the count has to survive here: a hit
-   * skips the layout entirely, and re-laying-out just to count lines would undo the saving the cache exists for.
+   * An element-based (DOM) label reports its line count from the element (`scrollHeight / lineHeight`). A
+   * canvas-drawn label has no element, so the count has to survive here: a hit skips the layout entirely, and
+   * re-laying-out just to count lines would undo the saving the cache exists for.
    */
   lines: number;
 }
@@ -249,11 +235,10 @@ export interface TextSurfaceStats {
   /**
    * FACES REFUSED AND STILL UNRESOLVED, RIGHT NOW — a GAUGE, not a total.
    *
-   * The flip criterion is written against this number ("`fontsPending` 0 on a settled screen"), so it has to be
-   * capable of returning to zero. Until R8 it could not: it was a cumulative per-attempt-per-build counter that
-   * was incremented at one site and never decremented, so a healthy warm-up in which every face arrived within a
-   * few builds still read 45 at settle and the criterion could only ever fail. That reading is kept, honestly
-   * named, as {@link fontWaits}.
+   * Any flip criterion written against this number ("`fontsPending` 0 on a settled screen") needs it to be capable
+   * of returning to zero, which is why it is a gauge: a cumulative per-attempt-per-build counter would never
+   * decrement, and a healthy warm-up in which every face arrived within a few builds would still read high at
+   * settle. The cumulative reading is kept, honestly named, as {@link fontWaits}.
    *
    * What it counts now is DISTINCT `cssFont` strings that have been refused and whose load has not since come
    * back. A face's load resolving removes it; a load rejecting moves it to {@link fontsFailed}. So non-zero at
@@ -285,7 +270,7 @@ export interface TextSurfaceStats {
   fontsFailed: number;
   paceBytes: number;
   paceCount: number;
-  /** Atlas pages allocated (R6 P6-D2). Each is {@link TEXT_PAGE_DIM} squared of RGBA — 4 MB at 1024. */
+  /** Atlas pages allocated. Each is {@link TEXT_PAGE_DIM} squared of RGBA — 4 MB at 1024. */
   pages: number;
   /** The page dimension in force, so a census can never be read against the wrong page size. */
   pageDim: number;
@@ -307,7 +292,7 @@ export interface TextSurfaceStats {
    */
   atlasFull: number;
   /**
-   * Pages released because nothing live was left on them (R6 P6-D3).
+   * Pages released because nothing live was left on them.
    *
    * The only thing in this module that ever frees a page allocation — a shelf cannot take an arbitrary rect back,
    * so without this a session that walks through screens grows by a page per screenful of labels and never
@@ -334,9 +319,8 @@ export interface TextSurfaceStats {
    * then the upload or the region write put the wrong pixels on the page. Keyed by `texX`/`texY` so a sample can
    * be matched against a paint dump's `src` rect exactly, with no guessing about which label is which.
    *
-   * ROUND 7 ANSWERED THAT BISECT — the scratch is already wrong — so round 8's job is to name the TERM, and the
-   * sample carries the whole arithmetic rather than just the picture. The added fields exist to discriminate
-   * between two mechanisms that produce the same photograph:
+   * The sample carries the whole arithmetic rather than just the picture, to discriminate between two mechanisms
+   * that produce the same symptom:
    *
    *   * A SIZING term. `ink`/`rasterScale`/`laidOutW` are every input `texW = ceil(ink.w * rasterScale)` has, so a
    *     surface that is too small for the ink it was asked to hold can be shown to be too small ARITHMETICALLY.
@@ -347,8 +331,8 @@ export interface TextSurfaceStats {
    *     `preW`/`postW`/`postAscent`/`postDescent` re-ask the SAME questions on either side of it: a pre-resize
    *     measure that disagrees with a post-resize one is a face that changed underneath the memo.
    *
-   * `metricsMismatch` cannot answer the second question and never could — both of ITS measurements are taken
-   * before the resize, so they agree with each other whatever face is in force.
+   * `metricsMismatch` cannot answer the second question — both of ITS measurements are taken before the resize, so
+   * they agree with each other whatever face is in force.
    */
   scratchSamples: {
     texX: number;
@@ -439,8 +423,8 @@ export interface TextSurfaceOptions {
   /**
    * The atlas page dimension, or `0` to give every label its own texture (`?textAtlas=off`).
    *
-   * The off arm is what makes the promotion criterion re-checkable: the whole argument for packing is a measured
-   * texture-slot flush rate, and a measurement needs both halves. It is also the fallback if the pages ever cost
+   * The off arm keeps the packing decision re-checkable: whether packing pays is a texture-slot flush rate, and a
+   * measurement needs both halves. It is also the fallback if the pages ever cost
    * more than the binds they remove. Defaults to {@link TEXT_PAGE_DIM}.
    */
   pageDim?: number;
@@ -475,11 +459,9 @@ export interface TextSurfaceOptions {
   /**
    * The scratch probe's SELECTION BAND: only rasters at most this many device px wide are sampled.
    *
-   * Defaults to {@link SCRATCH_MAX_TEX_W_DEFAULT}, which is round 7's band verbatim — `?textScratchProbe=1` must
-   * keep reproducing that round's sample byte for byte, because the committed bisect photograph is scored against
-   * it. Widening it (`?textScratchProbe=64`) is what puts the BROKEN SIBLINGS in: the same shop shelf carries a
-   * 28-wide label that is wrong in exactly the same way and that round 7's band could not see, and "identical
-   * font, identical scale, adjacent acquires, some right and some wrong" is the observation the round turns on.
+   * Defaults to {@link SCRATCH_MAX_TEX_W_DEFAULT}; `?textScratchProbe=1` keeps selecting that same narrow band run
+   * to run. Widening it (`?textScratchProbe=64`) admits wider siblings that the default band excludes, which is
+   * what a comparison of "identical font, identical scale, adjacent acquires, some right and some wrong" needs.
    */
   scratchMaxTexW?: number;
 }
@@ -518,11 +500,10 @@ function normalizeCap(value: number | undefined, fallback: number): number {
 /**
  * HOW FAR A LABEL'S INK REACHES OUTSIDE ITS GLYPH RUN, per side, in box space.
  *
- * Split out of {@link inkBoxOf} so that a caller which cannot lay text out — an OFFLINE probe has no 2D context and
- * therefore no `measureText` — can still state the pad EXACTLY rather than guessing one. The parity harness
- * (`scripts/probe-text-crops.mjs`) crops per-label comparison windows out of a screenshot, and a guessed pad there
- * would either clip a shadow (and score a difference nobody drew) or swallow half the screen (and dilute every
- * RMSE toward zero). There is one definition of the pad and this is it.
+  * Split out of {@link inkBoxOf} so that a caller which cannot lay text out — an OFFLINE tool has no 2D context and
+  * therefore no `measureText` — can still state the pad EXACTLY rather than guessing one. A guessed pad would
+  * either clip a shadow or swallow half the screen when cropping per-label comparison windows. There is one
+  * definition of the pad and this is it.
  *
  * The outline is a CENTRED stroke, so half of it lands outside the glyph; the shadow displaces a full copy of the
  * ink (stroke included) by its offset, in one direction only.
@@ -756,19 +737,16 @@ export function createTextSurfaces(options: TextSurfaceOptions): TextSurfaceRegi
   const metricsSamples = stats.metricsSamples;
   const captureScratch = options.captureScratch === true;
   /**
-   * How many samples a probe run may take. Raised 20 -> 32 for round 8, and the number is the WIDENED BAND's:
-   * `?textScratchProbe=64` admits the broken 28-wide siblings that round 7's 24px band excluded, and the shop
-   * shelf under investigation carries ~24 labels inside that band across the settling builds. At 20 the cap
-   * bound before the shelf was complete, which would have made "the wide siblings are absent from the sample"
-   * unreadable — cap or band, no way to tell. 32 clears the shelf with room, and the cost is bounded by the same
-   * argument the seam already rests on: 32 `toDataURL` calls, once, on a diagnostic run nothing times.
+   * How many samples a probe run may take. The cap has to clear a full shelf of labels inside the selection band:
+   * if it bound early, "the wide siblings are absent from the sample" would be unreadable — cap or band, no way to
+   * tell. The cost is bounded by the same argument the seam already rests on: a handful of `toDataURL` calls, once,
+   * on a diagnostic run nothing times.
    */
   const SCRATCH_SAMPLE_CAP = 32;
   /**
-   * Only rasters THIS NARROW are sampled. The first pass at this seam took the first fourteen acquires and every
-   * one of them was a label that renders correctly — so it proved that correct labels are correct and nothing
-   * else. The labels that come out as a fragment are short strings whose rasters sit at 22x22, so selecting the
-   * band rather than the order is what puts the population under investigation into the sample.
+   * Only rasters THIS NARROW are sampled. Taking the first N acquires samples mostly labels that render correctly;
+   * the labels that come out as a fragment are short strings with small rasters, so selecting by band rather than
+   * by order is what puts the population under investigation into the sample.
    */
   const scratchMaxTexW =
     options.scratchMaxTexW != null && Number.isFinite(options.scratchMaxTexW) && options.scratchMaxTexW > 0
@@ -876,10 +854,9 @@ export function createTextSurfaces(options: TextSurfaceOptions): TextSurfaceRegi
    *
    *   1. THE CONTEXT'S FONT MOVED WITHOUT US. `font` is part of a 2D context's drawing state, so `restore()`
    *      puts back whatever was in force at the matching `save()` — and this module's `save()` runs AFTER the
-   *      resize that reset the context, so what it banks is `10px sans-serif`. That is the defect R8's probe
-   *      measured in the field: nine of eleven fragment rasters on the shop screen were SIZED from a measurement
-   *      taken at `10px sans-serif` and DRAWN with the label's real 46.8px face, four to five times larger than
-   *      the surface allocated for them. {@link forgetFont} is the answer, at both sites.
+   *      resize that reset the context, so what it banks is `10px sans-serif`. The result: a raster SIZED from a
+   *      measurement taken at `10px sans-serif` and DRAWN with the label's real, much larger face, several times
+   *      larger than the surface allocated for it. {@link forgetFont} is the answer, at both sites.
    *
    *   2. THE FACE ARRIVED AFTER THE ASSIGNMENT. `measureFor` runs during the CALLER's layout, which is an
    *      argument expression at the acquire site and therefore happens before the readiness gate has said
@@ -1061,11 +1038,11 @@ export function createTextSurfaces(options: TextSurfaceOptions): TextSurfaceRegi
       const probe = c.measureText("M") as TextMetrics;
       const ascent = probe.fontBoundingBoxAscent ?? spec.fontPx * FALLBACK_ASCENT_RATIO;
       const descent = probe.fontBoundingBoxDescent ?? spec.fontPx * FALLBACK_DESCENT_RATIO;
-      // THE METRICS INSTRUMENT (R7). The raster is sized from widths the CALLER measured, and drawn with the font
-      // this context has NOW. If those two disagree the glyphs are drawn wider than the surface that was allocated
-      // for them and the label comes out clipped to a sliver — which is what the G8 gate photographed on short
-      // labels. One `measureText` per ACQUIRE (not per build, not per draw) is a negligible price for telling
-      // "the raster is wrong" apart from "the raster is right and something else is".
+      // THE METRICS INSTRUMENT. The raster is sized from widths the CALLER measured, and drawn with the font this
+      // context has NOW. If those two disagree the glyphs are drawn wider than the surface that was allocated for
+      // them and the label comes out clipped to a sliver. One `measureText` per ACQUIRE (not per build, not per
+      // draw) is a negligible price for telling "the raster is wrong" apart from "the raster is right and
+      // something else is".
       // The PRE-RESIZE readings, retained for the scratch sample: the width the caller laid out with, and the
       // width this context answers for the same line right now. Both are taken before `target.width = texW`
       // resets the context, which is the whole point — the sample compares them against the same two questions
@@ -1241,7 +1218,7 @@ export function createTextSurfaces(options: TextSurfaceOptions): TextSurfaceRegi
 
       try {
         const t1 = nowMs();
-        // ONTO A PAGE if one will have it (R6 P6-D2). The rect carries its gutter on the right and bottom only —
+        // ONTO A PAGE if one will have it. The rect carries its gutter on the right and bottom only —
         // the page's own left and top edges are already a cleared boundary, and doubling the gutter between two
         // rects would cost 2px of page for a 1px guarantee.
         const placement =

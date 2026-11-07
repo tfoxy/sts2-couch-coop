@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Input;
 
-// R4 change-2 wiring: the END-TURN button hit-test behind GestureCallbacks.EndTurnBoxAt. Pure (Godot-free) so the
+// The END-TURN button hit-test behind GestureCallbacks.EndTurnBoxAt. Pure (Godot-free) so the
 // Exe suite can unit-test it; the godot-client InputRouter curries the live store handles over BoxAt.
 //
 // The button is identified by its owning INSTANCED SCENE (v0.107.1 promoted it to its own

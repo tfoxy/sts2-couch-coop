@@ -66,8 +66,7 @@ internal static class CouchCoopHostTransport
     /// so at that moment there is nothing to ask and the probe reports null — a raise that only ever lands on the
     /// lobby would be invisible here. A listener sized for 4 while the lobby admits 16 refuses the fifth seat at
     /// the transport, which is exactly the failure this avoids. Read once per host start, so it answers only for a
-    /// host started while a lobby screen is current; "Lobby player cap" in docs/agents/architecture-map.md says
-    /// what that means in practice.
+    /// host started while a lobby screen is current.
     /// </para>
     /// </summary>
     internal static Func<int?>? MaxLobbyPlayersProbe { get; set; }

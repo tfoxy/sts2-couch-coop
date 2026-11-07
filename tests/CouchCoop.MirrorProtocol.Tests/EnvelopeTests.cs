@@ -271,7 +271,7 @@ internal static class EnvelopeTests
         // scene-ack
         Check.Equal(ProtocolJson.Serialize(new SceneAckMessage()), "{\"type\":\"scene-ack\"}", "scene-ack exact bytes");
 
-        // watch (WS-B stream gate) — exact bytes, because the host reads `on` strictly as a JSON true (anything
+        // watch (stream gate) — exact bytes, because the host reads `on` strictly as a JSON true (anything
         // else, including a missing key or the string "true", is read as OFF).
         Check.Equal(ProtocolJson.Serialize(new WatchMessage(true)), "{\"on\":true,\"type\":\"watch\"}", "watch:on exact bytes");
         Check.Equal(ProtocolJson.Serialize(new WatchMessage(false)), "{\"on\":false,\"type\":\"watch\"}", "watch:off exact bytes");

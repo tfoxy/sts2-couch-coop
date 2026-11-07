@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.Assets;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-U/WS-W (M3): shared percentile math (linear interpolation between nearest ranks) backing the walk-timing
+// Shared percentile math (linear interpolation between nearest ranks) backing the walk-timing
 // summaries. Order-independent; empty → zeros; multi-quantile.
 internal static class PercentilesTests
 {

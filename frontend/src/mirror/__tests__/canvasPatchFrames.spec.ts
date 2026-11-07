@@ -550,7 +550,7 @@ describe("the frame-level patch refusals", () => {
     expect(idleStats().plans).toBe(1);
   });
 
-  // --- the TRANSFORM tier's frame-level gate (R7 W3-T) ---------------------------------------------------------
+  // --- the TRANSFORM tier's frame-level gate ---------------------------------------------------------
 
   it("patches animated transforms", () => {
     const r = mount();
@@ -611,7 +611,7 @@ describe("the frame-level patch refusals", () => {
   });
 
   it("PATCHES a WIDENED stage — the refusal that cost every maximized desktop browser its idle frames", () => {
-    // R21 B2. This used to assert the opposite, and the assertion was faithful to a comment that was wrong about
+    // This used to assert the opposite, and the assertion was faithful to a comment that was wrong about
     // the world: "this costs a widened stage its idle frames and nothing else" — except a maximized 1920x1080
     // browser window has a ~1878x954 content viewport (chrome eats the height), aspect 1.97, i.e. WIDENED. On
     // Firefox, same scene, only the window width changing: 295/295 frames rebuilt at 1.97, 94% patched at 1.73.

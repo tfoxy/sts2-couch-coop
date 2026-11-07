@@ -1,8 +1,8 @@
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// M2 wide-screen re-layout (WS-O foundation, then FROZEN). The native analog of the web mirror's per-element
+// Wide-screen re-layout (foundation, then FROZEN). The native analog of the web mirror's per-element
 // `data-spread-dx / -w / -mode / -paints` attributes (frontend/src/mirror/mirrorRenderer.ts visit() L2337-2356):
-// one record per wire node, produced by <see cref="SpreadIndex"/> (WS-P). At spreadFactor 1 (16:9) NO records
+// one record per wire node, produced by <see cref="SpreadIndex"/>. At spreadFactor 1 (16:9) NO records
 // exist (strict no-op), so this whole subsystem is free.
 //
 //   * <see cref="SpreadRecord.Dx"/>          — the node's ABSOLUTE horizontal shift in 1920 design px (web `data-spread-dx`;
@@ -17,7 +17,7 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 //                                              aura (web `data-paints`; the pointer map keys off painting anchors).
 public readonly record struct SpreadRecord(double Dx, double RenderedWidth, bool Prop, bool Paints);
 
-// WS-P2 incremental-ApplySpread stamp: the FINAL per-VIEW output the reconciler's spread pass writes onto a
+// Incremental-ApplySpread stamp: the FINAL per-VIEW output the reconciler's spread pass writes onto a
 // MirrorNodeView (SpreadOffset + SpreadWidth), pre-resolved inside the SpreadIndex walk so the reconciler can stamp
 // ONLY the views whose stamp changed since last drain (SpreadIndex.DirtyIds) instead of re-deriving every view every
 // drain. It reproduces SceneReconciler.ApplySpread's per-view math EXACTLY:

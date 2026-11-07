@@ -307,7 +307,7 @@ describe("geometry epoch — the view-scale pass", () => {
     expect(renderer.viewScaleInputStamps()).toHaveLength(1);
   });
 
-  // R10-PERF6 WS-P1 — the INPUT half of the pass is LAZY. A shuffle frame legitimately bumps the geometry epoch
+  // The INPUT half of the pass is LAZY. A shuffle frame legitimately bumps the geometry epoch
   // (the flying card moves real hitboxes), so the visual stamp loop must re-run — but the GAME-space input
   // registry it used to rebuild in the same breath is coordinate-only and read exclusively by pointer events.
   it("does not assemble the input registry until something reads it", () => {

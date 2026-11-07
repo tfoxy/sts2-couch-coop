@@ -258,7 +258,7 @@ describe("the landing log — what the verdict says", () => {
   });
 
   it("names SETTLE-JUMP when the prediction was right and the card still moved on the delta", () => {
-    // The Aug-29 shape, one level up: the endpoint arithmetic agrees with the game, and the frame the player was
+    // The same shape, one level up: the endpoint arithmetic agrees with the game, and the frame the player was
     // looking at one tick earlier was somewhere else — so the card visibly jumps when the producer's word lands.
     const log = createLandingLog();
     const stage = new FakeStage();
@@ -280,7 +280,7 @@ describe("the landing log — what the verdict says", () => {
   });
 
   it("names ENDPOINT-FIELD when the endpoint got a shift the field rule does not produce", () => {
-    // The pre-WS-C behaviour: the endpoint keeps the shift the walk derived at the card's CURRENT pose. A card
+    // The earlier behaviour: the endpoint keeps the shift the walk derived at the card's CURRENT pose. A card
     // resting at x=160 claims 160·0.25 = 40; the field at the endpoint (x=800) is 200. The endpoint is drawn 160px
     // short, which is `(endX − startX)·(F − 1)` exactly — the signature the user's report describes.
     const row = playOne(

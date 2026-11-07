@@ -11,7 +11,7 @@ namespace CouchCoop.Mod.Patches;
 /// <para><b>Why this replaced <c>FastmpPatch</c>.</b> The old patch answered <c>HasArg("fastmp") == true</c> for
 /// EVERY instance, including the host — and that flag also decides whether the session runs on Steam or on ENet,
 /// so the host was permanently forced onto ENet and a real Steam session (remote friends) was impossible, which
-/// is the whole reason WS-1 exists. The override table is now EMPTY on the host: it hosts normally, exactly as an
+/// is the whole reason this patch exists. The override table is now EMPTY on the host: it hosts normally, exactly as an
 /// unmodded game does.</para>
 ///
 /// <para><b>What it does now.</b> A headless couch seat (<c>COUCHCOOP_HEADLESS_CLIENT=1</c>) is launched with NO

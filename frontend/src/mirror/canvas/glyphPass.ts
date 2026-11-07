@@ -406,14 +406,13 @@ export function createGlyphPassRegistry(options: GlyphPassOptions): GlyphPassReg
    * `slotFor`, and `drawRun` via its eviction re-upload — goes through `HbGpuRenderer.upload`, so this bracket
    * is now belt and braces rather than the thing standing between this app and a dead renderer process.
    *
-   * IT IS KEPT, on full evidence rather than a pending hunch. The 2026-09-06 Vulkan/headless ABBA replayed the
-   * complete deckview-40-openclose and combat-modern-2026-08-06 streams at the only clean seven-row atlas
+   * IT IS KEPT, on full evidence rather than a pending hunch. A Vulkan/headless ABBA replayed
+   * complete deck-view and combat recordings at the only clean seven-row atlas
    * (28,672 texels): wrapper/upstream/upstream/wrapper had zero crashes, context losses, dropped glyphs or GL
    * errors, with state stable at alignment=4 / flip=false / premultiply=false. But that capacity had zero
    * reuploads. The next lower six-row capacity (24,576) made 24,921 reuploads during full deck replay and hit
    * hb-gpu's same-frame atlas-overwrite error twice. Thus the required initial-upload-and-reupload removal gate
-   * cannot pass; retain the mixed-uploader safeguard. Durable reports, raw RGBA and pixel comparisons are under
-   * the consumer checkout's ignored `.sts2/renderer-deferred-20260906/unpack-*`.
+   * cannot pass; retain the mixed-uploader safeguard.
    *
    * Query-and-restore rather than set-and-forget: pixel-store parameters are client-side state in every WebGL
    * implementation, so `getParameter` here is a struct read and not a driver round trip — and restoring means

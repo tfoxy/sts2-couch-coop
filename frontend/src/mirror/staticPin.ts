@@ -49,8 +49,8 @@
 //   quality when using static shaders" — a frozen surface shown at a size it was not rendered at (browser-scaled,
 //   softer or sharper) is the accepted trade.
 //
-// HONEST SCOPE — what this is measured to remove. An instrumented 60s session on the target phone (Moto G86,
-// recorded combat, own tab) measured `canvasReallocs: 18` across 26 shader nodes, ALL inside the first ~15s and
+// HONEST SCOPE — what this is measured to remove. An instrumented 60s session on a mid-range phone
+// (recorded combat, own tab) measured `canvasReallocs: 18` across 26 shader nodes, ALL inside the first ~15s and
 // flat thereafter, with 0 adaptive-quality events; replaying 12 recorded sessions through the real parser showed
 // `localRect` never changing on any of 1,258 shader nodes. So the churn this removes is the STARTUP TRANSIENT,
 // rotation and fullscreen entry — NOT a steady-state speedup. The steady-state effect is the density correction

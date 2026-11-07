@@ -476,10 +476,10 @@ describe("rich glyph fragment placement", () => {
   });
 });
 
-// --- the paint dump's `G` line (R-A4) ----------------------------------------------------------------------------
+// --- the paint dump's `G` line ---------------------------------------------------------------------------------
 //
-// THE BUG THIS BLOCK PINS, and it shipped on the arm the text harness actually runs (`probe-text-scratch.mjs`
-// asks for the canvas stage with `paintDump=1`).
+// THE BUG THIS BLOCK PINS, and it shipped on the arm that external text tooling actually runs (the canvas stage
+// with `paintDump=1`).
 // `drawListDump` dispatched on THREE kinds — nine-patch, polyline, everything else — and "everything else" called
 // `readQuad`. gsw's `requireKind` refuses to read a `glyphs` command as a quad, correctly: its payload is not a
 // quad payload. So the first glyph run in the list threw, `window.__mirrorDrawListDump()` returned nothing at
@@ -491,7 +491,7 @@ describe("rich glyph fragment placement", () => {
 //   * READING THE COMMAND DOES NOT THROW. Asserted against the same list, both ways: `readQuad` on that index
 //     still throws (that IS the shipped fallthrough, so the spec would pass vacuously if it stopped throwing for
 //     some other reason), and `dumpCommandLines` over the same list does not.
-//   * THE LINE IS PARSEABLE BY `compare-paint-dumps.mjs`'s RULE — split on spaces, read `k=v`. A field with a
+//   * THE LINE IS PARSEABLE BY THE PAINT-DUMP COMPARER'S RULE — split on spaces, read `k=v`. A field with a
 //     space in it truncates silently for every reader, which is how the `text://` key had to become an ordinal.
 
 describe("the paint dump's G line", () => {

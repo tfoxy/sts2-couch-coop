@@ -109,7 +109,7 @@ public sealed class TextOverlayPlanner
     public int LastPromoted { get; private set; }    // labels promoted
     public int LastMeasured { get; private set; }    // text candidates that used a client MEASURED box (N in measured=N/M)
 
-    // WS-CRISP capture (dumpcrisp verb): when CaptureRejects is set the LAST Plan records the per-id first-fail reject
+    // Capture (dumpcrisp verb): when CaptureRejects is set the LAST Plan records the per-id first-fail reject
     // (None for a promoted label) and, for an Occluded label, the first blocker id. Opt-in so a normal Eval pays zero
     // recording cost (the controller flips it on only around a diagnostic Plan). Cleared + refilled by that Plan.
     public bool CaptureRejects;
@@ -213,7 +213,7 @@ public sealed class TextOverlayPlanner
             DesignAabb? labelBox = LabelBoxOf(id, node, transforms, spreadDxOf, widened, measuredExtents,
                 candidateRole: true);
 
-            // The box used when THIS label is a demoted-text OCCLUDER of earlier labels. WS-EVENTTEXT #14 Leg B: when
+            // The box used when THIS label is a demoted-text OCCLUDER of earlier labels. When
             // the client supplied a TIGHT measured OCCLUDER box for this text id (TextBlockerExtents — a single-line
             // RichTextLabel narrowed to its drawn ink, e.g. the full-screen-box "NEOW" ancient banner), use it + the
             // small MeasuredSlackPx instead of the full box width; that box can only SHRINK toward the drawn art, so a
@@ -600,7 +600,7 @@ public sealed class TextOverlayPlanner
     // already call.
     public static Rgba EffectiveModulate(MirrorState state, string id) => PaintOrderTables.EffectiveModulate(state, id);
 
-    // WS-CRISP R17 fade-in variant (delegated) — see PaintOrderTables.EffectiveModulate(state, id, fadeInAlpha).
+    // Fade-in variant (delegated) — see PaintOrderTables.EffectiveModulate(state, id, fadeInAlpha).
     public static Rgba EffectiveModulate(MirrorState state, string id, IReadOnlyDictionary<string, double>? fadeInAlpha) =>
         PaintOrderTables.EffectiveModulate(state, id, fadeInAlpha);
 
@@ -674,7 +674,7 @@ public sealed class TextOverlayPlanner
             //
             // A clipping ancestor whose exact clip rect (its rendered rect under the global
             // — no slack pads; the label box IS slack-padded, which is the strict direction for a containment test; and
-            // WS-COLUMN: the anchor-WIDENED rendered width when the stage is stretched, so a 0..1-anchored ScrollContainer
+            // The anchor-WIDENED rendered width when the stage is stretched, so a 0..1-anchored ScrollContainer
             // is not treated as narrower than it draws) fully CONTAINS the label box cannot crop a single glyph pixel,
             // so it is non-clipping FOR THIS LABEL —
             // this is what lets a deck-dialog grid card's title/description (under the dialog ScrollContainer) and
@@ -716,11 +716,11 @@ public sealed class TextOverlayPlanner
             return TextReject.Offscreen;
         }
 
-        // WS-CRISP R17: `anyInvisible` (a Visible=false ancestor) stays fail-closed. The effective-modulate α check
+        // `anyInvisible` (a Visible=false ancestor) stays fail-closed. The effective-modulate α check
         // uses the fade-in override so a label under a tween-owned fade-IN (whose streamed modulate the producer pins
         // at ≈0 for the whole reveal) reads the tween ENDPOINT alpha (>0) instead of the pin — the rest-site focused
         // description promotes at the start of its fade instead of only after the tween settles. Null map ⇒ the plain
-        // streamed product (byte-identical to pre-R17). A genuine fade-OUT never enters the map (endpoint ≤ 0.05).
+        // streamed product (byte-identical to the unfaded product). A genuine fade-OUT never enters the map (endpoint ≤ 0.05).
         if (anyInvisible || EffectiveModulate(state, id, fadeInAlpha).A <= 0.004)
         {
             return TextReject.Invisible;
@@ -948,7 +948,7 @@ public sealed class TextOverlayOptions
     // edge-fade gradient) — a label whose overlap with the blocker lies entirely inside the hole is not covered.
     public IReadOnlyDictionary<string, DesignAabb>? BlockerArtHoles { get; init; }
 
-    // WS-EVENTTEXT #14 Leg B: client-measured TIGHT ink boxes for TEXT occluders (a single-line RichTextLabel narrowed
+    // Client-measured TIGHT ink boxes for TEXT occluders (a single-line RichTextLabel narrowed
     // to GetContentWidth positioned by its alignment — see MirrorNodeView.TryGetTextGlyphRect tightRichWidth). Used
     // ONLY for a text label's demoted-OCCLUDER-role box (candidacy is unaffected — a candidate keeps its conservative
     // full-box measurement), so a full-screen-box name banner ("NEOW") no longer phantom-occludes the event options

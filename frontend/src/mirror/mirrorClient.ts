@@ -66,7 +66,7 @@ export interface MirrorInputMessage {
   // the pre-gamepad wire. C# twin: BrowserInputRequestEnvelope.Input.
   input?: string;
   pressed?: boolean;
-  // R10 WS-E — COALESCED WHEEL TICKS. How many identical notches this ONE message stands for. The eager-scroll
+  // COALESCED WHEEL TICKS. How many identical notches this ONE message stands for. The eager-scroll
   // wheel path folds every notch accumulated within an animation frame into a single send (the host injects one
   // queued input per game-thread turn, so a per-notch message stream arrives as a visible trickle). Only ever set
   // on a full `wheel-up`/`wheel-down` click, and OMITTED (not 1) for a single tick, so an un-coalesced wheel event
@@ -109,7 +109,7 @@ export interface MirrorScrollAck {
 // Rolling round-trip latency, measured by a `ping`→`pong` echo. TWO buckets, from TWO ping variants sent on the
 // same probe tick:
 //   NETWORK RTT — the plain `{type:"ping"}` the host answers immediately from its send loop (real congestion).
-//     Kept as the FLAT `lastMs`/`p50`/`p95`/`count` fields (backward-compatible with scripts/measure-latency.mjs
+//     Kept as the FLAT `lastMs`/`p50`/`p95`/`count` fields (backward-compatible with external measurement tooling
 //     and the `?latency=1` overlay).
 //   GAME end-to-end — the `{type:"ping", mainThread:true}` the server answers from the game's MAIN THREAD, so its
 //     RTT folds in the game's per-frame processing delay (governed by the refresh rate). Reported in the `game*`
@@ -155,7 +155,7 @@ export interface MirrorSettingsPayload {
   // EVERY streaming mirror connection reports true. C# twin:
   // BrowserSettingsRequestEnvelope.StaticBg.
   staticBg?: boolean;
-  // R14: this viewer's TRAIL-DRIVE capability (it places the card-flight trail root from the declarative flight
+  // This viewer's TRAIL-DRIVE capability (it places the card-flight trail root from the declarative flight
   // hint). It is a capability rather than a preference. C# twin: BrowserSettingsRequestEnvelope.TrailDrive.
   trailDrive?: boolean;
 }
@@ -201,15 +201,15 @@ export interface MirrorClient {
   // Send an upstream input message (no-op when the socket isn't open). Fire-and-forget: the host replies only
   // on error, which this receive-only client ignores.
   sendInput(message: MirrorInputMessage): void;
-  // R11 WS-M — send a SEMANTIC action (`{type:"action"}`). The mirror drives gameplay with REAL INPUT (see
-  // docs/agents/architecture-map.md "Real input, not semantic actions"); this channel is for the narrow cases the
+  // Send a SEMANTIC action (`{type:"action"}`). The mirror drives gameplay with REAL INPUT, not semantic
+  // actions; this channel is for the narrow cases the
   // maintainer has signed off — map travel (`select-map-node`, which also carries the run-global vote a synthetic
   // host-local seat has no map screen for) and the view-only `set-scroll-offset`. No viewer id is
   // sent: the host takes the acting seat from THIS connection (a joined seat's
   // socket is its own headless game; a direct-view socket is the host's game). Fire-and-forget — the host answers
   // with an `action-result` this client ignores (a refused vote simply doesn't travel, as a dead click didn't).
   //
-  // R19 WP5: returns the `requestId` the send went out under, or null when the socket was not open. Every caller
+  // Returns the `requestId` the send went out under, or null when the socket was not open. Every caller
   // but one throws it away; scroll authority needs it, because the absolute-scroll ack is only meaningful when it
   // can be matched to the send it answers (see MirrorScrollAck).
   sendAction(message: MirrorActionMessage): string | null;
@@ -224,7 +224,7 @@ export interface MirrorClient {
   // hold even if some future caller drives it from a frame callback. Returns whether it actually sent, which is
   // what the specs assert on.
   sendClientVitals(attemptId: string): boolean;
-  // WS-B STREAM GATE. Turn the host's `scene-delta` stream on/off for THIS connection without reconnecting.
+  // STREAM GATE. Turn the host's `scene-delta` stream on/off for THIS connection without reconnecting.
   // OFF: the host sends nothing at all and this client applies nothing (a viewer sitting on the join picker must
   // not pull — or render — a multiplayer host's game in the background). ON: the host replies with a fresh FULL
   // keyframe. The INITIAL value rides the connect URL (`?watch=0`) because only that can suppress the host's
@@ -306,13 +306,13 @@ export function connectMirrorClient(options: {
   // Fired whether or not a join is in flight — the case it exists for is a join that already succeeded and a
   // redirect to a port this device cannot open — and a `none` cause withdraws whatever was last shown.
   onSeatNotice?: (notice: BrowserSeatNotice) => void;
-  // R19 WP5 — the ABSOLUTE-SCROLL ack (see MirrorScrollAck). The one `action-result` this client reads for its
+  // The ABSOLUTE-SCROLL ack (see MirrorScrollAck). The one `action-result` this client reads for its
   // VALUE rather than for the fact that it failed. Fired only for a SUCCESSFUL `set-scroll-offset` result, i.e.
   // strictly after the join backstop above has had its look, so nothing about join failure changes.
   onScrollAck?: (ack: MirrorScrollAck) => void;
   // When > 0, send a `ping` this often (ms) and track the round-trip in `client.latency` (the `?latency=1` path).
   pingIntervalMs?: number;
-  // WS-B stream gate: whether this connection starts WATCHING the host's scene stream. Defaults to true (the
+  // Stream gate: whether this connection starts WATCHING the host's scene stream. Defaults to true (the
   // pre-gate behavior). False appends `watch=0` to the derived URL, so the host sends no connect keyframe and no
   // deltas until `sendWatch(true)`. Ignored when an explicit `url` is supplied — that URL carries its own query.
   watch?: boolean;
@@ -320,7 +320,7 @@ export function connectMirrorClient(options: {
   // always carries the canonical `staticBg=0|1` selector; later flips ride the `settings` control message.
   // Ignored when an explicit `url` is supplied — that URL carries its own query.
   staticBg?: boolean;
-  // R14 trail drive: whether this viewer drives the card-flight trail root from its declarative flight hint. The
+  // Trail drive: whether this viewer drives the card-flight trail root from its declarative flight hint. The
   // derived URL always carries the canonical `trailDrive=0|1` selector; later flips ride the settings payload.
   // Ignored when an explicit `url` is supplied — that URL carries its own query.
   trailDrive?: boolean;
@@ -616,7 +616,7 @@ export function connectMirrorClient(options: {
   // The caller is "a frame was rendered", which is NOT the same thing: a render is also scheduled by a texture's
   // natural size resolving, an atlas region finishing its bake, the aspect/spread change, and the spine /
   // backstop-occlusion / static-bg setting watchers. Each of those used to send an ack granting a credit the host
-  // was never holding — a pure ~0.32ms/send tax on a Moto G86, and the texture/atlas pair fire constantly during
+  // was never holding — a pure per-send tax on a mid-range Android phone, and the texture/atlas pair fire constantly during
   // a combat texture storm.
   //
   // The ledger is therefore "deltas applied SINCE THE LAST ACK", not "this render consumed a delta". That
@@ -881,7 +881,7 @@ export function connectMirrorClient(options: {
         options.onActionError?.(typeof message === "string" && message ? message : code);
         return;
       }
-      // R19 WP5 — the ABSOLUTE-SCROLL ack. Deliberately BELOW the backstop, and reading only SUCCESSFUL results, so
+      // The ABSOLUTE-SCROLL ack. Deliberately BELOW the backstop, and reading only SUCCESSFUL results, so
       // the "a faulted message during a join is that join failing" rule keeps first refusal on every error-carrying
       // envelope exactly as it did before this existed.
       const ack = readScrollAck(raw);
@@ -1054,7 +1054,7 @@ export function connectMirrorClient(options: {
   return client;
 }
 
-// R19 WP5 — read an `action-result` as an ABSOLUTE-SCROLL ack, or null when it is not one.
+// Read an `action-result` as an ABSOLUTE-SCROLL ack, or null when it is not one.
 //
 // The wire shape is the host's ordinary action reply: the envelope echoes the `semanticActionId` we sent, and the
 // spirectl result rides nested under `result.result` with the handler's answer in its `values` bag. Those values

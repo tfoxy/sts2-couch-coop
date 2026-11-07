@@ -181,8 +181,8 @@ const FRAME_BAND_FRACTION = 0.95;
 // fallback) carries no per-painter dx at all, so there is nothing to undo; worse, under the squeeze practically
 // EVERY spread rect looks like an offender by construction (a rect's rendered box is `[gLeft+dx, gRight+dx]` but the
 // squeeze-consistent band is `[gLeft·s, gRight·s]` — wider for every rect once s > 1). Running the pass there made
-// the sent X BISTABLE between adjacent hover samples (measured 268.61 design px of step jump at 2520x1080,
-// scripts/probe-targeting-drag-jump.mjs). So: squeeze in ⇒ no push.
+// the sent X BISTABLE between adjacent hover samples (a step jump of hundreds of design px at 2520x1080).
+// So: squeeze in ⇒ no push.
 export function nearMissApplies(squeezed: boolean): boolean {
   return !squeezed;
 }
@@ -430,7 +430,7 @@ export function pushOutOfNearMiss(
   return topOffender(x) ? finish(gameX, false) : finish(x, true);
 }
 
-// R19 6a — the SQUEEZE RENDERED-BOX GATE. The generalisation, to interactive rects, of the view-scale `renderedBox`
+// The SQUEEZE RENDERED-BOX GATE. The generalisation, to interactive rects, of the view-scale `renderedBox`
 // guard (viewScaleInverse.ts): the identical failure one layer up.
 //
 // THE HOLE the squeeze gate above leaves. A point the anchor map resolved through the UNIFORM SQUEEZE carries no

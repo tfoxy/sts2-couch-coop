@@ -1279,15 +1279,14 @@ describe("the stage-wakeup cap", () => {
 });
 
 // THE RESIDENT FX-BYTE CAP (default 48 MB) — the sibling of the texture bridge's page
-// ceiling, and the second of the two populations round 7's ledger found with no resident budget at all. What this
+// ceiling, and one of two populations that otherwise had no resident budget at all. What this
 // registry had was an upload PACE (32 MB per build, which shapes when bytes arrive rather than how many stay) and
 // a 120-build age-out (a clock, not a budget).
 //
-// The default is placed by ITS OWN measurements rather than by symmetry with the page cap. Measured on the host
-// at the device's geometry, fx bytes alone: 0 MB on combat and audit-shop with effects STATIC, 3.0 MB on
-// r13-discard static, 4.2 MB on combat with a live background — and 209.2 MB on r13-discard with effects
-// DYNAMIC. The product default is static on both effect families, so 48 MB is never approached by the shipped
-// configuration; what it bounds is the dynamic worst case.
+// The default is placed by real fx-byte measurements rather than by symmetry with the page cap: effects STATIC
+// keep a few MB resident, while effects DYNAMIC on a heavy screen exceeded 200 MB. The product default is static on
+// both effect families, so 48 MB is never approached by the shipped configuration; what it bounds is the dynamic
+// worst case.
 describe("fx resident byte cap", () => {
   /** Warm `ids` to `mb` megabytes each and leave them uploaded. */
   const warm = (h: Harness, ids: readonly string[], mb: number): void => {

@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.Discovery;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// M3 WS-T host-discovery wire codec (HostDiscovery). Assert-or-throw Exe suite (see TestSupport.Check).
+// Host-discovery wire codec (HostDiscovery). Assert-or-throw Exe suite (see TestSupport.Check).
 internal static class HostDiscoveryCodecTests
 {
     public static void Run()

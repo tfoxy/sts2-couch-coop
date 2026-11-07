@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// OWNER: WS-Q (widened input). Port of frontend/src/mirror/__tests__/pointerMap.spec.ts `describe("pushOutOfNearMiss")`
+// Widened input. Port of frontend/src/mirror/__tests__/pointerMap.spec.ts `describe("pushOutOfNearMiss")`
 // against Input/NearMiss.cs — the hit-consistency pass (4 iterations, renderedWidth-aware blocker rects, direction
 // locked from the rendered mid, all-or-nothing revert). The web `iRect(...)` helper maps 1:1 onto the frozen
 // InteractiveRectScan.InteractiveRect (game-space global 6-tuple + node box + spread shift + rendered width); no
@@ -32,7 +32,7 @@ internal static class NearMissTests
         StretchedBlockerNeverVouches();
         GoldReproUnchangedWithGuard();
 
-        // R19 6a — the squeeze rendered-box gate (twin of pointerMap.pushOutOfSqueezeMiss).
+        // The squeeze rendered-box gate (twin of pointerMap.pushOutOfSqueezeMiss).
         SqueezeGateEjectsFromTheMapLegend();
         SqueezeGateLeavesLegitAndUnclaimedPointsAlone();
         SqueezeGateEjectsOneStepNotAWalk();

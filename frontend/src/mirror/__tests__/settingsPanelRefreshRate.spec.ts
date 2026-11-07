@@ -55,7 +55,7 @@ describe("SettingsPanel refresh-rate presets (C6 opt-in lever)", () => {
     expect(mirrorSettings.refreshRate).toBe(40);
   });
 
-  // R9 item 9: the 60 chip. The value is a SERVER-pushed stream rate (serverSettingsPayload → the host's
+  // The 60 chip. The value is a SERVER-pushed stream rate (serverSettingsPayload → the host's
   // Engine.MaxFps), and every other layer already allowed 60 — the slider's max, the session-seed clamp — so the
   // chip is the whole feature. It must sit INSIDE the slider's range, or the slider and the chip would disagree.
   it("pushes 60 through the same store field, within the slider's own 4..60 range", async () => {

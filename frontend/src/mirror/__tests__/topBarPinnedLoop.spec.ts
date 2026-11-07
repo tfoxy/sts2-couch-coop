@@ -23,17 +23,17 @@ beforeAll(() => {
 afterAll(() => {
 });
 
-// R10-B2 — the three top-bar icon loops the R13 producer folds out of the wire (bridge-mod Sts2TopBarFold), named
+// The three top-bar icon loops the producer folds out of the wire (bridge-mod Sts2TopBarFold), named
 // on `RuntimeSceneNodeDelta.PinnedLoopAnim` and replayed here on the browser's own clock.
 //
-// The fixtures below are the REAL nodes, taken off a recorded wire (.sts2/bench/r8-map-live.ndjson): each button's
+// The fixtures below are the REAL nodes, taken off a recorded wire: each button's
 // `Control/Icon` is an atlas-sprite `Godot.TextureRect` with an HSV shader material, whose element the mirror
 // sizes to the texture REGION and positions with a baked matrix. Two consequences the tests pin:
 //   * the loop cannot ride that element (an individual `rotate:` over a baked matrix ORBITS the icon), so it rides
 //     the animSelf self-layer child — and the icon's paint sub-layer has to move INSIDE that child or
 //     the animation would move an empty box;
 //   * the pivot is measured in REGION px, not node px (see nodeStyles' elementLocalPoint).
-// The producer pins ONLY the rotation and keeps streaming position + scale live — that is what fixed the WS-D
+// The producer pins ONLY the rotation and keeps streaming position + scale live — that is what fixed an earlier
 // mispositioning bug — so the headline assertion here is that the element's own style is byte-untouched by the
 // token.
 interface ButtonFixture {
@@ -234,7 +234,7 @@ describe.each([
   });
 
   // THE regression assertion for the mispositioning fix: the fold exists so that position + scale keep STREAMING.
-  // A client-side write to the element's own transform (the WS-D pin) is what broke the deck/settings icons, so the
+  // A client-side write to the element's own transform (the earlier pin) is what broke the deck/settings icons, so the
   // element's inline style must be byte-identical with and without the token — before and after it arrives.
   it("leaves the element's own transform/position/inline style byte-untouched", () => {
     const { stage, renderer } = harness();

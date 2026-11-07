@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Unit tests for WS-BGBAKE PlanBandFlatten (the K≤2 combat background band flatten). Covers: the two-quad split
+// Unit tests for PlanBandFlatten (the K≤2 combat background band flatten). Covers: the two-quad split
 // (quad A = statics below the LAST live interloper, quad B = the trailing static run), interloper bridging (a spine /
 // particle / dynamic painter does NOT end the band, unlike the exact planner), the bottom-only Sub/Mul rules (bottom
 // prefix bakes, above the first interloper stays live), position-stable slot z ordering (strictly increasing with
@@ -32,7 +32,7 @@ internal static class BandFlattenPlannerTests
         FlattenIsPureBeforeExactPlan();
         GameplayBucketUntouched();
 
-        // WS-BGBAKE order guard: BandIds identity + IsBandOrderUnchanged (the OrderChanged keep-alive).
+        // Order guard: BandIds identity + IsBandOrderUnchanged (the OrderChanged keep-alive).
         BandIdsMatchTheBandPrefix();
         ExactPathPlanHasNullBandIds();
         OrderGuardTrueWhenGameplayReordered();
@@ -40,21 +40,21 @@ internal static class BandFlattenPlannerTests
         OrderGuardFalseWhenInterloperRemoved();
         OrderGuardFalseOnZMigration();
 
-        // WS-BGBAKE room bench (band repeat offenders exiled for the room) + the drain-decision policy truth table.
+        // Room bench (band repeat offenders exiled for the room) + the drain-decision policy truth table.
         RoomBenchSecondStrikeExilesForTheRoom();
         RoomBenchSurvivesKeyframeResetsOnScreenChange();
         RoomBenchedAncestorNeverRejectsTheBand();
         PolicyTruthTable();
 
-        // WS-BGBAKE subtree bench (the fading Intents-row carrier exiled with its whole subtree).
+        // Subtree bench (the fading Intents-row carrier exiled with its whole subtree).
         SubtreeBenchExilesCarrierSubtree();
         SubtreeBenchSurvivesKeyframeResetsOnScreenChange();
 
-        // WS-BGBAKE round 3: the static exclusion policy (creature/HUD/VFX live-subtree roots).
+        // The static exclusion policy (creature/HUD/VFX live-subtree roots).
         ExclusionPolicyCollapsesCreatureSubtree();
         CrossBucketDescendantFallsBackPerPainter();
 
-        // WS-BGBAKE round 3: guard tolerance under excluded-subtree churn + keyframe stability preservation.
+        // Guard tolerance under excluded-subtree churn + keyframe stability preservation.
         GuardToleratesExcludedSubtreeChurn();
         KeyframePreservesBandStability();
     }
@@ -179,7 +179,7 @@ internal static class BandFlattenPlannerTests
     private static void BottomOnlyBakesInBottomPrefixOnly()
     {
         // Round 3: a Sub/Mul member may bake wherever a PAINTING member of its OWN segment precedes it (its blend
-        // then composites onto in-quad pixels) — the round-2 bottom-prefix-only rule is gone, so sub1 now BAKES.
+        // then composites onto in-quad pixels) — the earlier bottom-prefix-only rule is gone, so sub1 now BAKES.
         var h = new Harness();
         h.AddGroup("root", null);
         h.AddBandStatics("s", 3);
@@ -484,7 +484,7 @@ internal static class BandFlattenPlannerTests
             "gameplay-bucket painters never re-leveled");
     }
 
-    // ---- WS-BGBAKE order guard (BandIds + IsBandOrderUnchanged) --------------------------------------------------
+    // ---- Order guard (BandIds + IsBandOrderUnchanged) --------------------------------------------------
 
     // The shared guard scene: an 8+P0+8 band under a z=0 root, plus two z=0 gameplay painters whose reorder must NOT
     // count as a band change.
@@ -595,7 +595,7 @@ internal static class BandFlattenPlannerTests
         (ordered[ia], ordered[ib]) = (ordered[ib], ordered[ia]);
     }
 
-    // ---- WS-BGBAKE room bench + drain-decision policy ------------------------------------------------------------
+    // ---- Room bench + drain-decision policy ------------------------------------------------------------
 
     // A band repeat offender (the ~9s wave banner) is exiled on its SECOND strike within the room: the next
     // PlanBandFlatten rejects it (Eligibility) and re-levels it as a LIVE interloper instead of re-baking it.
@@ -778,7 +778,7 @@ internal static class BandFlattenPlannerTests
             "both registrations still emitted (member bench + carrier subtree bench)");
     }
 
-    // ---- WS-BGBAKE subtree bench (non-spine carrier exiled WITH its subtree) -------------------------------------
+    // ---- Subtree bench (non-spine carrier exiled WITH its subtree) -------------------------------------
 
     // The Intents shape: a non-painting band group ("intents") with two painting children, member-benched into a
     // CARRIER role (exactly how the real Intents row ended up), sitting mid-band so it is NOT a spine carrier.
@@ -889,7 +889,7 @@ internal static class BandFlattenPlannerTests
         Check.That(i0Baked, "the subtree bakes again in the new room (member bench cleared with it)");
     }
 
-    // ---- WS-BGBAKE round 3: static exclusion policy (creature/HUD/VFX live-subtree roots) ------------------------
+    // ---- Static exclusion policy (creature/HUD/VFX live-subtree roots) ------------------------
 
     // A policy-matched creature root (NodeType suffix Combat.NCreature) collapses to ONE live slot at its band
     // position; its whole subtree is skipped (never member/carrier) and projected out of BandIds; the surrounding
@@ -933,7 +933,7 @@ internal static class BandFlattenPlannerTests
     }
 
     // The safety valve: an excluded subtree with a CROSS-BUCKET descendant must not slot-collapse (the root override
-    // would drag that descendant to the deep slot) — it falls back to per-painter recording (round-2 shape).
+    // would drag that descendant to the deep slot) — it falls back to per-painter recording (earlier shape).
     private static void CrossBucketDescendantFallsBackPerPainter()
     {
         var h = new Harness();
@@ -967,7 +967,7 @@ internal static class BandFlattenPlannerTests
             "no projection either — the guard still watches the per-painter subtree");
     }
 
-    // ---- WS-BGBAKE round 3: tolerant order guard + keyframe stability ---------------------------------------------
+    // ---- Tolerant order guard + keyframe stability ---------------------------------------------
 
     // The creature-scene builder shared by the guard/keyframe tests (6 statics | P0 | excluded creature{visuals,hp} |
     // 6 statics — the ExclusionPolicyCollapsesCreatureSubtree shape).

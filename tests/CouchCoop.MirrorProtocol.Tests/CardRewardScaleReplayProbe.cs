@@ -3,9 +3,9 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R4-round4 (WS-reward) HEADLESS live-data verification of the card-reward NESTING — no Godot, no display, no live
+// HEADLESS live-data verification of the card-reward NESTING — no Godot, no display, no live
 // lock. Point COUCHCOOP_MIRROR_CARDREWARD_PROBE_NDJSON at a recorded mirror stream on the card-reward SELECTION screen
-// (e.g. .sts2/bench/audit-cardreward-open.ndjson), and this replays every scene-delta into a MirrorState, then resolves
+// (a recorded card-reward-open session), and this replays every scene-delta into a MirrorState, then resolves
 // ViewScale.ResolveFor(id, state) for every node and CHECKS that:
 //   * the screen ROOT (NCardRewardSelectionScreen, "") resolves the 1.10 container GROUP, Center, UNCLAMPED (NoClamp);
 //   * every reward NCard (ancestry through the screen) resolves the per-card 1.15, NOT a group, Center, NoClamp;

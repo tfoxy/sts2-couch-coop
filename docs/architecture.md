@@ -76,9 +76,9 @@ The project uses several layers of validation because a browser mirror can be fu
 - Browser end-to-end tests exercise the join and interaction flows.
 - Recorded scenarios replay deterministic scene updates without launching the game.
 - Live touch harnesses verify gestures against an isolated game instance.
-- Rendering and performance benches compare output, frame cost, memory use, and behavior on real devices.
+- Rendering and performance are also checked on real devices before high-risk input or rendering changes land.
 
-The repository's detailed QA documents are written for development agents and maintainers. They record exact test commands, known baselines, and the evidence required before changing high-risk input or rendering behavior.
+The commands a contributor needs are in [configuration.md](configuration.md), `scripts/validate.sh` and the test runners listed in `AGENTS.md`.
 
 ## Repository map
 
@@ -87,7 +87,7 @@ The repository's detailed QA documents are written for development agents and ma
 | `src/` | Host mod, server, session management, and shared mirror protocol |
 | `frontend/` | Vue/TypeScript browser client and frontend tests |
 | `tests/` | C# protocol, mod, and hosted-server test runners |
-| `scripts/` | Packaging, validation, replay, profiling, and QA tools |
+| `scripts/` | Packaging, release, validation, replay, and QA tools |
 | `docs/` | Configuration, security, architecture, and maintainer documentation |
 
 Players should install a published release rather than build from source. Local development requires a legitimately obtained game installation and the setup described in [Configuration](configuration.md).

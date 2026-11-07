@@ -59,7 +59,7 @@ internal static class NewFixtureReaderTests
 
     // The bite attack overlay: a ONE-SHOT spine node. `spineLooping:false` rides in the same message that starts
     // the clip, which is the whole one-shot contract on the wire — the client clamps on the last frame, so no
-    // "animation finished" message is ever needed (round-8 item 10).
+    // "animation finished" message is ever needed.
     private static void SpineVfxBiteNode()
     {
         if (ApplyFixture("spine-vfx-bite-node.json") is not { } state)
@@ -203,7 +203,7 @@ internal static class NewFixtureReaderTests
         Check.Equal(loop.DurationMs, 800.0, "hint2.durationMs");
     }
 
-    // WS-3: the declarative card flights, read from the bytes the server serializer actually produces. The TS leg
+    // The declarative card flights, read from the bytes the server serializer actually produces. The TS leg
     // (wireFixtureCorpus.spec.ts) asserts the SAME fixture field-for-field, so a rename or an arity change on either
     // reader breaks here — which matters more than for a tween hint, because the producer stops streaming the
     // flight's node and a dropped flight leaves it frozen.
@@ -238,14 +238,14 @@ internal static class NewFixtureReaderTests
         Check.SequenceClose(noTrail.Basis, [0.5, 0, 0, 0.5], "flight1.basis (a scaled parent chain)");
         Check.Close(noTrail.Scale0, 0.5, "flight1.scale0");
 
-        // Every entry in the pre-R13 fixture is a shuffle, and it says so WITHOUT the key existing — the reader
+        // Every entry in the earlier fixture is a shuffle, and it says so WITHOUT the key existing — the reader
         // normalizes the absence, so nothing downstream branches on null.
         Check.Equal(withTrail.Kind, "shuffle", "flight0.kind (absent ⇒ shuffle)");
         Check.Close(withTrail.Rot0, 0, "flight0.rot0 (absent ⇒ 0)");
         Check.Equal(noTrail.Kind, "shuffle", "flight1.kind (absent ⇒ shuffle)");
     }
 
-    // R13: one array, both kinds. The TS leg (wireFixtureCorpus.spec.ts) asserts the same three entries. The third
+    // One array, both kinds. The TS leg (wireFixtureCorpus.spec.ts) asserts the same three entries. The third
     // is the one that matters most: a kind this build has never seen must come out as the shuffle motion, because a
     // dropped flight leaves a card frozen (the producer stopped streaming it) while wrong-flavoured motion does not.
     private static void CardFlightKinds()

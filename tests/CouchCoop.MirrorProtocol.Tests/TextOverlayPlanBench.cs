@@ -4,8 +4,8 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Optional planner micro-benchmark (Track-V). Point COUCHCOOP_TEXTOVL_BENCH_NDJSON at a recording (e.g.
-// .sts2/bench/combat-2026-07-15T16-40-09-999Z.ndjson); it applies every scene-delta to build the final MirrorState,
+// Optional planner micro-benchmark. Point COUCHCOOP_TEXTOVL_BENCH_NDJSON at a recording (e.g.
+// a recorded combat session); it applies every scene-delta to build the final MirrorState,
 // then times TextOverlayPlanner.Plan over many iterations and prints p50/p95/p99 in ms. This measures the DOMINANT
 // per-eval cost of the TextOverlay walk (the ordered-ids sweep + eligibility + occlusion) in isolation from Godot, so
 // the ~2.15ms overlay-walk budget can be checked on a clean machine. Skips SILENTLY when the env var is unset / the

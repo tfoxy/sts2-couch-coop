@@ -7,7 +7,7 @@
 // `card_trail_<character>.tscn` hangs two `Line2D`s off every flying card: `Trails/OuterTrail` (width 96) and
 // `Trails/InnerTrail` (width 64). Their whole look is FOUR things the producer's stroke-geometry unit deliberately
 // drops — a `width_curve` taper, an alpha `gradient`, a stretched `trail.png`, and an ADDITIVE material — so when
-// the Aug-7 producer started streaming every Line2D's points (a TYPE-only gate) the mirror drew each trail as one
+// the producer started streaming every Line2D's points (a TYPE-only gate) the mirror drew each trail as one
 // thick solid bar. Worse, a discard→draw reshuffle spawns two GROWING strokes PER CARD, each re-marshalled and
 // re-shipped whole on every changed tick. The producer is now scoped to the map quill strokes it was written for
 // (spirectl's Sts2Line2DGeometryEmit), and the trail is rebuilt here from data that is ALREADY on the wire.
@@ -257,7 +257,7 @@ const INNER_PROFILE: TrailProfile = {
 //
 // WHAT "SINGLE" IS. Every comet is TWO strokes, and each of them is hosted in an element carrying
 // `mix-blend-mode: plus-lighter` — so each is its own compositor render surface, sized to the arc it paints. The
-// R15 phone bench pinned the per-frame compositing of those surfaces (AREA × COUNT) as the largest single cause of
+// A phone bench pinned the per-frame compositing of those surfaces (AREA × COUNT) as the largest single cause of
 // 3+-card flight lag, and pinned equally firmly that the paint-rate, band and point diets do NOT touch it: they
 // make each surface cheaper to FILL, and the phone is not paying for the fill. The only lever that moves the term
 // is fewer or smaller surfaces. `single` takes the count: ONE stroke is drawn, carrying the light both of them
@@ -581,7 +581,7 @@ export function pushTrailPoint(
 // was born. Two clients stopped at "the same" recorded-stream millisecond are therefore NOT showing the same
 // picture unless their ribbons are also the same AGE — and nothing on either arm published an age at all. Every
 // trail number was a peak or a counter, which is exactly the sort of instrument that cannot detect the problem:
-// the round-4 crop comparison put a canvas ribbon at one phase of its decay beside a DOM ribbon at another and
+// an earlier crop comparison put a canvas ribbon at one phase of its decay beside a DOM ribbon at another and
 // reported the difference as a fidelity gap.
 //
 // So both backends publish this, from ONE implementation, and the harness refuses to compare pixels until the two
@@ -677,7 +677,7 @@ export interface TrailRibbon {
   // authored arc-length stops PROJECTED onto the tail→head axis, so a curved flight puts each stop where it
   // geometrically belongs instead of where a straight-line reading of the arc length would put it.
   stops: Array<{ offset: number; opacity: number }>;
-  // R15 — INSTRUMENT ONLY (`mirrorWalkStats.trailPathBboxAreaSum`); nothing here draws with it. The axis-aligned
+  // INSTRUMENT ONLY (`mirrorWalkStats.trailPathBboxAreaSum`); nothing here draws with it. The axis-aligned
   // box ONE band covers, in design px², i.e. the surface an SVG re-raster of this ribbon has to fill. It is the
   // centre-line extent inflated by the widest band's half-width: the widest band is the one every diet rung draws
   // (bands are widest-first and `maxBands` truncates from the back), and a flat flight would otherwise measure a

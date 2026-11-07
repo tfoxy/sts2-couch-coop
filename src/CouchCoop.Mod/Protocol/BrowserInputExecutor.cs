@@ -120,7 +120,7 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
             MouseX: hasElement ? null : ToPixel(request.CoordX),
             MouseY: hasElement ? null : ToPixel(request.CoordY),
             MouseButton: ParseButton(request.Button),
-            // R10 WS-E: the coalesced wheel-tick count rides the scalar Values bag (spirectl's
+            // The coalesced wheel-tick count rides the scalar Values bag (spirectl's
             // Sts2ActionHandler.ReadWheelCount reads `count`), so no action-record field had to change. Emitted ONLY
             // when it would mean something — a click-kind message, a wheel button, and a count above 1 — so every
             // other request builds byte-identically to before the feature.
@@ -163,7 +163,7 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
     private static int? ToPixel(double? value)
         => value is { } v && double.IsFinite(v) ? (int)Math.Round(v) : null;
 
-    // R10 WS-E: the `{"count": N}` scalar bag for a coalesced WHEEL message, or null (⇒ the pre-feature request).
+    // The `{"count": N}` scalar bag for a coalesced WHEEL message, or null (⇒ the pre-feature request).
     // Deliberately narrow — a repeat only ever means "N wheel notches at this point":
     //   * click kind only (a hover carries no button);
     //   * wheel-up / wheel-down only, so a malformed/hostile count can never multiply a left-click;

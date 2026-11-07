@@ -143,7 +143,7 @@ describe("intentFrameIndex", () => {
   });
 });
 
-// --- the CANVAS arm (R6) ----------------------------------------------------------------------------------------
+// --- the CANVAS arm ----------------------------------------------------------------------------------------
 //
 // The DOM backend blits the frame onto the node's own atlas canvas; the canvas backend has no canvas per node and
 // needs none — a frame IS a source rect, so the whole port is a SUBSTITUTE node carrying that frame's texture

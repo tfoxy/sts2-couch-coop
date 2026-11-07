@@ -553,7 +553,7 @@ describe("S14 — capturedGlobals stays PRE-scale", () => {
   });
 });
 
-// S15 — THE STAMP IS MEASURED AT THE DRAWN POSE, offsets included (R7).
+// S15 — THE STAMP IS MEASURED AT THE DRAWN POSE, offsets included.
 //
 // `gSpread` is the node's PRE-offset pose, so before this a client-side scroll left the stamp stale in two ways:
 // `computeViewScaleStamp` answers null for a box fully outside the design stage, so an item scrolled INTO view

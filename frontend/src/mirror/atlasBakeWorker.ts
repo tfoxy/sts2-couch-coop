@@ -1,20 +1,18 @@
 // The atlas region baker's WORKER ENTRY — one region in, one PNG blob out, off the main thread. (Also one N-cell
 // STRIP in, one PNG blob out; same page handling, same response, same timing split — see STRIPS below.)
 //
-// WHY (measured, Aug-13 moto g86, real recorded combat over a real WebSocket, own tab, hiddenSamples: 0):
-//   {"baked":24,"slow":9,"slowestMs":2962.3,"totalMs":4502.6,"syncTotalMs":385.3,"slowestSyncMs":93.6,
-//    "disabled":true,"trips":3,"rearms":2,"requeued":85,"parked":41}
-// 4,502.6ms of bake WALL against 385.3ms of main thread: 91.4% of a bake's life is not main-thread time. A
-// bake-probe on the same phone then measured PNG encode at ~36ms/region on an IDLE page vs ~188ms/region on a
-// BUSY one, with the main-thread share essentially unchanged (~20ms vs ~16ms). The encode did not get more
+// WHY (measured on a weak phone, real recorded combat over a real WebSocket, own visible tab): bake WALL time was
+// many times the main-thread time — over 90% of a bake's life was not main-thread time. A bake-probe on the same
+// phone then measured PNG encode at several times the cost on a BUSY page versus an IDLE one, with the main-thread
+// share essentially unchanged. The encode did not get more
 // expensive — THE WAIT DID: `convertToBlob` runs its PNG encode as an idle task, and a busy combat main thread
 // starves idle callbacks even with the tab fully visible. So the fix is to run the encode somewhere that is not
-// the busy thread, and the queue that stranded 41 regions on the canvas path disappears with it.
+// the busy thread, and the queue that stranded regions on the canvas path disappears with it.
 //
 // SHAPE: **THE WORKER OWNS THE ATLAS.** It `fetch`es and decodes the atlas page itself, so a per-region job is
 // `{key, url, region}` in and `{key, blob}` out — the main thread never pays a GPU→CPU readback, never touches a
 // canvas, and never holds a job's pixels. This is the perf-harness's `worker-imagedata` arm (gsw
-// `packages/perf-harness/probes/bake-probe.html`), the one that won even at FAN-OUT 1 (709ms vs 1,238ms inline)
+// `packages/perf-harness/probes/bake-probe.html`), the one that won even at FAN-OUT 1
 // precisely because it removes the readback rather than just moving the codec. The `worker-webp` arm — transfer
 // one `ImageBitmap` per region from the main thread — LOST at fan-out 1 and is deliberately not used.
 // `Blob` structured-clones BY REFERENCE, so the return trip is not a copy either.
@@ -30,7 +28,7 @@
 // past `keepBytes` (always keeping the newest one, or it could never make progress), and reports what it holds
 // after every change so the pool can decide whether a SECOND copy of a page is affordable. See atlasBakePool.ts.
 //
-// DROPPING A FINISHED OVERSIZED PAGE (Aug-14 follow-up)
+// DROPPING A FINISHED OVERSIZED PAGE
 // That LRU has a floor — it always keeps ONE page, or a worker could evict the very page the job in its hand is
 // cropping from — and the floor is UNBOUNDED when a page alone is bigger than `keepBytes`: a worker that baked a
 // single card_atlas region then sits on 62.6MB indefinitely, whatever the pool's budget says. So a page bigger
@@ -49,7 +47,7 @@
 // a page is only let go once demand for it has stopped for `dropIdleMs`, which at the 2s default is ~125x the
 // baker's 16ms inter-bake yield, so main-thread jank inside a burst cannot look like the end of demand.
 //
-// AND WHY THE DROP IS OFF ON MOST DEVICES (Aug-19). What the delay still leaves is one re-decode per DEMAND GAP —
+// AND WHY THE DROP IS OFF ON MOST DEVICES. What the delay still leaves is one re-decode per DEMAND GAP —
 // a new hand of cards, a screen change — and a gap is not an exception in this game, it is the rhythm of a turn.
 // Every gap cost ~590ms of worker time per oversized page to buy back 62.6MB that nothing else was asking for.
 // So the policy is now DECODE-AT-MOST-ONCE-PER-WINDOW, tiered by `navigator.deviceMemory` and configured by the
@@ -65,7 +63,7 @@
 // than mysterious: a release shows up as `atlasReleased` and any re-decode it causes shows up as `atlasLoads`
 // above `atlasPages`, both now on `window.__mirrorAtlasBakeStats` directly.
 //
-// THE HOLD SLOT (Aug-20): the LRU's ACCOUNTING was the defect, not the budget's size.
+// THE HOLD SLOT: the LRU's ACCOUNTING was the defect, not the budget's size.
 // A fresh combat mount on a browser that reports no `navigator.deviceMemory` (so: budget 64MB, poolSize 2,
 // `keepBytes` 32MB per worker, and the idle drop already off by the tier above) measured `atlasLoads` 18 against
 // `atlasPages` 10 — eight pages decoded a second time inside ONE mount, ~590ms of worker time each. The cause was
@@ -88,7 +86,7 @@
 //
 // The hold slot is armed by exactly the same lever as the tier above (`?atlasPageDrop`), so the two halves cannot
 // disagree: `bigPageBytes` is a number precisely when `dropIdleMs` is `"off"`, i.e. from 4GB up and on a device
-// that reports nothing. Under 4GB `bigPageBytes` is `"off"` too, and this module's sweep is the pre-Aug-20 one,
+// that reports nothing. Under 4GB `bigPageBytes` is `"off"` too, and this module's sweep is the earlier one,
 // byte for byte — that tier gives oversized pages back on a timer instead, which is the trade it was measured to
 // want.
 //
@@ -97,7 +95,7 @@
 // so this file is emitted as its own chunk. It imports nothing on purpose — a worker chunk that pulled in the
 // renderer would ship (and parse) the whole mirror a second time per worker.
 
-// --- STRIPS (Aug-15): N regions of one page, composed into ONE image ------------------------------------------
+// --- STRIPS: N regions of one page, composed into ONE image ------------------------------------------
 //
 // The enemy-intent glyph cycles its frames on the COMPOSITOR: all N frames live side by side in one strip image
 // that a `translate` + `steps(N)` animation walks (see frontend/src/mirror/intentStrip.ts). Building that strip is
@@ -160,7 +158,7 @@ export type AtlasBakeWorkerRequest =
       dropIdleMs?: number | "off";
       /**
        * The HOLD SLOT line: a page of this many bytes or more is held apart from `keepBytes` instead of competing
-       * with it (see THE HOLD SLOT above). `"off"` = no hold slot, one flat LRU over everything — the pre-Aug-20
+       * with it (see THE HOLD SLOT above). `"off"` = no hold slot, one flat LRU over everything — the earlier
        * rule, and the FALLBACK here, so a config that never mentions it behaves exactly as it always did. Same
        * OPTIONAL-and-sticky contract as `dropIdleMs`, and decided by the same lever: see
        * `resolveAtlasBigPageBytes` in atlasBakePool.ts.
@@ -230,7 +228,7 @@ let dropIdleMs: number | "off" = DROP_IDLE_MS;
 
 /**
  * The live HOLD SLOT line: a page of this many bytes or more is held apart from the share (see THE HOLD SLOT).
- * `"off"` — the FALLBACK — is the pre-Aug-20 rule: no hold slot, no pin ordering, one flat LRU over every page.
+ * `"off"` — the FALLBACK — is the earlier rule: no hold slot, no pin ordering, one flat LRU over every page.
  * The pool configures it on spawn from the same lever that decides `dropIdleMs`, so a worker only ever runs on
  * this fallback if it was never told (which, outside a spec driving this module directly, does not happen).
  */

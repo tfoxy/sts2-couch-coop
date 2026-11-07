@@ -1,4 +1,4 @@
-// R10-PERF4 WS-2 — the EFFECTS-DIRTY seam (`renderer.consumeEffectsDirty`) and the MirrorView gate built on it.
+// The EFFECTS-DIRTY seam (`renderer.consumeEffectsDirty`) and the MirrorView gate built on it.
 //
 // MirrorView used to reconcile BOTH gsw runtimes after every rendered frame. Each reconcile is a whole-stage
 // `querySelectorAll` sweep plus per-binding attribute re-reads, and the shader one brackets itself in

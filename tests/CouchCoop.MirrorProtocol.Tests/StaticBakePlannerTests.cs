@@ -52,7 +52,7 @@ internal static class StaticBakePlannerTests
         MultiRegionChangeInOneSegmentSparesAnother();
         MultiRegionParticleWithoutStaticSegmentsFallsBackToV2();
 
-        // WS-ADDBAKE: Add joins region membership everywhere (alpha-preserving variant); Sub/Mul stay bottom-only.
+        // Add joins region membership everywhere (alpha-preserving variant); Sub/Mul stay bottom-only.
         AddInterleavedWithMixOneRegion();
         SubMulInUpperSegmentStaysLive();
         SubMulStayBottomOnlyWhenAddBakes();
@@ -690,7 +690,7 @@ internal static class StaticBakePlannerTests
         }
     }
 
-    // WS-BGBAKE round 3 (keyframe stability preservation): an IDENTICAL keyframe (loop restart / resync — every
+    // Keyframe stability preservation: an IDENTICAL keyframe (loop restart / resync — every
     // node value-compares unchanged via NodeChangeDiffer.ClassifyKeyframe) KEEPS stability, so the immediate re-plan
     // is still bakeable; a keyframe that actually CHANGED a node re-stamps exactly that node.
     private static void KeyframeKeepsStabilityForIdenticalNodes()
@@ -854,7 +854,7 @@ internal static class StaticBakePlannerTests
         Check.That(!Contains(plan.BakedIds, "sh"), "the shader boundary is not baked");
     }
 
-    // WS-ADDBAKE: a plain-Add painter interleaved in an UPPER segment now BAKES into that region (via the alpha-
+    // A plain-Add painter interleaved in an UPPER segment now BAKES into that region (via the alpha-
     // preserving variant), NOT stays live — Add is no longer bottom-only. Region 0's Add bakes too.
     private static void AddInUpperSegmentBakes()
     {
@@ -946,7 +946,7 @@ internal static class StaticBakePlannerTests
         Check.That(!plan.IsBakeable, "no viable multi-region → v2 fall-through → below budget → no bake");
     }
 
-    // ---- WS-ADDBAKE: Add joins region membership (alpha-preserving variant) ----------------------------------------
+    // ---- Add joins region membership (alpha-preserving variant) ----------------------------------------
 
     // An upper segment of [mix, Add, Add, mix] bakes as ONE region (no add partition, no mix-after-add split): the Add
     // painters are ordinary members of the region's single quad, and the trailing mix stays in the SAME region.

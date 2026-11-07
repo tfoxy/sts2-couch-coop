@@ -13,11 +13,11 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF5 WS-4 — RECLAIM HIDDEN DOM ON FULL WALKS.
+// RECLAIM HIDDEN DOM ON FULL WALKS.
 //
-// WS-1 never BUILDS a hidden subtree and WS-3 pre-builds it at idle, but neither ever gives DOM back: a screen the
+// Dormancy never BUILDS a hidden subtree and the hatchery pre-builds it at idle, but neither ever gives DOM back: a screen the
 // player opened once keeps its ~1,900 elements for the session, and a keyframe/reconnect re-establishes every one
-// of them inline. WS-4 closes that loop. On a FULL walk — the only walk that owns the `visited` set and the
+// of them inline. Reclaim closes that loop. On a FULL walk — the only walk that owns the `visited` set and the
 // post-walk prune — an effectively-hidden node that HAS an element is dormant too: its element is torn down at the
 // boundary and its record demotes to an ordinary marker, so the keyframe rebuilds only what is visible and the
 // hatchery re-grows the rest at idle.
@@ -209,7 +209,7 @@ function builtThenHidden(): {
 
   update(state, [node("Map", "Game", { visible: false, sceneFilePath: MAP_SCENE })]);
   renderer.reconcile(state);
-  expect(nodeCount(stage)).toBe(VISIBLE_IDS.length + MAP_IDS.length); // WS-1: a hide is not a teardown
+  expect(nodeCount(stage)).toBe(VISIBLE_IDS.length + MAP_IDS.length); // a hide is not a teardown
   expect(mapEl.style.display).toBe("none");
   return { stage, renderer, state, mapEl, dotEl };
 }

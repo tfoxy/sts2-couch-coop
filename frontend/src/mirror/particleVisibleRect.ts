@@ -26,7 +26,7 @@
 // PURE MATH, NO LAYOUT READ. Every input is already in hand during the walk (`gNodeStretched` and
 // the spread draw box), and this is per-particle-node per-visit work — a `getBoundingClientRect` here
 // would be a forced reflow per emitter per frame, which is the phone-CPU rule `pointerMap.ts` states
-// and which the particle runtime already paid for once (the Aug-14 trace where 97% of a gsw
+// and which the particle runtime already paid for once (a trace where 97% of a gsw
 // runtime's self-time was `get clientWidth`).
 
 import { affineInverse, nodeMatrix, type Affine } from "@/mirror/affine";

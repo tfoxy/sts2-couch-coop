@@ -15,7 +15,7 @@ internal static class InputMappingTests
         KeyInputCarriesCodeModifiersAndPressed();
         ClickThreadsPressStateForDrag();
         HoverIgnoresPressState();
-        // R10 WS-E — the coalesced wheel-tick count.
+        // The coalesced wheel-tick count.
         WheelCountRidesTheValuesBag();
         WheelCountIsOmittedForASingleTick();
         NonWheelButtonsNeverRepeat();

@@ -16,7 +16,7 @@ import { CARD_RIPPLE_SHADER_IDS, setStageOwnsEffectPixels } from "@/mirror/shade
 import type { MirrorNode, MirrorShaderParam } from "@/mirror/sceneTree";
 
 // The two glow emitters, spelled exactly as the producer streams them (confirmed against a recorded mirror
-// session, `.sts2/bench/audit-cardreward-open.ndjson`).
+// session).
 const UNCOMMON_GLOW = "MegaCrit.Sts2.Core.Nodes.Vfx.Cards.NCardUncommonGlow";
 const RARE_GLOW = "MegaCrit.Sts2.Core.Nodes.Vfx.Cards.NCardRareGlow";
 

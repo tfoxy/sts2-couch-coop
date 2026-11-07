@@ -21,7 +21,7 @@ import {
 // step the clock and pump whatever tick is ALREADY scheduled WITHOUT any notifyActivity call, for exercising
 // the idle-timeout path itself.
 //
-// The DUTY CYCLE (R10-PERF4 WS-2) adds a second scheduled thing: after each measurement window the loop parks on
+// The DUTY CYCLE adds a second scheduled thing: after each measurement window the loop parks on
 // a `cooldownMs` timer instead of a rAF. That timer is injected into the same fake clock, and every pump fires it
 // when it comes due — so a scenario keeps running across parks without any real timers either. `isRunning()` =
 // "an animation frame is scheduled"; `isActive()` = "still monitoring" (a frame OR a park).
@@ -309,7 +309,7 @@ describe("createAdaptiveController — activity-gated lifecycle", () => {
   });
 });
 
-// --- R10-PERF4 WS-2: the post-window DUTY CYCLE -----------------------------------------------------------------
+// --- the post-window DUTY CYCLE -----------------------------------------------------------------
 
 describe("createAdaptiveController — sampler duty cycle", () => {
   it("parks after a COMPLETED window instead of sampling every frame until the next one", () => {

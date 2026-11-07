@@ -22,7 +22,7 @@ namespace CouchCoop.Mod.Tests;
 /// <para>
 /// Registered near the TOP of the runner sequence, and behind its own <c>-- log-prefix</c> verb. The sequence
 /// runs to completion again (the SIGSEGV that used to take it down inside <c>HeadlessAudioMuteTargetsTests</c>
-/// was fixed on 2026-09-17), but the position and the verb are kept: this guard is cheap, it depends on
+/// was fixed), but the position and the verb are kept: this guard is cheap, it depends on
 /// nothing, and a check that only exists downstream of every other suite is one abort away from not existing.
 /// </para>
 /// </remarks>

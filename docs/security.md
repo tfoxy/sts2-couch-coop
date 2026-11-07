@@ -141,11 +141,11 @@ interface, on the seat's hub port (TCP and UDP), as the browser server and the p
   WebTransport, never plain WebSocket.
 - **New parsers on the LAN.** The capture's WebSocket/HTTP parser and godot-scene-web's net module (QUIC, HTTP/3 and
   TLS in Rust: wtransport, quinn, rustls) are reachable from the LAN while a streaming seat runs. They run in the seat
-  process, not the host's; a fault there stops that carrier, not the game (godot-scene-web carrier-design.md D17).
+  process, not the host's; a fault there stops that carrier, not the game.
 - **Not the public website.** The pages.dev bootstrap page cannot be allowed (its origin carries no port, and the
   stream's allow-list takes only exact `scheme://host:port` entries), and Chrome puts WebTransport and wss from a
   public origin to a private address behind its Local Network Access permission
-  ([local-network-access.md](agents/local-network-access.md)).
+  ([local-network-access.md](local-network-access.md)).
 
 ## Direct-IP HTTPS trust
 

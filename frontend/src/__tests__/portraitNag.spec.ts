@@ -190,7 +190,7 @@ describe("PortraitNagOverlay", () => {
     wrapper.unmount();
   });
 
-  // R19 WP-2b. Entering fullscreen is ALSO what asks for the landscape lock (useFullscreen hangs the lock off
+  // Entering fullscreen is ALSO what asks for the landscape lock (useFullscreen hangs the lock off
   // `fullscreenchange`, not off the caller), so the overlay that tells you to turn the phone can just turn it.
   it("offers fullscreen as the primary action, and entering it is what rotates the phone", async () => {
     Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });

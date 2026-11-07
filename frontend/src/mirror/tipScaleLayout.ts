@@ -121,7 +121,7 @@ export function tipChildBoxes(tipId: string, env: TipScaleEnv): TipAabb[] {
 }
 
 /**
- * THE ON-SCREEN THING A TIP POINTS AT (R5 H2 — twin of native `TipOwnerResolve.ResolveVisualOwnerId`), moved here
+ * THE ON-SCREEN THING A TIP POINTS AT (twin of native `TipOwnerResolve.ResolveVisualOwnerId`), moved here
  * from the DOM renderer so both stages resolve the SAME node.
  *
  *   (i)   the owner has a positive-width box → itself;
@@ -189,7 +189,7 @@ const NO_OWNER: TipOwner = { kind: "none", box: null, followX: 0, followY: 0 };
  * Resolve what the tip points at.
  *
  * The KIND is keyed on the ORIGINAL anchor owner (a holder is still a "hand card"), never on the resolved visual
- * owner; the BOX is the visual owner's, since that is the ink the tip must not cover. R5/R6 item 6: if the owner
+ * owner; the BOX is the visual owner's, since that is the ink the tip must not cover. If the owner
  * renders inside view-scaled item(s), its box is forward-mapped through every containing stamp (group ∘ card) and
  * the centre delta becomes a FOLLOW translation, so the tip stays glued to where the owner is actually drawn.
  */
@@ -202,7 +202,7 @@ function resolveTipOwner(tipNode: MirrorNode, env: TipScaleEnv): TipOwner {
   const kind = rawOwnerNode
     ? resolveTipOwnerKind(env.typeLeafOf(rawOwnerId), env.sceneFileOf(rawOwnerId))
     : resolveTipOwnerKind(null, null);
-  // R5 H2: measure the VISUAL owner (a 0×0 holder → its painting card child), not the anchor node itself.
+  // Measure the VISUAL owner (a 0×0 holder → its painting card child), not the anchor node itself.
   const ownerId = resolveVisualOwnerId(rawOwnerId, env);
   const raw = env.drawnBoxOf(ownerId);
   if (raw === null) {

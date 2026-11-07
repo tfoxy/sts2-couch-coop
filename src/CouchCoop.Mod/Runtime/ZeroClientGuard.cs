@@ -207,7 +207,7 @@ public static class ZeroClientAllowances
 /// registered state or scene entry point counts as idle work: it increments the entry's counter and writes one
 /// rate-limited line, <c>[couchcoop][idle-work] &lt;caller&gt; &lt;entry point&gt;</c>, to the game log. It never
 /// fails, throws or blocks; it exists so the next always-on subscriber shows up in a player's log and in QA without a
-/// profiler (the Sep-13 hosting tracker ran for two releases with nothing noticing).
+/// profiler (an earlier hosting tracker ran for two releases with nothing noticing).
 /// </summary>
 /// <remarks>
 /// <para>

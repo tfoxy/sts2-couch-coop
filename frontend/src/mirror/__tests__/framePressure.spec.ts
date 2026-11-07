@@ -69,8 +69,8 @@ describe("mirror frame pressure", () => {
 // THE SECOND TERM — armed-work suppliers (`registerPressureSource`).
 //
 // The hole this closes is specific and was measured: the recency term is made of frames the mirror PRODUCED, and
-// a long readback stops the loop that produces them. The Aug-19 Moto G86 trace has a 285 ms task and a 1,163 ms
-// task, plus two recovery gaps of 362 ms and 674 ms with no frames at all — every one of them longer than the
+// a long readback stops the loop that produces them. A trace on a mid-range Android phone showed single tasks of hundreds of ms
+// to over a second, plus recovery gaps with no frames at all — every one of them longer than the
 // 250 ms window, so the signal reported QUIET at peak overload and gsw's drain spent another readback into it.
 // A supplier reports what is ARMED instead, which a blocked main thread cannot suppress.
 describe("mirror frame pressure — armed-work sources", () => {

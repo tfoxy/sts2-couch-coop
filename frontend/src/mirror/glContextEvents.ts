@@ -3,7 +3,7 @@
 // WHY IT IS PAGE-WIDE AND NOT PER-RENDERER. The canvas stage already handles its own context loss and now counts
 // it (canvasRenderer's contextLosses/contextRestores). But the stage is one canvas among a dozen: the gsw shader
 // and particle runtimes each own theirs, and on the DOM arm they are the ONLY ones there are. When Android's
-// lowmemorykiller takes the GPU process — which is what it did during the round-6 device matrix — every context
+// lowmemorykiller takes the GPU process — which real phones do under memory pressure — every context
 // on the page dies at once, so a counter attached to one renderer describes a fraction of the event and cannot
 // even say whether the rest recovered.
 //

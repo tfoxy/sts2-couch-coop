@@ -14,12 +14,12 @@ export const RS_GROUP_CREATURE_POWER = "couchcoop_rs_creature_power";
 export const RS_GROUP_CARD_REWARD_ROOT = "couchcoop_rs_card_reward_root";
 export const RS_GROUP_CARD_REWARD_CARD = "couchcoop_rs_card_reward_card";
 export const RS_GROUP_TREASURE_RELIC = "couchcoop_rs_treasure_relic";
-// CONFIRM TAP (the stream's input-side confirm feature): the three confirm-eligible families the handoff asked to
-// tag in RenderStreamItemTagger (reward and treasure reuse the TAG3 groups above).
+// CONFIRM TAP (the stream's input-side confirm feature): the three confirm-eligible families to
+// tag in RenderStreamItemTagger (reward and treasure reuse the groups above).
 export const RS_GROUP_EVENT_OPTION = "couchcoop_rs_event_option";
 export const RS_GROUP_SHOP_ITEM = "couchcoop_rs_shop_item";
 export const RS_GROUP_REST_SITE = "couchcoop_rs_rest_site";
-// POINTER TARGETS (GSW input plan row C3): every Control that takes pointer input (mouse_filter STOP or PASS), so
+// POINTER TARGETS: every Control that takes pointer input (mouse_filter STOP or PASS), so
 // the client's hit test can pick as Godot's GUI does.
 export const RS_GROUP_POINTER_INPUT = "couchcoop_rs_pointer_input";
 

@@ -28,7 +28,7 @@ import type { LoadedSpineClip } from "@/mirror/spineClip";
 import { __setStillDecoderForTest, type StillDecoder } from "@/mirror/stillDecode";
 import { onTextureSizesResolved, __recordTextureSizeForTest, __resetTextureCacheForTest, __textureWaitersForTest } from "@/mirror/textureCache";
 
-// R10-PERF4 WS-4 — COMPOSITED-LAYER REDUCTION.
+// COMPOSITED-LAYER REDUCTION.
 //
 // Every <canvas> is an unconditionally promoted composited layer, and each promotion forces `Overlap` promotions on
 // whatever paints above it (a settled combat measured 115 layers: Canvas×38 + Overlap×44). These specs pin the two
@@ -438,7 +438,7 @@ describe("atlas sprite paint mechanism", () => {
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// Aug-19 — the page-crop placeholder's SIZE GATE (`?atlasPageCropMaxMp`)
+// The page-crop placeholder's SIZE GATE (`?atlasPageCropMaxMp`)
 //
 // A page-crop placeholder paints `background-image: url(page)`, which hands the WHOLE page to the compositor's
 // decode + upload path; for a card atlas (4032×4072) a card-draw trace measured 76-238ms of stalled frame
@@ -503,7 +503,7 @@ describe("page-crop placeholder size gate", () => {
     expect(icon.querySelector("div.mirror-atlas-page")).toBeNull();
   });
 
-  // Aug-20 — THE PAGE-SETTLE WAITER. "Unknown ⇒ page, upgraded on the next walk" is only true if a next walk comes,
+  // THE PAGE-SETTLE WAITER. "Unknown ⇒ page, upgraded on the next walk" is only true if a next walk comes,
   // and for a sprite the hatchery pre-built during the cold prefetch window it never does: nothing about the node
   // changes, so it keeps a page-crop div over a 62MB card atlas and hands the whole page to the raster domain at
   // its first reveal. The renderer now books that walk itself — url → the ids that guessed, woken by

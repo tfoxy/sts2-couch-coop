@@ -4,7 +4,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-B (parse-path copy elimination): the zero-copy Parse(byte[]) overload must produce EXACTLY the same parsed
+// Parse-path copy elimination: the zero-copy Parse(byte[]) overload must produce EXACTLY the same parsed
 // MirrorDelta as the pre-existing Parse(string) and Parse(ReadOnlySpan<byte>) paths, on every checked-in wire
 // fixture plus the null-returning shapes (non-scene-delta / non-object / malformed). Deep equality is asserted by
 // re-serializing the parsed object graph through System.Text.Json (member order is deterministic per type), so any

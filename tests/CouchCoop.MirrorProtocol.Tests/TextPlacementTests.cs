@@ -4,10 +4,10 @@ using V = CouchCoop.MirrorProtocol.SceneModel.TextScale.PlacementValign;
 namespace CouchCoop.MirrorProtocol.Tests;
 
 // Truth table for TextScale.PlacementLift — the pure vertical-lift math backing TextBuilder.GrowthCenterPlain.
-// The round-5 combat-recording ink matrix proved the growth-centering must split a streamed-Center label by whether
+// A combat-recording ink matrix proved the growth-centering must split a streamed-Center label by whether
 // its BUMPED glyph overflows the box (the game fitted the box to the UNbumped size):
 //   * LOOSE box (glyph fits, overflow ≤ 0): Godot's Center already lands the glyph on the box centre EXACTLY as the
-//     game did → lift 0. The pre-round-5 code lifted by grow/2 anyway, shoving the energy/pile counts ~8px too high.
+//     game did → lift 0. The earlier code lifted by grow/2 anyway, shoving the energy/pile counts ~8px too high.
 //   * TIGHT box (glyph overflows, overflow > 0): Godot's Center drifts the overflowing block down → lift = overflow/2
 //     re-centres it (the HP bar). Because the game fitted boxHeight ≈ height(originalSize), overflow/2 == grow/2 for a
 //     tight box, so HP stays exactly where the shipped build already had it centred.
@@ -86,7 +86,7 @@ internal static class TextPlacementTests
         Check.Close(TextScale.PlacementLift(V.Top, growAll: 0f, overflow: -30f, nudge: 0f), 0f, "Top no-growth → 0");
     }
 
-    // The concrete round-5 regression: with the SAME grow, a tight HP box keeps its lift while a loose count box loses
+    // The concrete regression: with the SAME grow, a tight HP box keeps its lift while a loose count box loses
     // it. This is the whole fix in one assertion pair (measured HP overflow ≈ grow, count overflow ≪ 0).
     private static void HpVsCountRegressionGuard()
     {

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// WS-P2 per-node change classification. SceneTreeApplier.ApplySceneDelta accumulates one of these per changed node
+// Per-node change classification. SceneTreeApplier.ApplySceneDelta accumulates one of these per changed node
 // (OR-merged across a drain's deltas, keyed in MirrorState.ChangeFlags) so the reconciler can take a LIGHT apply
 // (transform/tint only) for an EXISTING view whose change set is a subset of Transform|Tint — skipping the full
 // Apply's MaterialResolver / ResolveTexture / five effect Syncs / text sync / QueueRedraw. Anything heavier (a draw
@@ -23,7 +23,7 @@ public enum NodeChangeFlags
     Text = 1 << 5,      // text content or properties (font/shadow/rich)
     Effects = 1 << 6,   // particles / spine (excl. track-time) / shader id+params / intent frames
     Removed = 1 << 7,   // the node was removed this drain
-    // R11: a pure atlas-FRAME swap — the TextureRegion crop changed to another SAME-SIZE region (a Sprite2D flip-book
+    // A pure atlas-FRAME swap — the TextureRegion crop changed to another SAME-SIZE region (a Sprite2D flip-book
     // frame, the Tezcatara candle flames) with NOTHING else drawn differently. Light-eligible (a re-crop of the same
     // texture needs only a QueueRedraw — MirrorNodeView.MarkRegionRedraw — not a full MaterialResolver/ResolveTexture
     // pass), and DELIBERATELY absent from SpreadIndex.WalkRelevant (a same-size region swap moves no spread input, so
@@ -43,9 +43,9 @@ public enum NodeChangeFlags
 // that forces the full Apply, so a mis-estimate can only ever be too conservative, never a dropped update.
 public static class NodeChangeDiffer
 {
-    // R11 region-light fast path (client-set from COUCHCOOP_MIRROR_REGION_LIGHT in AppShell — MirrorProtocol stays
+    // Region-light fast path (client-set from COUCHCOOP_MIRROR_REGION_LIGHT in AppShell — MirrorProtocol stays
     // env-free). ON (default): a region↔region same-size swap classifies as the light-eligible Region flag. OFF:
-    // Finalize remaps that Region bit to Draw, making the classification byte-identical to the pre-R11 single
+    // Finalize remaps that Region bit to Draw, making the classification byte-identical to the earlier single
     // TextureRegion→Draw rule (a full Apply per frame swap). The null↔non-null transition is ALWAYS Draw either way.
 
     // Everything a full Apply must cover — the flags for a new node (plus New) or a static-bearing re-upsert.
@@ -54,7 +54,7 @@ public static class NodeChangeDiffer
         NodeChangeFlags.Draw | NodeChangeFlags.Text | NodeChangeFlags.Effects;
 
     // The light-eligible mask: a change set with ONLY these bits (or None) can take ApplyLight. Region joins
-    // Transform/Tint (R11) — a same-size atlas re-crop rides the light path (ApplyLight refresh + MarkRegionRedraw).
+    // Transform/Tint — a same-size atlas re-crop rides the light path (ApplyLight refresh + MarkRegionRedraw).
     public const NodeChangeFlags LightMask = NodeChangeFlags.Transform | NodeChangeFlags.Tint | NodeChangeFlags.Region;
 
     // True when this change set can take the reconciler's light apply (only transform/tint bits set).
@@ -242,7 +242,7 @@ public static class NodeChangeDiffer
         new(nameof(MirrorNode.PivotY), NodeChangeFlags.Transform, static (e, m) => e.PivotY != m.PivotY),
         new(nameof(MirrorNode.ZIndex), NodeChangeFlags.Tint, static (e, m) => e.ZIndex != m.ZIndex),
         new(nameof(MirrorNode.TextureUrl), NodeChangeFlags.Draw, static (e, m) => !string.Equals(e.TextureUrl, m.TextureUrl, StringComparison.Ordinal)),
-        // R11: TextureRegion is classified by TWO rules (both named TextureRegion so the completeness guard still sees
+        // TextureRegion is classified by TWO rules (both named TextureRegion so the completeness guard still sees
         // the property classified exactly once — ClassifiedNames is a HashSet that dedups the name). The two comparers
         // are mutually exclusive, so at most one ever fires. Keeping two rules (rather than one Category-switching rule)
         // preserves the static table + the reflection guard.

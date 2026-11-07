@@ -13,7 +13,7 @@ import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState }
 import { __resetAtlasCacheForTest } from "@/mirror/atlasBaker";
 import type { LoadedSpineClip } from "@/mirror/spineClip";
 
-// R10-PERF4 WS-3 — WALK & STYLE HYGIENE, items 2 and 3.
+// WALK & STYLE HYGIENE, items 2 and 3.
 //
 //   • item 2: applyTipScalePass is gated on the geometry epoch, so a tooltip that isn't
 //     moving costs nothing per reconcile instead of a full re-measure + transform re-write.

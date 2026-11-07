@@ -112,7 +112,7 @@ internal abstract partial class CouchCoopTextureButton : NButton
 
         if (texture is null && useFallbackPanel)
         {
-            // R3 fallback: a game update that renames the texture must still leave a visible, clickable
+            // Fallback: a game update that renames the texture must still leave a visible, clickable
             // control rather than an invisible hit-box.
             var fallback = new Panel { Name = "Fallback" };
             fallback.SetAnchorsPreset(LayoutPreset.FullRect);

@@ -120,7 +120,7 @@ internal static class BrowserSceneDeltaMessageTests
     // clip with loop:false and frees the node on animation_completed). The ONE-SHOT information rides entirely
     // in this START message as `spineLooping:false`: both clients clamp on the clip's last frame when it is
     // false, so the overlay plays once and needs no "animation finished" message on the wire at all. Guards the
-    // round-8 item-10 regression, where the producer reported the overlay as looping and it replayed forever.
+    // regression, where the producer reported the overlay as looping and it replayed forever.
     private static void SpineVfxBiteNodeFixtureMatches()
     {
         var bite = new RuntimeSceneNodeDelta(
@@ -273,7 +273,7 @@ internal static class BrowserSceneDeltaMessageTests
         Assert(parsed?.Hints[0].CancelTransform?[4] == 958, "protocol reader preserves explicit cancellation");
     }
 
-    // WS-3: a delta carrying declarative card flights — the shuffle case (one per shuffled card) with a trail, plus
+    // A delta carrying declarative card flights — the shuffle case (one per shuffled card) with a trail, plus
     // one flight the game made no trail for. These ride their OWN array, never `hints`, and every point/basis is a
     // streamed-space GLOBAL value, so the fixture also pins that the two readers agree on the arity of each.
     private static void CardFlightsDeltaFixtureMatches()
@@ -291,7 +291,7 @@ internal static class BrowserSceneDeltaMessageTests
         AssertOrWriteFixture("card-flight-delta.json", Serialize(delta));
     }
 
-    // R13: the SAME array carrying the second flight kind. Three entries, one per case both readers must agree on:
+    // The SAME array carrying the second flight kind. Three entries, one per case both readers must agree on:
     // an explicit "discard" (the hand→discard fly, which also carries the resting angle it turns out of), a legacy
     // entry with neither key (what every shuffle entry still serializes to), and an entry whose kind this build has
     // never heard of — which must fail OPEN to the shuffle motion rather than being dropped, since dropping it would
@@ -576,7 +576,7 @@ internal static class BrowserSceneDeltaMessageTests
         Assert(!json.Contains("\"rotation\"", StringComparison.Ordinal), "dead rotation field killed end-to-end");
     }
 
-    // R13 CONTENT KEY: WireNodeDelta is an EXPLICIT field-by-field projection of the producer's node, so a new
+    // CONTENT KEY: WireNodeDelta is an EXPLICIT field-by-field projection of the producer's node, so a new
     // producer field is SILENTLY DROPPED unless FromNode lists it (the PinnedLoopAnim lesson). Prove the pooled-card
     // content identity reaches the wire under its camelCase name — `contentKey` is the property the client keys its
     // pool-recycling DOM adoption on — and that a node without one (almost all of them) still omits the field.
@@ -660,7 +660,7 @@ internal static class BrowserSceneDeltaMessageTests
             "line-wrap block omitted for nodes without ranges");
     }
 
-    // R19 WP-4 CLIP CONTENTS: same lesson as ContentKey / the role fonts — WireNodeDelta is an EXPLICIT
+    // CLIP CONTENTS: same lesson as ContentKey / the role fonts — WireNodeDelta is an EXPLICIT
     // field-by-field projection, so a producer field the client's reader already waits for is SILENTLY DROPPED
     // unless FromNode lists it. `clipContents` is the flag that makes a non-painting layout container bound its
     // children (the ancient-event ContentContainer); it is a DIFFERENT Godot property from `clipChildren`, so

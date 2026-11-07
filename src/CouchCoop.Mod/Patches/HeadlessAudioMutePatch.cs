@@ -30,8 +30,8 @@ namespace CouchCoop.Mod.Patches;
 ///
 /// <b>It is a list, not a guarantee, and it never covers third-party mods.</b> <see cref="Targets"/> names game
 /// types this assembly compiled against; a mod ships its own FMOD helper that this patch cannot see and can never
-/// enumerate. That is not theoretical — a third-party mod's per-call singleton lookup crashed a seat on
-/// 2026-09-16. Surviving an unknown caller is a different mechanism, and it lives in
+/// enumerate. That is not theoretical — a third-party mod's per-call singleton lookup crashed a seat
+/// in the field. Surviving an unknown caller is a different mechanism, and it lives in
 /// <see cref="Session.FmodSingletonStub"/>: the engine singleton NAME is re-pointed at a no-op stub before the
 /// native system is released, so a caller nobody listed gets <c>null</c> instead of freed memory.
 ///
@@ -39,7 +39,7 @@ namespace CouchCoop.Mod.Patches;
 /// own body; a copy of that body the JIT already inlined into some caller is untouched and cannot be patched at
 /// all. A mod that initializes before CouchCoop and patches a method gets its replacement JIT-compiled at that
 /// moment, small callees inlined — so a vanilla forward reached through it runs UN-MUTED, forever. That killed a
-/// Windows seat at the Neow event on 2026-09-22 (another mod's postfix carried an inlined ambient-loop forward).
+/// Windows seat at the Neow event (another mod's postfix carried an inlined ambient-loop forward).
 /// The list is still the first line — it saves the calls, and it is the whole defence on a seat with no other
 /// mods — but the forwards all land on a GDScript child named <c>Proxy</c>, so that node is closed as a doorway
 /// too: <see cref="Session.HeadlessFmodShutdown"/> closes the audio manager's before it releases anything, and

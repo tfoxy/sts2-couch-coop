@@ -6,7 +6,7 @@
  * different — merging them would mean one file whose every branch asks "which origin am I on".
  *
  * ---------------------------------------------------------------------------------------------------
- * THE CONSTRAINT (measured — docs/agents/local-network-access.md)
+ * THE CONSTRAINT (measured — docs/local-network-access.md)
  * ---------------------------------------------------------------------------------------------------
  * A window on this origin may fetch `http://192.168.x.x/...`: a private-IP literal is exempt from
  * mixed-content blocking. A SERVICE WORKER may not. The same request from worker scope is hard-blocked:

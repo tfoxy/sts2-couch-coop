@@ -12,7 +12,7 @@ import {
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 import type { LoadedSpineClip } from "@/mirror/spineClip";
 
-// WS-C OCCLUSION GATING. When a subtree fully covers the design stage, everything painted strictly BELOW it stops
+// OCCLUSION GATING. When a subtree fully covers the design stage, everything painted strictly BELOW it stops
 // costing anything it doesn't have to:
 //
 //   • TIER 1 (opaque cover, `mouse_filter = Stop`)  → covered subtree roots go `display:none`, their wall-clock
@@ -171,7 +171,7 @@ function runSchedulerRaf(): void {
 }
 
 beforeEach(() => {
-  // The WS-B exception suite freezes DISPLAYED atlas canvases; Stage C's default placeholder is a page-crop div,
+  // The exception suite freezes DISPLAYED atlas canvases; Stage C's default placeholder is a page-crop div,
   // so pin the canvas placeholder configuration to keep that machinery's vehicle.
   loadSpineClipMock.mockReset();
   mirrorWalkStats.reset();
@@ -689,7 +689,7 @@ describe("wall-clock animators under a cover", () => {
 
 describe("occlusion behavior", () => {
   it("keeps a node's OWN visibility authoritative through a gate + reveal cycle", () => {
-    // R10-PERF5 WS-1: Enemy starts VISIBLE and is hidden by a later delta, rather than being hidden at the
+    // Enemy starts VISIBLE and is hidden by a later delta, rather than being hidden at the
     // keyframe. A hidden-at-keyframe node is dormant (never built at all, so there is no `display` to assert),
     // while a node hidden AFTER it was
     // built keeps its element, which is the case this spec is about (own-visibility vs the occlusion gate).
@@ -730,7 +730,7 @@ describe("input-side invariance", () => {
 
   it("keeps geometry caches coherent while gated", () => {
     // The gate writes only `el.style.display` + one attribute, both DIRECTLY on the element (never through
-    // `record.style`, the one style path that feeds the epoch). So the whole WS-A O(delta) machine — the epoch
+    // `record.style`, the one style path that feeds the epoch). So the whole O(delta) machine — the epoch
     // counter, the view-scale pass run/skip split, and the interactive-rect rebuild count stay coherent over the
     // same delta sequence.
     const nodes = scene(1, { mouseFilter: 0 });
@@ -763,8 +763,8 @@ describe("input-side invariance", () => {
   });
 });
 
-// R10-PERF6 WS-B — the overlay-BACKSTOP exception and the canvas de-promotion that rides it (full coverage lives in
-// backstopCover.spec.ts). What belongs HERE is that neither of them may weaken a WS-C invariant: the generic cover
+// The overlay-BACKSTOP exception and the canvas de-promotion that rides it (full coverage lives in
+// backstopCover.spec.ts). What belongs HERE is that neither of them may weaken an occlusion-gating invariant: the generic cover
 // rules are unchanged for every node that isn't one of the three named backstops, and the input side stays
 // byte-identical while a cover is engaged AND canvases are de-promoted under it.
 describe("overlay-backstop exception (WS-B) against the WS-C invariants", () => {
@@ -778,7 +778,7 @@ describe("overlay-backstop exception (WS-B) against the WS-C invariants", () => 
 
 });
 
-// R10-PERF5 WS-1 — dormancy interaction. A hidden sibling of the covered content builds no element, so it can be
+// Dormancy interaction. A hidden sibling of the covered content builds no element, so it can be
 // neither a cover candidate nor a GATED root: the gate's bookkeeping must count only roots it actually applied,
 // or a subtree revealed later under the same cover would be skipped forever (`applied === tier`).
 describe("dormant subtrees and the gate", () => {

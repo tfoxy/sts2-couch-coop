@@ -2,7 +2,7 @@ using System;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// R6 card block-scale table — a TextScale SIBLING (same (file, relPath) resolution), but resolved into a per-view
+// Card block-scale table — a TextScale SIBLING (same (file, relPath) resolution), but resolved into a per-view
 // TRANSFORM scale (folded in MirrorNodeView.FoldCosmetic about the node's OWN LocalRect centre) rather than a
 // font-size multiplier. The point (user requirement): the card DESCRIPTION and TYPE blocks must keep the real
 // game's byte-identical line breaks — font-size scaling changed them — so the glyphs are transform-scaled instead;
@@ -19,8 +19,8 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 //   CardContainer/DescriptionLabel → 1.24  (leaf label; scales its own text block about its rect centre)
 //   CardContainer/TypePlaque       → 1.24  (bg NinePatch + child TypeLabel; scales the whole plaque as a UNIT — the
 //                                           child TypeLabel inherits TypePlaque's scaled transform, so bg+label grow
-//                                           together, fixing the type-block centring + overflow). WS-text round-4
-//                                           (P5-b): bumped from 1.16 — the font itself stays pinned at 1.0 (see
+//                                           together, fixing the type-block centring + overflow).
+//                                           Bumped from 1.16 — the font itself stays pinned at 1.0 (see
 //                                           TextScale.cs's TypeLabel entry) so byte-identical wrap is unaffected;
 //                                           only this transform scale changes. Web twin: mirrorTextScale.css's
 //                                           TypePlaque `.mirror-text` transform: scale(1.24) rule.

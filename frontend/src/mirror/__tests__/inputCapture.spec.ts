@@ -511,7 +511,7 @@ describe("createInputCapture — five-to-four raised-hand settlement", () => {
 // inputCapture.ts). Press/release/wheel/tap/peek always resolve fresh and refresh the memo for free; 16:9 stays
 // exactly as before (mapPointerToGame already probes zero times there). Time is driven by a mocked
 // `performance.now` (the same pattern mirrorTween.spec.ts uses) so the time bound is deterministic.
-// R10-PERF6 WS-P1 widened the bounds to 64 viewport px / 250ms (`?hoverReprobePx=`/`?hoverReprobeMs=` restore the
+// The bounds are widened to 64 viewport px / 250ms (`?hoverReprobePx=`/`?hoverReprobeMs=` restore the
 // old 24/120) — a plain move is the ONLY thing the memo covers. -------------------------------------------------
 
 describe("createInputCapture — hover-probe memo (widened stage)", () => {
@@ -796,7 +796,7 @@ function touchEvent(
 // Make elementsFromPoint resolve a z-stack of hover-first widgets (topmost first) so a touch can be identified.
 // The renderer stamps each widget's id as data-touch-id on every descendant; touchTargetsAt reads the stack.
 // Returns a probe counter so a test can pin how many times the touch path actually paid the forced hit test (the
-// WS-2 drag-probe throttle). Every restub resets the count.
+// drag-probe throttle). Every restub resets the count.
 function stubTouchStack(...touchIds: string[]): { probes: () => number } {
   const els = touchIds.map((id) => {
     const el = document.createElement("div");
@@ -812,7 +812,7 @@ function stubTouchStack(...touchIds: string[]): { probes: () => number } {
 }
 
 describe("createInputCapture — touch", () => {
-  // R16 tap-arm debounce: nowMs() reads `performance.now`, so a controllable clock lets a test place a re-tap
+  // Tap-arm debounce: nowMs() reads `performance.now`, so a controllable clock lets a test place a re-tap
   // precisely inside/outside TAP_ARM_DEBOUNCE_MS of the arm. Frozen at 0 unless a test advances it — the REAL
   // elapsed wall-clock time inside a synchronous test body is near-zero, so without this every re-tap-commit here
   // would otherwise land inside the debounce window and be wrongly swallowed.
@@ -1297,7 +1297,7 @@ type TouchOpts = {
 
 describe("createInputCapture — long-press peek", () => {
   // Fake ONLY setTimeout/clearTimeout so the suite's manual rAF stub (from the top-level beforeEach) still drives
-  // the hover flush. R16 tap-arm debounce (see the "touch" describe block for the full rationale): a controllable
+  // the hover flush. Tap-arm debounce (see the "touch" describe block for the full rationale): a controllable
   // `performance.now` clock lets a re-tap land past TAP_ARM_DEBOUNCE_MS of the arm.
   let clock = 0;
   beforeEach(() => {
@@ -1510,7 +1510,7 @@ describe("createInputCapture — long-press peek", () => {
 
     stage.dispatchEvent(touchEvent("pointerdown", { clientX: 480, clientY: 270 }));
     expect(sent).toEqual([{ kind: "hover", coordX: 960, coordY: 540 }]); // the primary down-hover
-    // R1: the non-hand-card leg fires at its own, longer LONG_PRESS_MS threshold, not PEEK_MS.
+    // The non-hand-card leg fires at its own, longer LONG_PRESS_MS threshold, not PEEK_MS.
     vi.advanceTimersByTime(LONG_PRESS_MS);
     expect(heldCard).not.toHaveBeenCalled(); // no lift — the peek stays hand-card only
     expect(sent).toEqual([
@@ -1664,7 +1664,7 @@ describe("createInputCapture — long-press right-click (#13)", () => {
     stage.dispatchEvent(touchEvent("pointerdown", { clientX: 480, clientY: 400 }));
     expect(sent).toEqual([{ kind: "hover", coordX: 960, coordY: 800 }]); // down-hover; right-click pending
 
-    // R1: a non-hand card's long-press leg fires at its OWN, longer threshold (LONG_PRESS_MS) — not PEEK_MS.
+    // A non-hand card's long-press leg fires at its OWN, longer threshold (LONG_PRESS_MS) — not PEEK_MS.
     vi.advanceTimersByTime(LONG_PRESS_MS);
     expect(sent).toEqual([
       { kind: "hover", coordX: 960, coordY: 800 },
@@ -1752,7 +1752,7 @@ describe("createInputCapture — long-press right-click (#13)", () => {
 
 });
 
-// --- R4 change 2: end-turn tap parks the cursor directly below the button ----------------------------------------
+// --- End-turn tap parks the cursor directly below the button ----------------------------------------
 // The END-TURN button is a *Button leaf → data-touch-block → no touch-id, so a tap on it lands in the empty/block tap
 // branch. `endTurnBoxAt` returns its game-space box; the un-hover fires AFTER the click at (centerX, maxY+24 ≤ 1079).
 // Twin of GestureMachineTests.{EndTurnTapUnhoversBelowButton, NonEndTurnTapNoExtraHover, EndTurnUnhoverSwitchOffNoHover,
@@ -1763,7 +1763,7 @@ describe("createInputCapture — end-turn un-hover", () => {
     delete (document as unknown as { elementsFromPoint?: unknown }).elementsFromPoint;
   });
 
-  // R13: the box itself is now used ONLY to decide whether the tap landed on it — its coordinates no longer feed
+  // The box itself is now used ONLY to decide whether the tap landed on it — its coordinates no longer feed
   // the parked point (see below).
   const endTurnBox = { minX: 1600, minY: 980, maxX: 1880, maxY: 1060 };
 
@@ -1836,7 +1836,7 @@ describe("createInputCapture — end-turn un-hover", () => {
 // a tap at clientY 200 lands ABOVE the line (coordY 400), one at clientY 500 lands BELOW it (coordY 1000).
 
 describe("createInputCapture — tap-to-unselect", () => {
-  // R16 tap-arm debounce (see the "touch" describe block for the full rationale): a controllable clock lets a
+  // Tap-arm debounce (see the "touch" describe block for the full rationale): a controllable clock lets a
   // two-step press land past TAP_ARM_DEBOUNCE_MS of the arm.
   let clock = 0;
   beforeEach(() => {
@@ -2048,7 +2048,7 @@ describe("createInputCapture — two-finger scroll wheel", () => {
 // Twin of GestureMachineTests.HandCardVerdictCapturedAtPressSurvivesReparent + the unselect self-disable.
 
 describe("createInputCapture — hand-card gating", () => {
-  // R16 tap-arm debounce (see the "touch" describe block for the full rationale).
+  // Tap-arm debounce (see the "touch" describe block for the full rationale).
   let clock = 0;
   beforeEach(() => {
     clock = 0;
@@ -2259,7 +2259,7 @@ describe("createInputCapture — drag-release below the play line (unselect)", (
 // mirrorRenderer.spec) ------------------------------------------------------------------------------------------
 
 describe("createInputCapture — arm-first reward/deck cards", () => {
-  // R16 tap-arm debounce (see the "touch" describe block for the full rationale).
+  // Tap-arm debounce (see the "touch" describe block for the full rationale).
   let clock = 0;
   beforeEach(() => {
     clock = 0;
@@ -2303,7 +2303,7 @@ describe("createInputCapture — arm-first reward/deck cards", () => {
       stubTouchStack("reward-1");
       const heldCard = rebuild({ isCard: () => true, isHandCard: () => false });
       stage.dispatchEvent(touchEvent("pointerdown", { clientX: 480, clientY: 270 }));
-      // R1: a non-hand card's long-press leg fires at LONG_PRESS_MS (300ms), not PEEK_MS (100ms).
+      // A non-hand card's long-press leg fires at LONG_PRESS_MS (300ms), not PEEK_MS (100ms).
       vi.advanceTimersByTime(LONG_PRESS_MS);
       expect(heldCard).not.toHaveBeenCalled(); // no lift — the peek stays hand-card only
       // #13: a long-press on a non-hand card is a right-click (not a peek, not nothing).
@@ -2762,7 +2762,7 @@ describe("createInputCapture view-scale inverse — renderedBox guard (wide stag
 // AFFINE at the press, but every drag-motion frame still re-tested the LIVE view-scale registry, so a stamp the drag
 // merely CROSSED took the coordinate over mid-gesture and stepped the sent X by (1−1/k)·(distance from the stamp's
 // pivot) in a single frame — the "targeting cursor jumps sideways" report. Measured on the real page with a combat
-// recording (scripts/probe-targeting-drag-jump.mjs): 67.6 design px at 2520x1080 and 66.7 at 1920x1080, from a map
+// recording: a jump of roughly 67 design px at both 2520x1080 and 1920x1080, from a map
 // screen's stamps that were still published while the player was in combat (the other half of the fix — see
 // mirrorRenderer's ancestorChainHidden reject). The claim is now decided ONCE, at the press, and replayed.
 describe("createInputCapture — frozen view-scale mapping on a held drag (R10 WS-F)", () => {
@@ -2865,7 +2865,7 @@ describe("createInputCapture — frozen view-scale mapping on a held drag (R10 W
   });
 });
 
-// R10 WS-F — THE STAGE-RECT INVALIDATION SEAM. The cached stage rect was dropped only on a window `resize`/`scroll`,
+// THE STAGE-RECT INVALIDATION SEAM. The cached stage rect was dropped only on a window `resize`/`scroll`,
 // but toggling the widescreen STRETCH setting rewrites the stage's width AND its letterbox scale from a Vue computed
 // with neither event firing. The stale rect then mis-maps EVERY pointer by a fixed ratio.
 describe("createInputCapture — stage-rect invalidation (R10 WS-F)", () => {
@@ -2937,11 +2937,11 @@ describe("createInputCapture — stage-rect invalidation (R10 WS-F)", () => {
   });
 });
 
-// --- the SQUEEZE GATE (r3/WS-N): the hit-consistency pass is for undoing a per-painter dx misregistration, so a
+// --- the SQUEEZE GATE: the hit-consistency pass is for undoing a per-painter dx misregistration, so a
 // point the anchor map resolved through the UNIFORM SQUEEZE (dead space / a demoted backdrop / the oversized
 // parallax prop, and any hover-memo replay of the squeeze field) must not run it. Under the squeeze practically
 // every spread rect "offends" by construction, and which one is topmost alternates between adjacent samples — the
-// wide-stage hover bistability (268.61 design px of step jump, scripts/probe-targeting-drag-jump.mjs). --------
+// wide-stage hover bistability (a step jump of hundreds of design px). --------
 
 describe("createInputCapture — near-miss squeeze gate (widened stage)", () => {
   // The same anchored offender the memo test uses: game x∈[900,1100], never rendered-shifted.
@@ -2988,7 +2988,7 @@ describe("createInputCapture — near-miss squeeze gate (widened stage)", () => 
       expect(probes()).toBe(1);
       expect(sent.at(-1)).toMatchObject({ kind: "hover", coordX: pushOutOfNearMiss(1020, 540, 1260, [button]) });
 
-      // The next flush replays that squeeze field with pure math — a squeeze coordinate, so no WALK. R19 6a: the
+      // The next flush replays that squeeze field with pure math — a squeeze coordinate, so no WALK. The
       // rendered-box gate still applies (it has to be on both legs, or the sent X would depend on whether a sample
       // happened to be memoized), so the replayed 980 is ejected from the button just like the fresh resolve was.
       clock += 10;
@@ -3003,8 +3003,8 @@ describe("createInputCapture — near-miss squeeze gate (widened stage)", () => 
   });
 });
 
-// R19 6a — the MEASURED map-legend case, end to end through the capture: hovering AND dragging in the dead band
-// right of the map legend on a 2520-wide stage. Geometry from .sts2/artifacts/diag-map-legend-2520.json.
+// The MEASURED map-legend case, end to end through the capture: hovering AND dragging in the dead band
+// right of the map legend on a 2520-wide stage.
 describe("createInputCapture — squeeze rendered-box gate, map legend (R19 6a)", () => {
   // The anchored legend row: game x[1582,1862] y[486,534], spreadDx 300 ⇒ it RENDERS at x[1882,2162].
   const legend: InteractiveRect = {
@@ -3111,7 +3111,7 @@ describe("createInputCapture — squeeze rendered-box gate, map legend (R19 6a)"
 // by a whole lift mid-drag and flickered the held card). The constant is only right where it was measured: drag the
 // card up to target and the game has long since lowered the hand, yet every frame still goes out 119px below the
 // finger — and the game draws the targeting arrow at the coordinate it is sent. Live measurement behind this:
-// pointer design y 361 → sent y 480, flat over ten samples out to 700px of travel (2026-08-25).
+// pointer design y 361 → sent y 480, flat over ten samples out to 700px of travel.
 //
 // The stage here is 960x540 for the 1920x1080 design box, so 1 client px = 2 design px.
 describe("createInputCapture — raise correction fades across a drag (F-arrow)", () => {

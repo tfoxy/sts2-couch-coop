@@ -10,13 +10,13 @@ import {
 } from "@/composables/usePortraitNag";
 import { isRunningStandalone } from "@/join/joinModel";
 
-// WS3 — "turn your phone sideways".
+// "Turn your phone sideways".
 //
 // The game is landscape; a portrait phone letterboxes the mirror into an unreadable strip, and the reports that
 // produced this said "the mod is broken", not "my rotation lock is on". Nothing exposes rotation-lock state, so
 // the composable infers it from time-in-portrait and this component only draws the answer.
 //
-// R19 WP-2 — it also offers the ONE action that can fix it from here. Entering fullscreen is what asks for the
+// The overlay also offers the ONE action that can fix it from here. Entering fullscreen is what asks for the
 // landscape lock (the lock hangs off `fullscreenchange`, not off the caller — see useFullscreen), so on a device
 // with the Fullscreen API this button rotates the phone even through the OS rotation lock, which is precisely the
 // state the overlay exists to diagnose. It is a real user gesture, so `requestFullscreen()` is allowed. Nothing
@@ -28,7 +28,7 @@ import { isRunningStandalone } from "@/join/joinModel";
 const props = defineProps<{
   /** The game view is up. A portrait join picker reads fine, so we say nothing there. */
   active: boolean;
-  /** WS2's landscape lock was granted — the browser is holding the phone for us, so there is nothing to nag. */
+  /** The landscape lock was granted — the browser is holding the phone for us, so there is nothing to nag. */
   suppressed?: boolean;
   /** Injectable seams (matchMedia / userAgent) for specs; the live browser otherwise. */
   seams?: PortraitNagSeams;

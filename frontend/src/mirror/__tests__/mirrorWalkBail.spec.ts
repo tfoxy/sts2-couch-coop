@@ -7,7 +7,7 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF3 — WALK-MODE CLASSIFICATION. Which reconciles take the expensive FULL structural path and which stay
+// WALK-MODE CLASSIFICATION. Which reconciles take the expensive FULL structural path and which stay
 // on the pruned incremental one. The regression these specs pin: a card play is VOLATILE-FAT (hundreds of
 // re-upserted nodes: tween hints, HP, badges, energy, VFX) but STRUCTURALLY TINY (a handful of adds/removes), and
 // the old classifier read `state.changedIds.size` — which counts every one of those volatile upserts — so it

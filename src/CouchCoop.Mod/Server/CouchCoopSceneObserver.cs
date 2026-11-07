@@ -341,7 +341,7 @@ public sealed class CouchCoopSceneObserver(CouchCoopRuntimeHost runtimeHost) : I
         return new SceneStructureIndex { RootIds = rootIds, ChildIdsByParent = childIdsByParent };
     }
 
-    // R10 KEYFRAME SELF-CONSISTENCY.
+    // KEYFRAME SELF-CONSISTENCY.
     // A keyframe's OrderedIds must name only nodes the keyframe actually CARRIES. It could not, historically: the
     // producer's order array included nodes it had never emitted (a subtree born hidden is registered but pruned
     // from every incremental capture), so the retained order held ids with no retained node — this method dropped

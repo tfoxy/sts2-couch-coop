@@ -4,7 +4,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-SHINC unit coverage for the PURE gdshader `#include` expander (ShaderIncludeExpander). The native ShaderStore
+// Unit coverage for the PURE gdshader `#include` expander (ShaderIncludeExpander). The native ShaderStore
 // BFS-prefetches include bodies then hands them to Expand; this suite pins the directive scan, the splice, and the
 // cycle/depth guards without a Godot host. All shader bodies are SYNTHETIC (hand-written) — no game content committed.
 internal static class ShaderIncludeExpanderTests

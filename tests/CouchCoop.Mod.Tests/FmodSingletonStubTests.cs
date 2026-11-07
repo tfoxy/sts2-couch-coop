@@ -19,7 +19,7 @@ namespace CouchCoop.Mod.Tests;
 //
 // Registered near the TOP of the runner sequence on purpose, and reachable alone as `-- fmod-stub`. The
 // sequence no longer takes the process down partway (the SIGSEGV inside HeadlessAudioMuteTargetsTests was
-// fixed on 2026-09-17), but a source-generation guard costs nothing to run first and should not depend on
+// fixed), but a source-generation guard costs nothing to run first and should not depend on
 // every suite above it passing.
 internal static class FmodSingletonStubTests
 {

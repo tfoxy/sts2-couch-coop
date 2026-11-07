@@ -3,12 +3,12 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// OWNER: WS-Q (widened input). Port of frontend/src/mirror/__tests__/pointerMap.spec.ts `describe("mapPointerToGame")`
+// Widened input. Port of frontend/src/mirror/__tests__/pointerMap.spec.ts `describe("mapPointerToGame")`
 // against Input/PointerField.cs. The web DOM fixtures (mkEl + stubbed elementsFromPoint) are re-expressed as
 // MirrorState node trees + hand-built SpreadRecords: where the web relied on the stub returning an element regardless
 // of position, the native port hit-tests the RENDERED box, so each painter's GAME rect (transform + localRect) is
 // placed so its rendered box (game box +Dx / widened to RenderedWidth) contains the design pointer. Records are
-// injected directly (no dependency on WS-P's SpreadIndex walk — see the Func<string,SpreadRecord?> lookup). Design
+// injected directly (no dependency on the SpreadIndex walk — see the Func<string,SpreadRecord?> lookup). Design
 // coords are the web's fraction·designWidth precomputed (a centered 0.5 fraction → 960 at 1920, 1260 at 2520).
 internal static class PointerFieldTests
 {

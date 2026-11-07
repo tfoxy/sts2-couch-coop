@@ -231,7 +231,7 @@ interface FakeCache extends CanvasTextureCache {
   uploaded: string[];
   released: string[];
   failNext(key: string): void;
-  /** R6 P6-D2: page keys allocated through `acquireBytes`, and the region writes made into each. */
+  /** Page keys allocated through `acquireBytes`, and the region writes made into each. */
   pageBytes: Map<string, { w: number; h: number }>;
   regionWrites: { key: string; x: number; y: number; w: number; h: number }[];
 }
@@ -266,7 +266,7 @@ function fakeCache(): FakeCache {
       uploaded.push(key);
       return handle;
     },
-    // R6 P6-D2 — an ATLAS PAGE is allocated from zeroed bytes; only the LABEL rasters are canvas elements.
+    // An ATLAS PAGE is allocated from zeroed bytes; only the LABEL rasters are canvas elements.
     acquireBytes: (key, pixels, width, height) => {
       const handle = { texture: {} as WebGLTexture, width, height, revision: 1 };
       entries.set(key, handle);
@@ -841,7 +841,7 @@ describe("the font readiness gate", () => {
 
   // --- the gauge, and why it is not the total ------------------------------------------------------------------
   //
-  // The flip criterion is "`fontsPending` 0 on a settled screen", and until R8 the number it named could not
+  // The flip criterion is "`fontsPending` 0 on a settled screen", and until it was fixed the number it named could not
   // return to zero: one increment site, no decrement, so a healthy warm-up in which every face arrived still read
   // 45 at settle. `fontWaits` is that reading, kept and honestly named; `fontsPending` is now the gauge the
   // criterion always meant.
@@ -1034,12 +1034,12 @@ describe("the digest and the witness under spans", () => {
 
 // --- the font memo, and the two ways it goes stale -------------------------------------------------------------
 //
-// THE DEFECT THESE ARE ABOUT, named by measurement rather than by argument (R8 R1,
-// `.sts2/artifacts/r8-text/probe-pre/`): on the shop screen nine of eleven fragment rasters were SIZED from a
+// THE DEFECT THESE ARE ABOUT, named by measurement rather than by argument (a field
+// probe): on the shop screen nine of eleven fragment rasters were SIZED from a
 // measurement taken at `10px sans-serif` — a canvas's untouched default — and then DRAWN with the label's real
 // 46.8px face. The glyphs land 4-5x larger than the surface allocated for them and only a corner survives the
 // bound, which is the photographed "magnified fragment" exactly. Not one number disagreed with another at
-// measure time, which is why `metricsMismatch` read 0 through the whole of round 7.
+// measure time, which is why `metricsMismatch` read 0 through an earlier round of testing.
 //
 // The memo is what makes that possible: `setFont` writes `ctx.font` only when the string differs from the last
 // one it wrote, and `ctx.font` resolves its face AT ASSIGNMENT. So an assignment that is SKIPPED leaves the
@@ -1048,7 +1048,7 @@ describe("the digest and the witness under spans", () => {
 
 describe("the font memo's honesty", () => {
   it("re-declares the font after a restore, because restore MOVES it", () => {
-    // SOURCE ONE, and the one R1 caught in the field. The raster brackets its draw in `save()`/`restore()`, and
+    // SOURCE ONE, and the one caught in the field. The raster brackets its draw in `save()`/`restore()`, and
     // the `save()` happens AFTER `target.width = texW` has reset the context — so the state it banks is the
     // canvas default, and the `restore()` at the end of the raster puts the default back. The memo is not told,
     // so the NEXT label that says the same font string measures at `10px sans-serif`.
@@ -1137,7 +1137,7 @@ describe("the font memo's honesty", () => {
 // has no rasterizer, so the picture is a constant here and the defect itself is only observable in a browser.
 
 describe("the scratch probe seam", () => {
-  const narrow = () => specOf("80"); // 2 chars * 10 + 2px skirt = 22 device px at scale 1 — inside round 7's band
+  const narrow = () => specOf("80"); // 2 chars * 10 + 2px skirt = 22 device px at scale 1 — inside the earlier band
   const wide = () => specOf("8000"); // 42 device px — the shape of the broken sibling that band could not see
 
   it("samples only rasters inside the band, and the DEFAULT band is round 7's 24px verbatim", () => {
@@ -1152,7 +1152,7 @@ describe("the scratch probe seam", () => {
 
   it("widens on request — which is the whole reason the band is a parameter", () => {
     // `?textScratchProbe=64`. The 28-wide label on the same shop shelf renders wrong in exactly the same way and
-    // was invisible to round 7's sample; "identical font, identical scale, adjacent acquires, some right and some
+    // was invisible to the earlier sample; "identical font, identical scale, adjacent acquires, some right and some
     // wrong" is an observation that needs both of them in one run.
     const { draw, texts } = harness({ captureScratch: true, scratchMaxTexW: 64, paceCount: 0 });
     draw(narrow());
@@ -1256,15 +1256,15 @@ describe("the bridge's text:// seam", () => {
   });
 
   it("does not even test the prefix without a text source configured", () => {
-    // With the lever off no key the builder emits starts with `text://`, so this is the pre-M4 path verbatim.
+    // With the lever off no key the builder emits starts with `text://`, so this is the earlier path verbatim.
     const b = bridged(undefined);
     b.bridge.sizeOf("/res/ui_atlas_0.png");
     expect(b.bridge.stats.requested).toBe(1);
   });
 });
 
-// THE LABEL ATLAS (R6 P6-D2). The promotion criterion this module wrote for itself was met — measured
-// texture-slot flushes of +20 and +45 per build against a +8 budget — so labels share 1024x1024 pages.
+// THE LABEL ATLAS. The promotion criterion this module wrote for itself was met — measured
+// texture-slot flushes far above the budget per build — so labels share 1024x1024 pages.
 //
 // The properties that has to have are all about what does NOT change: the key space (a label is still
 // `text://<digest>` to everything outside), the answers `handleFor`/`sizeOf` give the bridge, and the fact that a

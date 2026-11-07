@@ -283,7 +283,7 @@ function socketIsOpen(observation: SurvivalObservation, role: SocketLifecycle["r
 }
 
 async function saveExplicitLocalEvidence(page: Page, testInfo: TestInfo): Promise<void> {
-  // The config forces outputDir under .sts2/research/playwright-iphone-webkit only when the separate local
+  // The config forces outputDir under a gitignored local directory only when the separate local
   // evidence flag is set. The label makes the capture's potentially proprietary status unambiguous.
   const label = testInfo.outputPath("POTENTIALLY_PROPRIETARY.txt");
   await testInfo.attach("POTENTIALLY_PROPRIETARY", { body: "Potentially proprietary real-game evidence.\n", contentType: "text/plain" });

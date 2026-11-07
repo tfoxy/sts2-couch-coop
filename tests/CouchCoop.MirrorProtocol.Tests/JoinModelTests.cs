@@ -65,7 +65,7 @@ internal static class JoinModelTests
         Check.Equal(JoinModel.ConnectionCountLabel(1), "1 controller", "singular copy stays correct (unreachable via the gate)");
     }
 
-    // WS-B STREAM GATE. The user-facing rule this encodes: connecting to a host that has multiplayer active (lobby,
+    // STREAM GATE. The user-facing rule this encodes: connecting to a host that has multiplayer active (lobby,
     // saved multiplayer game, or multiplayer run) must NOT stream/render the host's game in the background — that
     // only happens once the viewer has chosen to control the host (directView) or a seat (joined), or when the host
     // is off the multiplayer screens entirely. Both clients feed this the same inputs, so the wire and the screen

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// Live probe for the WS-2 lobby QR host panel: the game-styled "Couch Co-Op QR Code" button and
+// Live probe for the lobby QR host panel: the game-styled "Couch Co-Op QR Code" button and
 // the host-select dialog it opens, which together REPLACED the always-on QR overlay.
 //
 // What it proves, in order:

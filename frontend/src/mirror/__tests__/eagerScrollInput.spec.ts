@@ -64,12 +64,12 @@ function mapTarget(streamedY = -600): EagerScrollTarget {
   };
 }
 
-// R19 WP5 — the action wire that states the target offset. `sent` remains available to prove a scroll gesture does
+// The action wire that states the target offset. `sent` remains available to prove a scroll gesture does
 // not also emit ordinary input.
 let scrolls: Array<{ elementId: string; offsetY: number; requestId: string }>;
 
 // The LIVE widened design width the capture is built with. 1920 = 16:9 (what every case in this file used before
-// R20); a bigger number is "Widescreen stretch", where the pointer fraction spreads across the wider design box and
+// widened stages); a bigger number is "Widescreen stretch", where the pointer fraction spreads across the wider design box and
 // the anchor map has to invert each painting node's shift to recover a 1920-space game coordinate.
 let buildDesignWidth = 1920;
 
@@ -137,7 +137,7 @@ afterEach(() => {
   delete (document as unknown as { elementsFromPoint?: unknown }).elementsFromPoint;
 });
 
-// R11 WS-S §5 — a drag inside a CARD GRID scrolls it, on both input paths, and the press is withheld so the game
+// A drag inside a CARD GRID scrolls it, on both input paths, and the press is withheld so the game
 // can neither start its own drag-scroll with it nor press the card under the finger.
 describe("inputCapture × eagerScroll — the grid drag", () => {
   // The deck grid: a 1002-tall frame at design y=80 with content twice as tall.
@@ -219,7 +219,7 @@ describe("inputCapture × eagerScroll — the grid drag", () => {
   });
 });
 
-// R11 WS-S §8 — the two-finger scroll goes through the same engine as everything else.
+// The two-finger scroll goes through the same engine as everything else.
 describe("inputCapture × eagerScroll — two fingers", () => {
   function touch(type: string, pointerId: number, clientY: number): MouseEvent {
     const ev = new MouseEvent(type, { button: 0, clientX: 480, clientY, bubbles: true, cancelable: true });
@@ -389,7 +389,7 @@ describe("inputCapture × eagerScroll — the pan", () => {
   });
 });
 
-// R19 WP5 — semantic scrolling through the real DOM event path. The two defects that live in THIS file are the ones
+// Semantic scrolling through the real DOM event path. The two defects that live in THIS file are the ones
 // only the input layer can fix: a press the game never accepts (the widescreen map drag) and a press the input
 // layer hands to the host and the host does nothing useful with (the card-grid scrollbar track).
 describe("inputCapture × eagerScroll — the scrollbar track", () => {
@@ -406,7 +406,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
       renderedY: 0,
       viewport: { minX: 0, minY: 80, maxX: 1920, maxY: 1082 },
       scrollbarBox: barBox,
-      // 16:9 (designWidth 1920) ⇒ the bar's spreadDx is 0 ⇒ the rendered box IS the game box, and the R20 gate is
+      // 16:9 (designWidth 1920) ⇒ the bar's spreadDx is 0 ⇒ the rendered box IS the game box, and the widened-stage gate is
       // provably inert. Set to the same box rather than null so these cases really do run through the gate.
       scrollbarRenderedBox: barBox,
       wheelSafe: { x: 87, y: 581 },
@@ -420,7 +420,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
   }
 
   // The z-stack over the strip, topmost first. The renderer stamps a scrollbar's track `data-touch-block="bar"` and
-  // its handle `"thumb"` (R21) — the claim reads the KIND, so the stub has to carry the right one or the test means
+  // its handle `"thumb"` — the claim reads the KIND, so the stub has to carry the right one or the test means
   // nothing. `over` puts a foreign widget on top, which is the confirm-button case.
   function stubStrip(kind: "bar" | "thumb", over?: { block?: string; id?: string }): void {
     const stack: Element[] = [];
@@ -485,7 +485,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
     // Touch normally offers a gesture to the engine only at DRAG CLASSIFICATION (8px of travel) — which is why a
     // track tap, a gesture with no travel in it at all, needed a press-time hook of its own.
     //
-    // R21: that hook no longer ACTS at the press. The strip is a ~50px sliver at the edge of the frame, so a
+    // That hook no longer ACTS at the press. The strip is a ~50px sliver at the edge of the frame, so a
     // finger reaches it by accident constantly; a claim that jumps on contact turns an accidental brush into a
     // jump to wherever the finger touched. The tap is committed when the gesture proves to BE a tap — on the lift.
     stage.dispatchEvent(touchAt("pointerdown", 400));
@@ -503,7 +503,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
 
   it("TOUCH: a SWIPE that began on the track scrolls the CONTENT — the strip gives the gesture up (the reported defect)", () => {
     // The player is scrolling the grid with their thumb, whose arc clips the strip at the right edge. The press
-    // lands at design y=1000 — the very BOTTOM of the 200..1000 strip — so before R21 the press-time claim read it
+    // lands at design y=1000 — the very BOTTOM of the 200..1000 strip — so before the deferral the press-time claim read it
     // as "drag the scrollbar" and threw the grid to the bottom of the whole collection (−2400) before the finger
     // had moved at all.
     stage.dispatchEvent(touchAt("pointerdown", 500));
@@ -527,7 +527,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
 
   it("TOUCH: a slide down the THUMB still tracks the finger by position", () => {
     // The handle is a deliberate grab — a player's finger does not land on it by accident the way it brushes the
-    // track — so it is NOT deferred and drags exactly as it did before R21.
+    // track — so it is NOT deferred and drags exactly as it did before the deferral.
     stubStrip("thumb");
     stage.dispatchEvent(touchAt("pointerdown", 200));
     engine.__frameForTest();
@@ -540,7 +540,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
     expect(sent).toEqual([]);
   });
 
-  // R21 — THE CONFIRM BUTTON. A card-selection dialog (smith / remove card) puts its confirm button at the right
+  // THE CONFIRM BUTTON. A card-selection dialog (smith / remove card) puts its confirm button at the right
   // of the frame, overlapping the strip. The bar claimed those presses on geometry alone and WITHHELD them, so the
   // only part of the button that clicked was the part clear of the strip.
   describe("a widget painted over the strip", () => {
@@ -578,7 +578,7 @@ describe("inputCapture × eagerScroll — the scrollbar track", () => {
 
 });
 
-// R20 — THE SAME TRACK ON A WIDENED STAGE, which nothing in this file had ever exercised: every case above builds
+// THE SAME TRACK ON A WIDENED STAGE, which nothing in this file had ever exercised: every case above builds
 // the capture at designWidth 1920, so the branch that spreads the pointer across a wider design box could not run and
 // the defect below shipped. Reported as "the card grid scrollbar takes over when dragging near its LEFT (but not over
 // it) on widescreen stretch".
@@ -629,11 +629,11 @@ describe("inputCapture × eagerScroll — the scrollbar track under Widescreen s
   });
 
   it("MOUSE: a press 20px LEFT of the painted strip is NOT the scrollbar's (the reported defect)", () => {
-    // Raw designX 2400 squeezes to game 1828.57 — inside the GAME box [1820,1870], so the pre-R20 AABB test claimed
+    // Raw designX 2400 squeezes to game 1828.57 — inside the GAME box [1820,1870], so the earlier AABB test claimed
     // it and withheld the press. On screen the pointer was 20px clear of the bar.
     stage.dispatchEvent(new MouseEvent("pointerdown", { button: 0, clientX: clientOf(2400), clientY: 400, bubbles: true }));
     engine.__frameForTest();
-    // Not the bar's — and R21: not NOBODY's either. R20 refused the bar claim but left the strip's game box carved
+    // Not the bar's — and not NOBODY's either. An earlier fix refused the bar claim but left the strip's game box carved
     // out of the content claim too, so the press went upstream at a coordinate the GAME reads as its own scrollbar
     // — which then took the whole gesture (its press latches a flag the grid drives its scroll target from). The
     // client refusing a claim must not hand the gesture to the very control it refused it for: the point is

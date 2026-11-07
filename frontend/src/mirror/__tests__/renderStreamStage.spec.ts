@@ -15,7 +15,7 @@ import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RS_GROUP_SHOP_ITEM } from "@/stream-ext/groups";
 
-// The stage's own lifecycle (handoff-mirror-new-renderer.md §3 Q5) against a fake client: it connects on mount,
+// The stage's own lifecycle against a fake client: it connects on mount,
 // shows the loading line until the first drawn frame, emits `failed` on a stop, disposes on unmount, and disposes
 // after 60 s in a hidden tab, reconnecting as a fresh join when visible again.
 

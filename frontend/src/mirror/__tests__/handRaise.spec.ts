@@ -732,7 +732,7 @@ describe("readable-hand mode — how the lift MOVES", () => {
     expect(el(stage, "h1").style.translate).toBe(`0px ${-RAISE}px`);
   });
 
-  // THE PHASE SEAM. Live H10, 2026-09-19: "1/8 focus changes drew a card past the pose it was heading for and back
+  // THE PHASE SEAM. Seen live: "1/8 focus changes drew a card past the pose it was heading for and back
   // (worst 9.4 design px, 0ms in, while returning to rest)". The recorded frame trace: the focused holder sat at
   // 871 design px with `translate: 0px`, then in ONE frame the pose stepped to 920.4 while the lift was still 0 —
   // 9.4px BELOW the 911 it was heading for — and the error decayed over the next ~150ms exactly as the lift eased.
@@ -900,7 +900,7 @@ describe("readable-hand mode — raise-input stamps", () => {
 
     // h1 is SELECTED: the game reparents its holder off the container onto the hand root and parks it in the play
     // position. It keeps its 300x422 hitbox, so it stays a governed hand rect — but the game will not focus it, and
-    // an anchor there swallowed every tap within its 30-local-px margin (live: four H6 points, 2026-08-26).
+    // an anchor there swallowed every tap within its 30-local-px margin (seen live: four points).
     move(renderer, state, [{ id: "h1", parentId: "PlayerHand", transform: at(700, 400) }]);
     const stamps = renderer.raiseInputStamps();
     // Still published, so the translation inverse continues to use the complete raised surface registry.

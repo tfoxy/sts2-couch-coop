@@ -4,10 +4,10 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// OWNER: WS-Q (widened input). Two suites:
+// Widened-input suites. Two suites:
 //   (1) the stateful resolve family (Input/PointerResolver.cs) — a port of inputCapture.ts's resolveSent / designCoord
 //       / fieldAffineCoord / frozenCoord / memoizedHoverCoord / hoverCoord / freezeAt / clearFreeze — incl. the F=1
-//       strict-verbatim no-op (WS-Q's gate-2 unit proof), press-freeze replay during a drag, fresh release, frozen
+//       strict-verbatim no-op (the gate-2 unit proof), press-freeze replay during a drag, fresh release, frozen
 //       cancel, the hover memo bounds (24px / 120ms / design-width invalidation), and near-miss integration; and
 //   (2) machine-seam tests: fake recording resolvers wired to the frozen GestureCallbacks assert WHICH resolver kind
 //       each GestureMachine send site invokes (press→Press, drag hover→Frozen, release→Fresh+ClearFreeze,
@@ -27,7 +27,7 @@ internal static class PointerResolverTests
         HoverMemoInvalidatedByDesignWidthChange();
         ClearFreezeResetsFrozenToIdentity();
 
-        // R19 6a: the frozen replay of an UNANCHORED press is rendered-box gated; an ANCHORED/prop press is not.
+        // The frozen replay of an UNANCHORED press is rendered-box gated; an ANCHORED/prop press is not.
         FrozenSqueezedPressIsRenderedBoxGated();
         FrozenUnsqueezedPressIsNotGated();
 
@@ -174,7 +174,7 @@ internal static class PointerResolverTests
         }
     }
 
-    // R19 6a — the MEASURED map-legend drag, through the resolver. A press the anchor map could not attribute to any
+    // The MEASURED map-legend drag, through the resolver. A press the anchor map could not attribute to any
     // painter (Squeezed) freezes the squeeze field; before the gate every replayed frame landed inside the anchored
     // legend row's game rect (x[1582,1862], rendered +300 → x[1882,2162]) and dragged it for the whole gesture.
     private static void FrozenSqueezedPressIsRenderedBoxGated()

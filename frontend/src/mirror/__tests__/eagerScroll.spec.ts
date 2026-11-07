@@ -133,7 +133,7 @@ function writeFixtureOffset(list: EagerScrollTarget[], nodeId: string, dy: numbe
   }
 }
 
-// R19 WP5 — the harness exposes the absolute action wire. `scrolls` records the position stated to the game;
+// The harness exposes the absolute action wire. `scrolls` records the position stated to the game;
 // `sent` remains available to prove this path does not also emit ordinary input.
 interface AuthorityHarness extends Harness {
   scrolls: Array<{ elementId: string; offsetY: number; requestId: string }>;
@@ -230,7 +230,7 @@ describe("eagerScroll — clamping", () => {
     expect(clampEager(t, -900)).toBe(0);
   });
 
-  // R11 WS-S §2 — the materialized band ABSORBS, it does not yank.
+  // The materialized band ABSORBS, it does not yank.
   it("absorbs travel past the materialized rows, one viewport past the last one", () => {
     // Rows materialized over local y 0..1500 with a 1002-tall viewport: the strict band edge is 1002−1500 = −498,
     // and a viewport of slack takes the absorbing edge to −1500.
@@ -443,7 +443,7 @@ describe("eagerScroll — the state machine", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R11 WS-S §1 — THE SHAKE. The composed position of a scroll container is `base matrix + cosmetic translate` (CSS
+// THE SHAKE. The composed position of a scroll container is `base matrix + cosmetic translate` (CSS
 // applies the `translate` property outside `transform`). Round 2 had TWO independent rAF writers for those two
 // halves, so on the unlucky (and deterministic) ordering every reconciled frame painted `eagerY + one host lerp
 // step`. These tests drive a simulated renderer — a "reconcile" writes the element's base matrix and hands the
@@ -636,7 +636,7 @@ describe("eagerScroll — the absolute-target seam", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R11 WS-S §3 — what a scrollable may claim.
+// What a scrollable may claim.
 describe("eagerScroll — the claim surface", () => {
   const barBox = { minX: 1820, minY: 210, maxX: 1870, maxY: 952 };
 
@@ -675,7 +675,7 @@ describe("eagerScroll — pan", () => {
     expect(h.sent).toEqual([]);
   });
 
-  // R11 WS-S §6 — a press is a CLAIM, not a scroll.
+  // A press is a CLAIM, not a scroll.
   it("a held press defers local movement until the finger moves", () => {
     const target = mapTarget();
     const h = harness([target]);
@@ -759,7 +759,7 @@ describe("eagerScroll — pan", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R11 WS-S §7 — while a drawing tool is armed the map does not scroll AT ALL (a product decision: on a phone the
+// While a drawing tool is armed the map does not scroll AT ALL (a product decision: on a phone the
 // scroll and the stroke are the same finger, and a stroke drawn onto moving parchment is unreadable — the native
 // game does allow it). §8 — a two-finger scroll is the same engine, not a separate stepper.
 describe("eagerScroll — a suppressed scrollable", () => {
@@ -885,7 +885,7 @@ describe("eagerScroll — upstream Y compensation", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R19 WP5 — SCROLL AUTHORITY. The client stops asking for travel and states a position; the game clamps it to its
+// SCROLL AUTHORITY. The client stops asking for travel and states a position; the game clamps it to its
 // own limits and answers with the clamped value. The tests that matter most are the two DISCRIMINATION ones: a
 // client-driven scroll the game must follow, and a game-driven one the client must follow.
 describe("eagerScroll — scroll authority: the absolute channel", () => {
@@ -1081,7 +1081,7 @@ describe("eagerScroll — scroll authority: the absolute channel", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R19 WP5 §"absolute" — the current claim surface.
+// The "absolute" section — the current claim surface.
 describe("eagerScroll — scroll authority: the claim", () => {
   it("claims a MAP drag as ABSOLUTE, so the caller withholds the press it could not get accepted", () => {
     const h = authorityHarness([mapTarget()]);
@@ -1136,7 +1136,7 @@ describe("eagerScroll — scroll authority: the claim", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R19 WP5 §"bar" — the card grid's SCROLLBAR strip becomes the client's own absolute channel.
+// The "bar" section — the card grid's SCROLLBAR strip becomes the client's own absolute channel.
 describe("eagerScroll — scroll authority: the scrollbar", () => {
   const barBox = { minX: 1820, minY: 200, maxX: 1870, maxY: 1000 };
   const withBar = (over: Partial<DomTarget> = {}) =>
@@ -1208,7 +1208,7 @@ describe("eagerScroll — scroll authority: the scrollbar", () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 
-// R21 — WHOSE POINT IS IT, and WHAT IS THE PLAYER DOING WITH IT. Two live defects, one shape: the claim was pure
+// WHOSE POINT IS IT, and WHAT IS THE PLAYER DOING WITH IT. Two live defects, one shape: the claim was pure
 // geometry, decided at the press.
 //   * a card-selection dialog's confirm button overlaps the strip, and every press of it that landed on the strip
 //     was claimed by the bar and WITHHELD, so only the part of the button clear of the strip could be clicked;

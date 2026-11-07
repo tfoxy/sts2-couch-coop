@@ -1,0 +1,26 @@
+#!/bin/sh
+# pre-push hook: refuse to publish what scripts/check-public-tree.py refuses (docs/commit-and-release.md,
+# "Public tree check"): pre-rewrite history, a tree that fails the markdown allowlist, denylist or
+# personal-data scan, and pushed commits that add or modify a denied path.
+#
+# git calls it as `pre-push <remote name> <remote url>` with one line per ref on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# A deletion (all-zero local sha) has nothing to check.
+#
+# Installed by scripts/install-agent-config.sh through `core.hooksPath scripts/githooks`.
+# Self-test: scripts/test-pre-push-hook.sh
+
+remote="$1"
+root="$(git rev-parse --show-toplevel)" || exit 1
+check="$root/scripts/check-public-tree.py"
+[ -f "$check" ] || exit 0 # a checkout from before the check existed
+
+rc=0
+while read -r _lref lsha _rref rsha; do
+  case "$lsha" in *[!0]*) ;; *) continue ;; esac
+  python3 "$check" --push "$lsha" "$rsha" "$remote" || rc=1
+done
+if [ "$rc" != 0 ]; then
+  echo "pre-push: refused by scripts/check-public-tree.py (see above)" >&2
+fi
+exit "$rc"

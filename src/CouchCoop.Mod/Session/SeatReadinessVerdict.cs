@@ -103,7 +103,7 @@ internal sealed record SeatReadinessVerdictResult(SeatReadinessCause Cause, stri
 /// <c>child HTTP listener: not responding</c>, and printed it for at least three unrelated conditions: a foreign
 /// program on the seat's port, a local firewall rule dropping the host's own loopback probe, and a blocked path
 /// between the phone and a seat that was serving perfectly. The three need opposite fixes and were
-/// indistinguishable from the text — measured Sep-15 2026, byte-identical across two of them. The line even
+/// indistinguishable from the text — observed live, byte-identical across two of them. The line even
 /// contradicted itself for anyone who knew the system: <c>authenticated heartbeat fresh: True</c> proves the seat
 /// process is alive and talking to the host, in the same sentence that calls its listener unresponsive.
 /// </para>
@@ -293,7 +293,7 @@ public static class SeatReadinessVerdict
     /// <remarks>
     /// <para>
     /// WHY THE HOST'S OWN FIREWALL IS NAMED FIRST HERE, in the one verdict that blames the network. This cause
-    /// is reached only when the host's loopback probe SUCCEEDED, and MEASURED Sep-17 2026 on Windows 11 with
+    /// is reached only when the host's loopback probe SUCCEEDED, and MEASURED on Windows 11 with
     /// the real game: with an inbound Block rule on the browser port scoped to one peer, the host's own
     /// loopback HTTP probe still returned 200 and its raw loopback connect was still accepted in 438 ms, while
     /// that peer timed out with no RST. Windows does not filter a machine's traffic to itself, so a

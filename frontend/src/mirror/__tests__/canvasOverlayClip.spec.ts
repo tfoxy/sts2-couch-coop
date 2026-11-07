@@ -1,4 +1,4 @@
-// R1 — CROPPING AN OVERLAY SURFACE TO ITS ENCLOSING CLIP CHAIN.
+// CROPPING AN OVERLAY SURFACE TO ITS ENCLOSING CLIP CHAIN.
 //
 // A canvas command lands inside whatever clip scopes the walk had open at its node; an overlay ELEMENT is a flat
 // child of one container and lands inside none of them. So a label inside a scrolled dialog kept painting after it

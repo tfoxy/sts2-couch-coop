@@ -15,7 +15,7 @@ import {
 import type { MirrorLatency } from "@/mirror/mirrorClient";
 import { renderStreamContext, sessionRenderStreamEndpoint, stopRenderStream } from "@/mirror/renderStreamAvailability";
 
-// "Use new renderer (Beta)" in the panel (handoff-mirror-new-renderer.md §3 Q4, MIR-2's component checks): the
+// "Use new renderer (Beta)" in the panel: the
 // checkbox is first, every row the stream does not support yet is disabled and SHOWS its forced value, the
 // supported rows stay the viewer's, nothing but `renderer` is ever written, and every unavailability reason shows.
 

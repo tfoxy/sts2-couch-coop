@@ -15,7 +15,7 @@ import {
   type MirrorNode
 } from "@/mirror/sceneTree";
 
-// R10 WS-A: THE PANEL DECIDES. A mid-range phone auto-resolves to the `very-low` tier, which seeds
+// THE PANEL DECIDES. A mid-range phone auto-resolves to the `very-low` tier, which seeds
 // `particlesEnabled: false` — and that used to be a CLAMP in two places (no DOM markers stamped, and the
 // effective particle mode forced `off`), so the Particles select in the settings panel did nothing at all on
 // exactly the devices that see it most, while the same select worked on a desktop. Only the hard-off lane

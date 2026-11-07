@@ -11,7 +11,7 @@ namespace CouchCoop.Mod.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE DEFECT THESE PIN, from a support report on 2026-09-18. A player's seat started, loaded the mod, joined
+/// THE DEFECT THESE PIN, from a support report. A player's seat started, loaded the mod, joined
 /// the host's lobby, bound its browser port and was still idling healthily 74 seconds later — and the host
 /// waited out its entire 75-second deadline and reported <c>startup-timeout</c>, because not one status POST
 /// ever reached it. Neither process recorded why: <c>SendOnceAsync</c> ended in a bare <c>catch</c>, a non-2xx

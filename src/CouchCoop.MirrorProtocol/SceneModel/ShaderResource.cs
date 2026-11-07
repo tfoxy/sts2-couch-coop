@@ -3,7 +3,7 @@ using System.Text;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// The FORMAT the server served a shader resource in (WS-H, M1d). The producer route is transitioning to Godot-
+// The FORMAT the server served a shader resource in. The producer route is transitioning to Godot-
 // native-first raw serving, so the native ShaderStore supports the two raw shapes:
 //   RawShader : a `.gdshader` body (or a `.tres` the host resolved to compiled shader source) — starts with a
 //               `shader_type ...;` declaration. Compiled directly; the source's `uniform x = default` initializers
@@ -31,7 +31,7 @@ public sealed record ParsedShaderResource(
     public static readonly IReadOnlyList<MirrorShaderParam> NoDefaults = System.Array.Empty<MirrorShaderParam>();
 }
 
-// WS-EMITTER: the kind of a materialized `.tres` sampler sub-resource. A particle/shader emitter's sampler uniform
+// The kind of a materialized `.tres` sampler sub-resource. A particle/shader emitter's sampler uniform
 // streams as a `::`-qualified SubResource ref (e.g. `…vfx_ring_polar.tres::CurveTexture_i84de`) whose default value
 // is NULL on the wire (ShaderResourceParser.ParseDefaultValue skips SubResource refs). ParseMaterialSamplers reads the
 // material `.tres` FULL TEXT and re-derives the sampler's baked data so the native side can rebuild the CurveTexture /
@@ -113,7 +113,7 @@ public static class ShaderResourceParser
 
     // ---- raw `.tres` (Godot text resource) --------------------------------------------------------------------
 
-    // R6 P6-F1 — the shader source of ONE named `[sub_resource type="Shader" id="…"]` inside a `.tres` body, or
+    // The shader source of ONE named `[sub_resource type="Shader" id="…"]` inside a `.tres` body, or
     // null when this body has no such sub-resource (unknown id, a sub-resource of some other type, or one with no
     // `code` property).
     //
@@ -597,7 +597,7 @@ public static class ShaderResourceParser
         return true;
     }
 
-    // ---- WS-EMITTER: material `.tres` sampler sub-resource materialization -------------------------------------
+    // ---- Emitter: material `.tres` sampler sub-resource materialization -------------------------------------
 
     // Parse a raw material `[gd_resource]` `.tres` FULL TEXT into its baked sampler sub-resources, keyed by SubResource
     // id (the `::`-suffix a streamed sampler ref carries). Additive to ParseDefaultValue (which still returns null for

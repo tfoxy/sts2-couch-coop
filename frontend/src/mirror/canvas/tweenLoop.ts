@@ -48,10 +48,10 @@
 //     de-lockstepping; the wave that wires the canvas up needs a numeric evaluator for those shapes, and it
 //     belongs upstream, not here.
 //
-// DEMAND-DRIVEN, AND WHY THAT IS THE POINT. The Aug-26 concurrency probe (docs/agents/canvas-stage-probes-aug26.md
-// §P8) replayed eight recordings: six never exceed 6 concurrent animations and are idle for more than 90% of their
-// span — a combat animates for 3.3 of 30 seconds. The one sizing case is a reshuffle at 46 concurrent tweens + 30
-// concurrent flights (78 combined), of which 124 of 137 hints are `modulate:a`. So: `nextDeadline()` returns
+// DEMAND-DRIVEN, AND WHY THAT IS THE POINT. Replaying recorded sessions showed most never exceed 6 concurrent
+// animations and are idle for more than 90% of their span — a combat animates for 3.3 of 30 seconds. The one sizing
+// case is a reshuffle at 46 concurrent tweens + 30
+// concurrent flights (78 combined), of which most hints are `modulate:a`. So: `nextDeadline()` returns
 // Infinity the moment nothing is armed (the caller parks completely), every sweep is O(active) and not O(scene) —
 // `noteStreamedValue` fast-outs on a node the loop has never heard of, which is what lets the caller feed it
 // everything it paints — and the alpha channels never touch the matrix math.
@@ -258,7 +258,7 @@ export interface TweenLoopOptions {
    */
   clockOriginMs?: number;
   /**
-   * WHO OWNS A VISIBLE LOOP'S CADENCE (R4). `"frame"` — the default, and every pre-R4 caller — makes a visible
+   * WHO OWNS A VISIBLE LOOP'S CADENCE. `"frame"` — the default, and every earlier caller — makes a visible
    * pinned loop publish `nowMs` from `nextDeadline`, i.e. "wake me next display frame", which is the only honest
    * answer for a source with no endpoint when the loop IS the animator.
    *
@@ -279,7 +279,7 @@ export interface TweenLoopOptions {
    */
   currentTransform?: (nodeId: string, out: number[]) => boolean;
   /**
-   * R5 T-DR4 — MAY THIS FLIGHT DRIVE ITS COMET ROOT? Answered by the renderer, per flight, at arm time.
+   * MAY THIS FLIGHT DRIVE ITS COMET ROOT? Answered by the renderer, per flight, at arm time.
    *
    * ABSENT MEANS NO, and that is the contract: without it this module behaves exactly as it did before the
    * drive existed, so every spec that predates it is untouched by construction.
@@ -362,7 +362,7 @@ interface NodeState {
   selfOpacity: AlphaChannel | null;
   flight: FlightState | null;
   /**
-   * R5 T-DR4 — this node is a comet ROOT following the flight owned by the card with this id. Null for every
+   * This node is a comet ROOT following the flight owned by the card with this id. Null for every
    * other node in the map, which is all of them but one per flight.
    */
   flightRootOf: string | null;
@@ -556,7 +556,7 @@ export interface TweenLoop {
   transformChannelTiming(nodeId: string, nowMs: number): { durationMs: number; ease: string | null; trans: string | null } | null;
 
   /**
-   * R5 T-DR4 — how many card flights have PLACED their comet root at least once (see `canDriveTrailRoot`).
+   * How many card flights have PLACED their comet root at least once (see `canDriveTrailRoot`).
    * Cumulative for the loop's life; a census row, not a per-frame number.
    */
   trailRootDrives(): number;
@@ -605,7 +605,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
   const nodes = new Map<string, NodeState>();
 
   /**
-   * R5 T-DR4 — comet roots this loop has actually PLACED, counted once per flight rather than once per frame.
+   * Comet roots this loop has actually PLACED, counted once per flight rather than once per frame.
    *
    * The census needs it because every other trail number can read zero for a healthy screen: a flight is over
    * in a second and a half, and "the drive never ran" and "nothing has flown recently" would otherwise produce
@@ -675,7 +675,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
   }
 
   /**
-   * `scaleOverride` is R5 T-DR4's one difference from the card's own sample: the comet root takes the flight's
+   * `scaleOverride` is the comet root's one difference from the card's own sample: the comet root takes the flight's
    * POSITION and FACING at scale 1, never the card's pop/shrink. The ribbons carry their own authored widths,
    * so folding the card's scale in here would breathe the whole comet in and out with the card. (The DOM path
    * writes the same thing, at `mirrorRenderer.writeTrailRootTransform`.)
@@ -1086,7 +1086,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
         node.transform = null;
         node.pendingTransform = null;
         node.pendingTransformBaseline = null;
-        // R5 T-DR4 — ARM THE COMET ROOT AS A FOLLOWER of this same flight.
+        // ARM THE COMET ROOT AS A FOLLOWER of this same flight.
         //
         // WHY THE ROOT NEEDS DRIVING AT ALL. A client that declares `trailDrive` tells the host it will place
         // the comet root itself, and the producer then STOPS streaming that root's transform — which is the
@@ -1151,7 +1151,7 @@ export function createTweenLoop(options: TweenLoopOptions = {}): TweenLoop {
       refreshNode(node, nowMs);
       let mask = SAMPLE_NONE;
 
-      // THE COMET ROOT FIRST (R5 T-DR4). A follower has no channels of its own — the branches below would all
+      // THE COMET ROOT FIRST. A follower has no channels of its own — the branches below would all
       // decline — but the precedence is stated rather than relied on: while a flight is placing this root,
       // nothing else may.
       const following = liveFlightFor(node, nowMs);

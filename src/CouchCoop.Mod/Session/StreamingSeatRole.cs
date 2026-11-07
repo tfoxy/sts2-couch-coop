@@ -33,8 +33,7 @@ namespace CouchCoop.Mod.Session;
 /// The capture loads at mod init, below the seat's cloud-save guard and above the command-line override that lets
 /// a seat join — the capture's "modder route". It arms there, before the game's first scene exists; the capture's
 /// own adoption (<c>GRC_ADOPT=arm</c>) is what covers anything created before it armed. Its <c>GRC_*</c>
-/// environment is the capture's contract, documented in godot-scene-web
-/// (<c>experiments/render-stream/protocol/gate8-product-handoff.md</c>), not read here.
+/// environment is the capture's contract, documented in godot-scene-web, not read here.
 /// </para>
 /// </remarks>
 internal static class StreamingSeatRole

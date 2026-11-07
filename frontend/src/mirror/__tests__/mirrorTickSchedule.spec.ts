@@ -13,7 +13,7 @@ import { resolveRenderQuality, __setRenderQualityForTest } from "@/render/qualit
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 import type { LoadedSpineClip } from "@/mirror/spineClip";
 
-// WS-B — the renderer's animation loop is DEADLINE-SCHEDULED, not a free-running 60Hz rAF poll. These specs drive a
+// The renderer's animation loop is DEADLINE-SCHEDULED, not a free-running 60Hz rAF poll. These specs drive a
 // FULLY SIMULATED browser clock (performance.now + setTimeout + a 60Hz rAF/vsync) so "how many times did the loop
 // actually run per second" is an exact, assertable number:
 //
@@ -124,7 +124,7 @@ function fakeClip(): LoadedSpineClip {
 
 const drawImage = vi.fn();
 const clearRect = vi.fn();
-// save/restore/translate/scale: the R10-B1 intent STRIP paints each cell under a canvas transform.
+// save/restore/translate/scale: the intent STRIP paints each cell under a canvas transform.
 const fakeCtx = {
   drawImage,
   clearRect,
@@ -344,7 +344,7 @@ describe("mirror animation-loop scheduling (WS-B)", () => {
     single.renderer.dispose();
   });
 
-  // R10-B1 — THE point of the compositor glyph path: on an idle screen whose only animator was the intent
+  // THE point of the compositor glyph path: on an idle screen whose only animator was the intent
   // cycling, the loop is now fully parked. The A4 idle baseline measured the old path waking 30-37×/s and every
   // wakeup forcing a full main frame (~7.1ms desktop / ~20.2ms at 6× CPU throttle).
   it("an enemy-intent glyph adds ZERO tick wakeups (compositor path, default)", async () => {

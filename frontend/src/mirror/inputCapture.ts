@@ -13,7 +13,7 @@
 //     DOM backend) and inverts its map — the same per-frame probe cost the old element-addressed hover path paid,
 //     now producing a plain coordinate.
 //
-// M0 — WHERE THE HIT TESTS LIVE. This module asks two questions about what is DRAWN at a point ("which widget is
+// WHERE THE HIT TESTS LIVE. This module asks two questions about what is DRAWN at a point ("which widget is
 // under this finger", "which painter anchors this pixel") and both are answered by the renderer (touchStackAt /
 // spreadPainterAt), never by reading the DOM here. On the DOM backend those ARE the walks this file used to run
 // inline, so nothing about the resolved coordinate changed; a canvas stage answers them from its own draw list.
@@ -26,8 +26,8 @@
 // for exact drop targeting, then clears the freeze.
 //
 // HOVER-PROBE MEMO: outside any gesture, a plain hover flush on a widened stage still paid a fresh elementsFromPoint
-// walk on EVERY flush (up to one per rAF, ~60/s while the mouse moves) — measured at 341ms over an 18.9s live
-// combat trace. A hover within HOVER_REPROBE_PX / HOVER_REPROBE_MS of the last fresh probe now replays that
+// walk on EVERY flush (up to one per rAF, ~60/s while the mouse moves) — a large share of
+// a live combat trace. A hover within HOVER_REPROBE_PX / HOVER_REPROBE_MS of the last fresh probe now replays that
 // probe's field affine with pure math instead (see hoverCoord) — a milder, self-correcting version of the same
 // staleness the gesture freeze already accepts for a whole held drag. Press/release/wheel/tap/peek always resolve
 // fresh (see designCoord) and refresh the memo for free; the memo itself is invalidated alongside the cached
@@ -83,7 +83,7 @@ export interface InputCapture {
   focusTarget(id: string, gameX: number, gameY: number, markReady?: boolean): void;
   /** Clears only the programmatic readiness above; the user's ordinary tap-to-focus arm is untouched. */
   clearProgrammaticFocus(): void;
-  // R10 WS-F — the stage-geometry invalidation SEAM. The cached stage rect (see stageRect) used to be dropped only on
+  // The stage-geometry invalidation SEAM. The cached stage rect (see stageRect) used to be dropped only on
   // a window `resize`/`scroll`, but the stage can be re-sized and re-scaled with NEITHER: toggling the widescreen
   // STRETCH setting rewrites `design.w` + the letterbox `scale` from a computed, and a frame-only ResizeObserver
   // (a sibling panel opening) does the same. The stale rect then mis-maps EVERY pointer — a pure linear X error, so
@@ -125,8 +125,8 @@ const TOUCH_TAP_SLOP_CSS_PX = 10;
 const TWO_FINGER_CANCEL_DESIGN = 24;
 
 // One hit-stack probe's verdict about a point (see touchTargetsAt). `ids` + `blocked` are the long-standing §3
-// tri-state; `blockKind` and `topStamp` are R21's answer to "WHICH widget is spoken for here", which the scrollbar
-// claim needs and a boolean cannot carry. M0: the SHAPE now lives with the renderer that produces it
+// tri-state; `blockKind` and `topStamp` answer "WHICH widget is spoken for here", which the scrollbar
+// claim needs and a boolean cannot carry. The SHAPE now lives with the renderer that produces it
 // (mirrorRenderer.TouchStack) — this alias keeps every reference in this file (and its `TouchHits["blockKind"]`
 // index reads) spelled exactly as before.
 type TouchHits = TouchStack;
@@ -144,8 +144,8 @@ const WHEEL_STEP_DESIGN = 56;
 // for at most HOVER_REPROBE_MS / HOVER_REPROBE_PX of plain mouse travel, so a hover can't drift far from what a
 // fresh probe would say before the next flush (or any press/release/wheel/tap/peek, which all resolve fresh and
 // refresh the memo for free — see resolveSent) corrects it.
-// R10-PERF6 WS-P1 — WIDENED (24/120 → 64/250, `?hoverReprobePx=`/`?hoverReprobeMs=` restore either). A phone trace
-// of a map scroll still measured 32.6ms of `elementsFromPoint` from plain hover flushes alone. The memo only ever
+// WIDENED (24/120 → 64/250, `?hoverReprobePx=`/`?hoverReprobeMs=` restore either). A phone trace
+// of a map scroll showed `elementsFromPoint` from plain hover flushes alone costing tens of ms. The memo only ever
 // covers a PLAIN MOVE: every press / release / wheel / tap / peek resolves FRESH (see resolveSent) and refreshes
 // the memo, so a widened bound can never carry a stale field into a gesture — the worst case is a hover that keeps
 // the previous painter's field for another 40px of drift, which is a HIGHLIGHT landing on the neighbouring rect
@@ -170,9 +170,9 @@ const DRAG_REPROBE_MS = 90;
 // A single finger held STILL on a HAND card for this long (ms) becomes a "peek": focus + raise, no play on release.
 // Exported so tests can drive the fake-timer clock by the real threshold rather than a magic number.
 export const PEEK_MS = 100;
-// R1: a single finger held STILL on a NON-hand card (reward / shop card / card-grid card) for this long (ms) becomes
+// A single finger held STILL on a NON-hand card (reward / shop card / card-grid card) for this long (ms) becomes
 // the #13 long-press RIGHT-CLICK — its OWN, longer threshold than PEEK_MS so an ordinary lingering reward-screen tap
-// can't accidentally register as a long-press. R6 (user request): retuned 500→300ms for a snappier long-press; still
+// can't accidentally register as a long-press. Retuned from 500 to 300ms for a snappier long-press; still
 // comfortably longer than the 100ms hand-card peek. Native twin: GestureOptions.DefaultLongPressMs.
 export const LONG_PRESS_MS = 300;
 // A peek release un-focuses by hovering this many DESIGN px straight up from the finger (reliably above the whole
@@ -182,7 +182,7 @@ export const LONG_PRESS_MS = 300;
 // tap lands on a card. 846 is the top of the resting hand; a focused/selected card pops ABOVE it, so the two-step
 // focus-tap and press-tap (which land on the popped-up card, above the line) are unaffected. `?unselectY=`.
 const UNSELECT_ZONE_Y = 846;
-// R16: milliseconds after a widget ARMS within which a re-tap of the SAME widget is treated as an accidental
+// Milliseconds after a widget ARMS within which a re-tap of the SAME widget is treated as an accidental
 // double-tap (finger bounce) and swallowed (no click; stays armed) rather than committing. Native twin:
 // GestureOptions.DefaultTapArmDebounceMs.
 const TAP_ARM_DEBOUNCE_MS = 200;
@@ -197,7 +197,7 @@ const TAP_ARM_DEBOUNCE_MS = 200;
 // anchors the map, so mapPointerToGame's uniform-squeeze fallback drops the centred content's spread shift and the
 // resulting game X lands inside the stamp's ScaledBox anyway. No native twin — native's
 // InverseRemap already tests the RAW design point against spread-folded boxes (see viewScaleInverse's header).
-// R19 6a: the SQUEEZE RENDERED-BOX GATE (default ON) — the same guard as `?viewScaleRenderedGate`, one layer up, on
+// The SQUEEZE RENDERED-BOX GATE (default ON) — the same guard as `?viewScaleRenderedGate`, one layer up, on
 // the plain interactive rects. A point the anchor map resolved through the UNIFORM SQUEEZE has the near-miss pass
 // suppressed (nearMissApplies) and is sent verbatim, which let a hover/drag over EMPTY wide-stage space right of the
 // map legend resolve into a legend row's game rect. When ON, such a point is ejected from the single rect it
@@ -207,11 +207,11 @@ const TAP_ARM_DEBOUNCE_MS = 200;
 // inside a confirm-eligible widget's TRUE game box (touch.confirmTapAt) is withheld and downgraded to the
 // focus+button pair — one choke point instead of a guard per gesture branch, so no branch (present or future)
 // can commit an irreversible choice with a bare tap or a slop-reclassified drag. Web-only: there is no native twin.
-// T2 (2026-08-27) — THE MOUSE DRAG-DROP CANCEL (default ON), i.e. the touch leg's below-line right-click, on the
+// THE MOUSE DRAG-DROP CANCEL (default ON), i.e. the touch leg's below-line right-click, on the
 // mouse leg, where the same gesture had no cancel at all.
 //
 // THE BUG. The game's cancel for a card being targeted is a ZONE, not an event: it polls its own cursor and
-// cancels once the cursor comes back down into the bottom band of the viewport (measured live: the bottom 5%,
+// cancels once the cursor comes back down into the bottom band of the viewport (the bottom 5%,
 // i.e. game y > 1026 at 1080). The mirror's cursor is whatever coordinate this client last sent — and
 // readable-hand mode draws the whole hand ~119px ABOVE where the game has it. So a player who drags a card up
 // into the play area and drops it back onto the DRAWN hand sends a Y about a lift short of the band, and the
@@ -219,7 +219,7 @@ const TAP_ARM_DEBOUNCE_MS = 200;
 // next click is eaten by the targeting. Whether the drop reaches the band today is down to luck — the raise
 // inverse only un-maps a pixel a raised card's drawn box claims, and the drag's frozen correction only survives
 // inside RAISE_DRAG_FADE_PX of the grab — so dropping the card back exactly where it was picked up cancels and
-// dropping it a few hundred px along the fan does not. Measured live 2026-08-27 (mouse-1920-off, H9): drop at
+// dropping it a few hundred px along the fan does not. For example: drop at
 // design (1560,998) → sent y 1078 → cancels; the same gesture dropped at (1300,998) → sent y 998 → the arrow
 // stays up, and the next two hovers go out at exactly the right coordinates and focus a card they are not on.
 //
@@ -300,17 +300,17 @@ export function createInputCapture(
     // eligible, i.e. the feature is off.
     confirmTapAt?: (gameX: number, gameY: number) => ConfirmTapHit | null;
   } = {},
-  // FIX 3 (R7): the renderer's live GAME-space view-scale input registry (mirrorRenderer.viewScaleInputStamps). Read
+  // The renderer's live GAME-space view-scale input registry (mirrorRenderer.viewScaleInputStamps). Read
   // FRESH on every resolved point (a live read of the per-drain cache — never snapshotted, so it tracks the latest
   // drain) so a hover/tap over an enlarged view-scale item (an ancient-event option, a reward/shop item) maps back
   // onto its true hit box. Absent / empty = no view-scale screen ⇒ the inverse is identity ⇒ input byte-identical.
   viewScaleInputStamps?: () => ViewScaleInputStamp[],
-  // R10 WS-E — the EAGER SCROLL engine (eagerScroll.ts). Absent ⇒ every scroll goes straight upstream and every
+  // The EAGER SCROLL engine (eagerScroll.ts). Absent ⇒ every scroll goes straight upstream and every
   // resolved coordinate is untouched. Present, it gets first refusal on a wheel tick (it owns the coalesced send
   // when a scrollable claims the point), owns one-finger PAN over a scrollable, and compensates every resolved
   // point for the local-vs-streamed offset.
   eagerScroll?: EagerScroll,
-  // R11 WS-M — MAP-NODE TRAVEL. Offered every TAP (touch tap end / a click-like mouse release) BEFORE the click is
+  // MAP-NODE TRAVEL. Offered every TAP (touch tap end / a click-like mouse release) BEFORE the click is
   // sent: it answers true when the point is a map point and the tap was routed as the `select-map-node` semantic
   // action instead (see mapNodeTap.ts, which owns the whole decision — kill-switch, armed drawing tool, resolution).
   // A coordinate click on a map point is a documented no-op in the game, which is exactly why the tap has to leave
@@ -322,7 +322,7 @@ export function createInputCapture(
   // the card USED to occupy, because the mirror's Y is otherwise a strict 1:1. Absent / empty (mode off, hand
   // lowered for a drag, not in combat) ⇒ identity ⇒ input byte-identical. See raiseInverse.ts.
   raiseInputStamps?: () => RaiseInputStamp[],
-  // M0 — THE RENDERER'S INPUT PROBES. "Which widget is under this finger" and "which painter anchors this pixel"
+  // THE RENDERER'S INPUT PROBES. "Which widget is under this finger" and "which painter anchors this pixel"
   // are questions about what was DRAWN, so they are asked of whatever backend drew it (mirrorRenderer's
   // touchStackAt / spreadPainterAt); MirrorView passes the live renderer. The default is the DOM backend's own
   // implementation of the same two walks — the exact code this file used to run inline — so an unwired caller (a
@@ -347,7 +347,7 @@ export function createInputCapture(
   let heldButton: "left" | "right" | "middle" | null = null;
   let heldPointerId: number | null = null;
   let mouseLastClient: { x: number; y: number } | null = null;
-  // R11 WS-M — the LEFT mouse press's client point (null when no left button is down). The release compares against
+  // The LEFT mouse press's client point (null when no left button is down). The release compares against
   // it so only a CLICK (not a map pan / a card drag) can route a map-node tap.
   let mouseDownClient: { x: number; y: number } | null = null;
   // T2 — the three press-time facts the mouse DROP-CANCEL needs at the release, frozen at the press for the same
@@ -363,24 +363,24 @@ export function createInputCapture(
   let mouseDragStartDesignY = 0;
   let mouseHandCardPress = false;
   let mouseDragged = false;
-  // R11 WS-S §5: the LEFT press of this mouse gesture was deliberately not sent (an eager grid scroll owns it), so
+  // The LEFT press of this mouse gesture was deliberately not sent (an eager grid scroll owns it), so
   // the release must not send a `pressed:false` either — see onPointerDown/onPointerUp.
   let pressWithheld = false;
   // While a gesture (a held mouse button / a classified touch drag) is underway, the field AFFINE is FROZEN to the
   // value resolved at the press: drag-motion hovers then replay `a·designX + b` with pure math so a drag never
   // re-probes the DOM and the dragged content can't drag the cursor's own map away. Null = no gesture.
   let frozenAffine: FieldAffine | null = null;
-  // R19 6a — was the press point SQUEEZE-resolved? Frozen alongside the affine because the affine alone cannot say:
+  // Was the press point SQUEEZE-resolved? Frozen alongside the affine because the affine alone cannot say:
   // a drag begun on a proportional CARD deliberately freezes the whole-world squeeze field too (so the world spreads
   // under the finger), and there the squeeze IS the right answer — the pointer is on real content. Only a press the
   // map could not anchor to a specific painter (dead stage space, or the oversized parallax backdrop) is
   // "unanchored", and only that one needs the rendered-box gate on its replayed frames.
   let frozenSqueezed = false;
-  // R10 WS-F — the OTHER half of the same freeze. The field affine alone did NOT freeze the whole mapping: every
+  // The OTHER half of the same freeze. The field affine alone did NOT freeze the whole mapping: every
   // drag-motion frame still re-tested the LIVE view-scale registry (applyViewScaleInverse), so a stamp whose
   // ScaledBox the drag crossed took over mid-gesture and stepped the sent X by (1−1/k)·(distance from the stamp's
-  // pivot) in ONE frame — measured 67.6 design px at 2520x1080 and 66.7 at 1920x1080 while dragging across a combat
-  // board (scripts/probe-targeting-drag-jump.mjs). The claim is now decided ONCE, at the press, and replayed:
+  // pivot) in ONE frame — a jump of tens of design px while dragging across a combat
+  // board. The claim is now decided ONCE, at the press, and replayed:
   //   null            no gesture is frozen (fresh resolves consult the live registry, as always)
   //   []              the press was claimed by NO stamp ⇒ this gesture never remaps — the case that covers every
   //                   targeting drag (a hand card is never view-scaled), and the one that kills the jump
@@ -418,11 +418,11 @@ export function createInputCapture(
   // game draws the targeting arrow at the coordinate it is sent, so the arrow trails the finger by a constant
   // 119px. That is the reported "the arrow doesn't follow my finger".
   //
-  // Measured live (2026-08-25, own instance, 1920x1080), pressing the middle card with no prior
+  // Observed live, pressing the middle card with no prior
   // hover: stamps [-119 x 9], pointer design y 361, sent y 480 — err +119 held flat over ten drag samples out to
   // 700px of travel. The SAME gesture after a 700ms hover (which focuses the card, so the game has already pulled
   // it up and its stamp dy is 0) sent y 361 — err 0. A mouse user usually hovers before pressing, which is why this
-  // hid for three rounds; a finger never does.
+  // is easy to miss; a finger never does.
   //
   // WHY A TRAVEL RAMP AND NOT "zero it when the hand lowers". Zeroing on the lift is the more direct truth, but the
   // lift is a LOGICAL flag that flips in one frame while the cards slide down over ~140ms — so keying on it
@@ -460,7 +460,7 @@ export function createInputCapture(
   let hoverProbe: { clientX: number; clientY: number; at: number; affine: FieldAffine; designWidth: number } | null =
     null;
 
-  // WS-2 drag-probe memo (see DRAG_REPROBE_DESIGN/MS): where + when the drag-into-card latch last ran its
+  // Drag-probe memo (see DRAG_REPROBE_DESIGN/MS): where + when the drag-into-card latch last ran its
   // elementsFromPoint hit test. Null = no probe held (a fresh gesture, or an endpoint cleared it).
   let dragProbe: { clientX: number; clientY: number; at: number } | null = null;
 
@@ -495,7 +495,7 @@ export function createInputCapture(
     lastY: number; // latest client Y
     ids: string[]; // hover-first widget ids under the finger at touchdown, topmost first (empty = none)
     blocked: boolean; // a data-touch-block widget covered the press point (see touchTargetsAt's tri-state)
-    // R21: the same probe's two scrollbar facts, frozen with `ids`/`blocked` (same walk, same instant) — the eager
+    // The same probe's two scrollbar facts, frozen with `ids`/`blocked` (same walk, same instant) — the eager
     // offer at drag classification is made a gesture later and must not re-probe (the phone-CPU rule) nor answer
     // from a stack the finger has since moved across.
     blockKind: TouchHits["blockKind"];
@@ -558,7 +558,7 @@ export function createInputCapture(
   // goes, the player touches elsewhere, or the settle flow gives up. Kept armed past its focus, it would make a
   // row that merely needs re-focusing take itself on the next tap.
   let programmaticFocusedRootId: string | null = null;
-  // R16: the nowMs at which armedRootId was last (re)armed — a re-tap of the SAME widget within
+  // The nowMs at which armedRootId was last (re)armed — a re-tap of the SAME widget within
   // TAP_ARM_DEBOUNCE_MS of THIS timestamp is treated as an accidental double-tap (see onTouchUp's commit branch).
   // Only meaningful alongside a non-null armedRootId. Native twin: GestureMachine._armedAtMs.
   let armedAtMs = 0;
@@ -633,7 +633,7 @@ export function createInputCapture(
     return null;
   }
 
-  // R21 — what the two eager-scroll offers need out of the ONE hit-stack probe a press pays for:
+  // What the two eager-scroll offers need out of the ONE hit-stack probe a press pays for:
   //   `blocked`   — for the §3 tri-state, and `blockKind` for the one caller that must tell a BUTTON's "this press
   //                 is spoken for" from a SCROLLBAR's (a bar that refuses a press must not also veto the content
   //                 claim, or the press falls through to the game's own scrollbar);
@@ -679,7 +679,7 @@ export function createInputCapture(
     return false;
   }
 
-  // R11 WS-M: has the mouse travelled past the TAP slop since its press? Measured in DESIGN px against the same
+  // Has the mouse travelled past the TAP slop since its press? Measured in DESIGN px against the same
   // DRAG_THRESHOLD_DESIGN the touch path classifies a drag with, so the same physical travel means the same thing on
   // a phone and on a desktop. A degenerate stage rect reads as "no travel" (there is nothing to scale by).
   function movedPastTapSlop(from: { x: number; y: number }, clientX: number, clientY: number): boolean {
@@ -810,7 +810,7 @@ export function createInputCapture(
   // hover — it never drops or reorders a click, so a hover enqueued after a click keeps click→hover order and
   // cannot suppress the click.
   //
-  // R13: park at the RESOLVED screen CENTER, not directly below the button (the old (centerX, maxY + 24) point) —
+  // Park at the RESOLVED screen CENTER, not directly below the button (the old (centerX, maxY + 24) point) —
   // a below-button park still sat close enough to the button's box that its long-press HoverTip could re-arm and
   // linger after the turn ends. Screen center reuses the SAME pattern as the peek-release un-focus (unfocusCenter):
   // the stage-center CLIENT point routes through designCoord (the resolver), whose fraction 0.5 reconstructs the
@@ -837,7 +837,7 @@ export function createInputCapture(
   // re-layout each frame. The rect only changes on window resize / page scroll / fullscreen (all of which the
   // ResizeObserver-driven scale also follows), so we cache it and invalidate on those events instead.
   let cachedRect: DOMRect | null = null;
-  // R10 WS-F: the design width the cached rect was measured under. A stretch toggle changes the design box AND the
+  // The design width the cached rect was measured under. A stretch toggle changes the design box AND the
   // letterbox scale with no window event at all, so the cache SELF-HEALS on that change even if a caller forgets the
   // explicit seam below (the same self-invalidation the hover-probe memo already carries).
   let cachedRectDesignWidth = 0;
@@ -852,11 +852,11 @@ export function createInputCapture(
   const invalidateRect = (): void => {
     cachedRect = null;
     hoverProbe = null; // the rect it was taken against is gone — the next hover must re-probe
-    dragProbe = null; // WS-2: same reasoning — its travel bound is measured against that rect
+    dragProbe = null; // same reasoning — its travel bound is measured against that rect
     resetNearMissMemory(); // a new stage geometry ⇒ new bands; a remembered push direction is meaningless
   };
 
-  // FIX 3 (R7): un-map a RESOLVED game point off an enlarged view-scale item's halo onto its true hit box — the web
+  // Un-map a RESOLVED game point off an enlarged view-scale item's halo onto its true hit box — the web
   // twin of native's InputRouter.ToDesign → ViewScaler.InverseRemap, applied ONCE per resolved point (hover/press/
   // drag/release) so every downstream stage (the send + the gesture state) sees the corrected point. Only points
   // inside a stamp's ScaledBox change; outside every ScaledBox (or with the feature off / no view-scale screen up)
@@ -868,7 +868,7 @@ export function createInputCapture(
   // Y is simply the incoming `coordY`: Y is never spread (design Y === game Y at every stage width) and the near-miss
   // pass only ever moves X, so the pre-inverse coordY IS the raw design Y. Omitted (or the gate off) ⇒ no guard ⇒
   // byte-identical to the pre-guard path.
-  // `frozen` (WS-F) replaces the LIVE registry with the gesture's frozen claim (see frozenViewScaleStamps): a held
+  // `frozen` replaces the LIVE registry with the gesture's frozen claim (see frozenViewScaleStamps): a held
   // drag never re-tests stamps it did not press on.
   function applyViewScaleInverse(
     coordX: number,
@@ -934,7 +934,7 @@ export function createInputCapture(
     return { coordX: settled.x, coordY: settled.y };
   }
 
-  // WS-F: which stamp (if any) owns a freshly-resolved point — the claim a press FREEZES for its whole gesture.
+  // Which stamp (if any) owns a freshly-resolved point — the claim a press FREEZES for its whole gesture.
   // Same registry, same false-halo guard the remap itself applies, so freezing the claim can never select a stamp the
   // live path would have refused. Returns null when the feature/registry is off ⇒ the frozen list is empty ⇒ identity.
   function claimViewScaleAt(coordX: number, coordY: number, rawDesignX: number): ViewScaleInputStamp | null {
@@ -949,7 +949,7 @@ export function createInputCapture(
     return claimViewScaleStamp(coordX, coordY, stamps, raw);
   }
 
-  // R10 WS-E — EAGER-SCROLL Y COMPENSATION, applied to a freshly mapped point BEFORE the near-miss and the
+  // EAGER-SCROLL Y COMPENSATION, applied to a freshly mapped point BEFORE the near-miss and the
   // view-scale inverse. The visual-anchor map answers "what is painted here", and while a scrollable is running
   // AHEAD of the host what is painted here is not what the GAME has here: the container carries a cosmetic
   // `translate` of (eager − streamed), so a point inside it must be reported `delta` px back up the content to reach
@@ -961,7 +961,7 @@ export function createInputCapture(
     return eagerScroll ? eagerScroll.compensate(coordX, coordY) : { coordX, coordY };
   }
 
-  // R19 6a — the squeeze rendered-box gate, applied to a resolved coordinate the near-miss pass DID NOT vet. It runs
+  // The squeeze rendered-box gate, applied to a resolved coordinate the near-miss pass DID NOT vet. It runs
   // in exactly the complement of `nearMissApplies(squeezed)`: a squeezed coordinate under the default switches, and
   // never twice (with `?nearmissSqueezeGate=off` the full pass runs there instead and this is inert). Same rect
   // provider, same read-only cached array, no DOM probe — so a held drag can afford it per motion frame too.
@@ -1002,12 +1002,12 @@ export function createInputCapture(
   } {
     const dw = designWidth();
     // The anchor map's one DOM-shaped question — "which painter anchors this pixel" — goes through the renderer
-    // seam (M0). On 16:9 it is never asked at all (mapPointerToGame short-circuits before probing).
+    // seam. On 16:9 it is never asked at all (mapPointerToGame short-circuits before probing).
     const m = mapPointerToGame(clientX, clientY, stageRect(), dw, probes.spreadPainterAt);
     const compensated = eagerCompensate(m.coordX, m.coordY);
     // READABLE-HAND MODE: un-map the cosmetic raise HERE, before the hit-consistency pass — the same reasoning (and
     // the same place in the pipeline) as eagerCompensate above. The pass tests GAME-space rects, so a Y still
-    // carrying the raise has it vetting the point against boxes it is not really over: measured live on a widened
+    // carrying the raise has it vetting the point against boxes it is not really over: observed live on a widened
     // stage, a hover in the revealed band of a raised hand card made THAT CARD'S OWN hitbox read as a near-miss
     // offender (its game box contains the design Y, its rendered box does not) and pushed the sent X clear across
     // the hand — design (1091, 1010) went out as game (280, 1010), so the game focused nothing. `compensated.coordY`
@@ -1047,7 +1047,7 @@ export function createInputCapture(
           coordX = pushOutOfNearMiss(raised.coordX, raised.coordY, m.designX, rects, designY);
         }
       } else {
-        // R19 6a: the pass was suppressed for a squeezed coordinate — the rendered-box gate still holds it to the
+        // The pass was suppressed for a squeezed coordinate — the rendered-box gate still holds it to the
         // ONE invariant the suppression threw away (see squeezeGate / pushOutOfSqueezeMiss).
         coordX = squeezeGate(raised.coordX, raised.coordY, m.designX, m.squeezed, designY);
       }
@@ -1127,7 +1127,7 @@ export function createInputCapture(
   // the DOM or the interactive rects.
   function frozenCoord(clientX: number, clientY: number): { coordX: number; coordY: number } {
     const raw = fieldAffineCoord(clientX, clientY, frozenAffine ?? { a: 1, b: 0 });
-    // R10 WS-E: a held drag inside an eagerly-scrolled container still reports GAME coordinates (see
+    // A held drag inside an eagerly-scrolled container still reports GAME coordinates (see
     // eagerCompensate). The engine exempts the scrollable the drag is PANNING — that gesture's whole point is that
     // the host consumes relative motion, and compensating by an offset that grows with the drag would subtract the
     // scroll from the very deltas producing it.
@@ -1147,7 +1147,7 @@ export function createInputCapture(
       raisedX = Math.min(Math.max(compX + frozenRaiseOffset.x * w, 0), MIRROR_DESIGN_WIDTH);
       coordY = Math.min(Math.max(designY + frozenRaiseOffset.y * w, 0), RAISE_DRAG_MAX_Y);
     }
-    // R19 6a: the frozen replay never ran ANY hit-consistency pass, so a drag whose press the map could not anchor
+    // The frozen replay never ran ANY hit-consistency pass, so a drag whose press the map could not anchor
     // (dead wide-stage space) replayed straight into a differently-shifted widget's game rect for its whole length
     // — the reported bug (dragging right of the map legend dragged the legend). The gate holds the replay to the
     // same invariant a fresh resolve now gets. Keyed on the press's FROZEN squeezed flag, not on the affine: a drag
@@ -1155,7 +1155,7 @@ export function createInputCapture(
     // rect read per motion frame). Costs one read of the cached rect array, no DOM probe.
     let coordX = squeezeGate(raisedX, coordY, raw.designX, frozenSqueezed, designY);
     // FIX 3: drag-motion also un-maps off a view-scale halo (native applies InverseRemap on every event, drags too).
-    // WS-F: through the gesture's FROZEN claim, not the live registry (see frozenViewScaleStamps) — so a stamp the
+    // Through the gesture's FROZEN claim, not the live registry (see frozenViewScaleStamps) — so a stamp the
     // drag merely crosses cannot take the coordinate over mid-gesture.
     return applyViewScaleInverse(coordX, coordY, raw.designX, frozenViewScaleStamps);
   }
@@ -1167,7 +1167,7 @@ export function createInputCapture(
   function memoizedHoverCoord(clientX: number, clientY: number, affine: FieldAffine): { coordX: number; coordY: number } {
     const replayed = fieldAffineCoord(clientX, clientY, affine);
     const designX = replayed.designX;
-    // R10 WS-E: same eager-scroll compensation, at the same place in the pipeline as the fresh resolve — a memoized
+    // Same eager-scroll compensation, at the same place in the pipeline as the fresh resolve — a memoized
     // hover must report the same GAME point a fresh probe at that pixel would.
     const { coordX: rawX, coordY: designY } = eagerCompensate(replayed.coordX, replayed.coordY);
     // …and the raise inverse in the same place as the fresh resolve, for the same reason it has to be BOTH: the memo
@@ -1183,7 +1183,7 @@ export function createInputCapture(
         coordX = pushOutOfNearMiss(raised.coordX, raised.coordY, designX, rects, designY);
       }
     } else {
-      // R19 6a: and the same rendered-box gate in the suppressed case, for the same reason it is in resolveSent.
+      // And the same rendered-box gate in the suppressed case, for the same reason it is in resolveSent.
       coordX = squeezeGate(raised.coordX, raised.coordY, designX, isSqueezeAffine(affine), designY);
     }
     const settledRaise = settleRaiseAfterCanonicalX(coordX, raised);
@@ -1234,9 +1234,9 @@ export function createInputCapture(
       squeezed
     } = resolveSent(clientX, clientY, touchClaim);
     frozenAffine = affine;
-    frozenSqueezed = squeezed; // R19 6a: the press decided "unanchored", and every replayed frame inherits it
+    frozenSqueezed = squeezed; // the press decided "unanchored", and every replayed frame inherits it
     resetNearMissMemory(); // a press starts a fresh band walk (the hover that preceded it doesn't govern it)
-    // WS-F: freeze the view-scale question too — the claim (or its absence) decided HERE governs every drag-motion
+    // Freeze the view-scale question too — the claim (or its absence) decided HERE governs every drag-motion
     // frame of this gesture. Decided from the same pre-inverse point the resolve above used, so the freeze and the
     // press event can never disagree.
     const claim = claimViewScaleAt(preCoordX, preCoordY, designX);
@@ -1260,23 +1260,23 @@ export function createInputCapture(
     frozenRaiseOffset = null;
     frozenRaisePress = null;
     resetNearMissMemory(); // ditto on release — the post-gesture hover decides its own direction
-    // R10 WS-E: a gesture freeze and an eager PAN are armed and cleared together — both are "this held gesture owns
+    // A gesture freeze and an eager PAN are armed and cleared together — both are "this held gesture owns
     // the mapping", and a pan outliving its gesture would keep exempting taps from compensation.
     eagerScroll?.endPan();
   }
 
-  // R11 WS-S (live-found): the RELEASE is the gesture's last position, and the host gets it — its own relative
+  // The RELEASE is the gesture's last position, and the host gets it — its own relative
   // chain (press → motions → release) ends there. So the eager offset must be taken there too. Without this the
   // tail of a gesture (every pointermove queued but not yet flushed when the pointer went up, which on a slow
   // frame is most of a fast flick) went UPSTREAM but never locally, and the content jumped by that tail the moment
-  // the host's answer landed: measured at 114 design px on a live map flick at 1280x720.
+  // the host's answer landed: over a hundred design px on a live map flick.
   function feedPanRelease(coordY: number): void {
     if (eagerScroll?.panActive()) {
       eagerScroll.panTo(coordY);
     }
   }
 
-  // R10 WS-E / R11 WS-S §5: offer the gesture just classified to the eager engine, with what only WE can see about
+  // Offer the gesture just classified to the eager engine, with what only WE can see about
   // the press point (the DOM hit stack). The engine owns the decision — which scrollable, which kind, what the
   // player is doing — and answers whether the semantic scroll action owns the gesture.
   function maybeBeginPan(
@@ -1289,7 +1289,7 @@ export function createInputCapture(
     }
     return eagerScroll.beginPan(pressCoord.coordX, pressCoord.coordY, {
       ids: hits.ids.length,
-      // R21: a SCROLLBAR's own block stamp no longer vetoes the CONTENT claim. It used to, and between it and the
+      // A SCROLLBAR's own block stamp no longer vetoes the CONTENT claim. It used to, and between it and the
       // bar claim's own (narrower) gates sat points claimed by nobody: the press went upstream at a coordinate the
       // game reads as its scrollbar, so the game's bar took a gesture the client had just decided was not the bar's.
       // A press the bar genuinely owns is refused by the zone test instead (see eagerScroll.barOwnsPoint).
@@ -1322,7 +1322,7 @@ export function createInputCapture(
       }
     }
 
-    // R10 WS-E: feed an armed PAN the finger's live position, so the container follows it on THIS frame rather than
+    // Feed an armed PAN the finger's live position, so the container follows it on THIS frame rather than
     // on the frame the host's motion comes back. The coordinate is the one about to be SENT — for a pan, the engine
     // suppresses its own compensation (the host consumes relative motion), so the two can never disagree.
     if (eagerScroll?.panActive()) {
@@ -1351,7 +1351,7 @@ export function createInputCapture(
       !twoFinger &&
       coord.coordY >= UNSELECT_ZONE_Y &&
       [...touchPointers.values()].some((p) => p.pressed && !p.ignore) &&
-      // WS-2: skip the forced hit test for a move too small/too recent to have changed which card is under the
+      // Skip the forced hit test for a move too small/too recent to have changed which card is under the
       // finger — the latch simply keeps its current verdict for those frames (see DRAG_REPROBE_DESIGN/MS).
       !dragProbeFresh(x, y)
     ) {
@@ -1463,7 +1463,7 @@ export function createInputCapture(
       // decreasing ⇒ accum < 0) ⇒ wheel-down; fingers DOWN (accum > 0) ⇒ wheel-up. Native twin: EmitTwoFingerWheel.
       if (twoFingerMoved) {
         const centroidY = twoFingerCentroidDesignY();
-        // R11 WS-S §8: over a scrollable the ENGINE owns the gesture — the content follows the fingers 1:1 on this
+        // Over a scrollable the ENGINE owns the gesture — the content follows the fingers 1:1 on this
         // very frame and the semantic action carries its offset. "swallow" is a map with a drawing tool armed:
         // claimed, and deliberately nothing happens.
         if (panClaimWithholdsPress(twoFingerClaim)) {
@@ -1506,7 +1506,7 @@ export function createInputCapture(
       heldTouchCardId = p.handCard ? (p.ids[0] ?? null) : null;
       heldFromProbe = false; // a press GRAB (finger went down ON the card) — sticky, never re-classified
       onHeldCard?.(heldTouchCardId, pressCoord.coordX, pressCoord.coordY, "drag");
-      // R10 WS-E: a one-finger drag that began on NO touch widget, inside a scrollable, is a PAN — the same gesture
+      // A one-finger drag that began on NO touch widget, inside a scrollable, is a PAN — the same gesture
       // the game reads as a scroll drag, since nothing above the container consumed the press. `p.ids` is the
       // press-time hit stack, so this costs no extra probe. The engine also self-verifies: a pan whose streamed
       // offset never moves is abandoned (see eagerScroll's pan proof), which covers the widgets this hit stack
@@ -1555,7 +1555,7 @@ export function createInputCapture(
     heldButton = button;
     heldPointerId = event.pointerId;
     mouseLastClient = { x: event.clientX, y: event.clientY };
-    // R11 WS-M: remember where a LEFT press started, so the release can tell a click from a drag (a left-drag on the
+    // Remember where a LEFT press started, so the release can tell a click from a drag (a left-drag on the
     // map is a pan) before routing a map-node tap. Cleared on release/cancel.
     mouseDownClient = button === "left" ? { x: event.clientX, y: event.clientY } : null;
     // A queued hover would land at the pre-press position; drop it so the press is the first event at this point.
@@ -1567,24 +1567,24 @@ export function createInputCapture(
     mouseDragStartDesignY = pressCoord.coordY;
     mouseHandCardPress =
       button === "left" && pressedRaisedHandCard(pressCoord.preRaiseX, pressCoord.preRaiseY);
-    // R10 WS-E: a LEFT press over a scrollable with nothing under it is the desktop twin of the touch pan — the map
+    // A LEFT press over a scrollable with nothing under it is the desktop twin of the touch pan — the map
     // and the card grids both drag-scroll on left-drag. One `elementsFromPoint` per press (never per frame), and
     // only when the engine is wired at all.
     if (eagerScroll && button === "left") {
-      // R19 WP5 — THE SCROLLBAR STRIP, offered FIRST and on its own terms. A press on the track is a whole gesture
+      // THE SCROLLBAR STRIP, offered FIRST and on its own terms. A press on the track is a whole gesture
       // (jump to that fraction), not the start of a drag, and the strip is stamped `data-touch-block`, so the
       // ordinary offer below would refuse it on the §3 rule.
       // §3 tri-state: a press on a BLOCKING widget (a dialog's sort/back button) is not empty space, whatever the
       // id list says — it must never arm a pan. §5: cards do not disqualify a GRID drag, so the whole hit stack
       // goes to the engine rather than a boolean.
       //
-      // R21: ONE probe now serves BOTH offers (it used to sit behind the `||`'s short-circuit, so a bar claim paid
+      // ONE probe now serves BOTH offers (it used to sit behind the `||`'s short-circuit, so a bar claim paid
       // for none). It has to: the bar claim's own gate is "is the bar what the player is TOUCHING", and only the
       // z-stack can answer that — a card-selection dialog's confirm button is painted over the strip, and every
       // press of it that landed on the strip was being claimed by the bar and thrown away.
       const hits = touchTargetsAt(event.clientX, event.clientY);
       pressWithheld =
-        // R20: the RAW widened-design X goes with the resolved point. On a widened stage the resolve is many-to-one,
+        // The RAW widened-design X goes with the resolved point. On a widened stage the resolve is many-to-one,
         // so the game-space AABB alone claimed a band beside the bar that nothing paints — and a "bar" claim
         // withholds the press, so that false claim DELETED the gesture instead of merely misplacing it. The claim now
         // also needs the pointer to be on the strip as painted (eagerScroll.barOwnsPoint's rendered-box gate). No
@@ -1615,7 +1615,7 @@ export function createInputCapture(
       // Capture is best-effort (e.g. a synthetic event in tests); the gesture still replays.
     }
     pending = null; // drop any queued hover so a stale pre-touch position isn't sent
-    dragProbe = null; // WS-2: the press probes fresh below, and this gesture's first latch probe must too
+    dragProbe = null; // the press probes fresh below, and this gesture's first latch probe must too
 
     // A finger arriving while a drag OR a live peek is already underway (or as a 3rd+ touch) is a stray — never let
     // it produce its own tap/click/right-click. Folding `peeking` in means a second finger during a peek is a stray,
@@ -1682,16 +1682,16 @@ export function createInputCapture(
       pointer.focusedRootIdAtDown = focusedTouchTargetAt(ids, press.coordX, press.coordY);
       pointer.focusedAtDown = pointer.focusedRootIdAtDown !== null;
       touch.noteTouchTarget?.(pointer.focusedRootIdAtDown ?? top ?? null);
-      // R19 WP5 — THE SCROLLBAR STRIP, AT THE PRESS. Touch only offers a gesture to the engine at DRAG
+      // THE SCROLLBAR STRIP, AT THE PRESS. Touch only offers a gesture to the engine at DRAG
       // CLASSIFICATION (8px of travel), which is the wrong moment for a bar: tapping the track is a complete
       // gesture and must move the grid without any travel at all. So the strip — and only the strip, decided by
       // the engine's own geometry, not by anything this layer can see — gets a press-time offer. A claim turns
       // this finger into a scroll gesture outright: no down-edge hover, no peek arm, no press, and the release
       // path's existing `pressed && scrollGesture` branch already knows to emit nothing.
-      // R20: with the RAW widened-design X, so a finger BESIDE the strip on a stretched stage cannot take the claim
+      // With the RAW widened-design X, so a finger BESIDE the strip on a stretched stage cannot take the claim
       // (see eagerScroll.barOwnsPoint) — which on touch is the difference between tapping a card and losing the tap.
       //
-      // R21 — AND THE CLAIM IS DEFERRED, unless the finger came down on the THUMB. The track is ~50 design px at the
+      // AND THE CLAIM IS DEFERRED, unless the finger came down on the THUMB. The track is ~50 design px at the
       // very edge of the frame, which is where a thumb's contact patch lands when it arcs through a swipe: acting on
       // contact turned those swipes into jumps to wherever the finger clipped the bar. Deferred, the gesture decides
       // for itself — a tap commits on release, a swipe hands over to the grid's content (see eagerScroll's
@@ -1782,7 +1782,7 @@ export function createInputCapture(
         const coord = designCoord(p.startX, p.startY, p.raisedHandTouchClaim);
         onHeldCard?.(cardId, coord.coordX, coord.coordY, "peek");
         send({ kind: "hover", ...coord });
-        // R1: the delay itself (below) already picked which leg this timer serves — a hand card's peek always fires
+        // The delay itself (below) already picked which leg this timer serves — a hand card's peek always fires
         // at PEEK_MS, a non-hand card's long-press right-click (the branch above) at the longer LONG_PRESS_MS —
         // using the SAME frozen `pointer.nonHandCard` verdict the branch dispatch reads. Native twin: GestureMachine's
         // FirePeekIfDue split (PeekDeadline armed at nowMs + (NonHandCard ? LongPressMs : PeekMs)).
@@ -1798,10 +1798,10 @@ export function createInputCapture(
     const button = buttonName(event.button) ?? heldButton;
     releaseCapture();
     if (button && pressWithheld) {
-      // §5: no press went out for this gesture, so there is nothing to release. Under the tap slop it was a click
+      // No press went out for this gesture, so there is nothing to release. Under the tap slop it was a click
       // after all — send it whole (press+release in one message, the game runs both).
       //
-      // R19 WP5 EXCEPT a "bar" gesture, which is the one withheld press that was NOT a deferred click: it already
+      // EXCEPT a "bar" gesture, which is the one withheld press that was NOT a deferred click: it already
       // did its whole job at the press (the engine stated the offset the track point names). Sending a click on
       // top would hand the game's own scrollbar a press that jumps it somewhere else again.
       if (
@@ -1835,7 +1835,7 @@ export function createInputCapture(
       }
     }
     pressWithheld = false;
-    // R11 WS-M: a click-like LEFT release (the pointer never travelled far enough to be a map pan) over a map point
+    // A click-like LEFT release (the pointer never travelled far enough to be a map pan) over a map point
     // ALSO sends the travel action. Unlike the touch tap this does NOT replace the press/release pair: the press has
     // already gone out by the time we know the gesture was a click, and swallowing the release would leave a button
     // stuck down in the game. The pair is the same no-op it has always been on a map point, so the action is the
@@ -1860,7 +1860,7 @@ export function createInputCapture(
     clearPeekTimer(p);
     touchPointers.delete(event.pointerId);
     releasePointer(event.pointerId);
-    dragProbe = null; // WS-2: a release resolves fresh — never let a mid-drag verdict outlive the gesture
+    dragProbe = null; // a release resolves fresh — never let a mid-drag verdict outlive the gesture
 
     if (p.ignore) {
       // Stray finger — produced nothing; just tidy up two-finger bookkeeping when the stage clears.
@@ -1884,7 +1884,7 @@ export function createInputCapture(
     }
 
     if (p.pressed && p.scrollGesture) {
-      // §5: an eager grid scroll sent no press, so it sends no release (and none of the drop semantics below apply
+      // An eager grid scroll sent no press, so it sends no release (and none of the drop semantics below apply
       // — nothing was ever picked up). The engine's endPan sends the final semantic offset.
       feedPanRelease(designCoord(event.clientX, event.clientY).coordY);
       pressedRootId = null;
@@ -1974,7 +1974,7 @@ export function createInputCapture(
       return;
     }
 
-    // R11 WS-M: a TAP on a map point travels through the `select-map-node` action instead of a coordinate click
+    // A TAP on a map point travels through the `select-map-node` action instead of a coordinate click
     // (which the game's map input ignores). Checked before anything is resolved/sent, so the routed tap emits no
     // click at all — the down-edge hover already told the game which point is under the finger. Any other tap (and
     // every tap with the feature off / a drawing tool armed) falls through to the unchanged path below.
@@ -2137,7 +2137,7 @@ export function createInputCapture(
       return;
     }
     if (top === armedRootId) {
-      // R16: a re-tap of the armed widget within TAP_ARM_DEBOUNCE_MS of the ARM is an accidental double-tap (finger
+      // A re-tap of the armed widget within TAP_ARM_DEBOUNCE_MS of the ARM is an accidental double-tap (finger
       // bounce) — swallow it: no click, stay armed (armedAtMs is NOT reset, so it keeps measuring from the
       // ORIGINAL arm, not this swallowed tap). Native twin: GestureMachine's commit-branch debounce check.
       if (nowMs() - armedAtMs < TAP_ARM_DEBOUNCE_MS) {
@@ -2180,7 +2180,7 @@ export function createInputCapture(
     const button = heldButton;
     releaseCapture();
     if (pressWithheld) {
-      // §5: nothing was pressed, so nothing is retracted — a cancelled grid scroll is simply over.
+      // Nothing was pressed, so nothing is retracted — a cancelled grid scroll is simply over.
       pressWithheld = false;
       heldButton = null;
       heldPointerId = null;
@@ -2206,11 +2206,11 @@ export function createInputCapture(
     clearPeekTimer(p);
     touchPointers.delete(event.pointerId);
     releasePointer(event.pointerId);
-    dragProbe = null; // WS-2: same endpoint rule as onTouchUp
+    dragProbe = null; // same endpoint rule as onTouchUp
     // Only a drag has a press to retract; a deferred tap / two-finger gesture sent nothing, so emit nothing. The
     // position is stale (capture cancelled), so retract with the FROZEN shift, then clear the freeze.
     if (p.pressed && p.scrollGesture) {
-      clearFreeze(); // §5: nothing was pressed, so nothing is retracted
+      clearFreeze(); // nothing was pressed, so nothing is retracted
     } else if (p.pressed) {
       const releaseCoord = frozenCoord(event.clientX, event.clientY);
       heldTouchCardId = null;
@@ -2246,7 +2246,7 @@ export function createInputCapture(
   // Mouse wheel → a Godot wheel button tick (full press+release, no held mask). One tick per event; large/precise
   // deltas (trackpads) still map to a single tick per event so a flick doesn't flood the socket.
   //
-  // R10 WS-E: over a scrollable (the map, a card grid) the EAGER engine takes the tick instead — it moves the
+  // Over a scrollable (the map, a card grid) the EAGER engine takes the tick instead — it moves the
   // container locally on this very frame and owns the (coalesced, `count`-carrying) upstream send. It refuses
   // anywhere else, where the ordinary single-tick input below remains the only wheel path.
   function onWheel(event: WheelEvent): void {
@@ -2254,7 +2254,7 @@ export function createInputCapture(
       return;
     }
     event.preventDefault();
-    // R21: the RAW widened-design X rides along (a free by-product of the same resolve — see designCoordRaw) so the
+    // The RAW widened-design X rides along (a free by-product of the same resolve — see designCoordRaw) so the
     // engine judges "is this on the scrollbar" by where the strip is PAINTED, the same rule a press gets.
     const { coordX, coordY, designX } = designCoordRaw(event.clientX, event.clientY);
     const coord = { coordX, coordY };
@@ -2303,7 +2303,7 @@ export function createInputCapture(
   window.addEventListener("scroll", invalidateRect, { capture: true, passive: true });
 
   return {
-    // WS-F: the exported stage-geometry seam (see InputCapture.invalidateStageRect). Identical to the resize/scroll
+    // The exported stage-geometry seam (see InputCapture.invalidateStageRect). Identical to the resize/scroll
     // listener's own invalidation — the rect, the hover memo and the drag memo are all measured against that rect.
     invalidateStageRect: invalidateRect,
     focusTarget(id: string, gameX: number, gameY: number, markReady = true): void {

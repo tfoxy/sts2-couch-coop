@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// WS-P2 memoizing scene-identity + text-scale cache (pure, Godot-free). Both the cosmetic animator (bob/spin scoping)
+// Memoizing scene-identity + text-scale cache (pure, Godot-free). Both the cosmetic animator (bob/spin scoping)
 // and the per-label text-scale lookup resolve a node's scene identity via SceneIdentity.Resolve — a parent-chain
 // walk to the owning instanced-scene root — and the text path additionally runs the TextScale table. On a full Apply
 // EVERY node pays that walk (CosmeticAnimator once per node; a text node a second time via TextScale). But a node's
@@ -20,8 +20,8 @@ public sealed class SceneIdentityCache
 {
     // The resolved identity + text metrics for one node id. `File`/`RelPath` are null when the node is not inside any
     // instanced scene (SceneIdentity contract); TextScale is 1.0 and the line-spacing ratios null (neutral) then.
-    // BlockScale is the R6 card block TRANSFORM scale (1.0 = none) MirrorNodeView.FoldCosmetic folds; NudgeYPx is the
-    // R15 vertical-centring nudge (0 = none) TextBuilder.GrowthCenterPlain applies.
+    // BlockScale is the card block TRANSFORM scale (1.0 = none) MirrorNodeView.FoldCosmetic folds; NudgeYPx is the
+    // vertical-centring nudge (0 = none) TextBuilder.GrowthCenterPlain applies.
     public readonly record struct Entry(
         string? File,
         string? RelPath,

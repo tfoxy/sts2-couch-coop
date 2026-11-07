@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Shared parsing for the committed agent config.
 
-`agents/*.md` is the source of truth for Claude Code subagents. Codex and DeepSeek
-Harness need the same markdown as harness-specific configuration, so both generators
-read it through this module instead of keeping private parsers that drift.
+`agents/*.md` is the source of truth for Claude Code subagents, joined by
+`private/agents/*.md` when the private companion is checked out (or linked) at
+`private/`. Codex and DeepSeek Harness need the same markdown as harness-specific
+configuration, so both generators read it through this module instead of keeping
+private parsers that drift.
 
 Stdlib only: the generators run from a fresh checkout before any package install.
 """
@@ -59,12 +61,15 @@ def parse_frontmatter(front: str) -> dict[str, str]:
     return fields
 
 
-def parse_agent(path: str, warn: Warn, *, rewrite_links: bool = True) -> AgentSpec:
+def parse_agent(
+    path: str, warn: Warn, *, rewrite_links: bool = True, link_prefix: str = ""
+) -> AgentSpec:
     """Read one agent markdown file.
 
-    `rewrite_links` drops the one leading `../` from relative links, which is correct
-    for `agents/*.md` because the body is inlined at the repo root. User and local
-    agent files keep their links untouched.
+    `rewrite_links` replaces the one leading `../` of relative links with `link_prefix`:
+    the body is inlined at the repo root, so `agents/*.md` (prefix "") links straight to
+    `docs/…`, and `private/agents/*.md` (prefix "private/") to `private/docs/…`. User and
+    local agent files keep their links untouched.
     """
     with open(path, encoding="utf-8") as fh:
         text = fh.read()
@@ -84,11 +89,40 @@ def parse_agent(path: str, warn: Warn, *, rewrite_links: bool = True) -> AgentSp
         warn(f"{path}: frontmatter name {name!r} does not match the filename")
 
     if rewrite_links:
-        body = LINK_RE.sub("](", body)
+        body = LINK_RE.sub(lambda _m: "](" + link_prefix, body)
     body = body.lstrip("\n").rstrip() + "\n"
     if not body.strip():
         raise AgentError(f"{path}: no body after the frontmatter")
     return AgentSpec(name=name, description=description, body=body, fields=fields)
+
+
+@dataclass
+class AgentSource:
+    path: str
+    link_prefix: str  # what a leading `../` in its links becomes at the repo root
+    private: bool
+
+
+AGENT_DIRS = (("agents", "", False), (os.path.join("private", "agents"), "private/", True))
+
+
+def repo_agent_sources(repo: str) -> list[AgentSource]:
+    """The repo's own agent files: `agents/*.md`, then `private/agents/*.md`, each sorted.
+
+    A private agent named like a public one is still listed; callers keep the first of a
+    name (public wins) and warn about the rest.
+    """
+    out: list[AgentSource] = []
+    for rel, prefix, private in AGENT_DIRS:
+        d = os.path.join(repo, rel)
+        if not os.path.isdir(d):
+            continue
+        out += [
+            AgentSource(os.path.join(d, f), prefix, private)
+            for f in sorted(os.listdir(d))
+            if f.endswith(".md")
+        ]
+    return out
 
 
 def is_inside(root: str, path: str) -> bool:

@@ -84,7 +84,7 @@ internal static class TextOverlayPlannerTests
         // modulate
         EffectiveModulateChainProduct();
 
-        // WS-CRISP R17 fade-in text (tween-owned reveal promotes at the start of its fade, not after settle)
+        // Fade-in text (tween-owned reveal promotes at the start of its fade, not after settle)
         FadeInNoOverridePinnedInvisible();
         FadeInEndpointOnePromotes();
         FadeInEndpointZeroStillInvisible();
@@ -111,8 +111,8 @@ internal static class TextOverlayPlannerTests
         CurrentClipAncestorChangeDemotes();
         CurrentDemotionRevalidationUsesEligibility();
 
-        // WS-EVENTTEXT #14 Leg B (ancient-event option occlusion by the full-screen name banner) — geometry captured
-        // from a LIVE Half-scale replay of the initial Neow ancient event (audit-mprun.ndjson).
+        // Ancient-event option occlusion by the full-screen name banner — geometry captured
+        // from a LIVE Half-scale replay of the initial Neow ancient event.
         CurrentTextBlockerExtentTightensNeowBanner();
         CurrentTextBlockerExtentAbsentKeepsFullWidth();
         CurrentTextBlockerExtentByteIdenticalForFullWidthEntry();
@@ -871,7 +871,7 @@ internal static class TextOverlayPlannerTests
         Check.Close(mod.A, 0.25, "A product = 0.5 × 0.5 × 1.0");
     }
 
-    // ---- WS-CRISP R17 fade-in text ------------------------------------------------------------------------------
+    // ---- Fade-in text ------------------------------------------------------------------------------
 
     // The rest-site fixture: a focused-option DESCRIPTION label under a panel whose alpha the producer has PINNED at 0
     // for the whole tween-owned fade-in. Without the fade-in override the eligibility Invisible check reads that pin.
@@ -914,7 +914,7 @@ internal static class TextOverlayPlannerTests
 
     private static void FadeInOwnNodePinNotPromoted()
     {
-        // Scope contract: R17 targets an ANCESTOR fade (the rest-site option container fading in carries the still-
+        // Scope contract: the override targets an ANCESTOR fade (the rest-site option container fading in carries the still-
         // opaque description). A label whose OWN modulate is pinned at 0 is filtered by the textBearing gate (OwnAlpha
         // ≈0) BEFORE eligibility, so the override cannot promote it — and it need not (its own in-stage alpha animates
         // live via the tween, so it renders mushy-but-visible, never MISSING). Both with and without an override.
@@ -959,7 +959,7 @@ internal static class TextOverlayPlannerTests
     }
 
 
-    // ---- WS-CRISP options --------------------------------------------------------------------------------------------
+    // ---- Options --------------------------------------------------------------------------------------------
 
     // Build a options options object the way the controller does (empty sets when not supplied).
     private static TextOverlayOptions Options(
@@ -1060,7 +1060,7 @@ internal static class TextOverlayPlannerTests
         Check.Equal(h.Planner.LastRejectHistogram.GetValueOrDefault(TextOverlayPlanner.TextReject.Clip), 1, "one Clip reject");
     }
 
-    // WS-COLUMN: a horizontally-stretched clipping ancestor (a deck-dialog ScrollContainer anchored 0..1) renders
+    // A horizontally-stretched clipping ancestor (a deck-dialog ScrollContainer anchored 0..1) renders
     // WIDER than its streamed rect at F≠1 (SpreadRecord.RenderedWidth override). A label near the WIDENED right edge
     // (the last grid column) is inside the TRUE clip region but OUTSIDE the un-widened rect. Without the width override
     // fed to the planner it is falsely Clip-rejected; with it, it promotes. A label past even the widened edge still
@@ -1261,7 +1261,7 @@ internal static class TextOverlayPlannerTests
         Check.That(!rebuild.Contains("lbl"), "not a rebuild — the label is no longer eligible");
     }
 
-    // ---- WS-EVENTTEXT #14 Leg B: ancient-event option occlusion by the name banner ------------------------------
+    // ---- Ancient-event option occlusion by the name banner ------------------------------
     //
     // LIVE-captured geometry (design space, Half render, measurements ON) from the initial Neow ancient event:
     //   * last option "Silken Tress"  id=848088286006  measured candidate box [552,957 1382,1027]
@@ -1373,7 +1373,7 @@ internal static class TextOverlayPlannerTests
         public readonly TextOverlayPlanner Planner = new();
         public readonly Dictionary<string, double> SpreadDx = new(System.StringComparer.Ordinal);
 
-        // WS-COLUMN: per-id anchor-WIDENED rendered width override (SpreadRecord.RenderedWidth; 0/absent = none). Fed
+        // Per-id anchor-WIDENED rendered width override (SpreadRecord.RenderedWidth; 0/absent = none). Fed
         // to Plan/CollectDemotions as spreadWidthOf so the options clip-contains test can widen a stretched clip ancestor.
         public readonly Dictionary<string, double> SpreadWidth = new(System.StringComparer.Ordinal);
 

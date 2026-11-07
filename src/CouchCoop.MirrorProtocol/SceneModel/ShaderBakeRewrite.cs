@@ -3,8 +3,8 @@ using System.Text;
 
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// PURE (Godot-free) gdshader source rewrite for the static-bake "alpha-preserving additive clone" variant
-// (WS-ADDBAKE). An Add-blend SHADER carrier baked into a region's SubViewport must NOT render with its live
+// PURE (Godot-free) gdshader source rewrite for the static-bake "alpha-preserving additive clone" variant.
+// An Add-blend SHADER carrier baked into a region's SubViewport must NOT render with its live
 // `blend_add` (Godot's canvas Add writes src.alpha into the transparent bake target, so the region's premult-over
 // composite would OCCLUDE live content below it instead of ADDING). Instead we render the add carrier into the bake
 // viewport with `blend_premul_alpha` plus a fragment epilogue that folds the additive contribution into RGB and
@@ -14,7 +14,7 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 //
 // Under PMALPHA (src ONE, dst 1-SRC_ALPHA) that accumulates (rgb*a, 0) into the bake target WITHOUT touching dst
 // alpha, so a region texel that is add-only stays (rgb, 0) and its premult-over composite onto the stage is a TRUE
-// additive draw — identical to blend_add's src.rgb*src.a contribution. The micro-leg (WS-ADDBAKE) measured this
+// additive draw — identical to blend_add's src.rgb*src.a contribution. A micro-test measured this
 // identity closing to within RGBA8 rounding (diff 0), including the (1-a_mix) attenuation of an earlier add by a
 // later mix inside the same region.
 //

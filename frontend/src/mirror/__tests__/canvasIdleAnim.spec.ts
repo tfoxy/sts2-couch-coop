@@ -1,4 +1,4 @@
-// THE IDLE-ANIMATION EVALUATOR (R3) — the CSS vocabulary as closed forms.
+// THE IDLE-ANIMATION EVALUATOR — the CSS vocabulary as closed forms.
 //
 // Every assertion here is against the CSS the DOM arm runs, not against this module's own arithmetic: presentation
 // expresses each of these loops as two keyframes plus a timing function, and the forms in `idleAnim.ts` are what

@@ -12,7 +12,7 @@
 // element gets it back. Both scrollables in scope move exactly ONE node:
 //   * the MAP — the `TheMap` Control under the map screen. Its streamed offset eases toward wherever the drag has
 //     asked for, and every path/point/quill-stroke is a DOM DESCENDANT of it, so one translate carries the whole
-//     annotated map (this is the same nesting WS-D's pinned stroke locals rely on);
+//     annotated map (this is the same nesting the pinned stroke locals rely on);
 //   * a CARD GRID — the `ScrollContainer` Control under `card_grid.tscn`: deck / draw / discard / exhaust views.
 //     Same easing, plus row RECYCLING (rows outside the window are not streamed at all), which is why the eager
 //     window is CLAMPED to materialized rows — see `clampEager`.
@@ -29,7 +29,7 @@
 // `count` on a wheel click (see mirrorClient.MirrorInputMessage), folding one frame's notches into ONE message
 // because the host injects exactly one queued input per game-thread turn.
 //
-// R19 WP5 — SCROLL AUTHORITY. Replaying RELATIVE input can never land the game where the player let go, and every
+// SCROLL AUTHORITY. Replaying RELATIVE input can never land the game where the player let go, and every
 // one of the four defects this round fixed is that same fact wearing a different hat:
 //   * wheel travel is QUANTISED at WHEEL_NOTCH_PX, so the sub-notch remainder of a flick is unexpressible;
 //   * the client's grid limit (`viewH − contentH`) is a reconstruction of the game's formula, not the formula;
@@ -103,16 +103,16 @@ export interface EagerScrollTarget {
   // claimed the whole dialog box, so pressing the bar armed a phantom pan that ran the content one way while the
   // host's jump-to-fraction ran it the other, and the 800ms deadline ended it with a snap-back.
   //
-  // R19 WP5: under scroll authority the client has an absolute channel of its OWN, so the strip stops being
+  // Under scroll authority the client has an absolute channel of its OWN, so the strip stops being
   // no-man's-land and becomes a claim of its own kind — see `beginBarPan` / PanClaim "bar". It is still carved out
   // of the wheel/compensation surface (`targetAt`), because those two remain relative.
   //
-  // R21: the box alone no longer decides. It says where the bar COULD be; `barOwnsPoint` decides whether it does —
+  // The box alone no longer decides. It says where the bar COULD be; `barOwnsPoint` decides whether it does —
   // the strip has to be what is painted there (`scrollbarRenderedBox`) and nothing may be painted on top of it
   // (BarPointFacts.occluded). Everywhere else inside the frame is CONTENT, including the pixels of this box the bar
   // turns out not to own, which is what stops a refused claim from falling through to the game's own scrollbar.
   scrollbarBox: EagerScrollBox | null;
-  // R20 — the SAME strip in WIDENED-DESIGN (on-stage) space: `scrollbarBox` shifted right by the bar node's own
+  // The SAME strip in WIDENED-DESIGN (on-stage) space: `scrollbarBox` shifted right by the bar node's own
   // `spreadDx` (Y is never spread). Null exactly when `scrollbarBox` is. This is what `beginBarPan` tests the RAW
   // pointer against, and it exists because a game-space AABB is not a valid hit test on a widened stage: the resolve
   // maps a whole band of raw positions into one game rect, and WHICH band depends on the painter that anchored it.
@@ -126,7 +126,7 @@ export interface EagerScrollTarget {
   // content (the grid takes wheel input across its whole frame, so a gutter point still scrolls). Null ⇒ send at the
   // pointer's own place, which is what the map does: it is one full-screen Control with nothing to aim past.
   //
-  // Why (R11 WS-S §3): over a CARD the injected tick lands on a child that may consume or re-route it, and the
+  // Why: over a CARD the injected tick lands on a child that may consume or re-route it, and the
   // resolved coordinate has to be un-compensated first (the tick must go where the cursor PHYSICALLY is, not where
   // the eager content has moved to) — two uncertainties, both of which vanish when the tick is aimed at a fixed
   // point that belongs to nobody.
@@ -173,11 +173,10 @@ export const SETTLE_DEADLINE_MS = 800;
 // still outstanding (the host clamped at its own limit, or the sent ticks quantized away a trackpad remainder), the
 // eager offset GLIDES the rest of the way instead of snapping.
 //
-// R11 WS-S: the stall window alone is NOT a statement about the host — for the first round trip after a gesture the
-// paint is ALWAYS still, because the answer is in flight. Round 2 armed the glide off that stillness and threw the
-// whole eager offset away ~330ms into a 250ms-RTT gesture, then the delta landed and the map jumped forward again:
-// the "shakes a lot after each scroll" the player reported, measured by scripts/probe-eager-scroll.mjs as a 265px
-// composed-Y excursion. The window is therefore only consulted once the paint has ALREADY moved during this settle
+// The stall window alone is NOT a statement about the host — for the first round trip after a gesture the
+// paint is ALWAYS still, because the answer is in flight. Arming the glide off that stillness threw the
+// whole eager offset away part-way into a high-RTT gesture, then the delta landed and the map jumped forward again:
+// the "shakes a lot after each scroll" the player reported. The window is therefore only consulted once the paint has ALREADY moved during this settle
 // (see ScrollEntry.stallGlideArmed) — i.e. the host demonstrably answered and has now stopped short, which is
 // the only situation a glide is the right answer to. "The answer never came at all" belongs to the deadline.
 export const SETTLE_STALL_MS = 120;
@@ -200,13 +199,13 @@ export const PAN_PROOF_PX = 12;
 // How far the finger/cursor must travel before a claimed pan becomes a LIVE one (design px — about the width of a
 // hairline, well under the input layer's own 8px drag threshold, so it never delays a real drag).
 //
-// R11 WS-S §6. A press used to activate the entry immediately, which pinned the container to the press-time paint:
+// A press used to activate the entry immediately, which pinned the container to the press-time paint:
 // hold the button down on the map and the host's own motion (an act-change slide, someone else's pan, a settling
 // flick) stopped dead on screen and then jumped when the finger lifted. A press is not a scroll — until something
 // MOVES there is nothing eager to show, and the stream should simply keep painting.
 export const PAN_ACTIVATE_PX = 2;
 
-// R21 — HOW FAR A DEFERRED TRACK GESTURE MAY TRAVEL BEFORE IT STOPS BEING A TAP (design px). Deliberately the same
+// HOW FAR A DEFERRED TRACK GESTURE MAY TRAVEL BEFORE IT STOPS BEING A TAP (design px). Deliberately the same
 // number as the input layer's own DRAG_THRESHOLD_DESIGN: "did the pointer travel or not" is one question and the two
 // layers must not answer it differently for the same gesture.
 //
@@ -218,7 +217,7 @@ export const PAN_ACTIVATE_PX = 2;
 // grab is not deferred at all — the handle is a target a player hits on purpose.
 export const BAR_TAP_SLOP_PX = 8;
 
-// R19 WP5 — ABSOLUTE-SEND COALESCING. A leading gesture would otherwise author one action per input event (a 120Hz
+// ABSOLUTE-SEND COALESCING. A leading gesture would otherwise author one action per input event (a 120Hz
 // trackpad stream, a per-frame drag), and every one of those is a queued hop onto the host's game thread. These two
 // gates keep the stream bounded without making it laggy: at most one send per SCROLL_SEND_MIN_MS, and only once the
 // offset has moved at least SCROLL_SEND_MIN_PX since the last one. The gesture's LAST position is always sent
@@ -305,7 +304,7 @@ export const BAND_SLACK_VIEWPORTS = 1;
 // local range is `[-o, viewportHeight - o]`. Requiring that range to stay inside `[band.lo, band.hi]` gives
 // `o ≤ -band.lo` and `o ≥ viewportHeight - band.hi`; both edges then get BAND_SLACK_VIEWPORTS of give.
 //
-// Why soft, and why only here (R11 WS-S §2). Round 2 re-applied the band as a HARD clamp on every frame, to a band
+// Why soft, and why only here. An earlier version re-applied the band as a HARD clamp on every frame, to a band
 // that is itself a round trip old. Two things followed, and the player felt both: the resting offset of a deck grid
 // was outside the band at all (see the renderer's header merge), so the first notch YANKED the content ~270px; and
 // mid-gesture recycling could narrow the window under a live drag, which reversed the content against the finger.
@@ -375,7 +374,7 @@ export function barHandleYFor(mapping: BarMapping, offset: number): number {
   return mapping.refHandleY + (offset - mapping.refOffset) * mapping.slope;
 }
 
-// R19 WP5 — WHERE A PRESS ON THE BAR POINTS, as a fraction of the strip's own height.
+// WHERE A PRESS ON THE BAR POINTS, as a fraction of the strip's own height.
 //
 // This is the one place the client reproduces a game formula rather than inferring it, and it can, because the
 // formula is trivially simple and was read off the live bar: the pressed position is taken as `mousePosition.Y /
@@ -432,7 +431,7 @@ interface ScrollEntry {
   // than in `idle` — clearing the translate onto an offset the container is still travelling to would be a jump.
   glideTo: number | null;
   lastInputAt: number;
-  // ---- R19 WP5, the absolute channel's bookkeeping. All inert while the host offers no such channel. ----
+  // ---- the absolute channel's bookkeeping. All inert while the host offers no such channel. ----
   // The eager offset has moved since the last send and is OWED to the game.
   pendingSend: boolean;
   // The offset last actually SENT (null = nothing authored for this surface yet), and the requestId it went under.
@@ -466,16 +465,16 @@ interface ScrollEntry {
 //               drag needs a press no card consumed, which is precisely the press we are not sending.
 //   "swallow" — claimed and deliberately inert (a map with a drawing tool armed, §7): the caller must not run its
 //               ordinary input loop either.
-//   "absolute"— R19 WP5, what "motion" and "ticks" BOTH become once the host offers the absolute channel: the caller
+//   "absolute"— what "motion" and "ticks" BOTH become once the host offers the absolute channel: the caller
 //               sends NOTHING (no press, no hover stream, no ticks) and the engine states the offset instead. For a
 //               card grid that is the same withheld press "ticks" already had; for the MAP it is the fix for the
 //               widescreen defect, because the press it withholds is exactly the one that used to be resolved into
 //               stretched dead space where no painter sits and the game therefore never began a drag at all.
-//   "bar"     — R19 WP5, a press on a card grid's SCROLLBAR STRIP. Absolute by nature (the press names a position,
+//   "bar"     — a press on a card grid's SCROLLBAR STRIP. Absolute by nature (the press names a position,
 //               not a distance) and claimed at the PRESS rather than at drag classification, because a tap on the
 //               track is a complete gesture. Made on a `data-touch-block` widget on purpose — but only on the bar's
 //               OWN stamp: that stamp says "the host owns this press", and under authority the client owns it
-//               instead, whereas a BUTTON's stamp over the same pixels still belongs to the button (R21).
+//               instead, whereas a BUTTON's stamp over the same pixels still belongs to the button.
 //   null      — not ours; the caller does exactly what it did before the feature existed.
 export type PanClaim = "swallow" | "absolute" | "bar" | null;
 
@@ -490,18 +489,18 @@ export function panClaimWithholdsPress(claim: PanClaim): boolean {
 export interface PanRequest extends BarPointFacts {
   // How many hover-first widget ids sat under the press (mirrorRenderer's `data-touch-id` stamps).
   ids: number;
-  // A BUTTON-kind `data-touch-block` widget covered it (see the renderer's computeTouchInfo). R21: a SCROLLBAR's own
+  // A BUTTON-kind `data-touch-block` widget covered it (see the renderer's computeTouchInfo). A SCROLLBAR's own
   // stamp is deliberately NOT reported here — whether the bar spoke for this press is `barOwnsPoint`'s question, and
   // answering it twice is what used to leave a refused bar claim with no claim at all.
   blocked: boolean;
   source: "press" | "gesture";
 }
 
-// R21 — what the caller knows about a point's relationship to the SCROLLBAR, which (like PanRequest.blocked) only
-// the input layer can see. Both are optional and both default to the pre-R21 behaviour when absent, so a caller with
+// What the caller knows about a point's relationship to the SCROLLBAR, which (like PanRequest.blocked) only
+// the input layer can see. Both are optional and both default to the earlier behaviour when absent, so a caller with
 // no raw X (a two-finger centroid) or no probe (the wheel) keeps the plain game-space test.
 export interface BarPointFacts {
-  // The pointer's own WIDENED-DESIGN X, pre-resolve. R20's gate: on a widened stage the resolve is many-to-one, so a
+  // The pointer's own WIDENED-DESIGN X, pre-resolve. The gate: on a widened stage the resolve is many-to-one, so a
   // game-space AABB is not a valid hit test — the raw pointer must be on the strip AS PAINTED too.
   rawDesignX?: number;
   // Something OTHER than this bar is painted on top of the strip here (a confirm button, a card): the topmost stamp
@@ -559,7 +558,7 @@ export interface EagerScroll {
   // PanClaim); a claimed gesture is also exempt from the growing Y-compensation, because the host consumes
   // RELATIVE motion and a compensation that grew with the drag would eat the very delta producing it.
   beginPan(gameX: number, gameY: number, request?: PanRequest): PanClaim;
-  // R19 WP5 — a press that landed on a card grid's SCROLLBAR STRIP, offered at the PRESS on both pointer paths.
+  // A press that landed on a card grid's SCROLLBAR STRIP, offered at the PRESS on both pointer paths.
   // Returns "bar" when it was claimed (the caller then withholds its press and streams the pointer through
   // `panTo` like any other claimed gesture) or null when it was not — which is every case the host cannot answer:
   // no absolute channel, the point is not on a bar, or the surface is suppressed.
@@ -568,7 +567,7 @@ export interface EagerScroll {
   // track tap is a whole gesture, not the start of a drag) and claims a `data-touch-block` widget on purpose.
   //
   // `facts` carries what only the caller can see about the point (see BarPointFacts); omitting either fact leaves
-  // that gate inert. `deferred` is the TOUCH rule (R21): claim the gesture but move nothing yet, and let `panTo` /
+  // that gate inert. `deferred` is the TOUCH rule: claim the gesture but move nothing yet, and let `panTo` /
   // `endPan` decide from what the finger DOES whether this was a track tap or a content swipe that happened to
   // start on the strip. A mouse press — and a touch press on the THUMB — passes it false and acts at once, as before.
   beginBarPan(gameX: number, gameY: number, facts?: BarPointFacts & { deferred?: boolean }): PanClaim;
@@ -585,13 +584,13 @@ export interface EagerScroll {
   // Y-compensation: a resolved GAME point inside a scrollable that is currently AHEAD of the host must be reported
   // in the host's coordinates, or a tap right after a scroll lands on whatever the host still has there.
   compensate(coordX: number, coordY: number): { coordX: number; coordY: number };
-  // THE SINGLE-WRITER SEAM (R11 WS-S). Called by MirrorView the instant `renderer.reconcile(...)` returns, i.e.
+  // THE SINGLE-WRITER SEAM. Called by MirrorView the instant `renderer.reconcile(...)` returns, i.e.
   // while the frame the walk just wrote is still un-painted: re-compose every live translate against the base
   // transform that walk PUT THERE, so `base + translate === eagerY` on every frame the player sees, whatever order
   // the two rAFs happened to run in. Pure composition — no clock, no state machine, no sends — and a zero-cost
   // early return when nothing is eager, which is the overwhelmingly common case.
   afterReconcile(): void;
-  // R19 WP5 — the host's answer to one absolute send (mirrorClient's `onScrollAck`). Matched to the surface whose
+  // The host's answer to one absolute send (mirrorClient's `onScrollAck`). Matched to the surface whose
   // LATEST send carries that requestId; anything else is a stale ack and is dropped without a trace.
   noteScrollAck(ack: MirrorScrollAck): void;
   // HARD RESET — drop every eager offset and adopt the streamed truth (keyframe / reconnect / stretch toggle).
@@ -635,7 +634,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
   let panLastGameY = 0;
   // What this gesture claimed (see PanClaim).
   let panMode: Exclude<PanClaim, null> | null = null;
-  // R21 — the last pointer Y this gesture was fed, whatever its phase. Distinct from `panLastGameY`, which is the
+  // The last pointer Y this gesture was fed, whatever its phase. Distinct from `panLastGameY`, which is the
   // last CONSUMED position and must stay frozen at the press while a claim is pending (the hand-over applies the
   // travel since the press, so spending it early would swallow it). This one is only read to commit a deferred
   // track TAP at the place the finger actually lifted.
@@ -741,8 +740,8 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
   // See EagerScroll.afterReconcile. The invariant this restores is the whole fix for the SHAKE: before it, the
   // renderer's walk and this module's rAF were two independent writers of one pixel, and in the (deterministic,
   // unlucky) order "engine first, walk second" every reconciled frame painted `eagerY + one host lerp step` — the
-  // host's catch-up landed ON SCREEN instead of inside the translate. Measured by scripts/probe-eager-scroll.mjs as
-  // a composed-Y overshoot of 258px at rtt 250 / 400px at rtt 400.
+  // host's catch-up landed ON SCREEN instead of inside the translate (a composed-Y overshoot that grows with the
+  // round-trip time).
   function afterReconcile(): void {
     if (disposed || entries.size === 0) {
       return; // the overwhelmingly common frame: nothing is eager, so nothing to compose
@@ -765,7 +764,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     return x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY;
   }
 
-  // R21 — DOES THE BAR OWN THIS POINT? The one statement of it, asked by BOTH sides of the strip's boundary: the
+  // DOES THE BAR OWN THIS POINT? The one statement of it, asked by BOTH sides of the strip's boundary: the
   // bar's own claim (`beginBarPan`) and the CONTENT claim that carves the strip out (`targetHitAt`). They used to
   // disagree by construction — the content side carved out the game-space AABB while the bar side had two extra
   // gates on top of it — and every point in the gap between them was claimed by NOBODY: the press went upstream at a
@@ -773,10 +772,10 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
   // was not the bar's. That is the same hijack the client-side claim exists to prevent, one layer down.
   //
   // Three conditions, in the order they became necessary:
-  //   1. inside the strip's GAME box at all (R19 WP5);
-  //   2. inside the strip AS PAINTED, when the caller can say where the pointer physically is (R20 — on a widened
+  //   1. inside the strip's GAME box at all;
+  //   2. inside the strip AS PAINTED, when the caller can say where the pointer physically is (on a widened
   //      stage the resolve is many-to-one, so a band beside the bar resolves into its game rect);
-  //   3. nothing else painted on top of it (R21 — a card-selection dialog's confirm button overlaps the strip, and
+  //   3. nothing else painted on top of it (a card-selection dialog's confirm button overlaps the strip, and
   //      the player is pressing the BUTTON they can see).
   function barOwnsPoint(
     target: EagerScrollTarget,
@@ -871,7 +870,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     ensureFrame();
   }
 
-  // R19 WP5 — put the eager offset at an ABSOLUTE value (the scrollbar's press-to-fraction; nothing else uses it).
+  // Put the eager offset at an ABSOLUTE value (the scrollbar's press-to-fraction; nothing else uses it).
   //
   // Deliberately NOT band-absorbed, unlike `nudge`: an absolute jump is where the player POINTED and therefore
   // where the game is about to be, so stopping the client short of it would put the two in different places —
@@ -891,7 +890,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     ensureFrame();
   }
 
-  // R19 WP5 — put the entry's current offset on the wire, subject to the coalescing gates (see SCROLL_SEND_MIN_MS
+  // Put the entry's current offset on the wire, subject to the coalescing gates (see SCROLL_SEND_MIN_MS
   // / _PX). `final` is the end of a gesture: it ignores both gates, because that send is the one that decides where
   // the game comes to rest. A send that could not go out (a closing socket) leaves the entry OWING one, rate-limited
   // by the same clock, so a momentary hiccup self-heals instead of stranding the surface mid-gesture.
@@ -1006,7 +1005,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
   }
 
   function beginPan(gameX: number, gameY: number, request: PanRequest = DEFAULT_PAN_REQUEST): PanClaim {
-    // R21: the strip is carved out of the content surface only where the bar actually OWNS the point — the request
+    // The strip is carved out of the content surface only where the bar actually OWNS the point — the request
     // carries the two facts that decide it (see barOwnsPoint). A point the bar refuses is ordinary content.
     const target = targetAt(deps.targets(), gameX, gameY, request);
     if (!target) {
@@ -1020,7 +1019,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     return claim;
   }
 
-  // R19 WP5 — the SCROLLBAR strip, claimed at the press. See EagerScroll.beginBarPan.
+  // The SCROLLBAR strip, claimed at the press. See EagerScroll.beginBarPan.
   function beginBarPan(gameX: number, gameY: number, facts: BarPointFacts & { deferred?: boolean } = {}): PanClaim {
     // The zone test carries BOTH gates (painted-strip, unoccluded) — see barOwnsPoint, which the content claim asks
     // the same question of, so the two can never leave a point claimed by nobody.
@@ -1037,8 +1036,8 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     panLatestGameY = gameY;
     // A bar gesture sends no press, no hover and no tick, so neither the frozen compensation nor the tick point has
     // anything to be right about. Zeroed rather than left stale.
-    // R19 WP5 shipped this claim NOT pending, unlike every other one: a press on the track is the whole gesture, and
-    // the defect it fixed was that such a press did nothing at all. R21 keeps that for the MOUSE and for a touch on
+    // This claim ships NOT pending, unlike every other one: a press on the track is the whole gesture, and
+    // the defect it fixed was that such a press did nothing at all. That is kept for the MOUSE and for a touch on
     // the THUMB, and defers it for a FINGER on the TRACK, where "the press is the gesture" is
     // exactly the assumption that broke — see BAR_TAP_SLOP_PX. A deferred claim moves nothing and sends nothing; it
     // is resolved by what the finger does next (panTo hands a swipe to the content, endPan commits a tap).
@@ -1049,7 +1048,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     return "bar";
   }
 
-  // R21 — a deferred TRACK gesture that travelled: it was never a track gesture at all, so the strip gives it up and
+  // A deferred TRACK gesture that travelled: it was never a track gesture at all, so the strip gives it up and
   // the grid's CONTENT takes it, armed at the PRESS so this frame's nudge carries every pixel the finger has moved
   // since (no jump, and nothing was sent upstream to retract — a "bar" claim withholds the press exactly like the
   // "absolute"/"ticks" claim replacing it). Returns false when nothing can take it, which ends the claim.
@@ -1123,8 +1122,8 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
     }
     const id = panId;
     if (panMode === "bar" && panPending) {
-      // R21 — THE TRACK TAP, committed at the end instead of at the press. It never travelled past the tap slop, so
-      // this is the gesture R19 WP5 introduced the claim for, and it lands at the position the finger LIFTED at
+      // THE TRACK TAP, committed at the end instead of at the press. It never travelled past the tap slop, so
+      // this is the gesture the claim was introduced for, and it lands at the position the finger LIFTED at
       // (within the slop of where it went down). A gesture that travelled is not here: it became a content pan the
       // moment it did (see handOverBarPan).
       const target = deps.targets().find((t) => t.id === id);
@@ -1139,7 +1138,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
       entry.lastInputAt = 0;
     }
     if ((panMode === "absolute" || panMode === "bar") && entry) {
-      // R19 WP5 — THE SEND THAT DECIDES WHERE THE GAME ENDS UP. The release is the gesture's last position, so it
+      // THE SEND THAT DECIDES WHERE THE GAME ENDS UP. The release is the gesture's last position, so it
       // goes out regardless of the coalescing gates: a throttled-away final send would leave the game a few px from
       // where the player let go, which is the whole class of defect this channel exists to close.
       flushScroll(panId, entry, now(), true);
@@ -1224,7 +1223,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
       }
 
       if (entry.phase === "settling") {
-        // R19 WP5 — THE DISCRIMINATION. Without the absolute channel there is exactly one statement about this
+        // THE DISCRIMINATION. Without the absolute channel there is exactly one statement about this
         // surface (the PAINT) and therefore exactly one possible answer to a disagreement: adopt it. With the
         // channel there are three, and their disagreements name their causes:
         //
@@ -1315,7 +1314,7 @@ export function createEagerScroll(deps: EagerScrollDeps): EagerScroll {
       // re-lays out, a screen resizes). The materialized band is deliberately NOT re-applied here — see absorbBand.
       entry.eagerY = clampEager(target, entry.eagerY);
 
-      // R19 WP5: state the (now clamped) offset upstream. Only while the gesture is LIVE, plus the one final send
+      // State the (now clamped) offset upstream. Only while the gesture is LIVE, plus the one final send
       // on the frame it ends — a glide is the client FOLLOWING the game, and authoring it would be the client
       // arguing with the answer it just agreed to.
       if (entry.phase === "active" || justSettled) {

@@ -5,7 +5,7 @@ using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using CouchCoop.MirrorProtocol.Envelopes;
 
-// WS-2 (host-performance truth). The mirror Settings panel's "Host performance" checkboxes used to be hardcoded ON
+// Host-performance truth. The mirror Settings panel's "Host performance" checkboxes used to be hardcoded ON
 // in the browser, so a viewer watching the HOST's own game (direct view: the [Host] row, or a singleplayer run) saw
 // three ticked boxes over a game where NOTHING was frozen — CouchCoopMod only installs the visual suspender for a
 // WINDOWLESS instance, while the suspender's static `_freeze*` flags read their env defaults (true) regardless.

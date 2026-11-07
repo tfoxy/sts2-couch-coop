@@ -1,7 +1,7 @@
 // TIER-3 INCREMENTAL PATCHING — a frame whose only change is ALPHA, written into the list the last build left.
 //
-// `buildDrawList` rebuilds the whole scene every animated frame (measured p50: 5.3 ms on combat, 8.3 ms on the
-// map). Probe P8 says what those frames are actually doing: 124 of the reshuffle's 137 hints are `modulate:a`,
+// `buildDrawList` rebuilds the whole scene every animated frame. Most of what those frames are actually doing is
+// opacity: a reshuffle's hints are overwhelmingly `modulate:a`,
 // i.e. a fade, and a fade moves no geometry, no clip, no paint order and no classification — it multiplies four
 // floats per quad. This module is the arithmetic that does that instead, against the commands the last build
 // already recorded.
@@ -642,7 +642,7 @@ function plan(scratch: PatchScratch, range: NodeCommandRange, k: number): void {
   scratch.planned++;
 }
 
-// --- TIER 3, TRANSFORM PATCHING (R7 W3-T) ------------------------------------------------------------------------
+// --- TIER 3, TRANSFORM PATCHING --------------------------------------------------------------------------------------
 //
 // WHY THIS IS NOT "THE SAME THING WITH A DIFFERENT CHANNEL", AND WHY IT IS POSSIBLE ANYWAY.
 //
@@ -672,7 +672,7 @@ function plan(scratch: PatchScratch, range: NodeCommandRange, k: number): void {
 // records themselves. `D` is computed once per moved root and spent over `order.ids.slice(spanStart, spanEnd)` —
 // an O(1) slice, because paint-order spans are contiguous and asserted to be.
 //
-// THE SPREAD TERM (R21 B2), i.e. why a widened stage is NOT the exception it was written down as.
+// THE SPREAD TERM, i.e. why a widened stage is NOT the exception it was written down as.
 //
 // This tier used to refuse `spreadFactor !== 1` outright, on the grounds that "`outer` is constant over a span
 // only at factor 1". The premise is true and the conclusion does not follow. The walk composes
@@ -706,10 +706,10 @@ function plan(scratch: PatchScratch, range: NodeCommandRange, k: number): void {
 // already going to spend. When `v` is zero — the common case — the loop takes `D_root` verbatim and this tier is
 // bit-for-bit what it was at factor 1.
 //
-// WHAT THAT BUYS, measured: at a 1878x954 viewport (a maximized 1920x1080 desktop browser, aspect 1.97) the
-// blanket refusal took 295 of 295 frames and every one of them was a full `buildDrawList` — 15 ms of JS per
-// frame. Narrowing the same window below 16:9 patched 94% of frames at 1 ms. The refusal was not costing "a
-// widened stage its idle frames"; it was costing every maximized desktop browser all of them.
+// WHAT THAT BUYS: on a wide window (a maximized desktop browser, aspect near 2:1) the blanket refusal sent every
+// frame through a full `buildDrawList`, while a window narrower than 16:9 patched nearly all of them at a small
+// fraction of the cost. The refusal was not costing "a widened stage its idle frames"; it was costing every
+// maximized desktop browser all of them.
 //
 // THE TWO NON-LINEAR READERS ARE REFUSED, not approximated: `nodeClipSpec` bakes a design-space rect out of the
 // node's global (and gsw has no `patchClipRect`), and `emitPolyline` bakes every point. Neither is a
@@ -720,8 +720,8 @@ function plan(scratch: PatchScratch, range: NodeCommandRange, k: number): void {
 // This tier used to refuse any span containing a command that is not `quad`/`ninePatch`, under the name
 // `polyline`, on the grounds that "a stroke's geometry is a list of baked points, not a matrix". True of a
 // stroke. There are SIX command kinds, and the one that bail actually blocked is `glyphs` — so with
-// canvas text every label on the screen refused the whole tier, and a combat screen rebuilt 370 of 371
-// frames at 27 ms of JS each where the same screen with its text in the DOM patched 94% of them at 1 ms.
+// canvas text every label on the screen refused the whole tier, and a combat screen rebuilt nearly every frame
+// where the same screen with its text in the DOM patched almost all of them.
 //
 // A glyph run is a matrix and a payload, exactly like a quad. `GlyphsView.m` is documented as "the 2x3 affine
 // that maps the run's local space into design space, in the same Godot `Transform2D` order as `QuadView.m`", and

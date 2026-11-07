@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-ATLAS: the pure AtlasTexture `.tres` parser (client-side crop of standalone relic/intent atlas node textures).
+// The pure AtlasTexture `.tres` parser (client-side crop of standalone relic/intent atlas node textures).
 // Fixture bodies are REAL `.tres` text fetched read-only from the live host (relic_atlas.sprites/*.tres — akabeko,
 // anchor, vajra) plus a real non-atlas ShaderMaterial `.tres`; synthetic bodies cover the margin-absent, filter_clip,
 // embedded-SubResource-atlas, and malformed edges.

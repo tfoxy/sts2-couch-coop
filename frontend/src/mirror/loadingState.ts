@@ -84,7 +84,7 @@ export function computeMirrorLoadingState(inputs: MirrorLoadingInputs): MirrorLo
 // ---- the join's SECOND line -----------------------------------------------------------------------------------
 //
 // "Joining…" above is one word and cannot change for 20-60 seconds, because that is genuinely how long a cold
-// seat spawn takes. The measured consequence (2026-09-15): a healthy join and a dead one showed the byte-identical
+// seat spawn takes. The measured consequence: a healthy join and a dead one showed the byte-identical
 // screen, so players closed the tab well before either resolved and reported "it hangs". The host has always known
 // which step it is on and for how long — `join-progress` carries it, and this turns it into a sentence.
 //

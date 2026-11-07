@@ -11,13 +11,13 @@ namespace CouchCoop.Mod.Server;
 /// <summary>
 /// Bakes every combat background the game can show, so a client's first <c>/bg/</c> fetch is a disk hit instead of
 /// a render it waits on. The <c>/spines/</c> twin of this job (<see cref="CouchCoopSpinePrerenderJob"/>) has
-/// existed since round 8; the background lane never had one, and a background render is the single most expensive
+/// existed for a while; the background lane never had one, and a background render is the single most expensive
 /// thing the host does on demand.
 /// </summary>
 /// <remarks>
 /// <para>
-/// WHY IT MATTERS EVEN AFTER THE ENCODE MOVED OFF-THREAD (Aug-22 round 2): offloading turned ~650 ms of game
-/// stall into ~650 ms of CLIENT LATENCY. The stall is gone either way, but the phone still waits for the first
+/// WHY IT MATTERS EVEN AFTER THE ENCODE MOVED OFF-THREAD: offloading turned hundreds of ms of game
+/// stall into the same amount of CLIENT LATENCY. The stall is gone either way, but the phone still waits for the first
 /// picture of a room — and this is what removes that.
 /// </para>
 /// <para>

@@ -48,7 +48,7 @@ internal sealed class SceneDeltaCoalescer
     // One-shot tween hints accumulate across folds (unlike node state they are NOT latest-wins — each is a distinct
     // event to replay once), and flush on the next Take. A Full keyframe drops them (a fresh client replays nothing).
     private List<TweenHintDelta>? _hints;
-    // WS-3 declarative card flights, same one-shot accumulate-across-folds lifecycle as _hints. Dropped by a Full
+    // Declarative card flights, same one-shot accumulate-across-folds lifecycle as _hints. Dropped by a Full
     // keyframe for the same reason: a fresh client is re-seeded from the keyframe's transforms and has no half-run
     // flight to continue — and the producer's suppression window closes on its own clock either way.
     private List<CardFlightHintDelta>? _cardFlights;
@@ -63,7 +63,7 @@ internal sealed class SceneDeltaCoalescer
     public bool HasPending { get; private set; }
 
     // Discard everything accumulated AND the order baseline — used when this connection's scene stream is GATED
-    // OFF and again when it is re-enabled (WS-B `watch` gate). Both halves matter:
+    // OFF and again when it is re-enabled (`watch` gate). Both halves matter:
     //   - the pending accumulator is a set of node ids whose state is resolved LATER, at Take time; holding it
     //     across a gap would ship a coalesced delta describing a scene the client stopped tracking.
     //   - `_lastSentOrder` is the exact array the client last received. Across a gap the client is re-seeded from

@@ -45,7 +45,7 @@ internal sealed class InputCoalescer
             && tail.Value.AccessGeneration == input.AccessGeneration && tail.Value.WatchEpoch == input.WatchEpoch)
             || (_queue.Last is { } wheelTail && TryMergeWheel(wheelTail.Value, input, out _));
 
-    // R10 WS-E — WHEEL RUN MERGE. A wheel notch is a QUANTITY, not an edge: N consecutive same-direction ticks at the
+    // WHEEL RUN MERGE. A wheel notch is a QUANTITY, not an edge: N consecutive same-direction ticks at the
     // same point are exactly one tick repeated N times, and the host injects strictly one queued message per
     // game-thread turn — so a fast scroll used to arrive as a visible trickle. Two ADJACENT wheel clicks fold into one
     // carrying their summed `count`.

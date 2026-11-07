@@ -29,9 +29,9 @@ import {
 import { __setRenderQualityForTest, type RenderQuality } from "@/render/quality";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// WS4 — the comet behind a flying card, SYNTHESIZED client-side.
+// The comet behind a flying card, SYNTHESIZED client-side.
 //
-// The Aug-7 producer streamed every `Line2D`'s points on a TYPE-only gate, which made the two `NCardTrail` strokes
+// An earlier producer streamed every `Line2D`'s points on a TYPE-only gate, which made the two `NCardTrail` strokes
 // behind every flying card render as thick solid bars (their look is a width_curve + gradient + stretched texture +
 // additive material, none of which that unit carries) and re-marshalled two growing arrays per reshuffled card per
 // tick. The producer is now scoped to the map quill strokes, and the trail is rebuilt here from data already on the
@@ -172,7 +172,7 @@ describe("cardTrail — ageing", () => {
   });
 });
 
-// M3 — THE SAMPLE ORDERING, on its own. It used to live inside `mirrorRenderer.pushCardTrailPoint`, closed over
+// THE SAMPLE ORDERING, on its own. It used to live inside `mirrorRenderer.pushCardTrailPoint`, closed over
 // the DOM's records and levers; the canvas stage integrates the same ribbons, so the SEQUENCE is now a pure
 // function both backends run and these are the specs that stop it being re-ordered by accident.
 describe("cardTrail — pushTrailPoint (the sample ordering)", () => {
@@ -425,7 +425,7 @@ describe("cardTrail — ribbon geometry", () => {
 // on the one-band rung: 13%). Compensation moves the dropped alpha to the narrowest survivor, so the collapse
 // costs bands and nothing else.
 
-// M3 — THE CANVAS RIBBON. The draw list has no polygon primitive, so the same comet is drawn as per-band runs of
+// THE CANVAS RIBBON. The draw list has no polygon primitive, so the same comet is drawn as per-band runs of
 // parallelograms. These specs pin its current band, texture, ramp and joint contracts.
 describe("cardTrail — buildTrailStrip (the canvas quad strip)", () => {
   const arcOf = (steps: Array<[number, number]>): TrailPoints => {
@@ -784,7 +784,7 @@ describe("cardTrail — renderer integration", () => {
     expect(Math.max(...xs)).toBeLessThan(1300);
   });
 
-  // R10 WS-F — WIDE SCREEN. The trail head was sampled from the card's UN-shifted 1920-space global while the card
+  // WIDE SCREEN. The trail head was sampled from the card's UN-shifted 1920-space global while the card
   // itself is placed on the spread field (`renderedX = gameX · spreadFactor`), so the ribbon flew a different path
   // from the card it belongs to — diverging by `gameX·(F−1)`, up to 600 design px at the 2520 stage. The head now
   // rides the parent record's own applied `spreadDx`, i.e. exactly where the DOM put the card.
@@ -965,7 +965,7 @@ describe("cardTrail — write diet (WS-P1)", () => {
   });
 });
 
-// ---- R11 A0: the writes that were never carrying information --------------------------------------------------
+// ---- the writes that were never carrying information --------------------------------------------------
 //
 // A line-audit of `paintCardTrail` found ~300 of the ~960 attribute writes a 30-card shuffle makes per frame were
 // re-writing a value the element already had. Both cases below are ZERO visual change by construction: one value
@@ -1050,7 +1050,7 @@ describe("cardTrail — A0, the free writes", () => {
 
 // ---- arc-length budget -----------------------------------------------------------------------------------------
 //
-// The comet retains ~0.8s of head positions, which for a real flight is the WHOLE arc. The R10 budget above spent
+// The comet retains ~0.8s of head positions, which for a real flight is the WHOLE arc. The newest-points budget above spent
 // that budget on the NEWEST points and threw the rest away, so a weak-tier phone (32) drew 32 of the 36-49 points
 // its arc wanted and the ribbon stopped 16-31% short of where the card had actually been — a comet with its tail
 // cut off, on exactly the devices least able to hide it. The current policy removes the surplus from the

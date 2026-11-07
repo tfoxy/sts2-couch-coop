@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createMirrorRenderer, type MirrorRenderer } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// WS-2 CONSUMER (web half) — LINE2D STROKE geometry, i.e. the map quill annotations.
+// CONSUMER (web half) — LINE2D STROKE geometry, i.e. the map quill annotations.
 //
 // A map annotation is a `Line2D` appended live under the map's DrawViewport as the finger drags. It has no texture
 // rect and no text and — the detail that shapes this whole feature — the producer measures NO `localRect` for it

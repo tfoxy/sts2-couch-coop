@@ -31,8 +31,7 @@
 // resolved so the browser had the bitmap in hand and `texImage2D` would not decode inline. THAT REASONING WAS
 // HALF RIGHT AND IS CORRECTED HERE. A decoded `<img>` frame is a CACHE, not a possession: `decode()` resolves,
 // and then a phone under memory pressure throws the pixels away. The next `texImage2D` re-decodes a multi-megabyte
-// WebP synchronously, inside the build. A Moto G86 combat trace measured that as 58.2 / 26.9 / 26.9 / 22.4 /
-// 20.9 ms frame tasks — the same eviction, and the same shape, as the card-atlas stalls `atlasRepack` was taught
+// WebP synchronously, inside the build. On a mid-range Android phone that cost 20-60 ms frame tasks — the same eviction, and the same shape, as the card-atlas stalls `atlasRepack` was taught
 // to dodge by cropping from owned bitmaps instead of from an element.
 //
 // So the upload source is now an `ImageBitmap` decoded from the clip's ENCODED bytes (which the clip retains
@@ -177,7 +176,7 @@ export interface SpineSurfaceRegistry extends SpineTextureSource {
    * NAME this clip for the build in progress and say whether its pixels are on the GPU.
    *
    * Uploading happens HERE, inside the build, exactly like the other two registries: that is where a budget can
-   * see it. `false` means "no quad this build" — the caller keeps the overlay's `<img>`, which is the pre-M3
+   * see it. `false` means "no quad this build" — the caller keeps the overlay's `<img>`, which is the earlier
    * behaviour and is why every refusal here is safe.
    */
   acquire(clipUrl: string, pixels: SpinePixelSource): boolean;

@@ -14,7 +14,7 @@
 // step is its smallest, and a re-placement bigger than that is something the curve never asked for.
 //
 // That reasoning needs the sampler to RESOLVE the motion, and on the canvas arm it does not. Measured
-// 2026-09-19 on the live harness, three canvas combos: the per-`requestAnimationFrame` trace samples at a
+// on the live harness, three canvas combos: the per-`requestAnimationFrame` trace samples at a
 // MEDIAN OF ~310 ms (3.1-3.4 fps — SwiftShader, and the canvas backend computes every animation frame
 // itself), against the ~90 ms the old rule's own header assumed. A hand tween is a few hundred ms, so the
 // last frame on which a channel is alive is typically the FIRST and only frame of that tween — the middle
@@ -50,7 +50,7 @@
 // snaps when the pin lifts — is still caught, because a stale endpoint is still an endpoint that is not
 // where the card rests. That case is pinned offline in `handLandingScore.spec.ts` at this run's own ~310 ms
 // cadence. It is NOT pinned live: the `?tweenReparent=keep` and `?spreadEndpoint=off` levers earlier rounds
-// used as negative controls no longer exist in the build (grep-verified 2026-09-19 — both behaviours became
+// used as negative controls no longer exist in the build (grep-verified — both behaviours became
 // unconditional), so nothing can currently break a landing on a live page on purpose.
 //
 // THE SETTLE IS A REST, NOT A DEADLINE. The old rule took whatever frame it found within 400 ms, which at

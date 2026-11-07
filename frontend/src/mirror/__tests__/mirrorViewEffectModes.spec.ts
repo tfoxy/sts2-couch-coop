@@ -181,11 +181,11 @@ describe("MirrorView effect-mode wiring", () => {
     wrapper.unmount();
   });
 
-  // R10 WS-A + Aug-11: the fps caps of a mode are the same on every device (they used to be whatever the runtime
+  // The fps caps of a mode are the same on every device (they used to be whatever the runtime
   // happened to be constructed with), and so are the ½/¼ DYNAMIC scales. STATIC's backing store is the one
   // deliberate device difference — a phone renders the frozen frame at ½ (shaders) / ¼ (particles) because a
-  // frozen shader still re-renders per scene-delta, and a full-res one took a Mali-G57 map screen to 126ms
-  // StartDrawToSwapStart p50.
+  // frozen shader still re-renders per scene-delta, and a full-res one made a weak phone's map screen far slower
+  // to present.
   it("maps Static to the DEVICE's static scale (½/¼ on a phone) and re-applies the tier's fps caps", async () => {
     // The `very-low` tier a weak-GPU phone auto-resolves to: renderScale 0.25, both caps 30.
     const phone = resolveRenderQuality({

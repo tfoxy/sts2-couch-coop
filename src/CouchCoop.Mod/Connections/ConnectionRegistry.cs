@@ -132,7 +132,7 @@ public sealed class ConnectionRegistry
                 //
                 // AND ONLY FOR A TAB THAT ACTUALLY HAD A VIEW. `ChildBrowser` is current state, so without the
                 // ever-seen latch this arm fires identically for a viewer who NEVER arrived at the seat — which
-                // is the blocked-path shape, not transport loss. Measured Sep-16 2026: a phone redirected to a
+                // is the blocked-path shape, not transport loss. Observed: a phone redirected to a
                 // seat it could not reach was reported to the host as "reload the browser and select the same
                 // player", advice for a problem it did not have, while the phone itself was correctly told its
                 // network path was blocked. A viewer who never attached falls through to ReportSeatCondition,
@@ -173,7 +173,7 @@ public sealed class ConnectionRegistry
                 // THE SAME DISTINCTION AS THE INFERENCE IN SetReadiness, and this is the arm that actually fires
                 // in the blocked-path shape. The browser reports a lost game view the moment its seat socket
                 // reaches `disconnected` — which a socket that NEVER OPENED does too, so a viewer that could not
-                // reach its seat at all reports itself as a closed tab. Measured Sep-16 2026: that is where the
+                // reach its seat at all reports itself as a closed tab. Observed: that is where the
                 // host panel's "reload the browser and select the same player" came from while the phone in the
                 // player's hand was correctly being told its network path was blocked.
                 //
@@ -422,7 +422,7 @@ public sealed class ConnectionRegistry
     /// its own overflow counter. Clearing the live entries' <c>IssueId</c> below is what converts each one from
     /// "this connection's current problem" into that standalone history row.
     /// </para>
-    /// Found the hard way on 2026-09-18: a reproduced iPhone failure was diagnosed, the host returned to the
+    /// Found the hard way: a reproduced iPhone failure was diagnosed, the host returned to the
     /// menu, and the census naming the cause went with it.
     /// </remarks>
     public void HostingEnded()

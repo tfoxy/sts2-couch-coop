@@ -1,6 +1,6 @@
 // THE STAGE-WIDE WIDE-SCREEN FIELD AUDIT (`?spreadAudit=1`) — one invariant, checked on every node, every build.
 //
-// WHY IT EXISTS. The Aug-29 hand-landing defect was a field claim measured at the pose the WIRE last reported
+// WHY IT EXISTS. A past hand-landing defect was a field claim measured at the pose the WIRE last reported
 // rather than the pose the node was DRAWN at, and it survived three rounds of instruments because every one of
 // them was shaped like a hand: they sampled the tween's TARGET, which is a zero-size holder that paints nothing,
 // and the holder's own claim was right the whole time. The nodes that were wrong were its painted descendants,

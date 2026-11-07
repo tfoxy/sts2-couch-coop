@@ -164,10 +164,10 @@ internal static class ConnectionArrivalLogTests
     private static void NoPlayerNameReachesTheRing()
     {
         var arrivals = new ConnectionArrivalLog(new FakeTime(), _ => { });
-        arrivals.Record(IPAddress.Parse("192.168.0.123"), "/?name=Tomas&lang=en", ConnectionArrivalOutcome.Shell);
-        arrivals.Record(IPAddress.Parse("192.168.0.123"), "/join#name=Tomas", ConnectionArrivalOutcome.Shell);
+        arrivals.Record(IPAddress.Parse("192.168.0.123"), "/?name=Alex&lang=en", ConnectionArrivalOutcome.Shell);
+        arrivals.Record(IPAddress.Parse("192.168.0.123"), "/join#name=Alex", ConnectionArrivalOutcome.Shell);
         var described = string.Join("\n", arrivals.Snapshot().Select(ConnectionArrivalLog.Describe));
-        Assert(!described.Contains("Tomas", StringComparison.OrdinalIgnoreCase), "a player name in the URL never reaches the ring");
+        Assert(!described.Contains("Alex", StringComparison.OrdinalIgnoreCase), "a player name in the URL never reaches the ring");
         Assert(!described.Contains('?'), "no query string is retained");
         Assert(arrivals.Snapshot()[0].Path == "/" && arrivals.Snapshot()[1].Path == "/join", "only the path is kept");
 
@@ -209,7 +209,7 @@ internal static class ConnectionArrivalLogTests
         Assert(await bundle.Content.ReadAsStringAsync() == "export const bundle = 1;\n", "a non-HTML file is served unmodified");
         Assert(CacheControl(bundle) is null, "the shell's no-store does not leak onto other static files");
 
-        var named = await client.GetAsync("/?name=Tomas");
+        var named = await client.GetAsync("/?name=Alex");
         Assert(named.StatusCode == HttpStatusCode.OK, "a join URL with a name still serves the shell");
         var missing = await client.GetAsync("/missing-asset.png");
         Assert(missing.StatusCode == HttpStatusCode.NotFound, "a missing asset 404s");
@@ -218,7 +218,7 @@ internal static class ConnectionArrivalLogTests
         Assert(recorded.Count(entry => entry.Outcome == ConnectionArrivalOutcome.Shell) == 3, "each shell response is one arrival");
         Assert(recorded.Any(entry => entry.Outcome == ConnectionArrivalOutcome.NotFound && entry.Path == "/missing-asset.png"),
             "a refusal is recorded too");
-        Assert(recorded.All(entry => !entry.Path.Contains("Tomas", StringComparison.OrdinalIgnoreCase)),
+        Assert(recorded.All(entry => !entry.Path.Contains("Alex", StringComparison.OrdinalIgnoreCase)),
             "no player name reaches the ring through the real request path");
         Assert(recorded.Any(entry => entry.VisitId == firstVisit) && recorded.Any(entry => entry.VisitId == secondVisit),
             "the served ids are the recorded ids");
@@ -233,7 +233,7 @@ internal static class ConnectionArrivalLogTests
             // `[couch-coop] `, a spelling nothing else in the mod used. CouchCoopLogPrefixTests pins the prefix.
             Assert(lines.Any(line => line.StartsWith("arrival ", StringComparison.Ordinal) && line.Contains("-> shell", StringComparison.Ordinal)),
                 "an arrival reaches the diagnostic log");
-            Assert(lines.All(line => !line.Contains("Tomas", StringComparison.OrdinalIgnoreCase)), "and never carries a player name");
+            Assert(lines.All(line => !line.Contains("Alex", StringComparison.OrdinalIgnoreCase)), "and never carries a player name");
         }
     }
 

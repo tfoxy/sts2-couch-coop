@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Shared NDJSON replay for the env-gated live-data probes (WS-SHOP round 6): parse every scene-delta line into a
+// Shared NDJSON replay for the env-gated live-data probes: parse every scene-delta line into a
 // retained MirrorState (via the SAME SceneDeltaReader + SceneTreeApplier the client uses) and collect every tween hint
 // seen across the stream. Handles both the record-mirror-stream wrapper ({"t":…,"data":"<raw>"}) and a bare raw line.
 // Mirrors the parse loop in CardRewardScaleReplayProbe so the probes agree on how a recording is decoded.

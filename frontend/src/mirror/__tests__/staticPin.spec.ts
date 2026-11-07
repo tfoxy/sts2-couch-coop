@@ -45,7 +45,7 @@ function tracker(
 
 describe("targetFitScale", () => {
   it("matches MirrorView's own fit for a landscape viewport, in BOTH stretch states", () => {
-    // A 16:9 desktop, a 2.22:1 phone (Moto G86 class), a 2.4:1 phone and a 4:3 tablet.
+    // A 16:9 desktop, a 2.22:1 phone, a 2.4:1 phone and a 4:3 tablet.
     for (const [w, h] of [
       [1920, 1080],
       [960, 432],

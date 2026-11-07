@@ -146,10 +146,10 @@ public static class CouchCoopHeadlessCpuProfiler
     // are read separately (a memory round greps `[couchcoop][memory]`, a cpu round greps `[couchcoop][profile]`).
     //
     // rss_mb is the number that actually matters — Godot's MemoryStatic counts only what went through Godot's
-    // own `Memory::alloc_static`, which misses the CLR entirely (GC heap + JIT code + loader heaps were ~300MB
-    // of a measured 1374MB seat) and, more importantly, misses nothing about the dummy renderer's retained
-    // texture images but gives no way to separate them. For the per-image breakdown use
-    // `scripts/headless-memory-census.py --images <pid>`, which reads this process from the outside; these
+    // own `Memory::alloc_static`, which misses the CLR entirely (GC heap + JIT code + loader heaps are a few hundred
+    // MB of a seat's resident set) and, more importantly, misses nothing about the dummy renderer's retained
+    // texture images but gives no way to separate them. For the per-image breakdown use an external memory-census
+    // tool that reads this process from the outside; these
     // counters are the cheap in-process trend line that says WHEN to go run it.
     private static void SampleMemory()
     {

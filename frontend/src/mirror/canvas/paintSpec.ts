@@ -11,14 +11,14 @@
 // NODE CLASSIFICATION. Every node resolves to exactly one of:
 //   * `canvas`  — the draw list paints it (textures, atlas regions, nine-patches, solid fills, Range bars,
 //                 Line2D strokes);
-//   * `overlay` — the node is handed back as an {@link OverlayRecord} for the Wave-2 DOM overlay (text runs,
+//   * `overlay` — the node is handed back as an {@link OverlayRecord} for the DOM overlay (text runs,
 //                 WebGL-shader surfaces, particle systems, Spine clips, card trails). These are the paints whose
 //                 pixels come from somewhere the flat list cannot reach: a glyph rasteriser, a gsw WebGL runtime,
 //                 a CPU particle simulation, a baked clip image, a synthesized ribbon.
-//                 M2 adds one thing and changes no classification: a shader/particle record
-//                 ALSO gets a quad ({@link emitFxQuad}) drawn from the surface the gsw runtime painted, uploaded
-//                 as a texture by `fxSurfaces`. The node stays `overlay` — the union oracle the offline gate
-//                 asserts is untouched — it simply has pixels in the list as well as a host in the DOM.
+//                 A shader/particle record also gets a quad ({@link emitFxQuad}) drawn from the surface the gsw
+//                 runtime painted, uploaded as a texture by `fxSurfaces`. The node stays `overlay` — the union
+//                 oracle the offline gate asserts is untouched — it simply has pixels in the list as well as a host
+//                 in the DOM.
 //   * `skip`    — invisible or non-painting (a pure transform group, a faded-out node, a `clip_children = Only`
 //                 stencil, an ancestor-hidden subtree).
 // `canvas ∪ overlay` is exactly the mirror's VISIBLE PAINTING SET, which is what the offline gate asserts against
@@ -76,11 +76,11 @@ import type * as GswGlyphs from "@godot-scene-web/canvas/glyphs";
 /** Which of the three buckets a node falls in. See the header. */
 export type NodeClass = "canvas" | "overlay" | "skip";
 
-/** Why an `overlay` node is not drawn — i.e. which Wave-2 surface has to render it. */
+/** Why an `overlay` node is not drawn — i.e. which DOM-overlay surface has to render it. */
 export type OverlayKind = "text" | "shader" | "particles" | "spine" | "trail";
 
 /**
- * A node the draw list refuses to paint, handed to the Wave-2 DOM overlay.
+ * A node the draw list refuses to paint, handed to the DOM overlay.
  *
  * `transform` is the node's PLACEMENT affine (its global composed with its box origin), so the overlay element's
  * `matrix(...)` is this verbatim and `w`/`h` are its CSS box — exactly the shape `nodeStyle` emits today.
@@ -119,7 +119,7 @@ export interface OverlayRecord {
    */
   coveredAbove: boolean;
   /**
-   * The DESIGN-space rect this surface must be cropped to (R1), or null when it needs no crop.
+   * The DESIGN-space rect this surface must be cropped to, or null when it needs no crop.
    *
    * A canvas command lands inside whatever clip scopes the walk had open at that node; an overlay element is a
    * FLAT child of one container and lands inside none of them, so before this a label inside a scrolled dialog
@@ -276,9 +276,9 @@ export interface NodePaintInput {
   hidden: boolean;
   /** The node's index in the paint order. */
   order: number;
-  /** Wide-screen stretched paint width in design px, or 0/undefined for the streamed `localRect.width` (M1a). */
+  /** Wide-screen stretched paint width in design px, or 0/undefined for the streamed `localRect.width`. */
   renderWidthOverride?: number;
-  /** R20 one-axis clip outset for this node's scene identity, or undefined (see `clipAxis.ts`). */
+  /** One-axis clip outset for this node's scene identity, or undefined (see `clipAxis.ts`). */
   clipAxisOutsetX?: number;
   /** The live node map, for the shader binding's ancestor probe. Optional; only the HSV path reads it. */
   nodes?: Map<string, MirrorNode>;
@@ -414,8 +414,8 @@ export function overlayRecordFor(
  *
  * THE CHAIN IS THE ANCESTORS', not the node's own scope — the same chain `buildHitEntry` is handed for the same
  * node. A node's own `clip_contents` would crop its own ink to its own box, which is the direction that LOSES
- * text when the box is a pixel small (a label's outline and shadow sit outside it, and R20 already had to carve
- * `RichTextLabel` out of the clip rules entirely). Under-clipping is the deliberate bias throughout this fix.
+ * text when the box is a pixel small (a label's outline and shadow sit outside it, and `RichTextLabel` already had
+ * to be carved out of the clip rules entirely). Under-clipping is the deliberate bias throughout this fix.
  *
  * `null` when the placed box is already INSIDE the intersection: nothing to crop, no rect to carry, and no style
  * for the overlay to write. That is the overwhelmingly common case, so the walk pays one AABB compare rather than
@@ -486,9 +486,9 @@ export function placedBoxAabbInto(input: NodePaintInput, out: Float64Array, at: 
  *
  * A restatement of `nodeStyle`'s clip branches in numbers instead of CSS, in the same order and with the same
  * gates: `clip_children` (Only/AndDraw) → the box, rounded to the clipper texture's capsule via
- * `clipCornerRadius`; else `Control.clip_contents` on a positive box → the box, square, with the two R20
- * exceptions (a RichTextLabel is NEVER clipped; a scene identity in the clip-axis table clips the vertical axis
- * only and outsets the horizontal one).
+ * `clipCornerRadius`; else `Control.clip_contents` on a positive box → the box, square, with the two exceptions
+ * (a RichTextLabel is NEVER clipped; a scene identity in the clip-axis table clips the vertical axis only and
+ * outsets the horizontal one).
  *
  * APPROXIMATION, named: `ClipRectView` is an axis-aligned design-space rect, so a clipper whose global carries a
  * ROTATION cannot be expressed exactly and gets the placed box's AABB — which is strictly LARGER than the true
@@ -509,10 +509,10 @@ export function nodeClipSpec(input: NodePaintInput): ClipSpec | null {
     cornerRadius = clipCornerRadius(node, input.renderWidthOverride);
   } else if (node.clipContents && lr && lr.width > 0 && lr.height > 0) {
     if (node.richText) {
-      return null; // R20 (1): rich text is never clipped — the readability transform is MEANT to spill.
+      return null; // Rich text is never clipped — the readability transform is MEANT to spill.
     }
     if (input.clipAxisOutsetX != null) {
-      outsetX = input.clipAxisOutsetX; // R20 (2): vertical axis at the box edge, horizontal outset.
+      outsetX = input.clipAxisOutsetX; // Vertical axis at the box edge, horizontal outset.
     }
   } else {
     return null;
@@ -622,7 +622,7 @@ export function emitNodePaint(
   return pushed;
 }
 
-// --- effect surfaces as quads (M2) -------------------------------------------------------------------------------
+// --- effect surfaces as quads ----------------------------------------------------------------------------------------
 
 /** The two overlay kinds an fx quad can paint. `text`/`spine`/`trail` have no gsw surface to upload. */
 export const FX_QUAD_KINDS: ReadonlySet<OverlayKind> = new Set<OverlayKind>(["shader", "particles"]);
@@ -648,11 +648,11 @@ export interface FxQuadSource {
 }
 
 /**
- * Draw an effect surface as a QUAD at the node's own paint index — the whole point of M2.
+ * Draw an effect surface as a QUAD at the node's own paint index — the whole point of the fx path.
  *
  * Until this existed, a shader or particle surface rode a DOM overlay ABOVE the entire stage canvas, so anything
  * the game painted over it would have been painted UNDER it instead; `overlay.ts`'s HOIST RULE therefore withheld
- * every covered surface, which on a combat screen is 24 of 26. A quad has no such problem: "above" and "below" are
+ * every covered surface, which on a combat screen is most of them. A quad has no such problem: "above" and "below" are
  * command indices, and this one is pushed from the walk's `overlay` branch, so it lands inside whatever clip scopes
  * are open and inside the node's own command range for free.
  *
@@ -730,7 +730,7 @@ export function emitFxQuad(
     // because gsw feeds the node's modulate into the shader itself through `data-godot-shader-modulate`. A CSS
     // tint on top would double it, and so would one here.
     //
-    // TODO(M3 — fidelity): this RESTATES the DOM twin rather than improving on it, and the twin DOUBLE-APPLIES
+    // TODO(fidelity): this RESTATES the DOM twin rather than improving on it, and the twin DOUBLE-APPLIES
     // the node's alpha. gsw folds `modulate.a` into the shader, so the surface's pixels already carry it; the
     // overlay then writes CSS `opacity: record.opacity` over the top, i.e. the effect fades as alpha SQUARED. A
     // faded glow is therefore fainter than the game draws it on both backends. Reproducing it is a deliberate
@@ -745,7 +745,7 @@ export function emitFxQuad(
   return 1;
 }
 
-// --- spine stills as quads (M3 A2) -------------------------------------------------------------------------------
+// --- spine stills as quads -------------------------------------------------------------------------------------------
 
 /**
  * A node-local spine still, as the draw list needs it — `overlay.SpineQuadSource` minus the pixel source, which
@@ -814,7 +814,7 @@ export function emitSpineQuad(
   return 1;
 }
 
-// --- text as quads (M4) ------------------------------------------------------------------------------------------
+// --- text as quads ---------------------------------------------------------------------------------------------------
 
 /**
  * One label's rastered texture, as the draw list needs it — `textSurfaces.TextRasterBox` plus the key and the
@@ -836,7 +836,7 @@ export interface TextQuadBox {
   w: number;
   h: number;
   /** The raster's own device pixels, and WHERE they sit in the texture — the source rect. `(0, 0)` for a label on
-   *  a texture of its own; a packed origin for one sharing an atlas page (R6 P6-D2). */
+   *  a texture of its own; a packed origin for one sharing an atlas page. */
   texW: number;
   texH: number;
   texX: number;
@@ -870,19 +870,16 @@ export interface TextQuadSource {
  * WHY A LABEL WANTS IT. Getting the raster scale right (see `rasterScaleFor`) makes the blit 1:1 in SIZE; it says
  * nothing about PHASE. A texture landing at x = 401.265 device px samples every texel between two screen pixels,
  * and the executor's `LINEAR` filter spreads each glyph stem across two — the classic "text at a half-pixel
- * offset looks blurry", measured on the live combat frame as 44 of 56 text quads at fractional translations.
+ * offset looks blurry"; on a live combat frame the large majority of text quads sat at fractional translations.
  * Rounding the origin to a whole device pixel costs at most half a pixel of placement error, which on a glyph
  * nobody can see, and buys back sharpness, which everybody can.
  *
  * WHY IT NEEDS A REST TEST AT ALL. Snapping is a quantizer, so a label drifting across the grid would step in
  * whole device pixels instead of gliding — judder, in exchange for sharpness nobody can read off a moving card.
  *
- * WHY THE REST TEST IS PER LABEL AND NOT PER FRAME, which is the part that had to be measured rather than
- * assumed. The first attempt gated the whole build on "the tween loop and the idle loops are both idle", on the
- * reasoning that a settled screen is the common case. It is not, in the one place that matters: a live COMBAT
- * always has idle loops running (the energy orb, the enemy intents), so the
- * gate was shut on essentially every frame the reporter would ever read text on. Re-measuring said so: the
- * fractional-translation count barely moved, 44/56 to 38/47.
+ * WHY THE REST TEST IS PER LABEL AND NOT PER FRAME. Gating the whole build on "the tween loop and the idle loops are
+ * both idle" does not work, because a live COMBAT always has idle loops running (the energy orb, the enemy
+ * intents), so such a gate would be shut on essentially every frame text is read on.
  *
  * SO REST IS ASKED OF THE LABEL, by the only question that needs no motion plumbing at all: did this node's
  * composed translation come out the same as it did last build? That is ancestor-agnostic by construction — a
@@ -923,18 +920,15 @@ const AXIS_ALIGNED_EPS = 1e-4;
 /**
  * The quad size that makes the blit EXACTLY 1:1 — one texel per device pixel — or null when it cannot.
  *
- * THE DEFECT THIS EXISTS FOR, which round 9 diagnosed wrongly and had to retract. A label's texture is a whole
- * number of texels (`texW = ceil(ink.w * rasterScale)`) while the quad it is stretched over is the ink's
- * FRACTIONAL design width; the whole texture maps onto the whole quad, so the sampler is permanently squeezing
- * one or two extra texels into the label's width. On the live combat frame that was 31x40 texels drawn into
- * 30.2x39.1 device px, and ZERO of 39 fully-visible labels landed at 1:1.
+ * THE DEFECT THIS EXISTS FOR. A label's texture is a whole number of texels (`texW = ceil(ink.w * rasterScale)`)
+ * while the quad it is stretched over is the ink's FRACTIONAL design width; the whole texture maps onto the whole
+ * quad, so the sampler is permanently squeezing one or two extra texels into the label's width, and almost no
+ * label lands at 1:1.
  *
- * Round 9 called a ~3% mismatch invisible and shipped. It is not, because the executor samples `LINEAR` for both
- * min and mag with no mipmaps: at any ratio other than 1 the sampling PHASE drifts across the label, so most
- * output pixels are a blend of two texels — a uniform softening with no fringe to give it away. Measured through
- * gsw's own sampler settings, the fully-bright share of ink falls 0.398 -> 0.213 between ratio 1.000 and 1.005.
- * Half a percent off already halves it. "Close to 1" is not 1, and the reporter could see the difference the
- * measurement said was not there.
+ * A ~3% mismatch is NOT invisible. The executor samples `LINEAR` for both min and mag with no mipmaps: at any
+ * ratio other than 1 the sampling PHASE drifts across the label, so most output pixels are a blend of two texels —
+ * a uniform softening with no fringe to give it away. Even half a percent off sharply reduces the share of
+ * fully-bright ink. "Close to 1" is not 1.
  *
  * So the quad is sized from the TEXTURE instead: at `texW / (axis * perDesignPx)` design units the drawn device
  * width is exactly `texW`, and texel k lands on device pixel k. Note this does NOT stretch the glyphs by the
@@ -965,13 +959,12 @@ function exactBlitSize(m: Affine, box: TextQuadBox, perDesignPx: number): { w: n
 }
 
 /**
- * Draw a rastered label as a QUAD at the node's own paint index — M4's whole point.
+ * Draw a rastered label as a QUAD at the node's own paint index — the whole point of the text path.
  *
- * WHY, in one measurement. Probe P6 counted, per recording, the visible nodes painting LATER than a text node
- * whose box they cover: 7% on the map, 32-46% on combat/shop/reward, and 70-73% on deck view and reshuffle, where
- * it is almost entirely cards — `NCardHighlight`'s glow and the card's own plates, which the game paints OVER the
- * card's text and the DOM overlay paints UNDER it. A quad has no such problem, because "above" and "below" are
- * command indices. It also ends the 17 batch breaks a combat screen pays for text→atlas→text churn.
+ * WHY. Many visible nodes paint LATER than a text node whose box they cover — on combat, shop, reward and especially
+ * deck-view screens, almost entirely cards: `NCardHighlight`'s glow and the card's own plates, which the game paints
+ * OVER the card's text and the DOM overlay paints UNDER it. A quad has no such problem, because "above" and "below"
+ * are command indices. It also removes the batch breaks a combat screen pays for text→atlas→text churn.
  *
  * THE GEOMETRY IS THE DOM'S, COMPOSED RATHER THAN RE-DERIVED. The element is a `.mirror-text` box carrying the
  * scale rules' `transform: scale(N)` with `transform-origin: 50% 50%`, inside a host carrying `record.transform`,
@@ -1172,7 +1165,7 @@ export interface GlyphFloorCensus {
  *
  * ONE WARNING PER SESSION, NAMING A NODE. "Some of this screen's text is small" is not actionable and a warning
  * per run would be one per label per build — a console nobody can read, on precisely the screen that needs
- * reading. One line naming the first offender's scene path and its measured ppem is a thing an agent can go and
+ * reading. One line naming the first offender's scene path and its ppem is a thing an agent can go and
  * look at; the tally is what the census is for.
  *
  * Lives here rather than in the renderer because it is pure — a counter, a latch and a string — and because the
@@ -1329,7 +1322,7 @@ export function emitTextGlyphs(
   return pushed;
 }
 
-// --- card trails as quad strips (M3 A4) --------------------------------------------------------------------------
+// --- card trails as quad strips --------------------------------------------------------------------------------------
 
 /**
  * The half of `cardTrailState.CardTrailState` a draw-list build needs: the strip for one stroke, and the blend it
@@ -1369,7 +1362,7 @@ export interface TrailQuadSource {
  * as the fourth factor — Godot's `gradient × texture × default_color` with the ramp already folded in by
  * `buildTrailStrip`.
  *
- * THE TEXTURE (R5 T-DR1). The authored page is pure white with a soft falloff ACROSS the ribbon and nothing
+ * THE TEXTURE. The authored page is pure white with a soft falloff ACROSS the ribbon and nothing
  * along it, and the executor's `texel × premultiplied colour` is exactly the missing factor of Godot's
  * `texture × gradient × default_color × modulate`. So a textured strip's cell takes the WHOLE PAGE as its source
  * rect: `v` already runs edge to edge across the ribbon, and `u` samples a constant column whatever the cell's
@@ -1378,7 +1371,7 @@ export interface TrailQuadSource {
  *
  * `strip.textured` and `textureFor` come from the same decision and cannot disagree: a strip is only built
  * full-width once its page is READY, because an unready url pushes an INVISIBLE quad and a hopeful strip would
- * blank the comet for the length of the load. The banded fallback is not a degraded mode, it is the pre-R5 shape.
+ * blank the comet for the length of the load. The banded fallback is not a degraded mode, it is the original shape.
  *
  * Returns the number of quads pushed.
  */
@@ -1804,12 +1797,12 @@ function emitPolyline(
   input: NodePaintInput,
   sink: PaintSink
 ): number {
-  // R9 — AN ERASER IS NOT A PEN. The game's eraser stroke carries `line_erase.gdshader`, which is `blend_sub`
+  // AN ERASER IS NOT A PEN. The game's eraser stroke carries `line_erase.gdshader`, which is `blend_sub`
   // INSIDE the isolated `DrawViewport` that holds the annotations: it removes ink the player laid down and
   // touches nothing else. A flat draw list has no isolated group to subtract inside, and the alternatives are
   // both wrong — `BLEND_SUB` against the stage would darken the parchment, and a `dst-out` would punch a hole
   // through the map itself. So the honest step is to lay down NOTHING: the erased ink stays visible, which is
-  // strictly less wrong than the pre-R9 behaviour of painting the eraser as a solid stroke ON TOP of the map.
+  // strictly less wrong than painting the eraser as a solid stroke ON TOP of the map.
   // The DOM backend composites a real SVG mask here; the isolated-surface fix that would let this arm do the
   // same is filed (`mapInkSurface`) and is not two lines.
   //

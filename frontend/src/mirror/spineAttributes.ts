@@ -116,7 +116,7 @@ export function spineClipUrl(node: MirrorNode, opts?: { skel?: string | null; re
     selectors.push("retry=1");
   }
   // A still-mode tier (or an explicit opts.still request) asks the host to render a SINGLE frame (cheap one-image
-  // placeholder) instead of the full clip. R10: a still of a PAUSED track additionally pins the sampled time
+  // placeholder) instead of the full clip. A still of a PAUSED track additionally pins the sampled time
   // (`&t=`) to the game's own frozen track time — see spineStillTime.
   // `hostUrl` is a no-op in host-served mode, so the "BYTE-IDENTICAL url" property above still holds
   // there — clip identity and the HTTP cache are untouched. Under the public-origin bootstrap it gains
@@ -184,7 +184,7 @@ export function spineStillTime(node: MirrorNode): string | null {
   return t.toFixed(2);
 }
 
-// R11 WS-F — TERMINAL (one-way) animation names: die / death / dead / defeat. Client port of the host's
+// TERMINAL (one-way) animation names: die / death / dead / defeat. Client port of the host's
 // `Sts2SpineStillFrame.IsTerminalAnimation` (spirectl bridge-mod) — KEEP THE TWO IN LOCKSTEP: the host uses it to
 // sample a still's LAST frame (the corpse pose) instead of the mid frame, and the mirror uses it as the "this
 // creature is dying" signal for spine-clip cache eviction (a corpse never replays its idle/attack clips, so their

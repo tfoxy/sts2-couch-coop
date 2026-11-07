@@ -1,6 +1,6 @@
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
-// Pure math for the WS-J native cosmetic effects — intent-glyph frame cycling, the enemy-intent bob wave, and the
+// Pure math for the native cosmetic effects — intent-glyph frame cycling, the enemy-intent bob wave, and the
 // energy/star-orb spin angle. NO Godot types, so it lives in the protocol lib: the Exe test runner (which references
 // only this lib) covers it, and the Godot ticking children (IntentPlayer/CosmeticAnimator) call the SAME functions
 // the tests pin. Each is the native twin of a web replay, and the two must agree:

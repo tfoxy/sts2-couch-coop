@@ -30,16 +30,16 @@ internal static class ViewScaleTests
         InverseUndoesTranslateOnlyStamp();
         InversePivotIsFixed();
         ParkedOffscreenBoxIsFullyOutsideRejectsStamp();
-        // R8 (WS-1) scale pack.
+        // Scale pack.
         MapPointMatchesNormalOnly();
         MapLegendMatchesRightPinnedGroup();
-        // WS-3 map drawing tools.
+        // Map drawing tools.
         DrawingToolsMatchesCenterGroup();
         DrawingToolsScaledBoxStaysOnStage();
         CombatPilesMatchCornerPivots();
         TreasureRelicLeafResolvesToRelicScale();
         NewRootFilesRegistered();
-        // R9 (WS-B) scale pack 2.
+        // Scale pack 2.
         ExhaustPileMatchesMiddleRightEdgePivot();
         DeckViewUpgradesMatchesBottomLeft();
         CardDetailViewUpgradesMatchesBottomCenter();
@@ -47,7 +47,7 @@ internal static class ViewScaleTests
         PrefilteredResolveMatchesTheRawTable();
     }
 
-    // R8 cost gate: ResolveFor(id, state) no longer runs the scene-identity walk for a node that provably cannot match
+    // Cost gate: ResolveFor(id, state) no longer runs the scene-identity walk for a node that provably cannot match
     // the table (the pass now stays alive through all of combat, where the walk cost ~3.8 ms per whole-tree pass). The
     // filter is DERIVED from the entry table, so this test just proves the two agree on a tree that exercises every
     // shape: a scene root that matches, a scene root that doesn't, a named child that matches, a named child that
@@ -79,7 +79,7 @@ internal static class ViewScaleTests
         Add("opts", "content", "OptionsContainer");                  // exact multi-segment path, matches
         Add("nameless", "content", "");                              // NO name → inherits "…/Content" tail
         Add("namelessUnderOpts", "opts", "");                        // NO name → inherits "…/OptionsContainer" tail
-        // R9 (WS-B): the deck dialog — a root that carries NO entry, its matching named child, and that child's own
+        // The deck dialog — a root that carries NO entry, its matching named child, and that child's own
         // interior (which must NOT double-scale).
         Add("deck", null, "DeckViewScreen", "res://scenes/screens/deck_view_screen.tscn");
         Add("viewUpgrades", "deck", "ViewUpgrades");                 // named child, matches
@@ -120,7 +120,7 @@ internal static class ViewScaleTests
         }
     }
 
-    // R8 (user decision): only NORMAL map points enlarge (56 → 84 design px). Ancient / boss points keep the game's
+    // Only NORMAL map points enlarge (56 → 84 design px). Ancient / boss points keep the game's
     // size, and the enlargement is UNCLAMPED because the map scrolls (a clamped point at the viewport edge would slide
     // off its own path). Per-item, NOT a group.
     private static void MapPointMatchesNormalOnly()
@@ -140,7 +140,7 @@ internal static class ViewScaleTests
         }
     }
 
-    // R8: map_screen.tscn :: MapLegend — a 1.2 GROUP pinned at its BOTTOM-RIGHT corner and UNCLAMPED. Its real box
+    // map_screen.tscn :: MapLegend — a 1.2 GROUP pinned at its BOTTOM-RIGHT corner and UNCLAMPED. Its real box
     // (1656,289)-(1996,743) already overhangs the right edge, so a clamped centre pivot would drag it left.
     private static void MapLegendMatchesRightPinnedGroup()
     {
@@ -155,11 +155,11 @@ internal static class ViewScaleTests
             "the map's Points container is never scaled (the points scale individually)");
     }
 
-    // WS-3: map_screen.tscn :: DrawingTools — the draw/erase/clear palette, a NinePatchRect the map screen owns as a
+    // map_screen.tscn :: DrawingTools — the draw/erase/clear palette, a NinePatchRect the map screen owns as a
     // plain child (recovered map_screen.tscn). 1.35 GROUP about its own CENTRE, UNCLAMPED. GROUP because its three
     // interior buttons (HBoxContainer/DrawButton|EraseButton|ClearButton) are the tap surfaces and must ride the one
     // stamp; CENTRE because the panel sits in free space above the bottom edge, so it can splay symmetrically.
-    // Twin of the web viewScale.spec "WS-3: scales the map DrawingTools palette 1.35×…".
+    // Twin of the web viewScale.spec "scales the map DrawingTools palette 1.35×…".
     private static void DrawingToolsMatchesCenterGroup()
     {
         var r = ViewScale.ResolveFor("res://scenes/screens/map/map_screen.tscn", "DrawingTools");
@@ -210,7 +210,7 @@ internal static class ViewScaleTests
             "the auto-derived NAME pre-filter keeps the DrawingTools child (candidate-name parity with the web set)");
     }
 
-    // WS-3 sanity math: the real design box (56,972)-(264,1040) — recovered map_screen.tscn, anchors_preset 2 with
+    // Sanity math: the real design box (56,972)-(264,1040) — recovered map_screen.tscn, anchors_preset 2 with
     // offsets 56/-108/264/-40 against the 1080-tall canvas — scaled 1.35 about its centre (160,1006) lands at
     // (19.6,960.1)-(300.4,1051.9): wholly inside the 1920×1080 stage, which is what makes NoClamp safe (the clamp is
     // a no-op on this box, so the flag only guarantees the growth stays exactly symmetric).
@@ -238,8 +238,8 @@ internal static class ViewScaleTests
         Check.That(clamped == s, "the clamp is a no-op on the drawing-tools box (clamped stamp == unclamped stamp)");
     }
 
-    // R8: the two combat corner piles grow INWARD from their own bottom corner so the enlarged button + tap halo stay
-    // glued to the screen corner. R9 (WS-B) adds the third pile — see ExhaustPileMatchesMiddleRightEdgePivot.
+    // The two combat corner piles grow INWARD from their own bottom corner so the enlarged button + tap halo stay
+    // glued to the screen corner. The third pile is covered by ExhaustPileMatchesMiddleRightEdgePivot.
     private static void CombatPilesMatchCornerPivots()
     {
         var draw = ViewScale.ResolveFor("res://scenes/combat/draw_pile.tscn", "");
@@ -256,7 +256,7 @@ internal static class ViewScaleTests
             "the pile COUNT label is not separately scaled (it rides the root stamp)");
     }
 
-    // R9 (WS-B): the EXHAUST pile — the third combat pile, but the only one that is NOT in a screen corner. Its root
+    // The EXHAUST pile — the third combat pile, but the only one that is NOT in a screen corner. Its root
     // box (1830,800)-(1910,880) is pinned to the RIGHT edge at mid height, so it takes the new MiddleRight EDGE pivot:
     // pivot X at the right edge (like the discard pile) but pivot Y at the box CENTRE, splaying up AND down.
     // Deliberately NOT NoClamp — the scaled box stays inside the viewport, so the clamp is a no-op backstop.
@@ -280,15 +280,15 @@ internal static class ViewScaleTests
         Check.Close(Forward(s, 1830, 800).Y, 790, "exhaust splays UP to 790");
     }
 
-    // R9 (WS-B): the deck dialog's "View Upgrades" toggle — deck_view_screen.tscn :: ViewUpgrades, a MarginContainer
-    // (mouseFilter PASS) at (16,1012)-(212.5,1060) measured from .sts2/bench/wscrisp-deckdialog.ndjson. R10 WS-F:
-    // 1.35 (was 1.25) about its BOTTOM-LEFT corner so the enlarged row grows right/up into the empty bottom-left margin. The screen ROOT itself
+    // The deck dialog's "View Upgrades" toggle — deck_view_screen.tscn :: ViewUpgrades, a MarginContainer
+    // (mouseFilter PASS) at (16,1012)-(212.5,1060) measured from a recorded deck dialog. Scale
+    // 1.35 about its BOTTOM-LEFT corner so the enlarged row grows right/up into the empty bottom-left margin. The screen ROOT itself
     // carries no entry — it is registered as a root file purely so the native presence gate fires on the dialog.
     private static void DeckViewUpgradesMatchesBottomLeft()
     {
         var r = ViewScale.ResolveFor("res://scenes/screens/deck_view_screen.tscn", "ViewUpgrades");
         Check.Close(r.Scale, ViewScale.ViewUpgradesDeckScale, "deck View Upgrades → 1.35");
-        // R10 WS-F: the deck dialog and the card-detail popup no longer share one factor — pin BOTH numbers here so a
+        // The deck dialog and the card-detail popup no longer share one factor — pin BOTH numbers here so a
         // future edit to either constant has to come past this test (and its web twin, viewScale.spec.ts).
         Check.Close(r.Scale, 1.35, "deck View-Upgrades factor is 1.35");
         Check.Close(ViewScale.ViewUpgradesDetailScale, 1.40, "card-detail View-Upgrades factor is 1.40");
@@ -319,12 +319,11 @@ internal static class ViewScaleTests
         Check.Close(s.ClampY, 0, "deck View Upgrades: the 1.35 box stays on-screen (no clamp)");
     }
 
-    // R9 (WS-B): the CARD-DETAIL popup's "View Upgrades" toggle — inspect_card_screen.tscn :: Upgrade. Same control as
+    // The CARD-DETAIL popup's "View Upgrades" toggle — inspect_card_screen.tscn :: Upgrade. Same control as
     // the deck dialog's but a different name and shape (the NUpgradePreviewTickbox ITSELF, mouseFilter STOP, no
     // wrapping MarginContainer) and a different anchor: its box (816.5,990)-(1103.5,1054) is horizontally CENTRED on
     // the screen (centre x == 960), so it takes BottomCenter — pinning the bottom keeps it clear of the screen edge
-    // and grows it upward toward the card. Measured live (no capture had this screen open before R9) — see
-    // .sts2/bench/r9-carddetail.ndjson.
+    // and grows it upward toward the card. Measured live (no earlier capture had this screen open).
     private static void CardDetailViewUpgradesMatchesBottomCenter()
     {
         var r = ViewScale.ResolveFor("res://scenes/screens/inspect_card_screen.tscn", "Upgrade");
@@ -363,7 +362,7 @@ internal static class ViewScaleTests
         Check.Close(Forward(s, 816.5, 1054).Y, 1054, "card-detail: the bottom edge stays where the game anchored it");
     }
 
-    // R8: the treasure-room relic HOLDER is matched by node-type LEAF, not (file, relPath) — the relic art + the co-op
+    // The treasure-room relic HOLDER is matched by node-type LEAF, not (file, relPath) — the relic art + the co-op
     // vote widget are instanced sub-scenes under it. The vote container's own scene is reused elsewhere, so only the
     // holder leaf resolves; its children (the vote icons) ride the holder's stamp instead of getting their own.
     private static void TreasureRelicLeafResolvesToRelicScale()
@@ -417,8 +416,8 @@ internal static class ViewScaleTests
         }
     }
 
-    // R8/R9: every newly-scaled scene must be a ROOT file, or the native presence gate (AnyViewScaleScenePresent)
-    // early-outs the whole pass and none of the new entries ever stamp. map_screen.tscn and (R9) deck_view_screen.tscn
+    // Every newly-scaled scene must be a ROOT file, or the native presence gate (AnyViewScaleScenePresent)
+    // early-outs the whole pass and none of the new entries ever stamp. map_screen.tscn and deck_view_screen.tscn
     // carry no root entry themselves — they are registered purely as the gate for a CHILD entry (MapLegend /
     // ViewUpgrades).
     private static void NewRootFilesRegistered()
@@ -429,7 +428,7 @@ internal static class ViewScaleTests
                      "res://scenes/screens/map/map_screen.tscn",
                      "res://scenes/combat/draw_pile.tscn",
                      "res://scenes/combat/discard_pile.tscn",
-                     // R9 (WS-B): the exhaust pile carries its own ROOT entry; the two dialog screens are
+                     // The exhaust pile carries its own ROOT entry; the two dialog screens are
                      // child-entry gates.
                      "res://scenes/combat/exhaust_pile.tscn",
                      "res://scenes/screens/deck_view_screen.tscn",
@@ -445,7 +444,7 @@ internal static class ViewScaleTests
             "the deck dialog's sort button is NOT a root file (it carries no rule)");
     }
 
-    // R8 item 12 is a TEXT-scale change only: the end-turn button must stay VIEW-scale neutral at every level (root,
+    // This is a TEXT-scale change only: the end-turn button must stay VIEW-scale neutral at every level (root,
     // visuals, label) so the button box itself never moves.
     private static void EndTurnButtonStaysViewScaleNeutral()
     {
@@ -459,7 +458,7 @@ internal static class ViewScaleTests
             "end_turn_button is not a view-scale root file");
     }
 
-    // WS6: the post-combat rewards PANEL (rewards_screen.tscn :: Rewards) is one centre-pivot GROUP at the reward-list
+    // The post-combat rewards PANEL (rewards_screen.tscn :: Rewards) is one centre-pivot GROUP at the reward-list
     // factor. The old per-ROW reward_button.tscn entry is gone — a reward row now rides the panel stamp, so a
     // file-keyed reward_button lookup must resolve NEUTRAL (and the file is no longer a presence-gate root file).
     private static void RewardsPanelGroupMatches()
@@ -488,7 +487,7 @@ internal static class ViewScaleTests
             "reward_button is no longer a view-scale root file");
     }
 
-    // R19/R20: the shop scales the merchant_inventory SlotsContainer (rug + all items) as ONE group; the old per-item
+    // The shop scales the merchant_inventory SlotsContainer (rug + all items) as ONE group; the old per-item
     // scene roots are no longer view-scaled.
     private static void ShopSlotsContainerMatches()
     {
@@ -496,7 +495,7 @@ internal static class ViewScaleTests
         Check.Close(r.Scale, ViewScale.MerchantGroupScale, "merchant SlotsContainer → shop group scale");
         Check.That(r.IsGroup, "SlotsContainer entry is a GROUP");
         Check.That(r.Pivot == HoverTipScaleMath.AnchorPivot.Center, "SlotsContainer group grows about centre");
-        // WS6: 1747×978 at 1.2 is 2096×1174 — bigger than the 1920×1080 stage on BOTH axes, so AxisClamp could only
+        // 1747×978 at 1.2 is 2096×1174 — bigger than the 1920×1080 stage on BOTH axes, so AxisClamp could only
         // ever pin one edge and crop the whole overflow off the other side (and it was the lever that pulled a
         // CLOSING panel back on-stage off a stale measure).
         Check.That(r.NoClamp, "the shop SlotsContainer group is UNCLAMPED (its scaled box cannot fit the stage)");
@@ -513,7 +512,7 @@ internal static class ViewScaleTests
         }
     }
 
-    // R4-round4: the card-reward SELECTION screen ROOT is a gentle 1.10 centre GROUP, UNCLAMPED (NoClamp). A file-keyed
+    // The card-reward SELECTION screen ROOT is a gentle 1.10 centre GROUP, UNCLAMPED (NoClamp). A file-keyed
     // card.tscn lookup stays neutral (per-card scaling is ancestry-driven, not file-keyed — see the ancestry test).
     private static void CardRewardGroupRootMatches()
     {
@@ -529,7 +528,7 @@ internal static class ViewScaleTests
         Check.Close(ViewScale.ScaleFor("res://scenes/cards/holders/grid_card_holder.tscn", ""), 1.0, "grid_card_holder by FILE → neutral (reused by deck dialog)");
     }
 
-    // R4-round4: the card-reward selection screen stays a ROOT file (the presence gate that lets the ancestry per-card
+    // The card-reward selection screen stays a ROOT file (the presence gate that lets the ancestry per-card
     // rule run), even though the group is now a table entry keyed on it.
     private static void CardRewardScreenStaysRootFile()
     {
@@ -537,7 +536,7 @@ internal static class ViewScaleTests
             "card-reward selection screen is a view-scale ROOT file (presence gate for the ancestry rule)");
     }
 
-    // R7/R9: event OptionsContainer entries — regular grows DOWN from top, ancient grows UP from bottom, ancient
+    // Event OptionsContainer entries — regular grows DOWN from top, ancient grows UP from bottom, ancient
     // dialogue is a pure translate-up (scale 1) via the clamp channel.
     private static void EventOptionEntriesMatch()
     {
@@ -546,8 +545,8 @@ internal static class ViewScaleTests
         Check.Close(reg.Scale, ViewScale.EventOptionsScale, "regular-event OptionsContainer → 1.2");
         Check.That(reg.IsGroup && reg.Pivot == HoverTipScaleMath.AnchorPivot.TopCenter, "regular options grow DOWN from top");
 
-        // R6 combat event: same shape as the regular layout — suffix-matched OptionsContainer, TopCenter GROUP.
-        // Path taken verbatim from audit-event.ndjson (combat_event_layout.tscn root → "VBoxContainer/OptionsContainer").
+        // Combat event: same shape as the regular layout — suffix-matched OptionsContainer, TopCenter GROUP.
+        // Path taken verbatim from a recorded event layout (combat_event_layout.tscn root → "VBoxContainer/OptionsContainer").
         var cmb = ViewScale.ResolveFor("res://scenes/events/combat_event_layout.tscn", "VBoxContainer/OptionsContainer");
         Check.Close(cmb.Scale, ViewScale.EventOptionsScale, "combat-event OptionsContainer → 1.2");
         Check.That(cmb.IsGroup && cmb.Pivot == HoverTipScaleMath.AnchorPivot.TopCenter, "combat options grow DOWN from top");
@@ -575,7 +574,7 @@ internal static class ViewScaleTests
         Check.Close(ViewScale.ScaleFor(null, (string?)null), 1.0, "no scene identity → neutral");
     }
 
-    // R4-round4: ResolveFor(id, state) restores the per-card 1.15 via ANCESTRY — an NCard under NCardRewardSelectionScreen
+    // ResolveFor(id, state) restores the per-card 1.15 via ANCESTRY — an NCard under NCardRewardSelectionScreen
     // enlarges 1.15 about its own centre, unclamped, NOT a group; an identically-typed HAND card (same NCard node type,
     // same card.tscn) stays neutral because its ancestry never reaches the reward screen (the deck-dialog-reuse guard).
     private static void CardRewardCardAncestryResolvesToPerCardScale()
@@ -651,7 +650,7 @@ internal static class ViewScaleTests
             "zero-height box → no center stamp");
     }
 
-    // R4-round4 NoClamp: a full-viewport box scaled >1 corner-pins under the on-screen clamp (the round-3 regression),
+    // NoClamp: a full-viewport box scaled >1 corner-pins under the on-screen clamp (an earlier regression),
     // but NoClamp forces clamp==0 (a pure centre scale, symmetric crop) so the interior stays centred.
     private static void AnchoredStampNoClampSkipsCorrection()
     {
@@ -669,7 +668,7 @@ internal static class ViewScaleTests
         Check.Close(noClamp.Scale, 1.10, "NoClamp: factor preserved");
     }
 
-    // R4-round4 Center-invariance LEMMA (the Q5 answer): a Center-pivot NoClamp stamp depends ONLY on the box CENTRE.
+    // Center-invariance LEMMA: a Center-pivot NoClamp stamp depends ONLY on the box CENTRE.
     // A focus animation that grows the box about its own centre leaves the centre fixed, so the stamp is IDENTICAL
     // across the growth (scale + pivot + clamp all unchanged) — i.e. a constant stamp renders M(t)=S·G(t): the growth
     // anchor is whatever the game's tween does, never re-anchored by the view scale. Holding the stamp constant across
@@ -690,7 +689,7 @@ internal static class ViewScaleTests
         Check.Close(small.PivotY, cy, "the invariant stamp pivot IS the fixed box centre Y");
     }
 
-    // R7/R9: TopCenter pins the box TOP (grows down), BottomCenter pins the box BOTTOM (grows up); pivot X stays the
+    // TopCenter pins the box TOP (grows down), BottomCenter pins the box BOTTOM (grows up); pivot X stays the
     // box centre for both.
     private static void AnchoredStampTopAndBottomPivots()
     {
@@ -705,7 +704,7 @@ internal static class ViewScaleTests
         Check.Close(bot.ClampY, 0, "bottom-center in-bounds → no vertical clamp");
     }
 
-    // R9 dialogue: a pure translate (scale 1) rides the clamp channel; the box stays on-screen so the clamp == the
+    // Dialogue: a pure translate (scale 1) rides the clamp channel; the box stays on-screen so the clamp == the
     // requested translate.
     private static void AnchoredStampTranslateOnly()
     {
@@ -738,7 +737,7 @@ internal static class ViewScaleTests
         Check.Close(iy, 720, "inverse round-trips Y with clamp");
     }
 
-    // R7/R9 (k==1 translate-only): the inverse of a pure-translate stamp subtracts the clamp — a tap on the lifted
+    // (k==1 translate-only): the inverse of a pure-translate stamp subtracts the clamp — a tap on the lifted
     // dialogue maps back to the game's un-lifted target.
     private static void InverseUndoesTranslateOnlyStamp()
     {
@@ -763,7 +762,7 @@ internal static class ViewScaleTests
         (s.PivotX + (s.Scale * (qx - s.PivotX)) + s.ClampX,
          s.PivotY + (s.Scale * (qy - s.PivotY)) + s.ClampY);
 
-    // WS-shopfix (P4): the ViewScaler off-screen reject predicate is `box.FullyOutside(designWidth, designHeight, 0)`
+    // The ViewScaler off-screen reject predicate is `box.FullyOutside(designWidth, designHeight, 0)`
     // — reused straight from DesignAabb (already Exe-tested generically in CullIndexTests). This test pins the exact
     // shop-phantom scenario: a node Visible==true but parked entirely above the viewport (the closed shop's
     // SlotsContainer at local y≈−1000), and proves the mechanism the guard prevents (AxisClamp dragging it ~1000px

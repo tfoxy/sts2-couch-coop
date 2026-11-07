@@ -47,6 +47,6 @@
     },
     "types": ["vitest/globals", "vite/client", "node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "bench/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.vue"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

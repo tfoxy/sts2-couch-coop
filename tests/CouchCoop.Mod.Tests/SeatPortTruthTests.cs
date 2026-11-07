@@ -11,7 +11,7 @@ namespace CouchCoop.Mod.Tests;
 /// join says which of four things is wrong — instead of burning 75 seconds and blaming the seat's listener.
 /// </summary>
 /// <remarks>
-/// The measured defect these pin (Sep-15 2026, real game + real phone): anything already holding
+/// The measured defect these pin (real game + real phone): anything already holding
 /// <c>SlotToPort(slot)</c> made the spawned seat port-WALK, while the host kept probing — and handing the browser
 /// — the computed port. The join died at the deadline with
 /// <c>child HTTP listener: not responding</c>, and a blocked network path between phone and seat produced the
@@ -79,7 +79,7 @@ internal static class SeatPortTruthTests
         int free;
         using (var released = new Blackhole()) free = released.Port;
         // ClassificationProbeTimeout, not ProbeTimeout: observing the refusal AT ALL is platform-sensitive.
-        // Linux refuses a closed loopback port in ~0.03 ms, Windows 11 in ~2030 ms (both measured Sep-17 2026,
+        // Linux refuses a closed loopback port in ~0.03 ms, Windows 11 in ~2030 ms (both measured,
         // five samples each), so under the survey's 250 ms budget this assertion held on Linux and could not
         // hold on Windows — the same blind spot that made the host call a missing seat a firewall there.
         var refused = await SeatPortAvailability.ProbeLoopbackAsync(
@@ -230,7 +230,7 @@ internal static class SeatPortTruthTests
 
     // ---- 3b. a refused LAUNCH says why, when the host knows why ------------------------------------------------
     //
-    // Measured Sep-22 2026 during release validation. An orphaned game process from an earlier session still
+    // Seen during release validation. An orphaned game process from an earlier session still
     // owned the couch transport's UDP port, so `DualNetHost.TryStartEnetSide` could not bind and
     // `MaySpawnCouchSeat` went false. Every phone join then failed in 141 ms with
     // "The process launcher returned no process handle. No further cause is available." — while the host had
@@ -635,7 +635,7 @@ internal static class SeatPortTruthTests
     /// accuses the operator's firewall.
     /// </summary>
     /// <remarks>
-    /// Measured Sep-17 2026: a closed loopback port is refused in 0.02-0.09 ms on Linux and 2008-2034 ms on
+    /// Measured: a closed loopback port is refused in 0.02-0.09 ms on Linux and 2008-2034 ms on
     /// Windows 11 build 26200 (five samples each). The survey's 250 ms sits between those, so on Windows every
     /// "nothing is listening" — a seat that crashed, or is being torn down, while its heartbeat is still fresh —
     /// timed out and classified as `seat-port-blocked`, "allow the game through this computer's firewall". This

@@ -1016,7 +1016,7 @@ internal static class SeatModSelectionTests
             "a seat that carries every host choice is routine — its line is INFO, not the ERROR channel a report quotes");
     }
 
-    // The live QA shape (leg D, Sep-22): the seat's Steam profile carries the host's list, and its offline
+    // The live QA shape: the seat's Steam profile carries the host's list, and its offline
     // `default/1` profile has never seen a modded launch, so it has no mod_settings at all. That is how an ordinary
     // modded host's seats are seeded; it must not read as a seat that may load a mod the host switched off.
     private static void AProfileWithNoModListIsNothingToPinAndStaysOffTheErrorChannel()

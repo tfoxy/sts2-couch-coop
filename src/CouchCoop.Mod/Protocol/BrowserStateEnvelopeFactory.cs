@@ -186,7 +186,7 @@ public sealed class BrowserStateEnvelopeFactory(
             FreezeSpines: freezeSpines,
             FreezeDecor: freezeDecor,
             TextEffects: textEffects,
-            // WS-U: browsers key their asset caches by this token — the `?b=` on every asset url they mint
+            // Browsers key their asset caches by this token — the `?b=` on every asset url they mint
             // (plus the service-worker /res/ store) — and it changes
             // iff the bytes a given asset url maps to can change. Composed ONCE, in CouchCoopAssetVersion, from
             // the SAME identity CouchCoopCacheRoot keys the host's own disk on, and shared with the /bg/ urls this

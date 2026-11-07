@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace CouchCoop.MirrorProtocol.Discovery;
 
-// M3 WS-T host-discovery wire codec — shared by the mod's responder (System.Net UdpClient) and the native
+// Host-discovery wire codec — shared by the mod's responder (System.Net UdpClient) and the native
 // Godot client's PacketPeerUdp prober. The client BROADCASTS a tiny probe and the host answers with a UNICAST
 // reply that carries the CONNECT-READY host:port (the "bare-IP" fix: the reply never assumes 13337, it states
 // the real port the TCP listener chose, so a second host that port-walked to 13338 is still connectable).

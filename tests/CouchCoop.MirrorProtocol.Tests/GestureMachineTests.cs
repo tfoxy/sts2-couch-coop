@@ -11,7 +11,7 @@ internal static class GestureMachineTests
 {
     // The web's PEEK_MS default.
     private const double Peek = GestureOptions.DefaultPeekMs;
-    // R1: the web's LONG_PRESS_MS default — the NON-hand-card long-press right-click's own, longer threshold.
+    // The web's LONG_PRESS_MS default — the NON-hand-card long-press right-click's own, longer threshold.
     private const double LongPress = GestureOptions.DefaultLongPressMs;
 
     public static void Run()
@@ -42,7 +42,7 @@ internal static class GestureMachineTests
         TwoFingerPinchEmitsNothing();
         StrayFingerDuringDragIgnored();
 
-        // ---- R16: tap-to-focus debounce ----
+        // ---- tap-to-focus debounce ----
         TapDebounceSwallowsQuickRetap();
         TapDebounceCommitsAfterWindow();
 
@@ -84,7 +84,7 @@ internal static class GestureMachineTests
         ReparentedHandCardDragBelowLineStillRightClicks();
         UnwiredPlayZoneThresholdNeverRightClicks();
 
-        // ---- R4 change 2 / R13: end-turn tap parks the cursor at screen center ----
+        // ---- end-turn tap parks the cursor at screen center ----
         EndTurnTapUnhoversBelowButton();
         EndTurnUnhoverCenterRoutesThroughResolverOnWidenedStage();
         NonEndTurnTapNoExtraHover();
@@ -142,7 +142,7 @@ internal static class GestureMachineTests
         public Func<string, bool> IsCardFn = _ => false;
         // Defaults true (an unwired IsHandCard is unrestricted) so the IsCard-only tests are unaffected.
         public Func<string, bool> IsHandCardFn = _ => true;
-        // R4 seams. Defaults keep every pre-existing test byte-identical: DesignWidth 1920 (16:9), ResolveFresh
+        // Seams. Defaults keep every pre-existing test byte-identical: DesignWidth 1920 (16:9), ResolveFresh
         // identity, EndTurnBoxAt unwired (null → no un-hover). Tests override these to exercise the new paths.
         public Func<double> DesignWidthFn = () => 1920;
         public Func<double, double, ResolvedCoord> ResolveFreshFn = (x, y) => new ResolvedCoord(x, y);
@@ -290,7 +290,7 @@ internal static class GestureMachineTests
 
     private static void KeyWithAndWithoutModifiers()
     {
-        // NOTE: event.repeat / editable-field filtering lives in WS-M's DOM event layer (the engine has no
+        // NOTE: event.repeat / editable-field filtering lives in the DOM event layer (the engine has no
         // KeyboardEvent); the engine forwards whatever code + pre-joined csv it is handed.
         var h = new Harness();
         h.M.Key("KeyE", "shift");
@@ -327,7 +327,7 @@ internal static class GestureMachineTests
         Check.SequenceEqual(h.Sigs(), new[] { "hover::", "click:left:" }, "tap 3 still clicks (stays armed)");
     }
 
-    // ================= R16: tap-to-focus debounce =================
+    // ================= tap-to-focus debounce =================
 
     private static void TapDebounceSwallowsQuickRetap()
     {
@@ -1032,10 +1032,10 @@ internal static class GestureMachineTests
         Check.That(!h.Sent.Exists(m => m.Kind == "click" && m.Button == "right"), "no right-click when the seam is off");
     }
 
-    // ================= R4 change 2 / R13: end-turn tap parks the cursor at screen CENTER =================
+    // ================= end-turn tap parks the cursor at screen CENTER =================
     // The END-TURN button is a *Button leaf → TouchTargetScan Block (id dropped), so a tap on it has empty p.Ids
     // (Targets = []) and lands in the top==null tap branch. EndTurnBoxAt returns its game-space box on that tap —
-    // used ONLY to decide whether the tap landed on the button; R13 replaced the box-derived (centerX, MaxY+24)
+    // used ONLY to decide whether the tap landed on the button; a later change replaced the box-derived (centerX, MaxY+24)
     // parked point with the RESOLVED screen center (a below-button park still sat close enough to re-arm the
     // button's own long-press HoverTip after the turn ends).
 
@@ -1049,7 +1049,7 @@ internal static class GestureMachineTests
             h.Sigs(),
             new[] { "hover::", "click:left:", "hover::" },
             "end-turn tap: down-hover, the click, THEN the un-hover in that order");
-        // R13: screen center (DesignWidth/2, 540) — NOT the button's box-derived (centerX, MaxY+24) = (1740, 1079).
+        // Screen center (DesignWidth/2, 540) — NOT the button's box-derived (centerX, MaxY+24) = (1740, 1079).
         AssertCoord(h.Last, 960, 540, "un-hover parks at the RESOLVED screen center");
     }
 
@@ -1209,7 +1209,7 @@ internal static class GestureMachineTests
 
     private static void LongPressDoesNotFireAtPeekMsOnlyAtLongPressMs()
     {
-        // R1: the NON-hand-card leg has its OWN, longer threshold — a still hold at PeekMs (100ms, the hand-card
+        // The NON-hand-card leg has its OWN, longer threshold — a still hold at PeekMs (100ms, the hand-card
         // peek's threshold) must NOT yet fire; only once LongPressMs (300ms) elapses does it right-click.
         var h = new Harness { Targets = new[] { "reward-1" }, IsCardFn = _ => true, IsHandCardFn = _ => false };
         h.TouchDown(1, 500, 300);

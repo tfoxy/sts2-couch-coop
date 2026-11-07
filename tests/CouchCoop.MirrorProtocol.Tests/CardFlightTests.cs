@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-3 declarative discard→draw shuffle CARD FLIGHT — the wire contract: SceneDeltaReader.NormalizeCardFlight's
+// Declarative discard→draw shuffle CARD FLIGHT — the wire contract: SceneDeltaReader.NormalizeCardFlight's
 // strictness, the applier's one-shot accumulate + bounded valve, and the round trip of a producer-shaped payload.
 //
 // WHY THE READER IS STRICT (and this suite is mostly rejection cases). A card-flight hint is not decoration: the
@@ -125,7 +125,7 @@ internal static class CardFlightTests
         Check.That(empty.TrailId is null, "empty trailId ⇒ null (not an id that joins to nothing)");
     }
 
-    // R13 — `kind` is the ONE field this strict parser is lenient about, and deliberately in the other direction:
+    // `kind` is the ONE field this strict parser is lenient about, and deliberately in the other direction:
     // it is normalized, never rejected. Unusable geometry is dropped because there is nothing to integrate; a kind
     // the client does not know still comes with a complete, integrable flight, so failing open to the shuffle motion
     // costs the wrong flavour of animation while a drop would leave the (suppressed) card frozen on the pile.

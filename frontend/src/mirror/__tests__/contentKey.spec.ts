@@ -7,7 +7,7 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// R13 CONTENT KEY (`RuntimeSceneNodeDelta.ContentKey` → wire `contentKey` → `MirrorNode.contentKey`). STS2 POOLS
+// CONTENT KEY (`RuntimeSceneNodeDelta.ContentKey` → wire `contentKey` → `MirrorNode.contentKey`). STS2 POOLS
 // its `NCard` visuals: ~30 instances are re-assigned as cards move between hand / draw / discard / reward / shop, so
 // a streamed node's INSTANCE id says nothing about which card is on screen (the same id is a Strike this tick and a
 // Bash the next). The producer therefore ships `nc:{entry}#{serial}` — a stable identity for the CONTENT — with the

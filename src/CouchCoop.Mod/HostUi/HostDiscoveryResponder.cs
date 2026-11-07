@@ -5,7 +5,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.HostUi;
 
-// M3 WS-T host-discovery responder. Binds a UDP socket on the SAME numeric port the TCP browser server chose
+// Host-discovery responder. Binds a UDP socket on the SAME numeric port the TCP browser server chose
 // (port-walk parity: host A owns UDP 13337, a second host on the same machine that took TCP 13338 owns UDP
 // 13338 — no bind conflict) and answers each well-formed discovery probe with a UNICAST reply built by
 // `replyFactory` (advertised LAN IPv4 + real port + machine name). It NEVER broadcasts and NEVER inspects run

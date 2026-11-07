@@ -246,13 +246,13 @@ export function isParticleNode(node: MirrorNode): boolean {
   return node.particleSpec != null;
 }
 
-// R10-B3 pure-work memo.
+// Pure-work memo.
 // Here it covers the BINDING object: the JSON was already memoized, but a fresh `{ specsJson }` wrapper was
 // allocated on every call, i.e. once per particle node per re-style.
 // Memoize the (potentially large) specs JSON keyed by the spec OBJECT identity. The spec is static — mergeNode
 // carries the SAME object across volatile-only upserts — so this only re-stringifies when emitting/epoch change
 // (a one-shot trigger) or a keyframe rebuilds the spec, instead of every revision (~60Hz) for every particle node.
-// R10-B3: the BINDING is cached alongside the JSON (the callers treat it as immutable — visit only reads
+// The BINDING is cached alongside the JSON (the callers treat it as immutable — visit only reads
 // `particle.specsJson`), so a repeat call allocates nothing at all.
 let specsJsonCache = new WeakMap<
   object,

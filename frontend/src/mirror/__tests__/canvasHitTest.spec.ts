@@ -456,8 +456,8 @@ describe("view-scale halo", () => {
   });
 });
 
-// THE PER-BUILD MEMO (`HitMemo`). Both ancestor walks ran per node per build and were 2.1 % + 1.4 % of frame
-// self-time on the Aug-28 Moto G86 combat trace, almost all of it re-walking chains siblings share. The memo is
+// THE PER-BUILD MEMO (`HitMemo`). Both ancestor walks ran per node per build and were a few percent of frame
+// self-time on a mid-range Android phone combat trace, almost all of it re-walking chains siblings share. The memo is
 // only sound if it answers IDENTICALLY, so that is what these check — the equivalence first, then the two ways
 // sharing an ancestor's answer could go wrong.
 describe("the hit-test walk memo", () => {

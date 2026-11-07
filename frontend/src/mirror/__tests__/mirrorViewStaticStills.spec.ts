@@ -36,7 +36,7 @@ const { shaderRt, particleRt, createWebglShaderRuntime, createParticleRuntime, c
     setStaticShaderPixelRatio: vi.fn(),
     setStaticShaderImages: vi.fn(),
     invalidateStaticSurfaces: vi.fn(),
-    // Typed as an open bag of numbers on purpose: the counter set GROWS (R17 added nine), and a return type
+    // Typed as an open bag of numbers on purpose: the counter set GROWS, and a return type
     // inferred from this first literal would force every later `mockReturnValue` to restate the whole shape —
     // which is exactly the drift a "gsw predating a counter reads 0" test needs to be able to express.
     stats: vi.fn((): Record<string, number> => ({
@@ -305,7 +305,7 @@ describe("MirrorView × gsw surface image swap", () => {
     expect(mirrorWalkStats.staticStillCanvases).toBe(0);
   });
 
-  // R17 — the RETAINED-STILL block. Same acceptance-metric argument as the gauge above, with one extra hazard
+  // The RETAINED-STILL block. Same acceptance-metric argument as the gauge above, with one extra hazard
   // that only shows up with more than one number: the counters and the POOL GAUGES fold differently, and getting
   // that wrong is not an error, it is a wrong number in a bench cell.
   it("mirrorWalkStats.staticStill* SUMS the counters and takes the MAX of the pool gauges", () => {

@@ -88,7 +88,7 @@ public static class JoinModel
     }
 
     /// <summary>
-    /// WS-B STREAM GATE — whether this viewer may have the host's live game streamed to it right now.
+    /// STREAM GATE — whether this viewer may have the host's live game streamed to it right now.
     /// <para>
     /// The product rule, in one place: <b>never render (nor even pull) a multiplayer host's game behind the join
     /// picker.</b> The host is streamed only when this device has been granted its own view — <paramref name="joined"/>

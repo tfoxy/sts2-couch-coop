@@ -102,8 +102,8 @@ function count(value: unknown): number {
 
 /**
  * The same validation without the rounding, for the one genuinely fractional field. Kept separate rather than
- * folded into `count` because rounding a device pixel ratio silently destroys it: a 3.4876 phone (a real measured
- * value — see the raster-scale note in qa-recipes) reads as 3, and the difference is 20% of the backing store on
+ * folded into `count` because rounding a device pixel ratio silently destroys it: a 3.4876 phone (a real
+ * value) reads as 3, and the difference is 20% of the backing store on
  * every surface on the page.
  */
 function ratio(value: unknown): number {

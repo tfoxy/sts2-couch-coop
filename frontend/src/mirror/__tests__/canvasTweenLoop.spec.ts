@@ -666,7 +666,7 @@ describe("canvas tween loop: card flights", () => {
   });
 });
 
-// ---- R5 T-DR4: the comet root follows its flight -----------------------------------------------------------------
+// ---- The comet root follows its flight -----------------------------------------------------------------
 //
 // A client that declares `trailDrive` tells the host it will place the comet root itself, and the producer then
 // stops streaming that root's transform. This backend did not place it, so the whole comet — the ribbons' host and
@@ -682,7 +682,7 @@ describe("canvas tween loop: the comet root follows its flight", () => {
   it("is OFF unless the renderer says otherwise — an absent guard drives nothing", () => {
     const loop = createTweenLoop();
     loop.applyFlights([flightHint()], 0);
-    // Byte-identical to the pre-R5 loop: only the card is animated, and the root is not even in the map.
+    // Byte-identical to the previous loop: only the card is animated, and the root is not even in the map.
     expect(sample(loop, "42", 100).mask).toBe(SAMPLE_NONE);
     expect(loop.ownsTransform("42")).toBe(false);
     expect(loop.activeCount()).toBe(1);
@@ -888,7 +888,7 @@ describe("canvas tween loop: demand-driven scheduling", () => {
   });
 
   it("a sweep is O(active), not O(scene) — the arena's peak is 78 concurrent", () => {
-    // docs/agents/canvas-stage-probes-aug26.md §P8: the reshuffle peaks at 46 tweens + 30 flights = 78 combined,
+    // The reshuffle peaks at 46 tweens + 30 flights = 78 combined,
     // while six of the eight recordings never exceed 6 and are idle 90%+ of their span. So the cost of a frame
     // must track what is ARMED, and a scene of any size must cost nothing while it is still.
     let visited = 0;
@@ -1046,7 +1046,7 @@ describe("canvas tween loop: a target nothing is painting", () => {
   });
 });
 
-// WHO OWNS A NODE'S TRANSFORM (M3 WS-D). The eager-scroll snapshot asks this of every scrollable it publishes: a
+// WHO OWNS A NODE'S TRANSFORM. The eager-scroll snapshot asks this of every scrollable it publishes: a
 // container something is ANIMATING must not also carry a cosmetic scroll offset, because the two would be writing
 // the same pixel every frame. The question is deliberately about the TRANSFORM channel and not about membership
 // of the loop, which is the proxy that looks right and is not.

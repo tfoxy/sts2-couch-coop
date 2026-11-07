@@ -7,7 +7,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-CRISP diagnosis probe (follows the TextOverlayPlanProbe pattern). Point COUCHCOOP_CRISP_PROBE_NDJSON at a mirror
+// Crisp-text diagnosis probe (follows the TextOverlayPlanProbe pattern). Point COUCHCOOP_CRISP_PROBE_NDJSON at a mirror
 // recording; it replays every scene-delta into the final MirrorState (or up to _MAXFRAMES to snapshot a transient
 // state like a visible hover tip), then runs both real planners under the current card and text policy;
 // excludeCards varies with card-layer ownership.
@@ -16,7 +16,7 @@ namespace CouchCoop.MirrorProtocol.Tests;
 //   * its planner verdict under the current production policy and under excludeCards=false (what CardOwned hides),
 //   * every gated planner trace line (`eval …` / `occluded …` / `card-occluded …`) that names it.
 // Target specs come from COUCHCOOP_CRISP_PROBE_TARGETS (comma-separated, "Name" or "Ancestor/Name" where Ancestor
-// matches a chain node's Name OR leaf NodeType), defaulting to the WS-CRISP batch: TopBar floor number + deck count,
+// matches a chain node's Name OR leaf NodeType), defaulting to the crisp-text batch: TopBar floor number + deck count,
 // hover-tip Title/Description, and card TitleLabel/TypeLabel/DescriptionLabel inside NCard subtrees.
 // COUCHCOOP_CRISP_PROBE_SCAN=1 additionally prints frame indices where a target's chain-visibility flips, so a
 // transient state's _MAXFRAMES can be picked. Skips SILENTLY when the env var is unset / the file is absent.

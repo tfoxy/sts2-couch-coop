@@ -14,7 +14,7 @@ import {
 } from "@/mirror/mirrorSettings";
 import type { RenderQuality, RenderQualityTier } from "@/render/quality";
 
-// WS-2 (web half): the "Host performance" checkboxes must show what the game SERVING THIS CONNECTION actually has
+// Web half: the "Host performance" checkboxes must show what the game SERVING THIS CONNECTION actually has
 // frozen, from the moment the viewer joins — including a direct-view viewer, whose game is the host's own windowed
 // one, where the mod never installs the visual suspender and therefore NOTHING is frozen. They used to be hardcoded
 // `true` and pushed as-is on join, so that viewer saw three ticked boxes over a game freezing nothing, and the push
@@ -209,7 +209,7 @@ describe("MirrorApp — Host performance seeding", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/");
     globalThis.sessionStorage?.clear();
-    globalThis.localStorage?.clear(); // R10 WS-A: a saved refresh rate changes the seed rule below
+    globalThis.localStorage?.clear(); // a saved refresh rate changes the seed rule below
     MockWebSocket.instances = [];
     realWebSocket = globalThis.WebSocket;
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
@@ -378,7 +378,7 @@ describe("MirrorApp — Host performance seeding", () => {
     });
   });
 
-  // R10 WS-A: the SERVER-tied fields a viewer's saved preference DOES own. `refreshRate` and `tweenReplay` ride
+  // The SERVER-tied fields a viewer's saved preference DOES own. `refreshRate` and `tweenReplay` ride
   // the same `settings` channel as the freezes, but they are preferences about this viewer's own stream rather
   // than truths about the instance — so the order contract runs the other way: the envelope seed steps aside for
   // a saved value, and the push that follows carries it TO the host.

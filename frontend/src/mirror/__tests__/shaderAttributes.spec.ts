@@ -252,7 +252,7 @@ describe("nodeShaderAttributes", () => {
       mirrorSettings.shaderMode = savedShaderMode;
     });
 
-    // A non-playable card (reward/deck/etc.) streams width 0 — the game's HIDDEN ripple. R10-B3: instead of
+    // A non-playable card (reward/deck/etc.) streams width 0 — the game's HIDDEN ripple. Instead of
     // dropping the binding (which made gsw dispose it, so the next playability flip rebuilt it + paid a
     // syncCanvasSize forced layout), the node keeps its full attribute set and is marked DORMANT — gsw parks the
     // binding with its canvas hidden, so the degenerate-smoothstep sliver still never shows.
@@ -329,10 +329,10 @@ describe("nodeShaderAttributes", () => {
     });
   });
 
-  // AUG-14 never-drawn surfaces. `Game/GameTransitionRect` is the biggest node in the fleet (2560×1200 design px,
+  // Never-drawn surfaces. `Game/GameTransitionRect` is the biggest node in the fleet (2560×1200 design px,
   // full-bleed) and it is invisible unless a screen change is fading: every transition shader resolves the
-  // fragment alpha from `threshold` alone, so at 0 it paints nothing. Across all 37 recorded mirror sessions in
-  // `.sts2/bench` the node appears in every one, is upserted exactly once, and its `threshold` is 0 in every
+  // fragment alpha from `threshold` alone, so at 0 it paints nothing. Across every recorded mirror session
+  // the node appears in every one, is upserted exactly once, and its `threshold` is 0 in every
   // upsert — so this is the steady state, not an edge case.
   describe("screen-transition threshold gate", () => {
     const transitionNode = (over: Partial<MirrorNode> = {}): MirrorNode =>

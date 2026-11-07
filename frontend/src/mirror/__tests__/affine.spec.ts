@@ -34,7 +34,7 @@ describe("affine helpers", () => {
   });
 });
 
-// R10-B1 — the deraster scale gate reads the LINEAR (2×2) part out of the transform strings the mirror itself
+// The deraster scale gate reads the LINEAR (2×2) part out of the transform strings the mirror itself
 // wrote, to tell a translation-only tween (no re-raster needed) from one that changes the rasterization scale.
 // Anything it cannot model must come back null, which the caller treats as "assume it changed".
 describe("cssLinear2x2", () => {

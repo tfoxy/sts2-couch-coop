@@ -13,8 +13,8 @@ namespace CouchCoop.Mod.Server;
 /// <remarks>
 /// <para>
 /// WHY IT EXISTS. A seat reports to its host by POSTing <see cref="HeadlessConnectionStatus"/> to
-/// <c>http://127.0.0.1:&lt;hostPort&gt;/internal/client-status</c>. Measured in the field 2026-09-18: a seat
-/// that had loaded the mod, joined the host's lobby, bound its browser port and was idling healthily 74 seconds
+/// <c>http://127.0.0.1:&lt;hostPort&gt;/internal/client-status</c>. Seen in the field: a seat
+/// that had loaded the mod, joined the host's lobby, bound its browser port and was idling healthily over a minute
 /// later, while not one of those POSTs ever arrived — a proxy, a VPN or security software on that computer
 /// filtering one program talking to another. <c>d27ff12b</c> made that diagnosable; it did not make the join
 /// work. A file in the seat's own Godot user dir crosses the same gap without a socket, and the host already

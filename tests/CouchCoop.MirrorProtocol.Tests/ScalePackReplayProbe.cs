@@ -4,11 +4,11 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R8 (WS-1) HEADLESS live-data verification of the scale pack — no Godot, no display, no live lock. Each leg is
+// HEADLESS live-data verification of the scale pack — no Godot, no display, no live lock. Each leg is
 // env-gated on its own recorded mirror stream and SKIPS SILENTLY when unset (the suite stays green in a plain
 // checkout). Modeled on EventOptionsScaleReplayProbe / CardRewardScaleReplayProbe.
 //
-//   COUCHCOOP_MIRROR_MAP_PROBE_NDJSON      — a capture showing the MAP screen (.sts2/bench/probe-map-visible.ndjson):
+//   COUCHCOOP_MIRROR_MAP_PROBE_NDJSON      — a capture showing the MAP screen:
 //                                            every normal_map_point.tscn root resolves 1.5 (unclamped, centre) and
 //                                            NO ancient/boss point does; MapLegend resolves the 1.2 BottomRight GROUP.
 //   COUCHCOOP_MIRROR_PILES_PROBE_NDJSON    — a COMBAT capture: draw/discard piles resolve 1.25 with their corner
@@ -187,7 +187,7 @@ internal static class ScalePackReplayProbe
             $"[piles-probe] {found} pile(s) stamped; whole-tree ViewScale.ResolveFor over {state.OrderedIds.Count} combat nodes " +
             $"= {sw.Elapsed.TotalMilliseconds / reps:0.###} ms/drain ({active / reps} active)");
 
-        // R9 (WS-B): still 2, NOT 3, even though the exhaust pile is now a view-scale entry too. Its root
+        // Still 2, NOT 3, even though the exhaust pile is now a view-scale entry too. Its root
         // (exhaust_pile.tscn / NExhaustPileButton, box (1830,800)-(1910,880)) is `visible:false` in EVERY recording on
         // this machine — the game only shows the pile once something has actually been exhausted — so no capture can
         // exercise it and this leg deliberately keeps probing the two CORNER piles only. The exhaust entry's geometry
@@ -394,7 +394,7 @@ internal static class ScalePackReplayProbe
         return state;
     }
 
-    // R8 cost gate soundness, checked against REAL trees: ResolveFor(id, state) now skips the scene-identity walk for a
+    // Cost gate soundness, checked against REAL trees: ResolveFor(id, state) now skips the scene-identity walk for a
     // node that cannot match the table (ViewScale.MightMatchTable). Over every node of the recording, whatever the
     // UNFILTERED table lookup would have produced must still be what the filtered resolve returns.
     private static void AssertPrefilterEquivalence(MirrorState state, string label)

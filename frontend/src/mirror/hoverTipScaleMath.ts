@@ -14,7 +14,7 @@
 export const HOVER_TIP_SCALE = 1.2; // k — the enlargement factor (must match native)
 export const HOVER_TIP_EDGE_THRESHOLD = 48; // bottom "edge-hug" band, design px (must match native)
 export const HOVER_TIP_DESIGN_HEIGHT = 1080; // design viewport height (must match native)
-export const HOVER_TIP_SIDE_GAP = 12; // R5 non-overlap gap enforced between a scaled tip and its owner (must match native)
+export const HOVER_TIP_SIDE_GAP = 12; // non-overlap gap enforced between a scaled tip and its owner (must match native)
 
 // The semantic thing a HoverTip points at (its anchor owner), driving which side the 1.2× enlargement grows toward
 // (#17/#18). Twin of native HoverTipScaleMath.TipOwnerKind. "none" (the default) grows RIGHT unless that overflows
@@ -54,7 +54,7 @@ export interface TipScaleResult {
 }
 
 // Choose the pivot + clamp offset for a tip set from its paint-bearing direct-child AABBs. `owner` is the tip's
-// anchor-owner design AABB (the card/creature/button the tip points at) when known — the R4 defect was a creature
+// anchor-owner design AABB (the card/creature/button the tip points at) when known — the defect was a creature
 // tip growing down+right INTO its own HP bar because the pivot chased the screen edge, not the anchored content.
 //   (a) TWO horizontally-disjoint child columns (the hand-card "straddle": a text panel on one side, the card on
 //       the other) → pivot X at the inner-gap midpoint, pivot Y at the union's top, so the tip grows outward
@@ -120,11 +120,11 @@ export function computeHoverTipScale(
   const sMinY = pivotY + k * (uMinY - pivotY);
   const sMaxY = pivotY + k * (uMaxY - pivotY);
 
-  // R5 owner-follow (item 6): translate the whole tip by the view-scaled owner's mapped-minus-raw centre.
+  // Owner-follow: translate the whole tip by the view-scaled owner's mapped-minus-raw centre.
   let offsetX = clampAxis(sMinX, sMaxX, designW) + ownerFollowX;
   let offsetY = clampAxis(sMinY, sMaxY, designH) + ownerFollowY;
 
-  // R5 non-overlap invariant (item 5): push a SINGLE-BLOCK tip off its owner (straddle untouched).
+  // Non-overlap invariant: push a SINGLE-BLOCK tip off its owner (straddle untouched).
   if (!straddle && owner) {
     const u = { minX: uMinX, minY: uMinY, maxX: uMaxX, maxY: uMaxY };
     [offsetX, offsetY] = applySideClamp(u, pivotX, pivotY, k, offsetX, offsetY, owner, ownerKind, designW, designH);
@@ -197,12 +197,12 @@ function applySideClamp(
   return [cx, cy];
 }
 
-// R7/R9 (WS-G2): the anchor a view-scale GROUP stamp grows FROM — twin of native HoverTipScaleMath.AnchorPivot.
-// R8 (WS-1) adds the two CORNER pivots — the first whose pivot X is NOT the box centre. A screen-CORNER widget must
+// The anchor a view-scale GROUP stamp grows FROM — twin of native HoverTipScaleMath.AnchorPivot.
+// The two CORNER pivots are the first whose pivot X is NOT the box centre. A screen-CORNER widget must
 // grow INWARD from the corner the game anchored it to: "bottomLeft" pins the bottom-LEFT corner (draw pile at
 // (15,985)), "bottomRight" pins the bottom-RIGHT corner (discard pile at (1826,985); the map legend, whose right edge
 // already sits at 1996 > 1920 by design, so a centre pivot + the on-screen clamp would drag the panel ~110px left).
-// R9 (WS-B) adds the EDGE pivot "middleRight": pivot X at the box's RIGHT edge but pivot Y still at the box CENTRE, so
+// The EDGE pivot "middleRight": pivot X at the box's RIGHT edge but pivot Y still at the box CENTRE, so
 // a SIDE-anchored (not corner-anchored) widget grows LEFT and splays symmetrically up/down. The combat EXHAUST pile
 // sits mid-right at (1830,800)-(1910,880) — right-anchored like the discard pile but not in a corner, so pinning its
 // bottom would push the whole enlargement upward off its own row.
@@ -220,12 +220,12 @@ export function computeCenterScaleStamp(
   return computeAnchoredScaleStamp(box, k, designW, designH, "center");
 }
 
-// R7/R9 (WS-G2) generalization — twin of native HoverTipScaleMath.ComputeAnchoredStamp: scale `box` by `k` about a
-// per-PIVOT anchor (center / topCenter / bottomCenter keep pivot X at the box centre; the R8 corner pivots
+// Generalization — twin of native HoverTipScaleMath.ComputeAnchoredStamp: scale `box` by `k` about a
+// per-PIVOT anchor (center / topCenter / bottomCenter keep pivot X at the box centre; the corner pivots
 // bottomLeft / bottomRight move it to the box's left / right edge), add a design-space TRANSLATE into the clamp
 // channel BEFORE the on-screen clamp, then clamp the translated+scaled box on-screen. A pure translate
 // (k=1) carries via the clamp channel (the ancient-event dialogue lift). Null for a degenerate box.
-// R4-round4 noClamp: when true the on-screen clamp is SKIPPED (offset carries only the requested translate). The
+// noClamp: when true the on-screen clamp is SKIPPED (offset carries only the requested translate). The
 // card-reward container (a full-viewport box scaled >1) corner-pins under the clamp; an unclamped centre scale crops a
 // symmetric border instead and keeps the interior on-screen. A per-card 1.15 uses noClamp too (exact centre scale).
 // The (pivotX, pivotY) a ScalePivot anchors at — the exact twin of the native `px`/`py` switches in
@@ -246,7 +246,7 @@ function pivotAnchor(box: TipAabb, pivot: ScalePivot): [number, number] {
     case "bottomRight":
       return [box.x + box.w, box.y + box.h]; // pin the bottom-RIGHT corner
     case "middleRight":
-      // R9: pin the RIGHT edge only — vertical growth stays symmetric about the box centre (a side-anchored widget
+      // Pin the RIGHT edge only — vertical growth stays symmetric about the box centre (a side-anchored widget
       // has no pinned bottom, unlike the two corner pivots above).
       return [box.x + box.w, box.y + box.h / 2];
   }
@@ -278,7 +278,7 @@ export function computeAnchoredScaleStamp(
   };
 }
 
-// WS-shopfix (P4 shop phantom) — twin of native DesignAabb.FullyOutside(width, height, margin=0): true when `box`
+// Twin of native DesignAabb.FullyOutside(width, height, margin=0): true when `box`
 // has NO overlap at all with the design rect [0,designW]×[0,designH]. A node can be visible==true yet PARKED
 // entirely off-stage (e.g. the closed shop's SlotsContainer sitting at local y≈−1000); applyViewScalePass must
 // reject such a box BEFORE computing a stamp, or the stamp's on-screen clamp drags the parked box fully into view

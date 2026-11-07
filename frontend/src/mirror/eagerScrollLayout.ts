@@ -6,9 +6,9 @@
 // {@link EagerScrollTarget} but the element, which is the backend's own (see EagerScrollTarget.el).
 //
 // WHY IT LIVES HERE, and not twice. The DOM walk grew this snapshot over four rounds, and four SEPARATELY EARNED
-// bug fixes are folded into it — the painted-vs-streamed Y (R11: the map dipped 233px for a frame), the grid
-// header merge (R11 §2: the first notch yanked a resting deck ~270px), the R20 on-stage scrollbar box (a phantom
-// claim to the bar's left on a widened stage), and the wheel-safe gutter point (R11 WS-S §3). A second
+// bug fixes are folded into it — the painted-vs-streamed Y (the map dipped 233px for a frame), the grid
+// header merge (the first notch yanked a resting deck ~270px), the on-stage scrollbar box (a phantom
+// claim to the bar's left on a widened stage), and the wheel-safe gutter point. A second
 // transcription for the canvas stage would be two chances to lose one of them, and the failure mode of losing one
 // is a gesture that feels broken rather than a test that goes red.
 //
@@ -161,7 +161,7 @@ function eagerLocalY(node: MirrorNode): number { return node.transform ? node.tr
 // themselves are boxless (0×0 Controls positioned at grid slots), so the band is their Y extent plus ONE row pitch
 // of slack, measured from the pitch between distinct row Ys.
 //
-// R11 WS-S §2 — THE HEADER MERGE. The first row of a deck grid sits at local y≈348.8, well below the grid's own
+// THE HEADER MERGE. The first row of a deck grid sits at local y≈348.8, well below the grid's own
 // origin, because the `SortingOptions` header (a plain Control child, NOT a recycled holder) is streamed above it.
 // Taking the band from the holders alone therefore declared the RESTING offset (0) illegal, and the first wheel
 // notch yanked the content ~270px — the "works horribly" first impression. When the top materialized row is
@@ -234,7 +234,7 @@ function eagerScrollBar(
     if (barGlobal !== null && bar.localRect != null) {
       const aabb = designAabbOf(barGlobal, bar.localRect);
       box = { minX: aabb.x, minY: aabb.y, maxX: aabb.x + aabb.w, maxY: aabb.y + aabb.h };
-      // R20 — the bar's ON-STAGE box in WIDENED-DESIGN space: the game rect shifted right by this node's own
+      // The bar's ON-STAGE box in WIDENED-DESIGN space: the game rect shifted right by this node's own
       // cumulative `spreadDx`, exactly as the view-scale stamp's `renderedBox` is. The strip hugs the right edge
       // of an anchored 1920-wide frame, so on a widened stage it carries the FULL delta — the largest shift in
       // the dialog — and a game-space AABB test on the raw pointer therefore claims a band to its LEFT that
@@ -349,8 +349,8 @@ export function buildEagerScrollTargets(
       // A transform tween owns the container (an act-change slide, a dialog open): its endpoint is the truth and a
       // composed cosmetic translate would fight it — the eager module treats this as a HARD RESET.
       pinned: env.transformPinned(candidate.id),
-      // R11 WS-S §7: the map does not scroll while a drawing tool is armed. The armed state is the ONE accessor
-      // WS-M established (the tool button's Icon glow texture), asked only for the map.
+      // The map does not scroll while a drawing tool is armed. The armed state is the ONE accessor
+      // already established (the tool button's Icon glow texture), asked only for the map.
       suppressed: candidate.kind === "map" && env.drawingToolActive(),
       bar: scrollbar.bar
     });

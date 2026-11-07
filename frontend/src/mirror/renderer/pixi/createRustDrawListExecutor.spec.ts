@@ -1614,7 +1614,7 @@ describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
     } finally { renderer.dispose(); }
   });
 
-  // The handoff's own spec list: "no eviction while a key is in flight." `asyncSubmissionRevision` (the
+  // The invariant: "no eviction while a key is in flight." `asyncSubmissionRevision` (the
   // mirror renderer above this executor) is expected to serialize builds, but this proves the EXECUTOR does
   // not merely trust that: two `render()` calls fired back-to-back, with neither awaited before the other
   // starts, race exactly the way a caller bug (or a future caller) could.

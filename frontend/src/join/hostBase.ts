@@ -13,7 +13,7 @@
 //
 // The bootstrap on the public origin sets `window.__couchCoopHostBase` BEFORE it injects the app bundle,
 // so by the time any of this runs the answer is already known and constant for the lifetime of the page.
-// See docs/agents/local-network-access.md for what the browser does and does not allow across that gap.
+// See docs/local-network-access.md for what the browser does and does not allow across that gap.
 //
 // THE SCHEME RULE, which is the one genuinely counter-intuitive part. In remote-hosted mode the PAGE is
 // `https:` while the HOST is `http:`. A WebSocket URL derived from `location.protocol` would therefore

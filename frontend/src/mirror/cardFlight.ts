@@ -3,7 +3,7 @@
 // integrator/curve math is unit-testable; the renderer owns the elements and drives this from its animation loop,
 // exactly the split cardTrail.ts uses.
 //
-// R13: there are now TWO kinds sharing all of this — "shuffle" (the discard→draw sweep this module was written for)
+// There are now TWO kinds sharing all of this — "shuffle" (the discard→draw sweep this module was written for)
 // and "discard" (the hand→discard fly, whose mover is the real played card). They share the curve, the two-phase
 // integrator and the whole closed-form timing; they differ only in the rotation and scale channels. See the
 // DISCARD_* block below for that contract, and `MirrorCardFlightHint.kind` for the wire side.
@@ -59,7 +59,7 @@ export const FLIGHT_ROTATION_LOOK_AHEAD = 0.05;
 export const FLIGHT_POP_SCALE_FROM = 0.1;
 export const FLIGHT_POP_SCALE_TO = -0.1;
 
-// ---- R13: the SECOND flight kind, "discard" -------------------------------------------------------------------
+// ---- The SECOND flight kind, "discard" -------------------------------------------------------------------
 //
 // Same two-phase arc, same pseudo-time integrator, same bezier — `cardFlightTiming` is shared unchanged. What is
 // different is WHAT IS MOVING. The shuffle's flier is a throwaway silhouette spawned at the draw pile for the
@@ -299,7 +299,7 @@ export function advanceCardFlight(
   return { x: hint.end[0], y: hint.end[1], rotation: state.rotation, scale: 0 };
 }
 
-// ---- R11: the CLOSED FORM, for handing the animation to the browser -------------------------------------------
+// ---- The CLOSED FORM, for handing the animation to the browser -------------------------------------------
 //
 // `advanceCardFlight` above is a forward-Euler integrator stepped once per displayed frame: it is stateful, it is
 // stepped, and it therefore needs a JS callback on every displayed frame. But both phases are integrable in closed
@@ -553,7 +553,7 @@ export function cardFlightGlobal6(
   return cardFlightGlobal6Into([0, 0, 0, 0, 0, 0], basis, pose, scale);
 }
 
-// The same composition written into a caller-owned tuple. The R11 trail sampler runs this once per stroke-owning
+// The same composition written into a caller-owned tuple. The trail sampler runs this once per stroke-owning
 // flight per frame purely to derive a head position, and a fresh array there is 1,800 short-lived allocations a
 // second during a 30-card reshuffle — exactly the garbage nodeStyles' placement scratch exists to avoid. The tuple
 // is consumed (read into a string / a spread lookup) before the next call, so one is enough.

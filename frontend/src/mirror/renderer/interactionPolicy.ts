@@ -21,17 +21,17 @@ export const TOUCH_TARGET_TYPES = new Set([
   "NMerchantCard",
   "NTreasureRoomRelicHolder",
   "NRewardButton",
-  // R20: the shop's CARD REMOVAL SERVICE coin — the one thing in the merchant's inventory that did not arm on the
+  // The shop's CARD REMOVAL SERVICE coin — the one thing in the merchant's inventory that did not arm on the
   // first tap. Its leaf is NMerchantCardRemoval (res://scenes/merchant/merchant_card_removal.tscn) with an
   // NClickableControl `Hitbox` child, i.e. the same shape as every other shop slot; but neither its own type nor the
   // hitbox's ends in "Button", so computeTouchInfo classified it as neither a target NOR a block, returned null, and
   // inputCapture's `if (!top)` guard fired BEFORE the tapToFocus check — so the setting was never consulted and one
   // tap was one full click. Exactly the shape NTreasureRoomRelicHolder had before it was listed. Confirmed off the
-  // streamed leaf in .sts2/bench/audit-shop-open.ndjson. Native twin: TouchTargetScan.TouchTargetTypes.
+  // streamed leaf. Native twin: TouchTargetScan.TouchTargetTypes.
   "NMerchantCardRemoval"
 ]);
 
-// R8: the end-of-event "Proceed" option is displayed through the SAME reusable NEventOptionButton wrapper as a
+// The end-of-event "Proceed" option is displayed through the SAME reusable NEventOptionButton wrapper as a
 // regular option (so it isn't statically distinguishable by node type), but keeps the
 // res://scenes/ui/proceed_button.tscn (NProceedButton) SCENE IDENTITY — computeSceneInfo reads a node's own
 // sceneFilePath before any type check, so this tells the two apart even though both report the "NEventOptionButton"
@@ -138,7 +138,7 @@ export function isMultiplayerPlayerStateSceneRoot(node: Pick<MirrorNode, "sceneF
   return node.sceneFilePath === MULTIPLAYER_PLAYER_STATE_SCENE_FILE;
 }
 
-// R19: what counts as a CARD for the gesture machine's card semantics (`isCardTouchTarget`) — the predicate that,
+// What counts as a CARD for the gesture machine's card semantics (`isCardTouchTarget`) — the predicate that,
 // with `isHandCard`, splits a touch target into `handCard` (peek / drag-lift / tap-unselect) and `nonHandCard` (the
 // long-press right-click that opens the item's detail dialog). It used to be the single leaf "NCard", which is why a
 // sustained touch on a SHOP card did nothing: a shop item's touch target resolves to NMerchantCard / NMerchantRelic /
@@ -146,7 +146,7 @@ export function isMultiplayerPlayerStateSceneRoot(node: Pick<MirrorNode, "sceneF
 // a TOUCH_TARGET_TYPES member (it has to be — the target must resolve before this is asked), and none of them can be
 // a HAND card, so widening this set only ever adds the non-hand long-press leg.
 // DELIBERATELY EXCLUDED: NRewardButton and NTreasureRoomRelicHolder. Both live on screens where the gesture consumes a
-// real run reward, which is not where a new touch verb gets its first outing. R20 adds NMerchantCardRemoval to that
+// real run reward, which is not where a new touch verb gets its first outing. NMerchantCardRemoval is added to that
 // list for a different reason: this set drives the non-hand long-press RIGHT-CLICK, whose whole job is to open an
 // item's DETAIL dialog — and the removal coin is a service, not an item, so it has no detail view for a right-click
 // to open. GestureMachineTests.LongPressNonCardTargetNoRightClick already pins that shape.
@@ -249,9 +249,8 @@ export function isCombatPileContainer(node: Pick<MirrorNode, "nodeType" | "scene
 // same prompt — and are re-exported here for the touch rules that also key on them.
 export { HAND_CHOICE_NAMES, HAND_CHOICE_TYPES } from "@/mirror/raise/constants";
 
-// R11 WS-M: the ARMED map-drawing-tool textures. The map screen's DrawButton / EraseButton swap their Icon's
-// texture to the `*_glow` variant exactly while that tool is armed (captured live in
-// `.sts2/bench/final-smoke-mapstroke.ndjson`, deltas 17-27), and back when it is put away — so this, not
+// The ARMED map-drawing-tool textures. The map screen's DrawButton / EraseButton swap their Icon's
+// texture to the `*_glow` variant exactly while that tool is armed and back when it is put away — so this, not
 // selfModulate (which also brightens on plain hover), is the reliable armed signal. Matched as a URL SUFFIX
 // because textureUrl is the host asset route (`/res/images/packed/map/drawing_quill_glow.png`).
 export const DRAWING_TOOL_ARMED_TEXTURES = ["drawing_quill_glow.png", "drawing_eraser_glow.png"];
@@ -270,7 +269,7 @@ export function isBlockingButtonType(nodeType: string): boolean {
   return nodeTypeLeaf(nodeType).endsWith("Button");
 }
 
-// R11 WS-S §4 — a card grid's SCROLLBAR is a blocking control too, and it is the one control in the mirror that
+// A card grid's SCROLLBAR is a blocking control too, and it is the one control in the mirror that
 // takes an ABSOLUTE input channel: the bar consumes the press itself (the grid behind it never sees it), and the
 // grid's scroll target then follows the BAR's position as a FRACTION of the full scroll range. Press = jump to a
 // fraction, drag = keep jumping — nothing relative, nothing an eager offset can lead. Marking the whole strip a
@@ -314,22 +313,21 @@ const DECORATIVE_OVERLAY = /flash|glow|highlight|vfx|sparkle|shine|halo/i;
 // ---------------------------------------------------------------------------------------------------------------
 // THE NAME/TYPE PREDICATE MEMO — one WeakMap, computed once per node OBJECT.
 //
-// WHY (Aug-28 Moto G86 combat trace). `buildHitEntry` runs for every hit-eligible node on every build, and these
-// predicates are what it spends its time in: `isHitTestExcluded` was 3.9% of frame SELF time and
-// `isDecorativeOverlay` 2.4% — ~6.3% of the frame, i.e. ~0.7 ms of an ~11.5 ms budget, spent re-running two
+// WHY. `buildHitEntry` runs for every hit-eligible node on every build, and these predicates
+// (`isHitTestExcluded`, `isDecorativeOverlay`) were a visible share of frame SELF time, spent re-running two
 // regexes and two Set lookups over strings that had not changed since the last frame. `nodeTypeLeaf` was already
 // memoized for exactly this reason (see sceneTree); this finishes the job at the predicate level.
 //
 // WHY A WeakMap AND NOT A STRING KEY. The obvious cache is `Map<name + nodeType, bits>`, and it leaks: one 30 s
-// combat recording carries 1,527 distinct node NAMES (987 of them with an embedded instance id) against only 198
-// distinct node TYPES, so a name-keyed map grows without bound for the length of a run. On the device whose
-// memory pressure caused this round's headline bug, an unbounded cache is precisely the wrong thing to add.
+// combat recording carries over a thousand distinct node NAMES (most with an embedded instance id) against only a
+// couple of hundred distinct node TYPES, so a name-keyed map grows without bound for the length of a run. On a
+// memory-constrained device an unbounded cache is precisely the wrong thing to add.
 //
 // Node identity is the right key instead, and it is SELF-INVALIDATING. `sceneTree.mergeNode` never mutates a node
 // in place — it returns a fresh object for every upsert — so a node whose fields could have changed is a cache
 // MISS by construction, and a WeakMap's entries die with the nodes. There is no invalidation hook to forget to
-// call. (Measured on the same recording: ~13 upserts per message against a scene of well over a thousand nodes,
-// so the miss rate is around 1%.)
+// call. (A message carries a handful of upserts against a scene of well over a thousand nodes, so the miss
+// rate is around 1%.)
 //
 // `mergeNode` also carries `name` and `nodeType` FORWARD from the retained node on a volatile-only upsert, so the
 // recompute a miss pays for lands on the same answer. That is a correctness note, not an optimisation: it is why

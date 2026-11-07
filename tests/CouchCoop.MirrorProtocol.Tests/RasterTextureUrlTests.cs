@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-PARTICLE: the pure raster-format policy for `.tres` particle/sampler textures. NeedsRasterFormat decides when
+// The pure raster-format policy for `.tres` particle/sampler textures. NeedsRasterFormat decides when
 // a texture url must be fetched with the explicit raster ask (`?format=png`); For composes the qualified url with
 // the `?`/`&` rule TextureStore.AstcUrl uses, so the astc suffix still appends cleanly afterwards.
 internal static class RasterTextureUrlTests

@@ -2,7 +2,7 @@ using System.Text.Json;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Loader;
 
-// WS-2: the overlay layout contract exists in FOUR places that cannot reference each other.
+// The overlay layout contract exists in FOUR places that cannot reference each other.
 //
 //   1. HostLobbyQrOverlayLayout.Default            (CouchCoop.Mod)          — what the UI runs on
 //   2. CouchCoopHotLogic.DescribeOverlayLayoutJson (CouchCoop.Mod.HotReload)— what a reload ships

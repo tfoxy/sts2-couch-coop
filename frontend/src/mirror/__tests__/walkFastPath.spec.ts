@@ -9,7 +9,7 @@ import {
 } from "@/mirror/mirrorRenderer";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
-// R10-PERF6 WS-P1 — the ANCESTOR-AFFINE fast path.
+// The ANCESTOR-AFFINE fast path.
 //
 // A map scroll is ONE wire upsert on the scroll container: every descendant's node object and inherited context are
 // unchanged EXCEPT the parent matrices, yet the pre-round walk re-ran each one's full restyle (nodeStyle + shader/

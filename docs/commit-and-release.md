@@ -100,8 +100,7 @@ squashing is legibility: `git log --oneline` on `main` should read as a list of 
 `git blame` should land on a commit whose body explains the whole change — not on
 `Poll H15 grab without animation frames`.
 
-Agents working a round commit to their own branch only and never merge (`agents/round-implementer.md`).
-The coordinator writes the squash message, with the whole branch diff in hand.
+Whoever lands the branch writes the squash message, with the whole branch diff in hand.
 
 ## Cutting a release
 
@@ -121,7 +120,7 @@ The coordinator writes the squash message, with the whole branch diff in hand.
    cannot be edited after the fact, so a trailer the collector mishandles ships permanently.
 
 2. Rewrite the draft in the reader's voice under a new `## [x.y.z] - YYYY-MM-DD` heading in
-   `CHANGELOG.md`, and move `[Unreleased]` above it. The `release-notes` skill does this step.
+   `CHANGELOG.md`, and move `[Unreleased]` above it.
 
 3. Bump the version (`src/CouchCoop.Mod.Loader/couchcoop.json` here) and commit both together:
 
@@ -309,8 +308,8 @@ Five properties are load-bearing, and each exists because of an incident:
   `previews/` as the *complete desired gallery* and deletes anything missing from it; that destroyed
   the item's only additional preview in v0.1.1. The gallery is curated in the Steam web UI now, and
   upstream's documented switch is that an absent `previews/` leaves previews unchanged. Do not
-  recreate it. (Diagnosis: `.agents/memory/workshop-uploader-workspace-sync.md`. The real log is
-  `.sts2/uploader/mod-uploader.log`; the repo-root one is empty and misleads.)
+  recreate it. (The uploader's real log is `.sts2/uploader/mod-uploader.log`; the repo-root one is
+  empty and misleads.)
 - **The uploader binary stays put; the workspace moves.** `ModUploader` needs `libsteam_api.so` and
   `steam_appid.txt` beside it, so it runs from `.sts2/uploader` and the workspace is chosen with
   `--workspace` or `COUCHCOOP_WORKSHOP_WORKSPACE_DIR`. A workspace may declare which lanes it is
@@ -375,8 +374,7 @@ feature flag was on; and the `k_EResultTimeout` uploads had all committed, as th
 an item supports, but that check is **advisory**: it records a message and logs an error, and the mod
 loads anyway. The only thing that actually refuses a mod on the wrong build is `min_game_version` —
 which is why a beta-floored payload on a stable game failed loudly, and why a stable payload on a
-beta game would have failed silently instead. Verified against both game builds' decompiled corpora;
-the derivation is in `.sts2/research/workshop-branch-check-advisory-sep15.md`.
+beta game would have failed silently instead. Verified against both game builds.
 
 **The ecosystem agrees, for whatever that is worth as corroboration.** No STS2 Workshop mod uses
 branch linking: RitsuLib (3747602295), MultiplayerLimitBreak (3747606832) and Unlimited (3747509118)
@@ -421,8 +419,23 @@ anyway. So the two items cannot be installed side by side, and testers need this
 
 ## Reading the history
 
-`git log` on `main` is the history. **`priv` is not.** It is a frozen local archive of the
-development history from before these repos were published — 2122 commits on couch, unrelated to
-`main`'s history, in a mix of styles that predates this document. It is kept for archaeology
-("when did this stop working?") and is never published, never committed to, and never a model for
-how to write a commit here.
+`git log` on `main` is the history: one commit per coherent change, each with a body that explains it.
+
+## Public tree check
+
+This repository is public, and `scripts/check-public-tree.py` keeps internal material out of it.
+It runs as the `public-tree` leg of `scripts/validate.sh`, in the `pre-push` hook that
+`scripts/install-agent-config.sh` wires up, and in the release workflow before anything is built.
+It refuses:
+
+- a tracked `*.md` / `*.mdx` file that is not on the allowlist in `scripts/public-tree.conf`;
+- a path on that file's denylist (research results, handoffs, design notes, ledgers, `private/`),
+  in the tree or added by any commit being pushed;
+- text matching its personal-data patterns (documented placeholders are allowed);
+- on push, a branch that still descends from history from before a rewrite of `main`.
+
+A new public document needs one `allow-md` line in `scripts/public-tree.conf`, in the same change.
+Material for maintainers only (investigations, results, plans, internal agent configuration)
+belongs in the private companion checked out at `private/`, which is gitignored; the installer
+links each worktree's `private` to the main checkout's. Run `bash scripts/test-check-public-tree.sh`
+after changing the check itself.

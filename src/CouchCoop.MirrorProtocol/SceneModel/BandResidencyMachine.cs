@@ -2,7 +2,7 @@ namespace CouchCoop.MirrorProtocol.SceneModel;
 
 using System.Collections.Generic;
 
-// WS-BGBAKE round 3: the PURE band-bake drain-residency decision, hoisted out of the Godot StaticBake controller so
+// The PURE band-bake drain-residency decision, hoisted out of the Godot StaticBake controller so
 // the controller and the replay-driven residency test exercise the SAME logic verbatim (no more "the unit test
 // passed but the controller's inline copy diverged"). Two phases, mirroring the controller's drain flow:
 //

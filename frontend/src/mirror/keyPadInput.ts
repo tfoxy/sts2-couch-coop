@@ -206,7 +206,7 @@ const ANALOG_BINDINGS: readonly AnalogBinding[] = [
  * exactly like any other control — which is what keeps the hysteresis honest — but a deflection is sent as its
  * D-PAD twin alone.
  *
- * WHY, measured rather than assumed (2026-09-21): the game binds its `ui_*` navigation to the d-pad ONLY, and its
+ * WHY, measured rather than assumed: the game binds its `ui_*` navigation to the d-pad ONLY, and its
  * own engine-side controller strategy separately translates a stick deflection into the matching d-pad action. So
  * on that path a stick token and a d-pad token together deliver TWO navigation events for one push and the focus
  * ring double-steps; on the path where Steam Input owns the frame that translation never runs and a stick token

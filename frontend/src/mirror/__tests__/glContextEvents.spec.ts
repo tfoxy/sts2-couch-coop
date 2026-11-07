@@ -6,7 +6,7 @@ import {
   installGlContextEventReporter
 } from "@/mirror/glContextEvents";
 
-// R7 W1 fix (d). WHAT WENT WRONG WITHOUT THIS. The one combat cell that completed on the device in round 6 had its
+// WHAT WENT WRONG WITHOUT THIS. The one combat cell that completed on the device in an earlier run had its
 // GPU process killed MID-CELL and finished anyway — the canvas stage's context-loss handling worked. Nothing
 // counted it, because the only gauge was a post-settle boolean that reads `false` once a context has been lost AND
 // restored: indistinguishable from a context that never went. These are TRANSITIONS.

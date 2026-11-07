@@ -3,12 +3,12 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// R6 (WS-cardtext) HEADLESS live-data verification of the card block-scale table — no Godot, no display, no live
+// HEADLESS live-data verification of the card block-scale table — no Godot, no display, no live
 // lock. Point COUCHCOOP_MIRROR_BLOCKSCALE_PROBE_NDJSON at a recorded mirror stream that shows cards (e.g. the deck
-// grid .sts2/bench/wscrisp-deckdialog.ndjson or the card reward audit-cardreward-open.ndjson), and this replays
+// grid or the card reward screen), and this replays
 // every scene-delta into a MirrorState and prints, for every node whose resolved (file, relPath) is a card
-// DescriptionLabel / TypePlaque / relic AmountLabel: the resolved BlockScale (R6), its LocalRect + computed pivot
-// (the FoldCosmetic block pivot c = own rect centre), and — for the relic — the TextScale (R14). This proves the
+// DescriptionLabel / TypePlaque / relic AmountLabel: the resolved BlockScale, its LocalRect + computed pivot
+// (the FoldCosmetic block pivot c = own rect centre), and — for the relic — the TextScale. This proves the
 // table's suffixes match the REAL streamed node paths and that a LocalRect (pivot) exists for every match. Skips
 // SILENTLY when the env var is unset/absent so the suite stays green in a plain checkout. Env-gated, no assert.
 internal static class BlockScaleReplayProbe

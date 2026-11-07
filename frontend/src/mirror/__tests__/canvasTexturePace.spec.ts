@@ -569,8 +569,8 @@ describe("decode", () => {
 });
 
 // OWNED PAGE PIXELS. `decode()` above makes the FIRST upload cheap, but a decoded `<img>` frame is
-// a cache the phone reclaims — after which `texImage2D` decodes the page again, inside the build. The Moto G86
-// trace measured 40.5 / 37.0 / 36.8 / 18.7 / 18.0 / 17.5 / 14.2 ms of exactly that. These pin the answer.
+// a cache the phone reclaims — after which `texImage2D` decodes the page again, inside the build. A mid-range Android
+// phone trace showed tens of ms of exactly that. These pin the answer.
 describe("owned page pixels", () => {
   it("captures in a task of its OWN, then uploads pixels the browser cannot evict", async () => {
     const captures = capturer();
@@ -720,7 +720,7 @@ describe("upload accounting", () => {
   });
 });
 
-// THE TINY-PAGE EXEMPTION (R6 P6-B1).
+// THE TINY-PAGE EXEMPTION.
 //
 // The budget above has no queue and no comparator on purpose: the builder's paint order IS the priority. That is
 // right for atlas pages and wrong for one population — a texture of a few kilobytes wanted by something already on
@@ -878,12 +878,12 @@ describe("the tiny-page exemption", () => {
   });
 });
 
-// `paceReleases` — THE RELEASE COUNTER THE VERIFY ARM READS (R8 item 6).
+// `paceReleases` — THE RELEASE COUNTER THE VERIFY ARM READS.
 //
 // Patch verification compares a patched draw list against a rebuilt one and has to exclude any frame where the
 // WORLD moved in between rather than the patcher. For textures it did that with `pending * 1e6 + failed`, and
-// round 7 measured what that misses: at the default pacer the arm reported 24 / 28 / 4 / 86 / 7 mismatches on
-// five deckview runs, every mismatching field a colour (a zero injected budget → zero). A quad whose texture is
+// an earlier run showed what that misses: at the default pacer the arm reported spurious mismatches on
+// repeated deckview runs, every mismatching field a colour (a zero injected budget → zero). A quad whose texture is
 // decoded but whose UPLOAD the pacer is holding is pushed fully transparent — it is neither `pending` nor
 // `failed` in a way the comparison can see, so when the release happens between the two builds the second list
 // paints what the first left transparent and the arm scores the patcher for it.

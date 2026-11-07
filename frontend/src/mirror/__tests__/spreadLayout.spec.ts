@@ -433,7 +433,7 @@ describe("spreadLayout — childParentWidth", () => {
   });
 });
 
-// --- R6 M1: the field at the pose a node is DRAWN at ------------------------------------------------------------
+// --- the field at the pose a node is DRAWN at ------------------------------------------------------------
 //
 // `computeSpread` measures at the node's TRUE pose, which is where the game has it. While a client-side animation
 // moves the node — and while the producer FREEZES its streamed transform for the tween's whole window — that is the

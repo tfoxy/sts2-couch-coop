@@ -2,7 +2,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// WS-P2 memoizing scene-identity + text-scale cache. Proves the cache reproduces SceneIdentity.Resolve +
+// Memoizing scene-identity + text-scale cache. Proves the cache reproduces SceneIdentity.Resolve +
 // TextScale.ScaleFor, memoizes until Clear, and recomputes after Clear.
 internal static class SceneIdentityCacheTests
 {
@@ -12,7 +12,7 @@ internal static class SceneIdentityCacheTests
     }
 
     // A card scene: root (Card, scene file) → CardContainer → DescriptionLabel. The leaf's scene-relative path is
-    // "CardContainer/DescriptionLabel" (root name excluded). R6: its FONT scale is 1.0 (the enlargement is a block
+    // "CardContainer/DescriptionLabel" (root name excluded). Its FONT scale is 1.0 (the enlargement is a block
     // TRANSFORM scale) while its BlockScale is 1.24; both flow through the cache Entry.
     private static MirrorState Build()
     {
@@ -46,7 +46,7 @@ internal static class SceneIdentityCacheTests
         Check.Equal(e.RelPath, dr, "cache RelPath == SceneIdentity.Resolve RelPath");
         Check.Close(e.TextScale, TextScale.ScaleFor(df, dr), "cache TextScale == TextScale.ScaleFor");
         Check.Close(e.BlockScale, BlockScale.ScaleFor(df, dr), "cache BlockScale == BlockScale.ScaleFor");
-        // WS-TXT: the cache Entry also carries the card-description line-spacing metrics (MetricsFor).
+        // The cache Entry also carries the card-description line-spacing metrics (MetricsFor).
         Check.Close(e.LineHeight ?? -1, TextScale.CardDescLineHeight, "cache propagates the card-desc line-height metric");
         Check.Close(e.ParagraphExtra ?? -1, TextScale.CardDescParagraphExtra, "cache propagates the card-desc paragraph-extra metric");
         Check.Equal(cache.Count, 1, "one identity memoized");

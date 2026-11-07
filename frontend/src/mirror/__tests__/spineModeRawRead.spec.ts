@@ -6,7 +6,7 @@ import { isGeoclipPlaybackEnabled, isSpineClipNode, isSpineStillMode } from "@/m
 import type { MirrorNode } from "@/mirror/sceneTree";
 import { __setRenderQualityForTest, type RenderQuality, type RenderQualityTier } from "@/render/quality";
 
-// PERF FIX, R2-A: `isCreaturePlaceholderNode`/`isSpineClipNode`/`isSpineStillMode`/`isGeoclipPlaybackEnabled` used
+// PERF FIX: `isCreaturePlaceholderNode`/`isSpineClipNode`/`isSpineStillMode`/`isGeoclipPlaybackEnabled` used
 // to read `mirrorSettings.spineMode` (or `effectiveMirrorRenderSettings(mirrorSettings).spineMode`) directly
 // through the reactive Proxy on every node, every producer build. `spineMode` is parsed once from the dev-only
 // `?spineMode=` URL flag and nothing reassigns it in production, so `rawSpineMode`/`effectiveSpineMode` read it

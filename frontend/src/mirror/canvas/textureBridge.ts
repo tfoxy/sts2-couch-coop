@@ -70,14 +70,14 @@
 // a predictable 4 MB and an unpredictable decode. `decode()` resolves once the bitmap exists (off the main thread
 // where the browser can), so the FIRST upload of a url is fully paid for by the time the pacer prices it.
 //
-// …AND THAT IS ONLY TRUE ONCE. Corrected Aug-28 by a Moto G86 combat trace; the paragraph above used to end "so by
+// …AND THAT IS ONLY TRUE ONCE. Corrected by a phone combat trace; the paragraph above used to end "so by
 // the time the pacer spends budget on a url, the budget is the whole bill", and it is not.
 //
 // `decode()` resolves, and Chrome is then free to DISCARD the decoded frame — an `<img>`'s pixels are a cache, not
 // a possession, and a phone under memory pressure evicts them. Nothing tells us when. The next draw that needs
-// them re-decodes the whole PNG synchronously, and the trace shows exactly that: seven `Decode LazyPixelRef`
-// re-decodes of the 4032x4072 card sheets, 260-306 ms each, ~2.0 s of main thread, every one inside a rAF and
-// every one priced by this module as the ~1.4 MB crop it produced.
+// them re-decodes the whole PNG synchronously, and the trace shows exactly that: repeated `Decode LazyPixelRef`
+// re-decodes of the 4032x4072 card sheets, hundreds of ms each, every one inside a rAF and every one priced by
+// this module as the ~1.4 MB crop it produced.
 //
 // So the honest statement of the budget's scope is: it prices BYTES UPLOADED, and it assumes the pixels it is
 // uploading already exist. Where they might not, the fix is not a bigger budget — no byte figure can predict an
@@ -170,7 +170,7 @@ export const TEXTURE_RESIDENT_BYTES_DEFAULT = 192 * 1024 * 1024;
 export const TEXTURE_PACE_COUNT_DEFAULT = 8;
 
 /**
- * THE TINY-PAGE EXEMPTION (R6 P6-B1) — the largest byte a build may still upload without asking the budget.
+ * THE TINY-PAGE EXEMPTION — the largest byte a build may still upload without asking the budget.
  *
  * The pacer has no queue and no comparator by design (see the header): the builder's own paint order IS the
  * priority. That is right for the atlas pages it was written for, and wrong for one population — a texture that is
@@ -237,7 +237,7 @@ export interface TextureBridgeStats {
    */
   paceReleases: number;
   /**
-   * Times the TINY-PAGE EXEMPTION admitted an upload the budget would have deferred (R6 P6-B1). A GRANT count,
+   * Times the TINY-PAGE EXEMPTION admitted an upload the budget would have deferred. A GRANT count,
    * not an upload count: the re-packer asks through `admit` and can still decline the crop afterwards, so this
    * can run slightly ahead of `uploads`. Zero with the exemption off, which is the A/B arm.
    */
@@ -374,8 +374,8 @@ export interface TextureBridgeOptions {
    *
    * WHY IT EXISTS. A `<img>`'s decoded frame is a CACHE. Chrome discards it under memory pressure and re-decodes
    * it lazily on the next `drawImage` — so the re-packer's crop, which this module's header used to argue "costs
-   * nothing new", can cost a full synchronous PNG decode. Measured on a Moto G86 (Aug-28, 29.5 s combat trace):
-   * seven `Decode LazyPixelRef` re-decodes of the 4032x4072 card sheets, 260-306 ms each, ~2.0 s of main thread,
+   * nothing new", can cost a full synchronous PNG decode. On a mid-range Android phone a combat trace showed
+   * repeated `Decode LazyPixelRef` re-decodes of the 4032x4072 card sheets, hundreds of ms each,
    * every one inside a rAF. See the DECODE note in this module's header, which that trace corrected.
    *
    * The intended supplier is `atlasBaker.atlasDecodedSource`: `imagePrefetch` already decodes every atlas into an
@@ -395,8 +395,8 @@ export interface TextureBridgeOptions {
    * THE SAME BUG AS {@link decodedPageSource}, one path over. That option fixed the re-packer's CROP source, which
    * was the 260-306 ms class. The pages that go up WHOLE — the vfx PNGs, which `imagePrefetch` does not carry, so
    * `atlasBaker` has no bitmap to lend them — kept the original shape: `cache.acquire(url, entry.image)` on an
-   * element whose decoded frame the phone had since evicted, re-decoding it inside the build. The same Moto G86
-   * trace measured 40.5 / 37.0 / 36.8 / 18.7 / 18.0 / 17.5 / 14.2 ms of that around +20 s.
+   * element whose decoded frame the phone had since evicted, re-decoding it inside the build. The same kind of
+   * phone trace showed 15-40 ms frame tasks of exactly that.
    *
    * WHAT THIS BUYS, precisely. `createImageBitmap(HTMLImageElement)` is NOT free and may not even be
    * asynchronous — gsw's `surface-image-swap` measured a synchronous 576 ms capture on a GPU-resident source — so
@@ -465,7 +465,7 @@ export interface TextureBridgeOptions {
   spine?: SpineTextureSource;
   /**
    * THE `text://` SEAM — the same shape again, for a FOURTH population: label rasters drawn by `textSurfaces` on
-   * its own 2D canvas (M4).
+   * its own 2D canvas.
    *
    * Absent (every non-canvas stage) nothing about this module changes: no key
    * the builder emits then starts with `text://`, and the prefix is not even tested for.
@@ -1108,7 +1108,7 @@ export function createTextureBridge(options: TextureBridgeOptions): TextureBridg
       return resolved;
     }
     if (text !== undefined && url.startsWith(TEXT_KEY_PREFIX)) {
-      // A rastered label (M4). Third prefix leg, same rule, and see the note above for why falling through with
+      // A rastered label. Third prefix leg, same rule, and see the note above for why falling through with
       // one of these would be worse than a missing texture rather than merely equivalent to one.
       resolved.handle = text.handleFor(url.slice(TEXT_KEY_PREFIX.length));
       return resolved;

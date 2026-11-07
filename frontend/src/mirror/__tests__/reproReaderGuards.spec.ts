@@ -13,10 +13,9 @@ import { describe, expect, it } from "vitest";
 // is not a line the HOST sent. Replay one and the mirror is handed its own `input` envelope as if it had come
 // down the wire — a self-driving recording that reproduces nothing.
 //
-// Checked as SOURCE rather than by running each reader because two of these are not importable at all: the bench
-// loader inside bench-mirror-replay.mjs lives in a string that is evaluated in the browser page, and
-// mirrorReplay.bench.ts loads at import time from a file the bench config points at. The behavioural twin of
-// this spec, for the one reader that can be driven in-process, is `replay-ws-server.mjs --self-test` (Test D).
+// Checked as SOURCE rather than by running each reader, because a reader may not be importable at all (a loader
+// that lives in a string evaluated in a browser page, or one that reads its input at import time). The behavioural
+// twin of this spec, for the reader that can be driven in-process, is `replay-ws-server.mjs --self-test` (Test D).
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
@@ -27,19 +26,6 @@ const READERS: { file: string; anchors: string[] }[] = [
   {
     file: "scripts/replay-ws-server.mjs",
     anchors: ['if (typeof obj.data !== "string") continue;']
-  },
-  {
-    // Three separate loaders: the meta/discard scan, buildRevealMessage, and the in-page fake socket.
-    file: "scripts/bench-mirror-replay.mjs",
-    anchors: [
-      'if (typeof obj.data !== "string") continue;',
-      'if (obj.meta || typeof obj.data !== "string") continue;',
-      'if (typeof obj.data !== "string") continue;'
-    ]
-  },
-  {
-    file: "frontend/bench/mirrorReplay.bench.ts",
-    anchors: ['const data = typeof obj.data === "string" ? obj.data : null;']
   }
 ];
 

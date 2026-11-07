@@ -1,14 +1,14 @@
-// R2 — WHAT AN OVERLAY DOES WHEN THE GAME PAINTS SOMETHING OPAQUE OVER IT.
+// WHAT AN OVERLAY DOES WHEN THE GAME PAINTS SOMETHING OPAQUE OVER IT.
 //
 // Every overlay element paints above the WHOLE canvas, so with a full-screen dialog open the combat screen's own
-// labels keep painting over it — the second half of the user's U1 report, and NOT a clip problem: nothing is out
+// labels keep painting over it — the second half of a user report, and NOT a clip problem: nothing is out
 // of bounds, something opaque was simply painted in front. The only answer available to a DOM layer above one
 // canvas element is to stop drawing what the game has covered.
 //
 // So there are two halves, and they are tested apart because they land apart: the WALK measures the backstop (a
 // number on the build, on either setting, changing nothing in the list), and the OVERLAY decides what to do about
 // it (the current backstop policy is enabled; its dimmed treatment is
-// R7's answer to the first of that flip's two named residuals; the evidence lives at the lever in canvasRenderer).
+// the answer to the first of that flip's two named residuals; the evidence lives at the lever in canvasRenderer).
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -328,7 +328,7 @@ describe("the overlay acts on it", () => {
   });
 
   it("never folds its count into the HOIST RULE's", () => {
-    // `withheld` is M2's acceptance number and a before/after comparison; a second meaning inside it would make
+    // `withheld` is the acceptance number and a before/after comparison; a second meaning inside it would make
     // that comparison a redefinition.
     mountOverlay();
     overlay!.setBackstop(50);
@@ -348,7 +348,7 @@ describe("the overlay acts on it", () => {
 
   it("counts the backstop's hides on their OWN row, not on the draw-list quad's", () => {
     // `fxHidden` means "a draw-list quad paints this surface instead". Folding the backstop's hides into it made
-    // it a sum of two unrelated facts, so a dialog screen read as the M2/A2 wiring hiding surfaces it had never
+    // it a sum of two unrelated facts, so a dialog screen read as the wiring hiding surfaces it had never
     // drawn. The backstop's population is `backstopWithheld`.
     mountOverlay();
     overlay!.setBackstop(50);

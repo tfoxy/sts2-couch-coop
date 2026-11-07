@@ -3,8 +3,8 @@
 //
 // Replays each recorded mirror stream (`.sts2/bench/*.ndjson`) to its final state through the REAL wire model, runs
 // the REAL builder (`frontend/src/mirror/canvas/buildDrawList.ts`) into a REAL gsw draw list, and asserts four
-// things about the result. No live game, no browser, no dev server — the same offline shape as the canvas-stage
-// probes it shares `scripts/lib/mirror-probe.mjs` with (see docs/agents/canvas-stage-probes-aug26.md).
+// things about the result. No live game, no browser, no dev server — it shares the offline replay in
+// `scripts/lib/mirror-probe.mjs`.
 //
 //   (a) CLIP SCOPES ARE CONTIGUOUS AND BALANCED. Every `clipPush` has a matching `clipPop`, the stream ends at
 //       depth 0, and — the real claim — every command between a clipper's push and pop belongs to a node inside

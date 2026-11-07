@@ -10,7 +10,7 @@
 // origin; the LAN address is ordinary data in `localStorage` (see @/join/hostStore), so an address change
 // costs a re-scan at worst, never a re-install.
 //
-// WHAT THE BROWSER ALLOWS HERE is measured, not assumed — see docs/agents/local-network-access.md. The
+// WHAT THE BROWSER ALLOWS HERE is measured, not assumed — see docs/local-network-access.md. The
 // load-bearing facts: a private-IP literal is exempt from mixed-content blocking (so an https page may
 // load `http://192.168.x.x` scripts, styles, images and open a `ws://` socket), and all of it is gated on
 // a permission that only a WINDOW can prompt for.
@@ -201,7 +201,7 @@ export interface BootPlatform {
 /**
  * Whether this browser can NEVER reach the candidates below, however the network is configured.
  *
- * MEASURED, 2026-09-17 (docs/agents/local-network-access.md): WebKit has no private-IP mixed-content
+ * MEASURED (docs/local-network-access.md): WebKit has no private-IP mixed-content
  * exemption, so an https page's `fetch`, module script, image and `ws://` to `http://192.168.x.x` are all
  * blocked outright — "this content was blocked and must be served over HTTPS". There is no permission to
  * grant and no setting a player can change; the web link simply cannot work from an iPhone or iPad. Saying

@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using CouchCoop.Mod.HostUi;
 
-// WS-2 (redesigned): the option list the in-game QR dialog offers — the cross product of adapter ×
+// The option list the in-game QR dialog offers — the cross product of adapter ×
 // method, mdns always last, first ENABLED entry the default. Everything here is pure — no Godot, no
 // NICs, no lobby — because "which QR does the phone scan" is the one decision in this feature that is
 // actually hard, and it must be falsifiable without launching a game.

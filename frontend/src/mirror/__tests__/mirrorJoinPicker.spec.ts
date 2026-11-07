@@ -278,7 +278,7 @@ describe("MirrorJoinPicker", () => {
     expect(msg.text()).toContain("not from a session player");
   });
 
-  // WS-8: a dropped connection is title-only (no roster to show), so the message surface must render there too,
+  // A dropped connection is title-only (no roster to show), so the message surface must render there too,
   // not only over the picker.
   it("renders the message in title-only mode too (the disconnected state)", () => {
     const wrapper = mountPicker({
@@ -407,12 +407,12 @@ describe("MirrorJoinPicker", () => {
   });
 });
 
-// R9 item 8 — the pre-game LOADING states. The defect: `screenTitle || placeholder` meant a REMEMBERED screen
+// The pre-game LOADING states. The defect: `screenTitle || placeholder` meant a REMEMBERED screen
 // name always outranked the lifecycle word, so a viewer waiting out a 20-60s cold headless spawn read "Run" and
 // had no signal at all that anything was happening.
 describe("MirrorJoinPicker — transient lifecycle states", () => {
   it("keeps the game's own screen title on a STEADY TITLE-ONLY screen (the placeholder stays a fallback)", () => {
-    // R19 WP-2 moved the PICKER's steady heading (see the copy describe below); title-only is unchanged, because
+    // The PICKER's steady heading moved (see the copy describe below); title-only is unchanged, because
     // on that screen the heading is the only thing there is.
     const steady = mountPicker({
       mode: "title-only",
@@ -488,7 +488,7 @@ describe("MirrorJoinPicker — transient lifecycle states", () => {
     expect(picker.find('[data-testid="mirror-join-picker-view"]').exists()).toBe(true);
     expect(picker.find('[data-testid="screen-title-only-view"]').exists()).toBe(false);
     expect(picker.find('[data-testid="player-picker"]').exists()).toBe(true);
-    // R19 WP-2: a STEADY picker carries neither the kicker nor the screen-title <h1> (see the copy describe).
+    // A STEADY picker carries neither the kicker nor the screen-title <h1> (see the copy describe).
     expect(picker.find(".surface-kicker").exists()).toBe(false);
     expect(picker.find("h1").exists()).toBe(false);
     expect(picker.find('[data-testid="runtime-screen"]').exists()).toBe(false);

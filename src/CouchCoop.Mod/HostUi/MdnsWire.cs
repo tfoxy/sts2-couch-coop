@@ -34,9 +34,8 @@ public static class MdnsWire
     /// QTYPE/TYPE for an IPv6 host address record.
     /// </summary>
     /// <remarks>
-    /// MEASURED, and not what one would guess: an Android client asks for AAAA over the **IPv4** multicast
-    /// group, as a separate datagram beside its A query (captured 2026-08-21 — see
-    /// <c>.sts2/research/mdns-windows-android-aug21.md</c>). So AAAA support is mostly about the RECORD
+    /// Not what one would guess: an Android client asks for AAAA over the **IPv4** multicast
+    /// group, as a separate datagram beside its A query. So AAAA support is mostly about the RECORD
     /// TYPE, not about which socket the question arrives on; the IPv6 transport lane in
     /// <see cref="MdnsResponder"/> is a separate, additive concern.
     /// </remarks>
@@ -494,9 +493,8 @@ public sealed record MdnsQuestion(string Name, ushort Type, ushort Class, bool U
     /// only, and the browser server it advertises binds <c>IPAddress.Any</c> — AF_INET, no IPv6 listener —
     /// so an AAAA answer would name an address nothing accepts connections on, and Happy Eyeballs prefers
     /// IPv6. Answering AAAA needs a dual-stack listener first; until then, silence is the correct answer and
-    /// the querier falls back to the A record it asked for in the same breath. (Measured: an Android client
-    /// asks A and AAAA as separate datagrams over the IPv4 group, and resolves fine off the A alone — see
-    /// <c>.sts2/research/mdns-windows-android-aug21.md</c>.)
+    /// the querier falls back to the A record it asked for in the same breath. (An Android client asks A and
+    /// AAAA as separate datagrams over the IPv4 group, and resolves fine off the A alone.)
     /// </remarks>
     public bool AsksForAddress => Type is MdnsWire.TypeA or MdnsWire.TypeAny;
 

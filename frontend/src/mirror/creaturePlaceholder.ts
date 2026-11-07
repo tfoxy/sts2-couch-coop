@@ -86,7 +86,7 @@ const CREATURE_VISUALS_SPINE_LEAF = "Visuals";
  *
  * This address has already moved twice. It used to be authored inline in the room, so the producer sent
  * `res://scenes/rooms/merchant_room.tscn` + `SceneContainer/MerchantButton/MerchantVisual` (the form in
- * `.sts2/bench/audit-shop.ndjson`). On game v0.111.0 the button is its own scene, so the same node arrives as
+ * recorded scenes). On game v0.111.0 the button is its own scene, so the same node arrives as
  * `res://scenes/rooms/merchant_button.tscn` + a scene-local `MerchantVisual`. An exact-path match failed
  * silently against the live game — no error, just no stand-in — and a first attempt to fix it guessed the new
  * DIRECTORY (`scenes/merchant/`) wrong and failed silently a second time.

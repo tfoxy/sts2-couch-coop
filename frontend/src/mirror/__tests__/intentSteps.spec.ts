@@ -28,7 +28,7 @@ import {
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 import { __setStillDecoderForTest, type StillDecoder } from "@/mirror/stillDecode";
 
-// R10-B1 — COMPOSITOR-DRIVEN enemy-intent glyph cycling.
+// COMPOSITOR-DRIVEN enemy-intent glyph cycling.
 //
 // The glyph used to be cycled by the renderer's deadline tick (one atlas blit per frame index change). That tick
 // is a MAIN-THREAD wakeup and every wakeup forces a full main frame, which the A4 idle baseline measured at
@@ -459,12 +459,12 @@ describe("mirror renderer — intent glyph on the compositor", () => {
 
 // --- STAGE-C item 3: the strip as an <img> --------------------------------------------------------------------
 //
-// THE DEFECT THIS BLOCK PINS (Aug-15 phone trace, http://worky.local:13337, bundle index-C-adVWPm.js). The first
+// THE DEFECT THIS BLOCK PINS (seen in a phone trace). The first
 // version of this path kept the frames as N separate blobs and swapped `img.src` between them from ONE shared
 // `setInterval`. On a SETTLED combat screen that timer fired on a 66.0ms grid (112 → 215 → 281 → 347 → … →
 // 1139ms — 1000/15fps) at 0.19-0.26ms of script per fire, each followed by an image `load` EventDispatch and
 // dragging a whole main-frame lifecycle behind it: 16 Commits / 30 Paints / 16 UpdateLayoutTrees in ~1.3s of a
-// screen where nothing had changed. That is the SAME class of wakeup the R10-B1 strip above deleted, put back in
+// screen where nothing had changed. That is the SAME class of wakeup the strip above deleted, put back in
 // JS. So the img path now shows ONE worker-baked strip image stepped by the SAME compositor animation, and these
 // specs assert exactly that: same CSS, same phase law, no interval, and the strip cached across the run.
 describe("intent glyph as a worker-baked strip <img> (Stage C)", () => {

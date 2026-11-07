@@ -78,8 +78,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
     /// WHY THIS EXISTS. <see cref="SendOnceAsync"/> swallowed every failure in a bare <c>catch</c> and dropped
     /// every non-2xx answer without a word, and <see cref="TryReadEnvironment"/> returning false built no
     /// reporter at all — also without a word. So a seat whose channel was dead produced no evidence anywhere:
-    /// not here, and not on the host, which can only report the absence of a heartbeat. Measured in the field
-    /// 2026-09-18, on a report where the seat had joined the lobby, bound its browser port and was idling
+    /// not here, and not on the host, which can only report the absence of a heartbeat. Seen in the field,
+    /// on a report where the seat had joined the lobby, bound its browser port and was idling
     /// healthily while the host waited out its whole 75-second deadline and then blamed startup.
     /// </para>
     /// <para>

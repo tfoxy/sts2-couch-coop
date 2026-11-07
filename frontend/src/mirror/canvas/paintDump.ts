@@ -11,7 +11,7 @@
 // and passes the two things this cannot derive: the node a command belongs to (`ranges`) and the role a quad
 // plays (`roleOf`, which needs the build's trail-quad ids). Nothing here reads a window.
 //
-// FORMAT RULES, and they are the comparer's (`scripts/compare-paint-dumps.mjs` splits on spaces and reads `k=v`):
+// FORMAT RULES, and they are the comparer's (the paint-dump comparer splits on spaces and reads `k=v`):
 // no value may contain a space, and no number may be printed at full float width — everything is fixed to 3
 // decimals so a float-formatting difference cannot masquerade as a geometry one.
 

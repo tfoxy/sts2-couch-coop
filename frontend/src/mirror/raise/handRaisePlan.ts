@@ -21,7 +21,7 @@
 //     The DOM's version prefers a tween ENDPOINT while a pin or a pending pin-catch-up is in force; the canvas's
 //     takes an endpoint only while the tween is genuinely live, and the two stay a port (see that module's own
 //     header) rather than being folded together here.
-//     The H10 excursion recorded on 2026-09-19 was NOT that difference: the answer was right, and the DOM's eased
+//     The excursion once recorded was NOT that difference: the answer was right, and the DOM's eased
 //     lift simply LEFT the wrong value, because a producer delta that steps the pose and arms the return tween in
 //     one frame moved the pose channel while the lift channel still held the pose before it. That is a channel
 //     seam, closed where the channel is written (`handController.noteTransformArmPose` + `holderPaintedLocalY`),

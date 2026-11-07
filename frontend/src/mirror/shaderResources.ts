@@ -130,13 +130,12 @@ const effectsRenderer = "auto";
 
 // ---- FROZEN-SURFACE IMAGE SWAP: the couch-coop POLICY over gsw's generic mechanism ----------------------------
 //
-// WHAT IT BUYS (the device evidence, kept from the mechanism this replaced). In the static effect modes the gsw
-// runtimes draw one frozen frame per binding and park, yet every one of the fleet's `<canvas>` elements — 72 in
-// the measured UNDERDOCKS combat, 28 shader + 44 particle — stays an unconditionally promoted compositor layer
-// that is re-sampled every presented frame. rc2 measured the cliff on device (Android Chrome 151, Mali-G615):
-// hiding the whole fleet took the corridor from ~11 to 87.5 fps. rc5 measured the swap itself force-engaged:
-// render surfaces p50 103→18, TexOp/frame 361→66. (rc5 ALSO proved it is NOT a fix for the UNDERDOCKS widescreen
-// black band — that stayed byte-black with all 72 canvases swapped, and is a separate, still-open defect.)
+// WHAT IT BUYS. In the static effect modes the gsw runtimes draw one frozen frame per binding and park, yet every
+// one of the fleet's `<canvas>` elements on a combat screen (dozens of shader and particle canvases) stays an
+// unconditionally promoted compositor layer that is re-sampled every presented frame. On a mid-range phone, hiding
+// the whole fleet was the difference between an unplayable and a full frame rate, and forcing the swap cut render
+// surfaces and texture ops per frame several-fold. (It is NOT a fix for the widescreen black band — that stayed
+// byte-black with every canvas swapped, and is a separate, still-open defect.)
 //
 // WHY THIS IS NOW POLICY AND NOT CODE. This repo used to carry its own settle driver + per-binding freeze/thaw
 // (`staticStills.ts` + a `staticStill*` block in mirrorRenderer). gsw has since grown the generic hooks that
@@ -162,7 +161,7 @@ const effectsRenderer = "auto";
 //   * `encode: slice 4 / 120ms / smallest-first` — rc5's 736ms fix: kicking all 72 fleet encodes at once parked
 //     the main thread for 736ms. Small-first lands the bulk of the fleet (tiny particle canvases) in the early
 //     slices and leaves the room-sized ~4821×2156 shader monsters for their own late slices. The rest of the
-//     encode policy (`perTask`, `taskGapMs`, `busy`, the bound, the backoff, the parked stills) is the Aug-19
+//     encode policy (`perTask`, `taskGapMs`, `busy`, the bound, the backoff, the parked stills) is a device
 //     trace's answer to the fact that a slice bounds THROUGHPUT and not the main-thread PARK — see the block
 //     beside those constants below.
 //   * `canFreezeSurface` — the STATIC-MODE VETO, and it is load-bearing: see below.
@@ -198,8 +197,8 @@ const effectsRenderer = "auto";
 const STATIC_SURFACE_QUIET_MS = 1000;
 // Encode pacing: at most this many surfaces per window, that many ms apart, smallest backing store first.
 //
-// WS-5 (Aug-18 phone perf round): a 2.87 s Moto G86 trace measured this fleet's `toBlob` +
-// `createObjectURL` at 52.8 + 17.1 = 70 ms (2.6% of the trace) on the MAIN THREAD, inside a
+// A phone trace measured this fleet's `toBlob` +
+// `createObjectURL` at ~70 ms on the MAIN THREAD, inside a
 // `TimerFire`. The fix is `deferHead: true` below, NOT a throughput cut — `slice`/`intervalMs` stay
 // where the earlier on-device measurements put them. Freezing surfaces SLOWER is not free: a surface
 // that has not swapped yet is still a live canvas being drawn every frame, which is the cost the
@@ -207,7 +206,7 @@ const STATIC_SURFACE_QUIET_MS = 1000;
 // which is a 3.3x throughput drop) would trade a measured win for an unmeasured one. If a device
 // trace ever shows the DEFERRED windows are themselves too fat, tune these then, with that trace.
 //
-// Aug-19 follow-up — `busy` (below). The same trace's diagnosis was that the block is a GPU→CPU
+// `busy` (below). A follow-up trace's diagnosis was that the block is a GPU→CPU
 // READBACK (~2.8 ms of encoder CPU behind ~30 ms of wall time), so `deferHead` moved it off the
 // caller's stack but not out of the burst: a 1 ms timer lands between the same two draws. gsw grew
 // `encode.busy` for that, and `mirrorFramePressure` is our answer to it — see framePressure.ts for
@@ -215,15 +214,15 @@ const STATIC_SURFACE_QUIET_MS = 1000;
 const STATIC_SURFACE_ENCODE_SLICE = 4;
 const STATIC_SURFACE_ENCODE_INTERVAL_MS = 120;
 
-// ---- Aug-19 (second trace, Moto G86): the ENCODE PARK, and the four levers that bound it ---------------------
+// ---- The ENCODE PARK, and the four levers that bound it ---------------------
 //
-// THE MEASUREMENT. A reshuffle trace caught two single tasks of 285 ms and 1,163 ms, 97% of their
+// THE MEASUREMENT. A reshuffle trace on a mid-range phone caught single tasks of hundreds of ms to over a second, 97% of their
 // self-time inside native `toBlob` — and the SAME surfaces encoding in 6-13 ms each once the
 // animation ended. Three separate things had to be true for that to happen, and each constant below
 // answers exactly one of them:
 //
 //   1. `slice: 4` bounds THROUGHPUT per window, not the PARK: gsw drained all four readbacks
-//      back-to-back inside one timer task, with no yield. Four × ~290 ms IS the 1,163 ms task.
+//      back-to-back inside one timer task, with no yield. Four loaded readbacks of ~290 ms each ARE one ~1.2 s task.
 //      ⇒ `perTask: 1`. The window budget is untouched (still 4 per 120 ms) — only its granularity
 //      moves, so the longest park the mechanism can cause is now ONE readback. Throughput unchanged
 //      means the freeze rate is unchanged, which is the thing that must not regress: an unswapped
@@ -232,8 +231,8 @@ const STATIC_SURFACE_ENCODE_INTERVAL_MS = 120;
 //      3rd or 4th however much busier each one had just made the device. Under `perTask: 1` a pass
 //      IS one readback, so the predicate is now re-asked before every one of them.
 //   3. The predicate itself was blind at exactly the wrong moment: it is frame RECENCY, and a
-//      1,163 ms task suppresses the frames it is made of, so the trace's two recovery gaps (362 ms
-//      and 674 ms with no frames at all) read as IDLE at peak overload. Fixed on our side by
+//      ~1 s task suppresses the frames it is made of, so the recovery gaps with no frames at all
+//      read as IDLE at peak overload. Fixed on our side by
 //      framePressure's armed-work suppliers; `slowEncodeMs` below is gsw's independent net under it.
 const STATIC_SURFACE_ENCODE_PER_TASK = 1;
 // The yield between two encode tasks of one window. 16 ms ≈ one 60 Hz frame, so our own rAF gets to
@@ -242,7 +241,7 @@ const STATIC_SURFACE_ENCODE_PER_TASK = 1;
 // windows that have queued work (an idle fleet still arms nothing).
 const STATIC_SURFACE_ENCODE_GAP_MS = 16;
 // The self-measured backoff: a readback this slow holds the next one. 50 ms is >> the 6-13 ms an
-// UNLOADED readback costs on this device and << the ~290 ms a loaded one costs, so anything landing
+// UNLOADED readback costs on a phone and << the ~290 ms a loaded one costs, so anything landing
 // between the two returns the same verdict and the number is not a tuned guess. gsw arms this from
 // its own measurement of the previous readback, which is the one piece of evidence a main-thread
 // block cannot suppress — the belt to our predicate's braces.
@@ -273,10 +272,10 @@ const STATIC_SURFACE_BUSY_MAX_DEFER_MS = 4000;
 // exact-by-construction reuse — a paint, a re-allocation or a decode failure disqualifies the entry
 // and revokes it on the spot — so there is no fidelity question to A/B, only a memory one, which is
 // what the budget is. 24 MB ≈ one fleet's worth of quiet-window stills. Measure it with
-// `staticImageReuseHits`: every hit is a readback of the size that made the 1,163 ms task, not paid.
+// `staticImageReuseHits`: every hit is a readback of the size that made the long task, not paid.
 const STATIC_SURFACE_PARKED_STILL_BYTES = 24 * 1024 * 1024;
 
-// ---- R17: RETAINED STILLS, and why the whole block is PARTICLE-ONLY -------------------------------------------
+// ---- RETAINED STILLS, and why the whole block is PARTICLE-ONLY -------------------------------------------
 //
 // THE MEASUREMENT THAT OPENED IT. R16b proved the N=30 phone floor is not render cost: gsw's WebGPU backend
 // landed, adoption was MEASURED (`canvGpu` 60/60), and p95 (~117-122 ms) and p50 (~44.5 ms) did not move. What
@@ -325,9 +324,9 @@ const STILL_CACHE_BYTES = 8 * 1024 * 1024;
 /** One family's policy. `family` picks the effect mode the veto reads — nothing else differs, on purpose: the
  *  two fleets are the same kind of surface and the measurements that set these numbers covered both. */
 function staticSurfacePolicy(family: "shader" | "particle"): StaticSurfaceOption {
-  // R17's three additions are all PARTICLE-side (see the block above for why each one is). Spread rather than
+  // The retained-still additions are all PARTICLE-side (see the block above for why each one is). Spread rather than
   // set-to-a-neutral-value throughout, so the shader family's policy object comes out with exactly the fields it
-  // had before this round — absent is gsw's untouched path, a chosen default is not.
+  // had before them — absent is gsw's untouched path, a chosen default is not.
   const particle = family === "particle";
   return {
     gate: {
@@ -340,11 +339,11 @@ function staticSurfacePolicy(family: "shader" | "particle"): StaticSurfaceOption
       intervalMs: STATIC_SURFACE_ENCODE_INTERVAL_MS,
       order: "smallest-first",
       deferHead: true,
-      // The PARK bound (see the Aug-19 block above): one readback per task, a display frame apart.
+      // The PARK bound (see the encode-park block above): one readback per task, a display frame apart.
       perTask: STATIC_SURFACE_ENCODE_PER_TASK,
       taskGapMs: STATIC_SURFACE_ENCODE_GAP_MS,
       parkedStillBytes: STATIC_SURFACE_PARKED_STILL_BYTES,
-      // R17, PARTICLE ONLY: retain a KEYED entry after its last holder lets go, so the second surface to reach
+      // PARTICLE ONLY: retain a KEYED entry after its last holder lets go, so the second surface to reach
       // that frame attaches for zero readback — the thing that makes 35 copies of one spark frame free.
       ...(particle ? { stillCacheBytes: STILL_CACHE_BYTES } : {}),
       busy: mirrorFramePressure,
@@ -481,9 +480,9 @@ export const mirrorShaderRenderOptions: GodotHtmlMountOptions = {
 //
 // WHY, and exactly what this can and cannot claim. gsw compiles a shader when the first NODE that uses it is
 // created, and yields to the driver before asking a blocking status question. That yield is worth almost the
-// whole cost on a device with `KHR_parallel_shader_compile` — but the phone this round is gated on answers NULL
+// whole cost on a device with `KHR_parallel_shader_compile` — but a typical mid-range phone answers NULL
 // for that extension, so gsw's `ready()` reports true at once and `finish()` then blocks on `LINK_STATUS` for as
-// long as the driver takes. The Aug-28 Moto G86 trace has one such block at 90.3 ms, mid-combat, because that
+// long as the driver takes. A mid-range phone trace has one such block of ~90 ms, mid-combat, because that
 // frame was the first to create a node with that shader.
 //
 // Warming CANNOT make the link cheaper — the driver's work is the driver's work. It only moves WHEN it is paid,

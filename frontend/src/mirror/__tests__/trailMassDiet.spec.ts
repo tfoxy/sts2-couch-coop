@@ -14,20 +14,20 @@ import {
   type MirrorState
 } from "@/mirror/sceneTree";
 
-// R11/R14b — THE MASS-FLIGHT TRAIL DIET.
+// THE MASS-FLIGHT TRAIL DIET.
 //
 // A 1-2 card flight keeps the authored ribbon. A 30-card discard→draw reshuffle is the other case: 60 ribbons on
 // screen at once, each rebuilt and rewritten once per stroke per rAF, with a cost
 // linear in (strokes × bands × points). The diet arms on 12 LIVE STROKES and degrades the trail in four bounded
 // steps — point cap, band count, gradient-stop freeze, paint rate.
 //
-// R16 AMENDMENT TO THAT CONTRACT: the untouched window is now 1-2 CARDS. The trail-SURFACE diet (its own spec)
+// AMENDMENT TO THAT CONTRACT: the untouched window is now 1-2 CARDS. The trail-SURFACE diet (its own spec)
 // ships `short,noblend` ON and arms at 6 live strokes = 3 cards — the measured onset of the compositing lag — so
-// a 3-card flight is no longer pixel-identical to the authored trails BY DECISION (R16 phone matrix). THIS suite
+// a 3-card flight is no longer pixel-identical to the authored trails BY DECISION (phone matrix). THIS suite
 // pins the current combined path: the mass diet's 12-stroke threshold remains unchanged, while the surface policy
 // supplies its current brightness compensation from three cards onward.
 //
-// R14b pins the two things that were wrong with the R11 shape:
+// Pins the two things that were wrong with the original shape:
 //   * it counted FLIGHTS, so a stroke painting without an armed flight hint was invisible to the threshold — on
 //     the real host, where flights were being dropped, the diet never armed at all;
 //   * the band collapse dropped the narrow bands' alpha on the floor, and the bands are a decomposition of ONE
@@ -51,7 +51,7 @@ const box = { position: { x: 0, y: 0 }, size: { x: 100, y: 140 } };
 // two `NCardTrail` strokes under `Trails`, and a decorative `Sprites` branch of particle emitters and sprites.
 // Everything under the trail carries `canvasBlendMode: 1` (the additive material), which is what makes each one
 // its own compositor surface.
-// R13: the node that FLIES depends on the kind — a spawned VFX silhouette for a shuffle, the real played card for a
+// The node that FLIES depends on the kind — a spawned VFX silhouette for a shuffle, the real played card for a
 // discard — while everything under the trail root is identical either way. The diet keys on the flight COUNT.
 type FlightKind = "shuffle" | "discard";
 
@@ -388,7 +388,7 @@ describe("trail mass diet — armed above the threshold", () => {
 //
 // The bands are a 3-step midpoint decomposition of ONE cross-section alpha curve, so what a point on the centre
 // line ends up with is their SUM (0.784 × default_color for the outer trail). Dropping bands without their alpha
-// is therefore a dimming, not a coarsening — 0.101/0.784 = 13% of the authored brightness on the R11 one-band
+// is therefore a dimming, not a coarsening — 0.101/0.784 = 13% of the authored brightness on the original one-band
 // rung. Compensation folds the dropped alpha into the narrowest survivor: same total, coarser staircase.
 
 describe("trail mass diet — alpha compensation", () => {
@@ -409,7 +409,7 @@ describe("trail mass diet — alpha compensation", () => {
   });
 
   it("writes `fill-opacity` on the state EDGES only, not once per paint", () => {
-    // The attribute is a constant of (profile, band count, compensation) — R11 A0a hoisted it out of the paint
+    // The attribute is a constant of (profile, band count, compensation) — it was hoisted out of the paint
     // loop for that reason, and making it state-dependent must not put it back in.
     const { stage } = runShuffle(8, 12);
     const spies = strokePaths(stage, "t0-outer").map((p) => vi.spyOn(p, "setAttribute"));
@@ -534,7 +534,7 @@ describe("trail mass diet — the paint-rate cap", () => {
   });
 });
 
-// ---- R11 C2 — the instrumentation the A/B is read off ---------------------------------------------------------
+// ---- The instrumentation the A/B is read off ---------------------------------------------------------
 //
 // Fields only. The bench reads `window.__mirrorWalkStats` defensively and ADDING a field is explicitly safe, so
 // what these tests protect is the four-edit idiom itself: declared, initialised, incremented at the site, and —
@@ -612,7 +612,7 @@ describe("R11 counters", () => {
   });
 });
 
-// ---- R15 — the re-raster FILL proxy ---------------------------------------------------------------------------
+// ---- The re-raster FILL proxy ---------------------------------------------------------------------------
 //
 // `trailPathWrites` counts `setAttribute("d")` calls: it prices the string and the attribute, and says nothing
 // about how much SURFACE each one dirties — but an SVG re-raster is paid in pixels. `trailPathBboxAreaSum` is that

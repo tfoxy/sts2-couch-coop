@@ -6,8 +6,7 @@ namespace CouchCoop.Mod.Diagnostics;
 /// loads it; <see cref="Session.StreamingSeatRole"/> decides when, and what a failure means.
 /// </summary>
 /// <remarks>
-/// This is the modder load route of godot-scene-web's render-stream capture
-/// (<c>experiments/render-stream/protocol/gate8-product-handoff.md</c> there): the extension reads its own
+/// This is the modder load route of godot-scene-web's render-stream capture: the extension reads its own
 /// <c>GRC_*</c> environment and decides for itself whether to arm. This class holds no logic beyond validating the
 /// path and the load. The path must be absolute and name a <c>.gdextension</c> file that exists; anything else is
 /// refused and nothing is loaded. <see cref="Load"/> never throws: mod init runs inside the loader's blanket catch,

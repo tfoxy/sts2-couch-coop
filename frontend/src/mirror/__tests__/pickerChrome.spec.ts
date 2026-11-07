@@ -6,7 +6,7 @@ import FullscreenButton from "@/components/FullscreenButton.vue";
 import { shouldUseFixedChrome } from "@/composables/usePortraitViewport";
 import MirrorApp from "@/mirror/MirrorApp.vue";
 
-// R10 WS-A task 4: the pre-join picker carries BOTH browser-space controls — the settings gear on the exact
+// The pre-join picker carries BOTH browser-space controls — the settings gear on the exact
 // centre line and the fullscreen button beside it — so a phone can go full-bleed before it joins. The button's
 // own `isSupported` gate is what keeps it off browsers where it would do nothing (iOS Safari on iPhone, a
 // sandboxed frame); on the picker there is no game UI to explain a dead control, which is why that gate matters
@@ -94,7 +94,7 @@ describe("MirrorApp — pre-join picker chrome", () => {
   });
 });
 
-// R19 WP-2a. The pair used to jump the instant the scene appeared: fixed 44px browser chrome pre-join, then
+// The pair used to jump the instant the scene appeared: fixed 44px browser chrome pre-join, then
 // 80 DESIGN px INSIDE the letterboxed stage, so on a phone it shrank with --godot-scale and moved with the
 // letterbox. The fullscreen button is the worst case of that, because pressing it is also what rotates the
 // phone — the control that gets you out of portrait must not be hard to hit while you are in it.

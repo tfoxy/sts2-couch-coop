@@ -416,7 +416,7 @@ const retiredClients = new WeakSet<MirrorClient>();
 // RETRYABLE without restarting the join — and the reason it has to exist is the worst thing this app has been
 // measured doing.
 //
-// THE LOOP, measured live 2026-09-16 on a phone whose path to its seat port was blocked (a device-scoped firewall
+// THE LOOP, seen live on a phone whose path to its seat port was blocked (a device-scoped firewall
 // rule; guest/AP isolation and a client-isolating router do the same): the join COMPLETES, the browser is
 // redirected, and the seat socket never opens. That drop used to run the full `handleActiveClientDrop` teardown,
 // whose `reconnectToHost` closes EVERY client — the host socket included. Closing that socket is precisely what
@@ -607,7 +607,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
   }
   const c = connectMirrorClient({
     url,
-    // WS-B stream gate. The HOST connection opens GATED: we do not yet know which screen the host is on, and the
+    // Stream gate. The HOST connection opens GATED: we do not yet know which screen the host is on, and the
     // host ships a full keyframe on connect — so the only way to avoid pulling (and rendering) a multiplayer
     // host's game behind the picker is to start with the stream off. The first `session` arrives immediately and
     // `applyWatchGate` turns it on within one round trip when the host isn't on a multiplayer screen. The
@@ -618,7 +618,7 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
     // change the value. Ignored
     // when an explicit `url` was passed — the headless redirect builds its own query with the same value.
     staticBg: staticBgWireValue(mirrorSettings),
-    // R14 trail drive: declare this build's trail-root capability on the connect URL from the first byte.
+    // Trail drive: declare this build's trail-root capability on the connect URL from the first byte.
     // Same "ignored when an explicit `url` was passed" caveat as staticBg — the redirect builds its own query.
     trailDrive: mirrorSettings.trailDriveCapable,
     pingIntervalMs: desiredPingIntervalMs(),
@@ -1089,7 +1089,7 @@ const showScene = computed(() =>
 //
 const surfaceCovered = computed(() => showScene.value || showStream.value);
 
-// ---- WHERE THE BROWSER CHROME LIVES (R19 WP-2) ----------------------------------------------------------------
+// ---- WHERE THE BROWSER CHROME LIVES ----------------------------------------------------------------
 //
 // Two placements for the SAME pair of controls (settings gear + fullscreen):
 //   * FIXED browser-space chrome — 44px, `position: fixed`, top centre. Never moves, never scales.
@@ -1114,7 +1114,7 @@ const showFixedChrome = computed(() =>
 // fighting over one `panelAnchorTop`) nor both vanish.
 const showStageChrome = computed(() => showScene.value && !showFixedChrome.value);
 
-// THE RENDERER SWITCH, in the design's order (handoff-mirror-new-renderer.md §3 Q5): the server overlay goes out
+// THE RENDERER SWITCH, in order: the server overlay goes out
 // FIRST (freezes and static background off under the stream, the saved values back without it), then the watch
 // gate below flips, then MirrorView unmounts / the stage mounts and connects. `flush: "sync"` is what puts the push
 // ahead of the pre-flush watch gate and the render; the store watch further down then sees an identical payload and
@@ -1642,7 +1642,7 @@ function maybeAutoHostView(): void {
   submitJoin(host.name, host.playerId);
 }
 
-// Expose a latency snapshot for the measurement harness (scripts/measure-latency.mjs) to poll.
+// Expose a latency snapshot for external measurement tooling to poll.
 if (latencyEnabled && typeof window !== "undefined") {
   (window as unknown as { __mirrorLatency?: () => MirrorLatency }).__mirrorLatency = () => ({
     ...activeClient.latency
@@ -1842,7 +1842,7 @@ onBeforeUnmount(() => {
          it exactly as it does in game (gear on the centre line, fullscreen to its right), so a phone can go
          full-bleed BEFORE joining rather than watching the picker under the browser chrome. FullscreenButton
          renders nothing at all where the Fullscreen API is unavailable/forbidden.
-         R19 WP-2: in PORTRAIT this placement is kept once the game is up too, so the pair never jumps or shrinks
+         In PORTRAIT this placement is kept once the game is up too, so the pair never jumps or shrinks
          at the moment the scene appears (see showFixedChrome). No pointer-event guard is needed here, unlike the
          in-stage wrappers: this chrome is a SIBLING of the letterboxed stage, and inputCapture's listeners are
          attached to the stage element itself, so a tap on these buttons is never seen by the mirror input path. -->

@@ -4,8 +4,8 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// r3/nearmiss VERIFICATION LEG (real-geometry, replay-based). Env-gated like RecordingReplayTests / StaticBakePlanProbe:
-// point COUCHCOOP_MIRROR_NEARMISS_PROBE_NDJSON at a recording (e.g. .sts2/bench/audit-restsite.ndjson) and this rebuilds
+// VERIFICATION LEG (real-geometry, replay-based). Env-gated like RecordingReplayTests / StaticBakePlanProbe:
+// point COUCHCOOP_MIRROR_NEARMISS_PROBE_NDJSON at a recording (e.g. a recorded rest-site session) and this rebuilds
 // the FINAL MirrorState, widens it to a widescreen design width (COUCHCOOP_MIRROR_NEARMISS_PROBE_DW, default 2401), and
 // for each affected TopBar/rest-site widget drives the SAME production resolve path the InputRouter uses
 // (PointerResolver.Fresh = map + near-miss) at a pointer placed over the widget's RENDERED box. It asserts the fix:

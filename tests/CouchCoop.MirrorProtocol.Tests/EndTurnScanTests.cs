@@ -3,7 +3,7 @@ using CouchCoop.MirrorProtocol.SceneModel;
 
 namespace CouchCoop.MirrorProtocol.Tests;
 
-// Unit tests for EndTurnScan — the pure scene-file box lookup behind GestureCallbacks.EndTurnBoxAt (R4 change 2).
+// Unit tests for EndTurnScan — the pure scene-file box lookup behind GestureCallbacks.EndTurnBoxAt.
 // Fixture style mirrors InteractiveRectScanTests (local-space state + GlobalTransformIndex + an F=1 SpreadIndex
 // stub). The button is identified by the owning scene's file SUFFIX (end_turn_button.tscn) via SceneIdentity, and
 // the box is the UNION game-space AABB of every eligible InteractiveRectScan rect that scene owns. Web twin:

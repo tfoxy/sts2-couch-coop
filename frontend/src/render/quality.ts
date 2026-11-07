@@ -123,9 +123,9 @@ export interface RenderQuality {
 //
 // `very-low` is a FROZEN frame, so it has no per-frame loop… but the producer streams scene-deltas continuously and a
 // shader node whose uniforms jitter per delta misses the static-frame cache and RE-renders its one frame. At scale 1
-// on a phone that is a full-resolution fragment pass per delta: an Aug-11 Mali-G57 trace of the MAP screen measured
-// StartDrawToSwapStart p50 = 126ms (19× the 6.5ms of the previous build, which rendered the same frozen shaders at
-// the `very-low` tier's 0.25) with 74% of frames dropped. Fill is quadratic in the scale, so 0.5 is ~4× cheaper and
+// on a phone that is a full-resolution fragment pass per delta: a trace of the MAP screen on a weak phone showed
+// draw-to-swap times an order of magnitude slower, with most frames dropped, versus rendering the same frozen
+// shaders at the `very-low` tier's 0.25. Fill is quadratic in the scale, so 0.5 is ~4× cheaper and
 // 0.25 ~16×; the visible cost is a slightly softer glow on a frozen backdrop.
 //
 // Desktops keep 1 (they were never fill-bound and a frozen frame is free there), so a mode still means the same
@@ -199,7 +199,7 @@ function tierConfig(tier: RenderQualityTier): TierConfig {
       // Shaders ON but FROZEN (rendered once at a pinned TIME via the gsw runtime's staticShaders mode), so
       // there's no per-frame loop. But the producer streams scene-deltas continuously, and a shader node whose
       // uniforms jitter per delta misses the static-frame cache and RE-renders its one frame each time — so on a
-      // weak GPU (Moto G86 / Mali-G57) renderScale still matters. Empirically 0.5 is playable there and 0.25 is
+      // weak GPU renderScale still matters. Empirically 0.5 is playable there and 0.25 is
       // the safe floor (a blurrier glow, fine for the frozen background fidelity). Particles seed off here (a GPU
       // one-shot particle frame isn't meaningful as a SEED) — but see the hard-off note below: in the mirror the
       // settings panel can still turn them on, so the fps caps must be the shared 30 rather than the "irrelevant,
@@ -475,7 +475,7 @@ function applyOverrides(config: TierConfig, search: string): TierConfig {
 // bottom three — a desktop on a heuristic should keep effects; a laptop that's fine on medium stays medium).
 //
 // MOBILE phones/tablets are GPU-fill + thermally limited under the per-node CSS mirror, so the same signals step
-// further down: a weak mobile GPU → very-low (frozen effects — e.g. a Mali/Adreno mid-ranger), other weakness →
+// further down: a weak mobile GPU → very-low (frozen effects — e.g. a mid-range mobile GPU), other weakness →
 // low, an otherwise-capable phone → medium. This is what makes auto reach the bottom rungs (a phone trace showed
 // `medium` was still fill-bound while frozen effects were smooth). They remain desktop-opt-in.
 function autoTier(signals: RenderQualitySignals): RenderQualityTier {
@@ -495,7 +495,7 @@ function autoTier(signals: RenderQualitySignals): RenderQualityTier {
   }
   if (mobile) {
     if (weakGpu) {
-      // Positively-weak mobile GPU (Mali/Adreno mid-range, …): an animated per-frame loop is too costly, but a
+      // Positively-weak mobile GPU (mid-range, …): an animated per-frame loop is too costly, but a
       // single FROZEN shader frame is cheap and still shows the real effect → `very-low` (not `minimum`).
       return "very-low";
     }

@@ -122,7 +122,7 @@ export function isNonJoinableMirrorMode(mirrorMode: MirrorScreenKind | null): bo
   );
 }
 
-// ---- R19 WP-2: what the multiplayer join picker actually SAYS -------------------------------------------------
+// ---- What the multiplayer join picker actually SAYS -------------------------------------------------
 //
 // The picker used to open with a "Mirror" kicker and the game's own screen name as an <h1> ("Run", "Character
 // Select"), above an unlabelled name field called "Add a player" and an unlabelled list of rows. Three headings,
@@ -180,7 +180,7 @@ export function mirrorPickerRosterHeading(mode: MirrorJoinMode): string | null {
   return null;
 }
 
-// ---- R19 WP-2: the character icon beside each seat ------------------------------------------------------------
+// ---- The character icon beside each seat ------------------------------------------------------------
 //
 // Names alone do not tell players apart — least of all in the multiplayer SAVE lobby, where several seats can be
 // an anonymous "Player 1003" until somebody claims them. The roster wire carries the seat's character id, and the
@@ -195,7 +195,7 @@ export function seatCharacterIconUrl(player: Pick<BrowserPlayerOption, "characte
 }
 
 /**
- * WS-B STREAM GATE — whether this viewer may have the host's live game streamed to it right now.
+ * STREAM GATE — whether this viewer may have the host's live game streamed to it right now.
  *
  * The product rule, in one place: **never render (nor even pull) a multiplayer host's game behind the join
  * picker.** The host is streamed only when this device has been granted its own view — `joined` (its own headless

@@ -18,7 +18,7 @@ public sealed class SpirectlAssetBinaryCache
     // than one, and neither appears in a path any more: CouchCoopCacheRoot stamps them into the branch
     // directory's identity file, and a move there empties the directory instead of orphaning a sibling.
     //
-    // Public so the session envelope's assetCacheToken (WS-U) folds the server asset schema into the CLIENT
+    // Public so the session envelope's assetCacheToken folds the server asset schema into the CLIENT
     // cache's invalidation key — a generation bump re-namespaces the client cache exactly as it invalidates
     // this one.
     public static readonly string SchemaVersion =

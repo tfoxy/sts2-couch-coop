@@ -37,7 +37,7 @@ internal static class TouchTargetScanTests
         LoneVisibleEventOptionPressesImmediately();
     }
 
-    // R8: the end-of-event "Proceed" option reuses the SAME NEventOptionButton node type as a regular option (so
+    // The end-of-event "Proceed" option reuses the SAME NEventOptionButton node type as a regular option (so
     // it isn't statically distinguishable by leaf), but its owning SCENE stays res://scenes/ui/proceed_button.tscn
     // (the shared NProceedButton scene) — SceneIdentity.Resolve tells the two apart. Matched to a Block so a tap
     // presses IMMEDIATELY (no arm-first double-tap).
@@ -104,7 +104,7 @@ internal static class TouchTargetScanTests
             "the regular option is a hit-testable arm-first target");
     }
 
-    // R8 lone-option leg (live-verified): a resolved event's final "Continue" is a REGULAR event_option_button.tscn
+    // Lone-option leg (live-verified): a resolved event's final "Continue" is a REGULAR event_option_button.tscn
     // NEventOptionButton (the proceed_button.tscn key never fires for it — live QA capture). When it is the ONLY
     // effectively-visible event option there is no choice to preview, so it presses IMMEDIATELY. A second but
     // HIDDEN option (an already-collapsed choice) must not re-enable arm-first.
@@ -369,7 +369,7 @@ internal static class TouchTargetScanTests
         Check.That(TouchTargetScan.IsCard(state, "card"), "NCard leaf → IsCard true");
         Check.That(!TouchTargetScan.IsCard(state, "opt"), "non-NCard → IsCard false");
         Check.That(!TouchTargetScan.IsCard(state, "missing"), "unknown id → IsCard false");
-        // R20: the removal coin is a touch TARGET (it arms on the first tap) but deliberately NOT a card. This set
+        // The removal coin is a touch TARGET (it arms on the first tap) but deliberately NOT a card. This set
         // drives the non-hand long-press RIGHT-CLICK, which opens an item's detail dialog — a service has none, so
         // the right-click there would be a no-op at best. Pinned by
         // GestureMachineTests.LongPressNonCardTargetNoRightClick, which is exactly this shape.
@@ -428,7 +428,7 @@ internal static class TouchTargetScanTests
             Node("shop", null, "Game.NMerchantRoom"),
             Node("card", "shop", "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCard", 0, 0, 100, 100, texture: true),
             Node("relicHolder", "shop", "MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic.NTreasureRoomRelicHolder", 200, 0, 100, 100, texture: true),
-            // R20: the CARD REMOVAL SERVICE coin, as the wire streams it — the NMerchantCardRemoval root with the
+            // The CARD REMOVAL SERVICE coin, as the wire streams it — the NMerchantCardRemoval root with the
             // NClickableControl "Hitbox" child every other shop slot also has. Neither leaf ends in "Button", so
             // before it was listed BOTH classified as None and one tap was one full click.
             Node("removal", "shop", "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCardRemoval", 400, 0, 100, 100, texture: true),

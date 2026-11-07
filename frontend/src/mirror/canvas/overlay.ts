@@ -7,26 +7,23 @@
 // `OverlayRecord`; this module reconciles those records into absolutely-positioned elements above the canvas.
 //
 // WHAT IT IS NOT: a general depth-sorted overlay. Every element here paints ABOVE the whole canvas, so a quad that
-// should sit over a label does not. That divergence is MEASURED, not assumed — probe P6
-// (docs/agents/canvas-stage-probes-aug26.md) counted, per recording, the visible painting nodes later in paint
-// order whose AABB covers a text node: 7% on the map, 32-46% on combat/shop/reward, and 70-73% on DECK VIEW and
-// RESHUFFLE, where it is concentrated almost entirely on cards (`NCardHighlight`'s glow and the card's own
-// `ui_atlas_0` plates painting over the card's text). The records ARE mutually depth-sorted (see `syncOrder`), so
-// two overlay nodes still layer correctly against each other; only overlay-vs-canvas is wrong. The fix — effects
-// rendered INSIDE the stage canvas, in paint order, instead of on a DOM layer above it — is M2/M3's, and P6 is
-// its brief.
+// should sit over a label does not. That divergence is real, not hypothetical: many visible painting nodes later in
+// paint order cover a text node on combat, shop, reward and especially DECK VIEW and RESHUFFLE screens, where it is
+// concentrated almost entirely on cards (`NCardHighlight`'s glow and the card's own `ui_atlas_0` plates painting over
+// the card's text). The records ARE mutually depth-sorted (see `syncOrder`), so two overlay nodes still layer
+// correctly against each other; only overlay-vs-canvas is wrong. The fix — effects and text rendered INSIDE the
+// stage canvas, in paint order, instead of on a DOM layer above it — is the draw-list fx and text paths.
 //
-// THE HOIST RULE. M2 paints shader and particle surfaces in the draw list, so this rule is inert for those two
-// kinds. `coveredAbove` remains load-bearing for a surface whose pixels have not arrived: it is hidden rather
-// than shown until its current paint is available.
+// THE HOIST RULE. With the draw-list fx path, shader and particle surfaces are painted in the draw list, so this
+// rule is inert for those two kinds. `coveredAbove` remains load-bearing for a surface whose pixels have not
+// arrived: it is hidden rather than shown until its current paint is available.
 //
-// With effects ON, "paints above the whole canvas" is not a subtlety. A
-// combat scene's background carries ~23 WebGL VFX surfaces at paint-order ranks 11-73 out of 3,676, one of them a
-// 2765x1296 water reflection. Hoisted above the canvas they paint over the ENTIRE game — the screenshot is a
-// full-screen ripple pattern with the UI's text floating on it, and the three `card_ripple` glows behind the hand
-// (paint ranks 755-829, `render_mode blend_add` ⇒ gsw sets `mix-blend-mode: plus-lighter` on the host) add their
-// cyan over every card, which is the bug this module was fixed for. Additive-over-content-BELOW is Godot-correct;
-// content-ABOVE is the divergence.
+// With effects ON, "paints above the whole canvas" is not a subtlety. A combat scene's background carries a couple
+// of dozen WebGL VFX surfaces low in paint order, one of them a large water reflection. Hoisted above the canvas
+// they paint over the ENTIRE game — the screenshot is a full-screen ripple pattern with the UI's text floating on
+// it, and the `card_ripple` glows behind the hand (`render_mode blend_add` ⇒ gsw sets `mix-blend-mode: plus-lighter`
+// on the host) add their cyan over every card, which is the bug this module was fixed for. Additive-over-content-
+// BELOW is Godot-correct; content-ABOVE is the divergence.
 //
 // So: a `shader` or `particles` surface is hoisted ONLY when nothing the canvas paints later in paint order
 // overlaps it (`OverlayRecord.coveredAbove`, measured by `buildDrawList`'s cover pass). When something does, the
@@ -35,22 +32,22 @@
 // rule is safe to apply at this layer rather than in the classifier: every WebGL host is by construction a shader
 // INPUT node (`shaderAttributes.isShaderInputNode` IS `isWebglEligible`), so `paintSpec.paintsTexture` already
 // refuses to paint its raw SDF texture either way. A withheld surface loses the EFFECT and nothing else, which is
-// precisely the state every M1 parity baseline was measured in.
+// precisely the state a parity baseline without effects is measured in.
 //
 // The rule covers the two gsw RUNTIME kinds only. `text` and `spine` keep the unconditional hoist: text is a DOM
 // overlay on BOTH backends (so withholding it would blank labels the DOM stage draws) and a spine clip streams no
-// `localRect`, so its record box is a 0x0 anchor the cover pass has no opinion about. Their gap is the P6 one
-// above, unchanged by this rule.
+// `localRect`, so its record box is a 0x0 anchor the cover pass has no opinion about. Their gap is the one
+// described above, unchanged by this rule.
 //
 // The container is deliberately NOT a stacking context (`isolation: isolate` was considered and rejected):
 // isolating it would make a legitimately-hoisted additive host blend against an empty group instead of the canvas
 // beneath it, turning the one case this backend gets RIGHT — additive over content below — into a flat sheet.
 //
 // RESIDUAL WHEN THE RULE IS IN CHARGE, named: a withheld effect is a missing effect, and that arm trades a
-// missing glow for a visible game. M2 (below) is the fix, and it is the default.
+// missing glow for a visible game. The draw-list fx path (below) is the fix, and it is the default.
 //
 // ---------------------------------------------------------------------------------------------------------------
-// M2, THE DEFAULT — WHAT HAPPENS WHEN THE DRAW LIST PAINTS THE EFFECTS ITSELF.
+// THE DRAW-LIST FX PATH, THE DEFAULT — WHAT HAPPENS WHEN THE DRAW LIST PAINTS THE EFFECTS ITSELF.
 //
 // `reconcile` takes an `OverlayFxSource`, and its PRESENCE is the flag. With one, `buildDrawList` has already
 // emitted a quad for each shader/particle surface at that node's own paint index (`fxSurfaces` +
@@ -62,11 +59,10 @@
 //     rather than a redefinition, and what it counts under the flag is THE RESIDUE: a covered surface whose
 //     pixels have not arrived.
 //
-//     THAT RESIDUE IS NOT ZERO, AND SAYING SO IS THE POINT (measured Aug 27, real GPU). It falls — live combat
-//     room 24 -> 22 at settle, deck view 18 -> 12 — and the remainder is surfaces that produce NO FRAMES ON
-//     EITHER BACKEND: a `card_ripple` at `width: 0`, which cc itself stamps `data-godot-shader-dormant` and gsw
-//     therefore parks, and the `wind_sway` foliage family, for which gsw mounts no canvas at all (verified on
-//     the DOM stage too — same 12 hosts, same absent canvases). A surface with no pixels anywhere cannot be a
+//     THAT RESIDUE IS NOT ZERO, AND SAYING SO IS THE POINT. It is small, and the remainder is surfaces that produce
+//     NO FRAMES ON EITHER BACKEND: a `card_ripple` at `width: 0`, which cc itself stamps `data-godot-shader-dormant`
+//     and gsw therefore parks, and the `wind_sway` foliage family, for which gsw mounts no canvas at all (the same
+//     hosts, with the same absent canvases, on the DOM stage). A surface with no pixels anywhere cannot be a
 //     missing effect. So the honest acceptance number is not "withheld == 0"; it is that the flag NEVER hides
 //     something the flag-off arm shows, which is what the `hideHost` rule below guarantees case by case.
 //   * THE HOST STOPS COMPOSITING: `visibility: hidden` on the element (never the container, never the canvas's own
@@ -189,13 +185,13 @@ export interface OverlayCounts {
   /**
    * Records the HOIST RULE withheld this build (counted in their kind too) — see the module header.
    *
-   * It keeps exactly this meaning under M2: how many surfaces the hoist rule is hiding. By default the rule is
+   * It keeps exactly this meaning under the draw-list fx path: how many surfaces the hoist rule is hiding. By default the rule is
    * inert for the two gsw runtime kinds (their pixels are in the draw list now), so this FALLS to the residue —
    * covered surfaces that have no pixels because gsw draws none for them on either backend. See the module
    * header for why the residue is not zero and why that is correct rather than a shortfall.
    *
    * Read it against `overlayWithheldPeak` in `__mirrorCanvasStats`, never alone: a settled screen has no live
-   * effects on EITHER arm, so a post-settle reading of this cannot tell a working M2 from a dead one.
+   * effects on EITHER arm, so a post-settle reading of this cannot tell a working fx path from a dead one.
    *
    * Policy REFUSALS by the fx registry are a different fact and are never folded in here — they live in
    * `fx.declined`, and {@link OverlayCounts.fxDeclined} is their overlay-side twin.
@@ -206,17 +202,17 @@ export interface OverlayCounts {
   /** Records dropped this build because the fx registry REFUSED the surface. Never folded into `withheld`. */
   fxDeclined: number;
   /**
-   * TEXT records still riding the overlay because the draw list did NOT paint them (M4) — the honest residue.
+   * TEXT records still riding the overlay because the draw list did NOT paint them — the honest residue.
    *
    * Counted in `text` too, like `withheld` is counted in its kind. It is 0 with the lever off (nothing is drawn,
    * so nothing is hoisted "still"), and under the lever it is the labels the canvas refused: a rich one, a
    * `text-wrap: balance` reward row, a raster the pacer held back, a face that has not loaded yet. Each of those
    * renders exactly as it does today, which is why this is a census row rather than a failure — and it is the
-   * number that says how much of a screen's text M4 actually owns.
+   * number that says how much of a screen's text the canvas actually owns.
    */
   textHoisted: number;
   /**
-   * R1 — records this build CROPPED to their enclosing clip chain, i.e. the ones carrying an `OverlayClip`.
+   * Records this build CROPPED to their enclosing clip chain, i.e. the ones carrying an `OverlayClip`.
    *
    * 0 when no overlay surface needs clipping and for a screen whose overlay surfaces all sit inside their containers (the
    * builder answers null for a record its chain already contains), so a non-zero reading is the fix doing work
@@ -228,7 +224,7 @@ export interface OverlayCounts {
   /** …and of which the record's matrix carried a rotation/skew, so the crop is a `polygon()` and not an `inset()`. */
   clipPolygon: number;
   /**
-   * R2 — records this build withheld because the draw list painted a stage-spanning opaque fill OVER them.
+   * Records this build withheld because the draw list painted a stage-spanning opaque fill OVER them.
    *
    * NEVER folded into {@link OverlayCounts.withheld}, which is the HOIST RULE's number and must stay a
    * before/after comparison rather than a redefinition. 0 unless a caller passes a backstop order (the lever is
@@ -237,12 +233,12 @@ export interface OverlayCounts {
   backstopWithheld: number;
   /**
    * THE RESIDUAL, NAMED — records that are still COMPOSITING above the whole canvas while the game paints
-   * something over them. This is the P6 divergence as a live number rather than a probe's historical table.
+   * something over them. This is the overlay-vs-canvas divergence as a live number.
    *
    * The population is exactly "hoisted AND `coveredAbove`, and not hidden by any of the rules above". Every other
    * kind is structurally excluded from it, which is why only two of the five get a row:
    *
-   *   * `shader` / `particles` — the hoist rule and its M2 successor BOTH hide a covered surface, so a covered fx
+   *   * `shader` / `particles` — the hoist rule and its draw-list successor BOTH hide a covered surface, so a covered fx
    *     host never composites. Its number is `withheld` (flag off) or `fxHidden` (flag on).
    *   * `trail` — has no element on this backend at all; its ribbon is quads at the stroke's own paint index.
    *   * `text` / `spine` — the two that CAN reach the container covered and visible, and therefore the two the
@@ -271,7 +267,7 @@ export interface OverlayReconcileResult {
  * What the overlay needs to know about the fx registry — PRESENCE IS THE FLAG.
  *
  * Passing one is the DEFAULT: the draw list is painting the shader/particle surfaces itself, so the hoist
- * rule has nothing left to decide and the hosts must stop compositing. Omitting it (every caller before M2, and
+ * rule has nothing left to decide and the hosts must stop compositing. Omitting it (every caller before the draw-list fx path, and
  * every caller with the flag off) leaves this module byte-identical.
  */
 export interface OverlayFxSource {
@@ -294,19 +290,19 @@ export interface MirrorOverlayOptions {
 }
 
 /**
- * A spine node's still, described so the draw list can paint it as a QUAD instead of hoisting the `<img>` (M3, A2).
+ * A spine node's still, described so the draw list can paint it as a QUAD instead of hoisting the `<img>`.
  *
  * Node-LOCAL, and deliberately so: the record's own placement matrix is the node's, and the clip's rect is
  * expressed inside it, so a caller composes `record.transform · translate(tx,ty) · scale(scale)` and gets exactly
  * the geometry `mountStill` writes on the element. Nothing here re-derives a placement.
  *
- * `source` is the overlay's OWN decoded `<img>` — the one A1's decode gate committed. That is the whole reason
+ * `source` is the overlay's OWN decoded `<img>` — the one the decode gate committed. That is the whole reason
  * `spineClip`'s bytes-only still path can stay on: the quad reuses pixels the browser already has, rather than
  * re-decoding a 4-16 MB frame the client deliberately never decoded.
  *
  * `bytes` is there because "the browser already has them" turned out to be true only for a WHILE. A decoded
  * `<img>` frame is a CACHE, and a phone under memory pressure drops it — after which `texImage2D(img)` re-decodes
- * a 4-16 MB WebP INSIDE the build, which is what a Moto G86 combat trace measured as 58.2/26.9/26.9/22.4/20.9 ms
+ * a 4-16 MB WebP INSIDE the build, which showed up as repeated tens-of-ms
  * frame tasks. The same eviction is what the card atlases hit, and the same answer applies: upload pixels we OWN.
  * So the quad also carries a thunk back to the clip's ENCODED bytes (~50-300 KB, retained either way), which
  * `spineSurfaces` may turn into an `ImageBitmap` off the frame path and close the moment it has been uploaded.
@@ -349,7 +345,7 @@ export interface MirrorOverlay {
    * When a spine clip next needs a frame, or `Infinity` when none does. The renderer folds this into its own park
    * decision, so a scene with a running creature wakes for its frames and an idle one still parks.
    *
-   * AN HONEST TIMESTAMP SINCE M3, not a boolean in disguise. It used to answer `nowMs + 33` for any playing clip,
+   * AN HONEST TIMESTAMP, not a boolean in disguise. It used to answer `nowMs + 33` for any playing clip,
    * on the theory that the bake was ~30fps and the renderer would round it up to a frame anyway — and the renderer
    * DID round it up, to the next display frame, because `armAnimation` only asked whether the answer was finite.
    * The bake is 15fps (`CouchCoopSpineClipProvider`'s policy), so a playing creature repainted the whole stage
@@ -367,7 +363,7 @@ export interface MirrorOverlay {
    */
   spinePlayingCount(): number;
   /**
-   * Every spine node whose still is DECODED AND ON SCREEN, as the draw list would need to paint it (A2).
+   * Every spine node whose still is DECODED AND ON SCREEN, as the draw list would need to paint it.
    *
    * Only committed stills appear: a clip still loading, still decoding, or painted through the multi-frame canvas
    * path is absent, and the caller then leaves that node hoisted exactly as before. Empty unless a caller asked
@@ -398,7 +394,7 @@ export interface MirrorOverlay {
    */
   setSpineDrawn(ids: ReadonlySet<string> | null): void;
   /**
-   * Tell the overlay which text nodes the build being reconciled painted as quads (M4).
+   * Tell the overlay which text nodes the build being reconciled painted as quads.
    *
    * The TRAIL shape, not the spine one, and the difference matters. A drawn label loses its ELEMENT outright —
    * there is nothing to keep, because unlike a gsw host nothing renders into it and unlike a spine `<img>` the
@@ -410,7 +406,7 @@ export interface MirrorOverlay {
    */
   setTextDrawn(ids: ReadonlySet<string> | null): void;
   /**
-   * Tell the overlay the paint order of the last stage-spanning opaque fill this build drew (R2), or null to
+   * Tell the overlay the paint order of the last stage-spanning opaque fill this build drew, or null to
    * leave every record alone.
    *
    * WHY AN OVERLAY NEEDS IT. Every element here paints above the WHOLE canvas, so when the game opens a
@@ -423,7 +419,7 @@ export interface MirrorOverlay {
    */
   /**
    * What the game painted over everything below it: the paint order of the last stage-spanning opaque fill.
-   * `null` order is "no backstop" and restores the pre-R2 behaviour.
+   * `null` order is "no backstop" and restores the behaviour without a backstop.
    */
   setBackstop(order: number | null): void;
   counts(): OverlayCounts;
@@ -468,14 +464,14 @@ function removeStyleProp(el: HTMLElement, key: string): void {
 }
 
 /**
- * The `clip-path` that crops an overlay element to a DESIGN-space rect, or null when none is needed (R1).
+ * The `clip-path` that crops an overlay element to a DESIGN-space rect, or null when none is needed.
  *
  * THE SPACE. `clip-path` is resolved in the element's OWN box, and the element carries `record.transform` with
  * `transform-origin: 0 0` — so the design rect has to come back through that matrix's INVERSE. Everything below is
  * that one inversion, spelt two ways:
  *
- *   * an AXIS-ALIGNED placement (no rotation, no skew — every clipper and very nearly every surface we have
- *     measured) maps a rect to a rect, so it is an `inset()`, which is the only spelling that can carry the
+ *   * an AXIS-ALIGNED placement (no rotation, no skew — every clipper and very nearly every surface) maps a rect
+ *     to a rect, so it is an `inset()`, which is the only spelling that can carry the
  *     clipper's CORNER RADIUS. The insets are deliberately allowed to go NEGATIVE: a label's ink (its outline and
  *     its shadow) sits outside its own box, and clamping the crop to the box edge would cut exactly the pixels
  *     this fix must not touch. The radius is divided per axis, which is exact for a non-uniform scale too.
@@ -559,7 +555,7 @@ function px(v: number): string {
 //     the session rather than re-probing on every animation change.
 //
 // THE DIVERGENCE, STATED. An overlay element paints above the WHOLE stage canvas, so a geoclip mounted here
-// inherits the module header's P6 gap exactly as the unconditional spine hoist does — anything the canvas paints
+// inherits the module header's overlay-vs-canvas gap exactly as the unconditional spine hoist does — anything the canvas paints
 // later still lands under the creature. The in-canvas answer (a quad registry for geoclip geometry) remains a
 // separate piece of work that this overlay does not do.
 const GEOCLIP_LIVE_CLASS = "mirror-geoclip-live";
@@ -765,7 +761,7 @@ export function createMirrorOverlay(
     coveredSpine: 0
   };
   /**
-   * WHAT TO DO ABOUT A COVERED SURFACE — `on` (withhold, the round-6 flip) or `dim` (fade it by the sheet's own
+   * WHAT TO DO ABOUT A COVERED SURFACE — `on` (withhold) or `dim` (fade it by the sheet's own
    * transmission). `off` never reaches here: the renderer passes a null order instead, so this module has exactly
    * one way to be inert and the lever cannot disagree with itself.
    */
@@ -899,7 +895,7 @@ export function createMirrorOverlay(
    * which is what every non-dev device gets) and it renders as a plain `<img>` — there is no frame to advance and
    * no canvas to advance it into. Counting one as playing is what kept `nextSpineDeadline` finite for the whole
    * of a combat, so the renderer's animation rAF never parked and the stage repainted at ~23fps against a scene
-   * that P8 measured as animating for 3.3 seconds out of 30.
+   * that animates for only a few seconds in a half-minute.
    */
   function clipAnimates(entry: OverlayEl): boolean {
     if (entry.spinePaused) {
@@ -1016,7 +1012,7 @@ export function createMirrorOverlay(
   }
 
   /**
-   * The element's CROP (R1), written only when the rect or the placement it is expressed against actually moved.
+   * The element's CROP, written only when the rect or the placement it is expressed against actually moved.
    *
    * `clip-path` and not `overflow`, for two reasons that both had to hold: the crop is an ANCESTOR's rect, so
    * there is no element here to put an `overflow` on (every overlay element is a flat child of one container);
@@ -1099,7 +1095,7 @@ export function createMirrorOverlay(
   // borrow that registry, because it lives inside `createMirrorRenderer` (the DOM backend), which this stage does
   // not construct. The <defs> here is the same table under the same `mtint-<key>` ids and the same 1/50th
   // quantization, built LAZILY: across the whole standard recording set not one overlay record carries a non-white
-  // composed tint, so on every screen we have measured this element is never created at all.
+  // composed tint, so on essentially every screen this element is never created at all.
   // The <svg> hangs off the STAGE, not off the container: `syncOrder` sweeps every container child the build did
   // not name, so a defs element parked in there would be removed on the very next reconcile.
   let tintSvg: SVGSVGElement | null = null;
@@ -1161,7 +1157,7 @@ export function createMirrorOverlay(
       opacity: String(dimFactor === 1 ? record.opacity : record.opacity * dimFactor)
     };
     if (hideHost) {
-      // THE HOST STOPS COMPOSITING (M2). The draw list paints this surface as a quad now, so leaving gsw's canvas
+      // THE HOST STOPS COMPOSITING. The draw list paints this surface as a quad now, so leaving gsw's canvas
       // in the page would composite it a SECOND time, above the entire stage — the very layering the fx path
       // exists to end.
       //
@@ -1227,9 +1223,9 @@ export function createMirrorOverlay(
    * fallback unless something has injected an `@font-face` pointing at the host's `/res/` copy of the binary. The
    * DOM backend does that from its own walk, so on that backend every label has always had its real typeface. This
    * backend does not run that walk — and nothing else called `ensureFontFace` either, so EVERY label the canvas
-   * stage drew between M1 and this fix rendered in the browser's sans-serif fallback.
+   * stage drew before the font was ensured rendered in the browser's sans-serif fallback.
    *
-   * It hid for two rounds because the obvious gate is blind to it: the bench's T-records report the font-family the
+   * It is easy to miss because the obvious gate is blind to it: a record-level comparison reports the font-family the
    * element REQUESTED, which was identical on both arms and reported 100% agreement while the arms looked visibly
    * different. What actually catches it is a headed capture, where the wrong typeface is the first thing you see.
    *
@@ -1987,7 +1983,7 @@ export function createMirrorOverlay(
       let particleDirty = false;
       // The builder emits records in paint order already (it pushes them during the walk), but the contract is
       // the `order` field, so the sort is what this module actually depends on — and the sort is therefore, on
-      // every build we have ever measured, a copy plus an O(n log n) confirmation that nothing needed moving.
+      // every build, a copy plus an O(n log n) confirmation that nothing needed moving.
       // Checking is one linear scan of a number, and the answer is the same array when it passes: `sort` is
       // stable, so an already-ascending run (ties included) is its own sorted order. A builder that ever DID emit
       // out of order still gets sorted; this only removes the work when it did not.
@@ -2007,7 +2003,7 @@ export function createMirrorOverlay(
         if (fxKind && fxCanvas) {
           // THE HOIST RULE IS INERT for a surface the draw list paints: `coveredAbove` asks "would hoisting this
           // hide game content?", and nothing is being hoisted. `withheld` therefore goes to 0 on a screen whose
-          // effects are all in the list, which is M2's acceptance number.
+          // effects are all in the list, which is the acceptance number for the fx path.
           if (fx.declined(record.id)) {
             // …EXCEPT for a surface the registry REFUSED (SCREEN_TEXTURE policy, over MAX_TEXTURE_SIZE, a source
             // the driver would not take). There will never be a quad for it, so keeping the host would leave gsw
@@ -2038,7 +2034,7 @@ export function createMirrorOverlay(
         }
         if (record.kind === "text" && textDrawnIds !== null) {
           if (textDrawnIds.has(record.id)) {
-            // THE CANVAS OWNS THIS LABEL'S PIXELS (M4), so it must not also have an element — compositing the
+            // THE CANVAS OWNS THIS LABEL'S PIXELS, so it must not also have an element — compositing the
             // same words twice, once at the node's paint index and once above the entire stage, is the exact
             // double-paint the fx path had to be fixed for.
             //
@@ -2056,7 +2052,7 @@ export function createMirrorOverlay(
           counts.textHoisted++;
         }
         if (record.kind === "trail") {
-          // A TRAIL HAS NO OVERLAY ELEMENT ON THIS BACKEND, and since M3 it does not want one: the ribbon is a
+          // A TRAIL HAS NO OVERLAY ELEMENT ON THIS BACKEND, and it does not want one: the ribbon is a
           // run of QUADS in the draw list (`paintSpec.emitTrailQuads`, fed by `cardTrailState`), drawn at the
           // stroke's own paint index rather than composited above the whole stage. So this is not the withheld
           // decoration it used to be — it is the record whose pixels are already downstairs.
@@ -2068,7 +2064,7 @@ export function createMirrorOverlay(
           // The count still says what it always said: a trail node is an overlay node, whatever draws it.
           continue;
         }
-        // R2 — THE GAME PAINTED SOMETHING OPAQUE OVER THIS SURFACE. Text loses its element outright (the TRAIL
+        // THE GAME PAINTED SOMETHING OPAQUE OVER THIS SURFACE. Text loses its element outright (the TRAIL
         // rule: nothing renders into a label's element, so there is nothing to keep alive); a spine keeps its
         // `<img>` and merely stops compositing, because that element IS the pixels and a quad may be uploading
         // from it. The two gsw runtime kinds are deliberately untouched: their pixels are in the draw list under
@@ -2151,10 +2147,10 @@ export function createMirrorOverlay(
         //                                 same nothing — without the deadlock of withholding the element itself.
         //   * no quad yet, not covered -> SHOW: flag-off hoists it and that hoist is CORRECT (nothing paints over
         //                                 it). Hiding it here would make the flag lose an effect, which is the
-        //                                 one thing turning M2 on must never do.
-        // …and the SPINE twin of the same rule (A2). A creature the draw list painted must stop compositing; one
+        //                                 one thing turning the fx path on must never do.
+        // …and the SPINE twin of the same rule. A creature the draw list painted must stop compositing; one
         // it did not — a clip still loading, a refused upload, a still whose node the cover pass found nothing
-        // over — keeps its `<img>`, which is the pre-A2 behaviour and is why a refusal here can never lose a
+        // over — keeps its `<img>`, which is the original behaviour and is why a refusal here can never lose a
         // creature. Keyed on DRAWN alone: unlike a gsw surface there is no "pixels have not arrived yet" state to
         // withhold for, because the `<img>` IS the pixels.
         //
@@ -2171,7 +2167,7 @@ export function createMirrorOverlay(
         if (quadHidden) {
           // COUNTED ON ITS OWN CAUSE. `fxHidden` means "a draw-list quad paints this surface instead", and
           // folding the backstop's hides in made it a sum of two unrelated facts — so on a dialog screen it read
-          // as the M2/A2 wiring hiding forty surfaces it had never drawn. The backstop's own population is
+          // as the wiring hiding dozens of surfaces it had never drawn. The backstop's own population is
           // `backstopWithheld`.
           counts.fxHidden++;
         }
@@ -2309,7 +2305,7 @@ export function createMirrorOverlay(
           continue;
         }
         // `msToNextSpineFrame` answers Infinity for a CLAMPED one-shot that has run out — a landed attack holds
-        // its last pose, so it stops asking for frames even though it is still in the playing set. Before M3 that
+        // its last pose, so it stops asking for frames even though it is still in the playing set. Previously that
         // clip kept the stage at the display's rate for the rest of the screen.
         //
         const ms = msToNextSpineFrame(clip, spinePlayMs(entry, nowMs), entry.spineLooping);

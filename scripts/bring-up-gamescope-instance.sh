@@ -1,27 +1,25 @@
 #!/bin/bash
-# Bring up a PRIVATE gamescope compositor and one ISOLATED STS2 instance inside it, for the KNIGHTS_ELITE
-# geoclip gate (scripts/bench-geoclip-knights.mjs). Nothing here touches the operator's desktop or their game.
+# Bring up a PRIVATE gamescope compositor and one ISOLATED STS2 instance inside it, for live checks that need
+# a rendering game. Nothing here touches the operator's desktop or their game.
 #
-# WHY GAMESCOPE AND NOT XVFB. Xvfb prices an awaited engine frame about 20x the desktop's (qa-recipes §2.x,
-# measured in the phase-7 gate: ForceDraw 27 -> 595 ms per 8 draws). A geoclip bake and a raster still await
-# DIFFERENT numbers of engine frames, so that distortion does not cancel between the lanes — an Xvfb number
-# would manufacture a verdict rather than measure one. `gamescope --backend headless` gives a headed X11/Vulkan
-# game on the real GPU with no window on anybody's screen: verified on this box at gamescope 3.16.19, which logs
-# `vulkan: selecting physical device 'NVIDIA GeForce RTX 2060'` and starts its own XWayland (the child sees
-# DISPLAY=:N, WAYLAND_DISPLAY empty, GAMESCOPE_WAYLAND_DISPLAY=gamescope-0).
+# WHY GAMESCOPE AND NOT XVFB. Xvfb makes an awaited engine frame many times slower than on a real display, and
+# work that awaits different numbers of engine frames is distorted by different amounts, so timings taken under
+# Xvfb do not compare. `gamescope --backend headless` gives a headed X11/Vulkan game on the real GPU with no
+# window on anybody's screen: gamescope logs `vulkan: selecting physical device '<GPU>'` and starts its own
+# XWayland (the child sees DISPLAY=:N, WAYLAND_DISPLAY empty, GAMESCOPE_WAYLAND_DISPLAY=gamescope-0).
 #
 # Direct Wayland into that compositor STALLED when it was tried (project memory, phase-7 round), so the game is
 # launched with --display-driver x11 against gamescope's XWayland. That is a deliberate choice, not an oversight.
 #
-# WHAT IT COSTS, and why the bench is told: the compositor plus the game take seconds to become useful and about
-# a gigabyte of RSS. That is startup, not lane cost. This script measures it and writes it to a record the bench
-# folds into its `overhead` block, so a reader can see it was accounted for and excluded rather than assume it.
+# WHAT IT COSTS, and why a caller is told: the compositor plus the game take seconds to become useful and about
+# a gigabyte of RSS. That is startup, not the cost of whatever runs next. This script measures it and writes it to
+# a record a caller can fold into its own overhead accounting, so it is seen to be excluded rather than assumed.
 #
-#   scripts/bring-up-gamescope-instance.sh --instance geoclip-knights \
-#     --cache-root /tmp/geoclip-bench-cache --record /tmp/geoclip-bringup.json
+#   scripts/bring-up-gamescope-instance.sh --instance <name> \
+#     --cache-root /tmp/<name>-cache --record /tmp/<name>-bringup.json
 #
-# Then, and only then, drive the encounter and run the bench. Teardown:
-#   scripts/bring-up-gamescope-instance.sh --instance geoclip-knights --teardown
+# Then, and only then, drive the game and run the check. Teardown:
+#   scripts/bring-up-gamescope-instance.sh --instance <name> --teardown
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

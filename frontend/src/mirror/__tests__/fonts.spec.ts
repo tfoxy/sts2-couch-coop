@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ensureFontFace, mirrorFontRegistration } from "@/mirror/fonts";
 
-// `corpusDiagnosticEnabled` (R2-P3) is cached on `location.search` itself — this covers both halves of that
+// `corpusDiagnosticEnabled` is cached on `location.search` itself — this covers both halves of that
 // cache's contract: it answers correctly for a `search` it has already seen (not just the first time), and it
 // notices a NAVIGATION (the only way `search` ever changes) rather than sticking to a stale verdict.
 

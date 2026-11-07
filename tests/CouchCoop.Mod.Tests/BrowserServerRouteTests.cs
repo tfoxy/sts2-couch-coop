@@ -165,7 +165,7 @@ if (args is ["headless-input", ..])
     return;
 }
 
-// `dotnet run --project tests/CouchCoop.Mod.Tests -- host-guards` runs the WS-1 hosting guards ALONE: the patch
+// `dotnet run --project tests/CouchCoop.Mod.Tests -- host-guards` runs the hosting guards ALONE: the patch
 // TARGET resolution, the composite host's peer routing, and the Harmony ordering + client-cap rules that decide
 // how many players can actually connect. They are pure — no IO, no Harmony install, no live game, no port — which
 // makes them the one slice of this suite that is safe to run on its own, and the way to verify a hosting change
@@ -295,7 +295,7 @@ if (args is ["seats", ..])
 // the host advertises, the option list the QR dialog builds from it, the mDNS responder's wire codec and its
 // three-way mode decision, the discovery responder over real UDP loopback, the listener's own hardening, and
 // the reachability watch that says when nothing has connected. Registered as its own verb for the reason every
-// other verb here exists — the full sequence below is long and, until 2026-09-17, aborted before reaching
+// other verb here exists — the full sequence below is long and used to abort before reaching
 // these (see the note above HeadlessAudioMuteTargetsTests), so a networking change is verified here rather
 // than only through a full run. They are engine-free: loopback sockets and synthetic NIC descriptors, no
 // game, no Godot, and nothing that touches port 5353.
@@ -661,7 +661,7 @@ if (args is ["seat-timeout", ..])
 // host-authority probe (scheduler fold + follow-up, frame normalization, the gated seat viewer's warm gate and
 // screen-event subscription over real sockets), and the Stage-B walk-skip unanimity. Same rationale as `host-guards` / `beta-targets` above, and it is not
 // optional here: all five of these are registered near the END of the normal sequence, which is long and which
-// aborted before reaching them until 2026-09-17 (see the note above HeadlessAudioMuteTargetsTests). This verb
+// used to abort before reaching them (see the note above HeadlessAudioMuteTargetsTests). This verb
 // is what makes a static-background change cheap to verify on its own.
 if (args is ["static-bg", ..])
 {
@@ -686,7 +686,7 @@ if (args is ["static-bg", ..])
 // update or when adding an API lane — point Sts2AssembliesDir at the new build, build, run this. The legs are
 // pure metadata reflection (no Harmony install, no live game, no IO), so like host-guards above they are safe
 // alone, and this verb answers the per-build question in one short run rather than through the whole sequence
-// (which, until 2026-09-17, aborted before most of it — see the note above HeadlessAudioMuteTargetsTests).
+// (which used to abort before most of it — see the note above HeadlessAudioMuteTargetsTests).
 //
 // Every leg is run even when an earlier one fails, and each is named on its own line: a game update typically
 // breaks several members at once, and stopping at the first would hide the rest behind another build+run cycle.
@@ -724,7 +724,7 @@ if (args is ["beta-targets", ..])
         }
     }
 
-    // WS-1 networking/hosting seams, the headless FMOD forwards, the clean-exit popup suppression, and the two
+    // networking/hosting seams, the headless FMOD forwards, the clean-exit popup suppression, and the two
     // lobby-screen mount points — in the same order the full sequence takes them.
     Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
     Leg("HostTransportCapacityTests.HostCallTargets", HostTransportCapacityTests.HostCallTargetsResolve);
@@ -852,10 +852,10 @@ SeatCloudSaveIsolationTargetsTests.Run();
 // The seat's Steam Input route (the other half of the joypad strip above), reflected over the same way. Also
 // reachable as `-- beta-targets` and `-- headless-input`.
 SeatSteamControllerIsolationTargetsTests.Run();
-// WS-1 networking/hosting: every game member the host-transport / CLI-override / host-netId / save-compat patches
+// networking/hosting: every game member the host-transport / CLI-override / host-netId / save-compat patches
 // bind to must still resolve, including the two private NetHostGameService seams the composite host rewrites.
 NetTransportPatchTargetsTests.Run();
-// WS-1: the env-gated CommandLineHelper override table — EMPTY on a host (so it hosts normally, Steam included),
+// The env-gated CommandLineHelper override table — EMPTY on a host (so it hosts normally, Steam included),
 // fastmp=join + clientId on a headless couch seat launched with no CLI args at all.
 CommandLineOverrideTests.Run();
 // The render-capture extension path (a malformed one is refused unloaded) and the streaming seat role that loads
@@ -865,24 +865,24 @@ RenderCaptureExtensionLoaderTests.Run();
 StreamingSeatRoleTests.Run();
 await RenderStreamPairingTests.RunAsync();
 await BrowserServerRouteTests.RunRenderStreamDescriptorRoutesAsync();
-// WS-1: the composite Steam+ENet host — its shape (a missed override silently makes a message type Steam-only)
+// The composite Steam+ENet host — its shape (a missed override silently makes a message type Steam-only)
 // and its peer routing (unknown ids must reach ENet, never Steam, which throws on an unknown peer).
 DualNetHostShapeTests.Run();
 SavedRunEnetHostShapeTests.Run();
 SavedRunLoadLobbyIdentityTests.Run();
 HostPeerRoutingTests.Run();
-// WS-1 host capacity: our StartSteamHost prefix REPLACES the method, so it has to be the last prefix or it cuts
+// Host capacity: our StartSteamHost prefix REPLACES the method, so it has to be the last prefix or it cuts
 // a multiplayer limit mod's cap raise out of the host start — pinned against Harmony's own patch comparer, since
 // the StartSteamHost path needs a real Steam session and is not reachable from automated QA.
 HostTransportCapacityTests.Run();
-// WS-1: couchcoop.json must keep affects_gameplay=false or JoinFlow's mod-list comparison locks out every
+// couchcoop.json must keep affects_gameplay=false or JoinFlow's mod-list comparison locks out every
 // vanilla Steam friend — silently, since nothing else in the build would fail.
 ModManifestGameplayRelevanceTests.Run();
-// WS-3 energy orb: the decorative freeze must use the tween-safe mechanism per node type (see the file header).
+// Energy orb: the decorative freeze must use the tween-safe mechanism per node type (see the file header).
 HeadlessDecorativeFreezeTests.Run();
-// WS-D phantom potion: the particle freeze must exempt the self-freeing potion-flash VFX (see the file header).
+// Phantom potion: the particle freeze must exempt the self-freeing potion-flash VFX (see the file header).
 HeadlessParticleFreezeExemptionTests.Run();
-// WS-3 idle wire: the spine freeze re-asserts on every scan — its dedup set is a reporting set, never the gate
+// Idle wire: the spine freeze re-asserts on every scan — its dedup set is a reporting set, never the gate
 // (a node whose ProcessMode came back used to be skipped forever; see the file header).
 HeadlessSpineFreezeTests.Run();
 await HeadlessAssetLoadingActivityTests.RunAsync();
@@ -890,11 +890,11 @@ await HeadlessAssetLoadingActivityTests.RunAsync();
 // they otherwise freeze the detached rig a bake is posing and it returns one pose repeated) — and skip nothing
 // else, so a non-marked SubViewport's spine children stay frozen.
 HeadlessExtractionExemptionTests.Run();
-// WS-1 leaking VFX: the five self-free-on-`finished` VFX stay frozen and get a synthesized END-OF-BURST at their
+// Leaking VFX: the five self-free-on-`finished` VFX stay frozen and get a synthesized END-OF-BURST at their
 // burst's natural end — the `finished` they await AND the `Emitting` clear that stops the mirror drawing an ended
 // burst — plus a cap on the ceremonial beast's unbounded death await (see the file header).
 HeadlessParticleFinishNudgeTests.Run();
-// WS-8: headless clean-exit on a permanent host disconnect — Harmony target resolution (incl. the NErrorPopup.Create
+// Headless clean-exit on a permanent host disconnect — Harmony target resolution (incl. the NErrorPopup.Create
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
 ConnectionRegistryTests.Run();
@@ -945,21 +945,21 @@ LobbyCapReadTests.Run();
 LobbyCapReadTests.LobbyCapMemberResolves();
 HeadlessUserDirSeederTests.Run();
 HostProfileBackupTests.Run();
-// M3 WS-T host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
+// Host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
 await HostDiscoveryResponderTests.RunAsync();
 AssetCacheTokenEnvelopeTests.Run();
-// WS-2 host-performance truth: the `session` envelope reports the freezes THIS instance actually applies (all off
+// Host-performance truth: the `session` envelope reports the freezes THIS instance actually applies (all off
 // on a windowed host, which never installs the suspender), so the mirror panel's checkboxes stop lying.
 HostPerformanceEnvelopeTests.Run();
 // The GAME's Settings -> Text Effects preference, carried on the same envelope so the mirror's animated rich text
 // obeys the switch the player at the keyboard set. Covers the degraded path this runner can reach: unknown OMITS,
 // so a Godot-less host never tells a viewer to stop animating.
 TextEffectsEnvelopeTests.Run();
-// R13 host hint counters: the `session` envelope carries the embedded producer's per-family emit/decline tallies, so
+// Host hint counters: the `session` envelope carries the embedded producer's per-family emit/decline tallies, so
 // a passive `/ws?watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0` read answers "did the host emit hints, and if not which gate ate them".
 // FIX 2b: a single-frame &still=1 clip parses (client decoder) to a paintable frame with non-degenerate Local* placement.
 SpineStillClipTests.Run();
-// WS-7 (#14): the spine bake admission policy — instance count, degrade threshold, degraded-still key derivation.
+// The spine bake admission policy — instance count, degrade threshold, degraded-still key derivation.
 SpineBakeBudgetTests.Run();
 // Track T: tiny-PNG transcode threshold (pure filesystem, no IO beyond a temp dir).
 AstcTranscodeCacheTests.Run();
@@ -986,15 +986,15 @@ await EncounterGeoclipPrerenderTests.RunAsync();
 // evicted (1x1) texture from being written through into the asset cache the host shares.
 HeadlessAssetExtractionGuardTests.Run();
 await AssetSingleFlightTests.RunAsync();
-// WS-3 rejoin: per-seat status derivation (grace window + zombie reap) and the mp-load-game saved-run union.
+// Rejoin: per-seat status derivation (grace window + zombie reap) and the mp-load-game saved-run union.
 MirrorSeatRosterTests.Run();
 // Player names on a seat: what the host publishes (itself + remote Steam players, which a seat cannot resolve),
 // how that merges into the durable mp_names.json roster, and how a running seat picks up later joiners.
 PlayerNameRosterTests.Run();
 MultiplayerNameStoreTests.Run();
-// WS-F: advertised LAN IPv4 ranking (tunnel/docker/APIPA demotion) + the COUCHCOOP_ADVERTISED_HOST override.
+// Advertised LAN IPv4 ranking (tunnel/docker/APIPA demotion) + the COUCHCOOP_ADVERTISED_HOST override.
 LanAddressRankingTests.Run();
-// WS-2 QR dialog: the option list the dialog offers (adapter x method cross product, tier-first grouping,
+// QR dialog: the option list the dialog offers (adapter x method cross product, tier-first grouping,
 // mdns always last, per-adapter link rows, disabled-with-blocker availability, selection restore, .local
 // derivation, payload parity).
 QrHostOptionsTests.Run();
@@ -1037,7 +1037,7 @@ MdnsResponderTests.Run();
 // only proven by the macOS suite and by an argument nobody passes by default.
 LobbySupportCheckpointsTests.Run();
 DailyCustomLobbyTests.Run();
-// WS-2 QR dialog: when the "Couch Co-Op QR Code" button exists (and, just as importantly, when it does not).
+// QR dialog: when the "Couch Co-Op QR Code" button exists (and, just as importantly, when it does not).
 CouchCoopLobbyHostGateTests.Run();
 // …and its mid-run twin, which decides the same thing for the pause menu's row. Beside the lobby gate on
 // purpose: it shares those snapshot builders, and it asserts the two gates never answer yes at once.
@@ -1065,7 +1065,7 @@ HostBrowserAccessPolicyTests.Run();
 SessionFactsTests.Run();
 // …and that classifier over CouchCoop's own roster instead of the snapshot: identical on every fixture, by the retired
 // classifier kept as the oracle (delete both with the last WP3 read path).
-// WS-2 QR dialog: the four-way overlay layout contract (runtime default, hot-reload logic, shell copy,
+// QR dialog: the four-way overlay layout contract (runtime default, hot-reload logic, shell copy,
 // validator) plus the constant-extent invariant. Runs BEFORE any hot-reload test so the shell still
 // reports its compiled-in default.
 CouchCoopQrLayoutContractTests.Run();
@@ -1325,7 +1325,7 @@ internal sealed partial class BrowserServerRouteTests
         Expect(otherFormat.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "an unknown ?format value is rejected");
         Expect(otherFormat.Body.Contains("invalid-resource-format", StringComparison.Ordinal), "unknown format rejection is structured");
 
-        // WS-PARTICLE: `?format=png` is the explicit raster ask (an AtlasTexture `.tres` particle texture
+        // `?format=png` is the explicit raster ask (an AtlasTexture `.tres` particle texture
         // rasterizes via spirectl's cropped-region PNG path instead of serving `[gd_resource]` text).
         var pngResource = await GetAsync(baseUri, "/res/images/atlases/intent_atlas.sprites/attack/intent_attack_3.tres?format=png");
         Expect(pngResource.StatusLine.Contains("200 OK", StringComparison.Ordinal), "resource route succeeds with ?format=png");
@@ -1390,7 +1390,7 @@ internal sealed partial class BrowserServerRouteTests
         await AssertSpinePrerenderAsync();
         await AssertSpineClipRoutesAsync(baseUri, runtime);
         await AssertAssetBinaryCacheAsync();
-        // WS-PARTICLE raster format mapping. Position is historical: it was hoisted above a suite that used to
+        // Raster format mapping. Position is historical: it was hoisted above a suite that used to
         // abort the process, and the sequence now runs to completion either way.
         await AssertRasterResourceFormatAsync();
 
@@ -1415,7 +1415,7 @@ internal sealed partial class BrowserServerRouteTests
         // Last connect-based assert: pushing a scene caches it, so a later DrainConnectAsync (fixed
         // session+state frames) would also receive a trailing `scene` frame. Keep this after the others.
         await AssertSceneBroadcastAsync(baseUri, runtime);
-        // WS-B stream gate. Runs after the scene broadcast (it depends on the same pushed-delta plumbing) and
+        // Stream gate. Runs after the scene broadcast (it depends on the same pushed-delta plumbing) and
         // before the server-reload teardown.
         await AssertSceneStreamGateAsync(baseUri, runtime, streamingDemand);
         await AssertStaticBgWalkSkipAggregateAsync(server, baseUri, runtime);
@@ -1431,7 +1431,7 @@ internal sealed partial class BrowserServerRouteTests
 
         await AssertInternalServerErrorsAreStructuredAsync(root.Path);
         await AssertAppIconFailsOpenAsync(root.Path);
-        // WS-B prerequisite, on a DEDICATED server so no stateful connection can mask it.
+        // Prerequisite, on a DEDICATED server so no stateful connection can mask it.
         await AssertMirrorOnlyHostKeepsSessionsLiveAsync(root.Path);
         // …and the server's reaction to what the roster observer reads: re-sends, the reap rule, stale reads.
         await AssertRosterObserverDrivesTheServerAsync(root.Path);
@@ -1924,7 +1924,7 @@ internal sealed partial class BrowserServerRouteTests
                 == "spine://scenes/a.tscn?node=Visuals/Spine&anim=idle&skin=poisoned&mat=0123456789abcdef&skel=res://x/y.tres&codec=webp&fps=15&q=85&retry=1",
             "BuildSpineKey emits the full node→anim→skin→mat→skel→policy→v order");
 
-        // R10 PAUSED-STILL TIME (`&t=`). Only a still carries it, only when the client pinned one, and it is
+        // PAUSED-STILL TIME (`&t=`). Only a still carries it, only when the client pinned one, and it is
         // quantized to 2 decimals so a millisecond of drift can't mint a fresh bake per request. The closed
         // treasure chest is the case: the game freezes its "animation" clip at t=0, and without the pin the host's
         // mid-frame still heuristic renders a HALF-OPEN lid on a chest nobody has touched.
@@ -2154,7 +2154,7 @@ internal sealed partial class BrowserServerRouteTests
                 // The point of the whole exercise: the requested size actually reached the render seam.
                 Expect(runtime.LastAssetRequest is { RenderWidth: 2520, RenderHeight: 1080 }, "the last benched size reached the embeddable seam");
 
-                // ---- R21: the codec[@quality][:opaque] candidate grammar --------------------------------------
+                // ---- The codec[@quality][:opaque] candidate grammar --------------------------------------
                 var badCodec = await GetAsync(baseUri, "/perf/bg-render.json?id=underdocks&sizes=1920x1080&formats=avif");
                 Expect(badCodec.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "an unsupported codec is rejected, not silently rendered as png");
                 var badQuality = await GetAsync(baseUri, "/perf/bg-render.json?id=underdocks&sizes=1920x1080&formats=webp@85");
@@ -2486,7 +2486,7 @@ internal sealed partial class BrowserServerRouteTests
             // Deterministic variant (no digest): the first request renders ONCE through the embeddable seam at
             // the pinned 2520x1080 policy with NO CompositionSelector.
             //
-            // R21: the canonical URL lost its file extension, because the encoder became a policy (jpg@0.9 today)
+            // The canonical URL lost its file extension, because the encoder became a policy (jpg@0.9 today)
             // and Content-Type is what names it. `/bg/<id>` used to be a 400 — this is the assertion that flipped.
             var callsBefore = AssetCalls();
             var miss = await GetRawAsync(baseUri, "/bg/underdocks?v=1");
@@ -2844,7 +2844,7 @@ internal sealed partial class BrowserServerRouteTests
     // back to the browser as a rejection it can act on, instead of the `action-result` the mirror client ignores.
     //
     // The fault is injected exactly where the shipped one lived: HeadlessClientManager's launcher, which is what
-    // threw KeyNotFoundException on 2026-08-15 (an unguarded `psi.EnvironmentVariables[key]` read). Nothing here
+    // once threw KeyNotFoundException (an unguarded `psi.EnvironmentVariables[key]` read). Nothing here
     // is contrived — the launcher delegate is the manager's only seam and a launch really can fail.
     private static async Task AssertJoinFaultReachesTheViewerAsync(string staticRoot)
     {
@@ -2914,7 +2914,7 @@ internal sealed partial class BrowserServerRouteTests
         Expect(fake.Calls.Count(call => call == "GetCapabilities") == 1, $"{expectedCall} caches capabilities");
     }
 
-    // WS-PARTICLE: a `.tres` request under the raster format must return PNG magic bytes, not `[gd_` text. The
+    // A `.tres` request under the raster format must return PNG magic bytes, not `[gd_` text. The
     // recording runtime emulates spirectl's format contract for `.tres` keys (format "png" → cropped-region PNG
     // bytes, structure-family formats → the raw `[gd_resource]` text — the real routing is covered by spirectl's
     // own suites); this asserts the ADAPTER maps CouchCoopResourceFormat.Png to the embeddable "png" ask and
@@ -3756,7 +3756,7 @@ internal sealed partial class BrowserServerRouteTests
         await CloseWebSocketSilentlyAsync(mirror);
     }
 
-    // WS-B STREAM GATE, end to end against the real hosted server.
+    // STREAM GATE, end to end against the real hosted server.
     //
     // Product rule: a viewer connecting to a host that is on a MULTIPLAYER screen (lobby / saved game / mp run)
     // must NOT have the host's game streamed — and therefore rendered — behind its join picker. The gate is per
@@ -4015,7 +4015,7 @@ internal sealed partial class BrowserServerRouteTests
     }
 
     /// <summary>
-    /// WS-B PREREQUISITE — `screen.mirrorMode` must stay LIVE on a MIRROR-ONLY host.
+    /// PREREQUISITE — `screen.mirrorMode` must stay LIVE on a MIRROR-ONLY host.
     /// <para>
     /// The gate is client-driven off the session's `screen.mirrorMode`, so if that value can never change the gate
     /// latches shut: a viewer that arrived while the host was on a multiplayer screen would sit on the picker
@@ -4378,7 +4378,7 @@ internal sealed partial class BrowserServerRouteTests
     }
 
     /// <summary>
-    /// Assert that NO `scene-delta` reaches this socket — the central WS-B invariant.
+    /// Assert that NO `scene-delta` reaches this socket — the central invariant.
     /// <para>
     /// Deliberately not a timed-out read: cancelling <c>ClientWebSocket.ReceiveAsync</c> ABORTS the connection, so
     /// that technique can only ever be the last thing done to a socket. Instead: settle (anything the server meant
@@ -4463,7 +4463,7 @@ internal sealed partial class BrowserServerRouteTests
             TransformSpace: "local");
     }
 
-    // A variant of the sample delta for the WS-B gate suite: a distinct node id + originX (so a specific frame can
+    // A variant of the sample delta for the gate suite: a distinct node id + originX (so a specific frame can
     // be matched on the wire) and an explicit draw order (so a structural send is produced). The screen
     // discriminator is deliberately IDENTICAL to BuildSampleSceneDelta's, so pushing these never trips the
     // scene-path session re-send and the suite reads only the frames it asked for.
@@ -4551,7 +4551,7 @@ internal sealed partial class BrowserServerRouteTests
         Expect(renderRef.GetProperty("requestId").GetString() == "browser:req:render", "render ref action preserves browser request id");
         Expect(renderRef.GetProperty("code").GetString() == BrowserActionErrorCodes.StaleActionRef, "render refs are rejected structurally in S9");
 
-        // R11 WS-M — MAP TRAVEL FROM THE MIRROR. The mirror taps a map point it can only address by SCENE NODE
+        // MAP TRAVEL FROM THE MIRROR. The mirror taps a map point it can only address by SCENE NODE
         // (`elementId`), and mirror actions always use the served process's local player, so two things must hold: the arg lands on
         // the NAMED ElementId field (spirectl's select-map-node validation reads MapNodeId-or-ElementId, not Values),
         // and the executor dispatches with the empty process-local perspective.
@@ -5598,7 +5598,7 @@ internal sealed partial class BrowserServerRouteTests
         private int _sceneSubscribeCount;
         private int _sceneDisposeCount;
 
-        // WS-B: whether the server currently holds a LIVE scene-watch subscription. The scene producer is by far
+        // Whether the server currently holds a LIVE scene-watch subscription. The scene producer is by far
         // the most expensive thing a host does, and the stream gate's whole point is that it stops while every
         // viewer sits on the join picker — so the tests assert on this, not merely on the absence of frames.
         public bool SceneSubscriptionActive
@@ -5907,7 +5907,7 @@ internal sealed partial class BrowserServerRouteTests
                         null);
                 }
 
-                // WS-PARTICLE: emulate spirectl's `.tres` format contract (asserted end-to-end by spirectl's own
+                // Emulate spirectl's `.tres` format contract (asserted end-to-end by spirectl's own
                 // suites): a raster format ("png") routes an AtlasTexture `.tres` to cropped-region PNG bytes;
                 // the structure-family formats serve the raw `[gd_resource]` text under "raw".
                 if (request.Key.EndsWith(".tres", StringComparison.Ordinal))
