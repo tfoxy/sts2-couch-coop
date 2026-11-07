@@ -76,3 +76,6 @@ mp_names.json
 # the symlink is ignored too) and the root files the installer links in from it.
 /private
 /.codex-orchestration.toml
+
+# Codex-orchestration run artefacts and scratch (runs_dir default).
+.local/
