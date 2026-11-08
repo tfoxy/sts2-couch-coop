@@ -72,13 +72,15 @@ export interface MirrorInputMessage {
   // on a full `wheel-up`/`wheel-down` click, and OMITTED (not 1) for a single tick, so an un-coalesced wheel event
   // serialises byte-identically to the pre-feature wire. The host clamps 1..20.
   count?: number;
-  // C3 POINTER TARGET (hover/click only, all four or none). The node the viewer pointed at, as the render stream drew
+  // POINTER TARGET (hover/click only, identity plus local coordinates). The node the viewer pointed at, as the render stream drew
   // it — its instance scene and its path inside that instance (render-stream `item_meta` scene/path) — and the point
   // in that node's own coordinates. The seat keeps `coordX/coordY` when they still land on that node and otherwise
   // moves the event onto it (C# PointerTargetPlacement). OMITTED when no node was named, so the old mirror and every
   // untargeted message serialise byte-identically to before. C# twin: BrowserInputRequestEnvelope.TargetScene/….
   targetScene?: string;
   targetPath?: string;
+  // Decimal Godot instance id, preserved as a string beyond JavaScript integer precision.
+  targetInstance?: string;
   localX?: number;
   localY?: number;
 }

@@ -5,16 +5,11 @@ import type { ExtensionSession, ItemMeta, ItemMetaBatch, ItemQuery } from "@godo
 import {
   POINTER_TARGET_GROUPS,
   RS_GROUP_EVENT_OPTION,
-  RS_GROUP_HAND_HOLDER,
-  RS_GROUP_POINTER_INPUT
+  RS_GROUP_HAND_HOLDER
 } from "@/stream-ext/groups";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 import { climbToTarget, createPointerTargetModule } from "@/stream-ext/pointerTargets";
 import type { MirrorSettings } from "@/mirror/mirrorSettings";
-
-// C3: the stream's POINTER-TARGET module. The mouse filters (each node item's Godot filter stated to the client's hit
-// test, so the full-screen transition rect and decoration stop hiding every combat item) and couch's identity climb (the hand card's holder
-// or the confirm widget, not the label the finger is on).
 
 function meta(id: number, groups: string[], identity: { scene?: string | null; path?: string | null } = {}): ItemMeta {
   return {
@@ -91,59 +86,36 @@ describe("pointerTargets — identity climb", () => {
   });
 });
 
-describe("pointerTargets — the hit test's mouse filters", () => {
-  it("asks for scene, path and its groups", () => {
+describe("pointerTargets — host filters", () => {
+  it("asks for identity v2 and role groups without stating filters or pick order", () => {
     const { extension } = createPointerTargetModule();
-    expect(extension.wants).toEqual({ fields: ["scene", "path"], groups: [...POINTER_TARGET_GROUPS] });
-  });
-
-  it("states stop for an input Control, ignore for any other node, nothing for an item with no node", () => {
-    const module = createPointerTargetModule();
+    expect(extension.wants).toEqual({
+      fields: ["scene", "path", "instance_id", "mouse_filter"], groups: [...POINTER_TARGET_GROUPS]
+    });
     const s = session();
-    module.extension.onSession!(s);
-    module.extension.onItemMeta!(
-      full([meta(37, []), meta(38, [RS_GROUP_POINTER_INPUT]), { ...meta(39, []), node: false }])
-    );
-    expect(s.mouseFilter.mock.calls).toEqual([[37, "ignore"], [38, "stop"]]);
-    expect(module.filteredCount).toBe(2);
-    // A role widget is "stop" even when the seat read an IGNORE filter (an event option is enabled later).
-    module.extension.onItemMeta!(delta([meta(40, [RS_GROUP_EVENT_OPTION]), meta(38, [RS_GROUP_POINTER_INPUT])]));
-    expect(s.mouseFilter.mock.calls.at(-1)).toEqual([40, "stop"]);
-    expect(s.mouseFilter.mock.calls).toHaveLength(3); // 38 unchanged: not stated again
-    s.mouseFilter.mockClear();
-    // A full table replaces: an item it no longer lists loses its filter.
-    module.extension.onItemMeta!(full([meta(38, [RS_GROUP_POINTER_INPUT])]));
-    expect(s.mouseFilter.mock.calls.sort()).toEqual([[37, null], [40, null]]);
-    module.extension.onItemsRemoved!(Uint32Array.from([38]));
-    expect(module.filteredCount).toBe(0);
-  });
-
-  it("keeps the client's draw order: ready-time filters are too stale for Godot's tree order (C4a)", () => {
-    const module = createPointerTargetModule();
-    const s = session();
-    module.extension.onSession!(s);
-    module.extension.onItemMeta!(full([meta(37, []), meta(38, [RS_GROUP_POINTER_INPUT])]));
+    extension.onSession?.(s);
+    extension.onItemMeta?.(full([meta(37, []), { ...meta(38, [RS_GROUP_EVENT_OPTION]), mouseFilter: "ignore" }]));
+    extension.onItemMeta?.(delta([{ ...meta(38, [RS_GROUP_EVENT_OPTION]), mouseFilter: "stop" }]));
+    extension.onItemsRemoved?.(Uint32Array.from([38]));
+    extension.dispose?.();
+    expect(s.mouseFilter).not.toHaveBeenCalled();
     expect(s.pickOrder).not.toHaveBeenCalled();
   });
 
-  it("states nothing when the seat did not grant the input group", () => {
-    const module = createPointerTargetModule();
-    const s = session([]);
-    module.extension.onSession!(s);
-    module.extension.onItemMeta!(full([meta(37, []), meta(38, [])]));
-    expect(s.mouseFilter).not.toHaveBeenCalled();
+  it("uses a host-picked Hitbox itself instead of its hand holder", () => {
+    for (const mouseFilter of ["stop", "pass"] as const) {
+      const q = query({ 10: 9, 9: null }, {
+        10: { ...meta(10, []), mouseFilter },
+        9: meta(9, [RS_GROUP_HAND_HOLDER])
+      });
+      expect(climbToTarget(10, q)).toBe(10);
+    }
   });
 
-  it("a new session starts from nothing", () => {
-    const module = createPointerTargetModule();
-    const first = session();
-    module.extension.onSession!(first);
-    module.extension.onItemMeta!(full([meta(37, [])]));
-    const second = session();
-    module.extension.onSession!(second);
-    expect(module.filteredCount).toBe(0);
-    module.extension.onItemMeta!(full([meta(37, [])]));
-    expect(second.mouseFilter.mock.calls).toEqual([[37, "ignore"]]);
+  it("accepts instance-only input nodes and refuses picked nodes without any identity", () => {
+    const m = { ...meta(10, [], { scene: null, path: null }), mouseFilter: "stop" as const };
+    expect(climbToTarget(10, query({ 10: 9 }, { 10: { ...m, instanceId: "18446744073709551615" } }))).toBe(10);
+    expect(climbToTarget(10, query({ 10: 9 }, { 10: m, 9: meta(9, []) }))).toBeNull();
   });
 
   it("a client that cannot resolve (a spec's fake) gives no resolver", () => {

@@ -102,6 +102,7 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(at("?rsProtocol=8").renderStreamProtocol).toBe(13);
     expect(at("").renderStreamProtocol).toBe(13);
     expect(at("?rsProtocol=12").renderStreamProtocol).toBe(12);
+    expect(at("?rsProtocol=14").renderStreamProtocol).toBe(14);
   });
 
   it("overlays the server payload under the stream: freezes, static background and tween replay off, the rest as saved", () => {

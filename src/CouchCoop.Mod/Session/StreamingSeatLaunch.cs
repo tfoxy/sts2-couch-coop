@@ -356,10 +356,9 @@ internal static class StreamingSeatLaunch
             ["GRC_RESOURCE_INLINE_MAX_BYTES"] = "4096",
             ["GRC_PERF_TIMELINE_MAX_BYTES"] = PerfTimelineMaxBytes,
             ["GRC_MESH_DYNAMIC"] = "auto",
-            // TAG3: grant the couch extension modules their identities. Only scene, path, script and the mod's own
-            // groups (the request's groups whole) — the user's Q5 answer. The capture resolves nothing until a
+            // Grant the extension modules their identities, live filters and couch role groups. The capture resolves nothing until a
             // viewer's page actually asks (an extension's `wants`), so a pure viewer pays the same as before.
-            ["GRC_ITEM_META"] = "scene,path,script,groups",
+            ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter",
         };
         if (config.NetModule is { } netModule)
         {

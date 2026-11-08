@@ -5,9 +5,12 @@
 // HAND card — dragging it, or long-pressing to peek — the card is drawn lifted above the fingertip so the hand does
 // not cover it. The lift is a client-side `translate` override composed with the card's own pose; the game is never
 // told, and INP1's `toGame` inverse already un-maps a pointer that lands on the lifted card back to the game's
-// coordinate. Identity is the `couchcoop_rs_hand_holder` group: the hit item under the finger is a card's CHILD, so
-// the module climbs `query.parent` to the hand holder (the card's direct parent) and lifts THAT card, on a different
-// item id than the raised-hand module's holder lift — so the two lifts compose instead of fighting over one override.
+// coordinate. Identity is the `couchcoop_rs_hand_holder` group: the module climbs `query.parent` from the hit item to
+// the hand holder (the card's direct parent) and lifts THAT holder's card, on a different item id than the
+// raised-hand module's holder lift — so the two lifts compose instead of fighting over one override. The hit is the
+// Control Godot's GUI would pick (host filters select tree order): usually the holder's undrawn `Hitbox`,
+// which sits BESIDE the card under the holder, so the card is the holder's child that roots its own scene instance
+// (the card placed in it), and only a hit inside the card names the card by containment.
 //
 // The GESTURE (when to lift) belongs to the input channel (`streamInput.ts`); this module owns the identity climb
 // and the override. `unfocusOnRelease` is also the input channel's: on a peek release it re-hovers the seat to clear
@@ -32,7 +35,7 @@ import { HELD_CARD_GROUPS, RS_GROUP_HAND_HOLDER, RS_GROUP_TARGETING_ARROW } from
 
 /** The hand holder (and its card child) that owns a drawn item, or null when it is not under a hand card. */
 export interface HeldCardResolve {
-  /** The card to lift — the hand holder's direct child that contains the hit item. */
+  /** The card to lift — the hand holder's card child (its own scene instance), else the child containing the hit. */
   readonly card: number;
   /** The hand holder (group `couchcoop_rs_hand_holder`). */
   readonly holder: number;
@@ -80,6 +83,13 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
     }
   }
 
+  /** The holder's card: `child` (on the hit's path) when it is a scene instance root, else the holder's one that is. */
+  function cardOf(holder: number, child: number, q: ItemQuery): number {
+    if (q.meta(child)?.path === ".") return child;
+    for (const id of q.children(holder)) if (q.meta(id)?.path === ".") return id;
+    return child;
+  }
+
   /** The hand holder + its card child that contains `hitItem`, or null. */
   function resolveHeld(hitItem: number): HeldCardResolve | null {
     if (query === null) return null;
@@ -87,7 +97,7 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
     for (let depth = 0; cur !== null && depth < MAX_CLIMB; depth++) {
       const parent = query.parent(cur);
       if (parent !== null && holders.has(parent)) {
-        return { card: cur, holder: parent };
+        return { card: cardOf(parent, cur, query), holder: parent };
       }
       cur = parent;
     }
@@ -141,7 +151,7 @@ export function createHeldCardExtension(): { extension: RenderStreamExtension; c
 
   const extension: RenderStreamExtension = {
     id: "couchcoop.heldCard",
-    wants: { groups: [...HELD_CARD_GROUPS] },
+    wants: { fields: ["path"], groups: [...HELD_CARD_GROUPS] },
     onSession: (s) => {
       session = s;
     },

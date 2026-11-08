@@ -4,7 +4,10 @@
 // streaming seat: on the screens where a tap CONSUMES a run reward — card rewards, event options, shop purchases,
 // multiplayer treasure relics, rest-site choices — a tap only ever FOCUSES, and a DOM confirm button commits it.
 // The classification is group-based here instead of node-type-based: the mod tags each confirm-eligible widget with
-// its own `item_meta` group, and this module climbs from the hit item (a widget's CHILD) to that widget.
+// its own `item_meta` group, and this module climbs from the hit item (a widget's CHILD) to that widget. The hit is the
+// Control Godot's GUI would pick (host filters select tree order), and on a card reward that is the card
+// holder's undrawn `Hitbox`, which sits BESIDE the card it stands for, not inside it: a hit that climbs to no widget
+// takes the one reward card among its siblings.
 //
 // The DOM button is couch product UI (RenderStreamStage renders it); this module only classifies and holds the
 // button's live state — the target widget, its kind and its presentation-space rect for anchoring (the stage maps
@@ -42,7 +45,7 @@ export interface ConfirmTapHit {
 }
 
 export interface ConfirmTapController {
-  /** The confirm-eligible widget this drawn item belongs to (a widget's child), or null. */
+  /** The confirm-eligible widget this hit item belongs to (a widget's child, or a reward card's Hitbox), or null. */
   classify(hitItem: number): ConfirmTapHit | null;
   /** Raise the button for a classified widget (a refused show is a hide). */
   show(id: number, kind: ConfirmTapKind): void;
@@ -90,6 +93,19 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
     return query.subtreeRect(id) ?? query.rect(id);
   }
 
+  /** A card holder's input Control (its `Hitbox`) stands for the one reward card beside it under the same holder. */
+  function rewardCardBeside(hitItem: number, q: ItemQuery): ConfirmTapHit | null {
+    const parent = q.parent(hitItem);
+    if (parent === null) return null;
+    let card: number | null = null;
+    for (const id of q.children(parent)) {
+      if (id === hitItem || eligible.get(id) !== "reward") continue;
+      if (card !== null) return null; // a row of cards is no holder: never guess
+      card = id;
+    }
+    return card === null ? null : { id: card, kind: "reward" };
+  }
+
   function sameRect(a: Rect | null, b: Rect | null): boolean {
     if (a === null || b === null) return a === b;
     return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
@@ -104,7 +120,7 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
         if (kind !== undefined) return { id: cur, kind };
         cur = query.parent(cur);
       }
-      return null;
+      return rewardCardBeside(hitItem, query);
     },
     show(id, kind) {
       state.targetId = id;

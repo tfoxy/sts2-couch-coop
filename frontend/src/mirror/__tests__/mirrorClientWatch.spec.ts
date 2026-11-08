@@ -76,6 +76,21 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("pointer target input", () => {
+  it("sends a decimal instance id when present and omits it otherwise", () => {
+    const { client, socket } = connect(true);
+    const target = { kind: "hover", coordX: 10, coordY: 20,
+      targetScene: "res://button.tscn", targetPath: ".", localX: 1, localY: 2 } as const;
+    client.sendInput({ ...target, targetInstance: "18446744073709551615" });
+    client.sendInput(target);
+    expect(socket.sentOfType("input")).toEqual([
+      { type: "input", requestId: "input:1", ...target, targetInstance: "18446744073709551615" },
+      { type: "input", requestId: "input:2", ...target }
+    ]);
+    client.close();
+  });
+});
+
 describe("warm ack guard observation", () => {
   it("reports empty and sent branches without changing credit, even if the observer throws", () => {
     const events: WarmAckTraceEvent[] = [];

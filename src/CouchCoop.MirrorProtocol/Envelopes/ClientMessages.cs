@@ -19,7 +19,7 @@ public sealed record JoinMessage(string RequestId, string Name, string? PlayerId
 }
 
 // `{type:"input", requestId, kind, button?, coordX?, coordY?, key?, modifiers?, pressed?, count?}` — upstream
-// raw-input replay. Pointer input is COORDINATE-ONLY (design-space 1920x1080 coordX/coordY); keyboard carries a
+// raw-input replay. Pointer input carries design-space coordX/coordY and optional node identity; keyboard carries a
 // browser KeyboardEvent.code in `key`. Mirrors MirrorInputMessage; the host's BrowserInputRequestEnvelope ALSO
 // accepts elementId/offset for the spirectl CLI, which the mirror never sends.
 //
@@ -41,7 +41,9 @@ public sealed record InputMessage(
     string? TargetScene = null,
     string? TargetPath = null,
     double? LocalX = null,
-    double? LocalY = null)
+    double? LocalY = null,
+    // Decimal Godot instance id; when present it is authoritative over scene/path.
+    string? TargetInstance = null)
 {
     public string Type => "input";
 }

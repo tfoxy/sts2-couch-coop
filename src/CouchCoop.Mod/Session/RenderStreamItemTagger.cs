@@ -42,15 +42,6 @@ internal static class RenderStreamItemTagger
     internal const string EventOptionGroup = "couchcoop_rs_event_option";
     internal const string ShopItemGroup = "couchcoop_rs_shop_item";
     internal const string RestSiteGroup = "couchcoop_rs_rest_site";
-    // POINTER INPUT (GSW input plan row C3): every Control that takes pointer input (mouse_filter STOP or PASS).
-    // The page's pointer-target module states each node item's Godot mouse filter to the render-stream client's hit
-    // test (`ExtensionSession.mouseFilter`): tagged = "stop", any other node (an IGNORE Control, a Node2D) =
-    // "ignore". The client then picks the item Godot's GUI would, as far as drawn items tell, so the full-screen
-    // transition rect drawn over every combat item, background layers and particles over the UI stop hiding the
-    // cards and widgets under them, and a button whose face is IGNORE children is still found. Unlike the role tags
-    // it is read once the node is READY (the game's buttons set their filter in their own ready), which is still
-    // before the capture resolves the item's identity; a filter a script changes after that is not seen.
-    internal const string PointerInputGroup = "couchcoop_rs_pointer_input";
 
     // The node-type leaves and names the groups key on (the old mirror's raise/viewScale identity, verbatim).
     private const string HandHolderType = "NHandCardHolder";
@@ -121,7 +112,6 @@ internal static class RenderStreamItemTagger
         }
 
         _tree = tree;
-        Protocol.PointerTargetInstanceIndex.StartTracking();
         tree.NodeAdded += OnNodeAdded;
         // The capture's GRC_ADOPT=arm covers anything pre-existing; walking here keeps a node added between the
         // mod's very early Init and the SceneTree's existence tagged too.
@@ -155,35 +145,7 @@ internal static class RenderStreamItemTagger
         {
             node.AddToGroup(group);
         }
-
-        // C3: a Control's pointer-input tag waits for its ready (one one-shot connection per Control not yet ready).
-        if (node is Control control)
-        {
-            if (control.IsNodeReady())
-            {
-                TagPointerInput(control);
-            }
-            else
-            {
-                control.Connect(Node.SignalName.Ready, Callable.From(() => TagPointerInput(control)),
-                    (uint)GodotObject.ConnectFlags.OneShot);
-            }
-        }
-
-        // C3: the instance roots a viewer's pointer target resolves through (one scene-path read per node).
-        Protocol.PointerTargetInstanceIndex.Track(node);
     }
-
-    private static void TagPointerInput(Control control)
-    {
-        if (GodotObject.IsInstanceValid(control) && TakesPointerInput(control.MouseFilter))
-        {
-            control.AddToGroup(PointerInputGroup);
-        }
-    }
-
-    /// <summary>Whether a Control with this filter takes pointer input (Godot picks STOP and PASS, never IGNORE).</summary>
-    internal static bool TakesPointerInput(Control.MouseFilterEnum filter) => filter != Control.MouseFilterEnum.Ignore;
 
     // The per-node facts the pure decision keys on. SceneFilePath is non-empty only on an instanced-scene root.
     internal readonly record struct ItemTagFacts(

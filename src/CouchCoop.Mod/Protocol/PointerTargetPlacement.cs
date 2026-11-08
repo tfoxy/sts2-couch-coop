@@ -1,3 +1,6 @@
+using System.Globalization;
+using CouchCoop.Mod.Server;
+using CouchCoop.Mod.Session;
 using Godot;
 
 namespace CouchCoop.Mod.Protocol;
@@ -16,9 +19,12 @@ internal interface IPointerTargetNode
 
     /// <summary>A Control's size (it lands when the point falls in <c>Rect2(0, size)</c>); null for another CanvasItem.</summary>
     Vector2? ControlSize { get; }
+
+    /// <summary>Whether the optional scene/path identity still names this node.</summary>
+    bool MatchesIdentity(string scene, string path);
 }
 
-/// <summary>Finds the live nodes a target identity names: every instance of <c>scene</c>, then <c>path</c> under it.</summary>
+/// <summary>Finds a live node by instance id, or candidates for a legacy scene/path identity.</summary>
 internal interface IPointerTargetFinder
 {
     /// <summary>
@@ -26,6 +32,9 @@ internal interface IPointerTargetFinder
     /// an event, or call its target missing or ambiguous), so look again unless that was just done.
     /// </summary>
     IReadOnlyList<IPointerTargetNode> Find(string scene, string path, bool fresh);
+
+    /// <summary>A live CanvasItem inside the tree, or null. Never resolves through scene/path.</summary>
+    IPointerTargetNode? FindInstance(ulong instanceId);
 }
 
 /// <summary>
@@ -40,7 +49,8 @@ internal interface IPointerTargetFinder
 /// <item>a coordinate that still lands on the node goes as sent; a missed one moves to the node's transform applied
 /// to <c>local</c>. A Control lands when the point, through the inverse of its transform, is inside
 /// <c>Rect2(0, size)</c>; another CanvasItem when <c>transform * local</c> is within <see cref="Tolerance"/> px.</item>
-/// <item>several live instances make a path ambiguous: the one the coordinate lands on wins, else the target is
+/// <item>an instance id names the node directly. A stale or invalid id keeps the coordinate and never falls back
+/// to scene/path. Without an id, several live instances make a path ambiguous: the one the coordinate lands on wins, else the target is
 /// missing. Never a guess.</item>
 /// <item>a missing, freed or hidden node falls back to the coordinate.</item>
 /// <item>a press binds its node and the offset it was moved by until every button is up: every hover, wheel tick and
@@ -50,7 +60,7 @@ internal interface IPointerTargetFinder
 /// A message without target fields and with nothing bound is untouched (the old coordinate path). One instance per
 /// connection; called on the game thread only.
 /// </summary>
-internal sealed class PointerTargetPlacement(IPointerTargetFinder finder)
+internal sealed class PointerTargetPlacement(IPointerTargetFinder finder, Action<string>? log = null)
 {
     /// <summary>How far (px) a non-Control CanvasItem's <c>transform * local</c> may sit from the point and land.</summary>
     internal const float Tolerance = 1f;
@@ -58,6 +68,7 @@ internal sealed class PointerTargetPlacement(IPointerTargetFinder finder)
     private readonly IPointerTargetFinder _finder = finder ?? throw new ArgumentNullException(nameof(finder));
     private readonly HashSet<string> _held = new(StringComparer.Ordinal);
     private Binding? _binding;
+    private readonly RateLimitedDiagnosticLog _mismatchLog = new(log ?? CouchCoopLog.Stderr, TimeSpan.FromSeconds(10));
 
     /// <summary>What a press binds: the offset it was moved by (zero when it landed or its node was missing).</summary>
     private sealed record Binding(Vector2 Offset, IPointerTargetNode? Node);
@@ -117,14 +128,30 @@ internal sealed class PointerTargetPlacement(IPointerTargetFinder finder)
 
     private (Vector2 Position, IPointerTargetNode? Node) PlaceOnTarget(Vector2 point, PointerTargetRef target)
     {
-        // A cached answer may miss an instance created since; it is safe for an event that lands, and is checked
-        // again before any other decision.
-        var (outcome, position, node) = Decide(point, target, _finder.Find(target.Scene, target.Path, fresh: false));
-        if (outcome != Outcome.Landed)
+        (Outcome outcome, Vector2 position, IPointerTargetNode? node) result;
+        if (target.Instance is { } instance)
         {
-            (outcome, position, node) = Decide(point, target, _finder.Find(target.Scene, target.Path, fresh: true));
+            var resolved = ulong.TryParse(instance, NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+                ? _finder.FindInstance(id) : null;
+            if (resolved is { IsAlive: true } && target.Scene is { } scene && target.Path is { } path
+                && !resolved.MatchesIdentity(scene, path))
+            {
+                _mismatchLog.Write("instance-mismatch", $"[pointer-target] instance-mismatch instance={instance} scene={scene} path={path}");
+            }
+
+            result = Decide(point, target, resolved is null ? [] : [resolved]);
+        }
+        else
+        {
+            // A cached path answer is sufficient only for an event that already lands.
+            result = Decide(point, target, _finder.Find(target.Scene!, target.Path!, fresh: false));
+            if (result.outcome != Outcome.Landed)
+            {
+                result = Decide(point, target, _finder.Find(target.Scene!, target.Path!, fresh: true));
+            }
         }
 
+        var (outcome, position, node) = result;
         switch (outcome)
         {
             case Outcome.Landed: Stats.Landed++; break;
@@ -197,19 +224,19 @@ internal sealed class PointerTargetPlacement(IPointerTargetFinder finder)
     }
 }
 
-/// <summary>The node a message names: its instance scene, its path inside that instance, and the point in it.</summary>
-internal readonly record struct PointerTargetRef(string Scene, string Path, Vector2 Local)
+/// <summary>The node a message names: an instance id or scene/path, and the point in it.</summary>
+internal readonly record struct PointerTargetRef(string? Scene, string? Path, Vector2 Local, string? Instance = null)
 {
     /// <summary>The target a request carries, or null when it carries none (or an invalid one).</summary>
     public static PointerTargetRef? From(BrowserInputRequestEnvelope request)
     {
-        if (string.IsNullOrEmpty(request.TargetScene) || string.IsNullOrEmpty(request.TargetPath)
+        if ((request.TargetInstance is null && (string.IsNullOrEmpty(request.TargetScene) || string.IsNullOrEmpty(request.TargetPath)))
             || request.LocalX is not { } x || request.LocalY is not { } y || !double.IsFinite(x) || !double.IsFinite(y))
         {
             return null;
         }
 
-        return new PointerTargetRef(request.TargetScene, request.TargetPath, new Vector2((float)x, (float)y));
+        return new PointerTargetRef(request.TargetScene, request.TargetPath, new Vector2((float)x, (float)y), request.TargetInstance);
     }
 }
 

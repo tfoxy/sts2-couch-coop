@@ -881,6 +881,32 @@ describe("createStreamInput — pointer targets (C3)", () => {
     ]);
   });
 
+  it("preserves the instance id on hover and click as a decimal string", () => {
+    const instanceId = "18446744073709551615";
+    makeInput({ map: (x, y) => ({ x, y, item: 2 }), resolveTarget: (x, y) => {
+      const hit = resolveTarget(x, y)!;
+      return { ...hit, identity: { ...hit.identity, instanceId } };
+    } });
+    stage.dispatchEvent(mouse("pointermove", 150, 30, 0));
+    flushFrames();
+    stage.dispatchEvent(mouse("pointerdown", 150, 30, 1));
+    stage.dispatchEvent(mouse("pointerup", 150, 30, 0));
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 150, coordY: 30, ...target(2, 50, 30), targetInstance: instanceId },
+      { kind: "click", button: "left", pressed: true, coordX: 150, coordY: 30, ...target(2, 50, 30), targetInstance: instanceId },
+      { kind: "click", button: "left", pressed: false, coordX: 150, coordY: 30, ...target(2, 50, 30), targetInstance: instanceId }
+    ]);
+  });
+
+  it("stamps an instance-only target without requiring scene or path", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 5 }), resolveTarget: () => ({
+      key: 5, identity: { item: 5, instanceId: "123" }, local: { x: 1, y: 2 }
+    }) });
+    stage.dispatchEvent(mouse("pointermove", 10, 10, 0));
+    flushFrames();
+    expect(sent).toEqual([{ kind: "hover", coordX: 10, coordY: 10, targetInstance: "123", localX: 1, localY: 2 }]);
+  });
+
   it("over no node the message is coordinate-only, byte-identical to before", () => {
     makeInput({ map: (x, y) => ({ x, y, item: null }), resolveTarget });
     stage.dispatchEvent(mouse("pointermove", 500, 30, 0));

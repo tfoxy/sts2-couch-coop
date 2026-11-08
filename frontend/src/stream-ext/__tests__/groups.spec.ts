@@ -27,7 +27,7 @@ describe("stream-ext group names", () => {
         .filter(([name]) => name.startsWith(PREFIX))
         .map(([name, value]) => [name.slice(PREFIX.length).toLowerCase(), value])
     );
-    expect(Object.keys(fixture)).toHaveLength(15);
+    expect(Object.keys(fixture)).toHaveLength(14);
     expect(exported).toEqual(fixture);
   });
 

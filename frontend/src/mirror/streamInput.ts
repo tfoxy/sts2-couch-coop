@@ -220,25 +220,32 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     return { coordX: position[0], coordY: position[1] };
   }
 
-  // POINTER TARGETS: GSW's declarations (handle → scene + path), and the stamp a targeted record carries.
-  type TargetStamp = { targetScene: string; targetPath: string; localX: number; localY: number };
-  const declared = new Map<number, { scene: string; path: string } | null>();
+  // POINTER TARGETS: GSW's declarations (handle → node identity), and the stamp a targeted record carries.
+  type TargetIdentity = { targetScene?: string; targetPath?: string; targetInstance?: string };
+  type TargetStamp = TargetIdentity & { localX: number; localY: number };
+  const declared = new Map<number, TargetIdentity | null>();
 
   function stampOf(record: { target?: number; local?: InputVec2 }): TargetStamp | null {
     const handle = record.target;
     if (handle === undefined || handle === 0 || record.local === undefined) return null;
     const node = declared.get(handle);
     if (!node) return null;
-    return { targetScene: node.scene, targetPath: node.path, localX: record.local[0], localY: record.local[1] };
+    return { ...node, localX: record.local[0], localY: record.local[1] };
   }
 
   const sink: InputSink = {
     push(record: InputRecord): void {
       if (record.event === "target") {
-        // A node identity the seat can find needs both halves (an item-only or path-only one names nothing there).
+        // An instance id is sufficient; legacy targets need both scene and path.
         declared.set(
           record.handle,
-          record.scene !== undefined && record.path !== undefined ? { scene: record.scene, path: record.path } : null
+          record.instance_id !== undefined || (record.scene !== undefined && record.path !== undefined)
+            ? {
+                ...(record.scene !== undefined ? { targetScene: record.scene } : {}),
+                ...(record.path !== undefined ? { targetPath: record.path } : {}),
+                ...(record.instance_id !== undefined ? { targetInstance: record.instance_id } : {})
+              }
+            : null
         );
         return;
       }

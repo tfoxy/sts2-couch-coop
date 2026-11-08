@@ -56,10 +56,10 @@ function frame(seq: number, overrides: OverrideTable, query: ItemQuery): Extensi
 }
 
 describe("heldCard — identity + override", () => {
-  it("asks for the held-card groups and nothing else", () => {
+  it("asks for the held-card groups and paths", () => {
     const { extension } = createHeldCardExtension();
     expect([...(extension.wants?.groups ?? [])].sort()).toEqual([...HELD_CARD_GROUPS].slice().sort());
-    expect(extension.wants?.fields).toBeUndefined();
+    expect(extension.wants?.fields).toEqual(["path"]);
     expect(extension.wants?.metaKeys).toBeUndefined();
   });
 
@@ -78,6 +78,24 @@ describe("heldCard — identity + override", () => {
     expect(controller.handCardFor(12)).toBe(11);
     expect(controller.handCardFor(11)).toBe(11);
     expect(controller.handCardFor(99)).toBeNull(); // not under any hand holder
+    extension.dispose!();
+  });
+
+  it("resolves the holder's Hitbox to its sibling card and lifts that card", () => {
+    const { extension, controller } = createHeldCardExtension();
+    const query: ItemQuery = {
+      ...fakeQuery({ 12: 10, 11: 10, 10: null }),
+      children: (id) => Uint32Array.from(id === 10 ? [12, 11] : []),
+      meta: (id) => ({ ...meta(id, []), path: id === 11 ? "." : "Hitbox" })
+    };
+    const overrides = new FakeOverrides();
+    extension.onItemMeta!(batch([meta(10, [RS_GROUP_HAND_HOLDER])]));
+    extension.beforeDraw!(frame(1, overrides, query));
+    expect(controller.handCardFor(12)).toBe(11);
+    controller.setHeld(12, 1000, "peek");
+    extension.beforeDraw!(frame(2, overrides, query));
+    expect(overrides.written.get(11)).toEqual([0, -HELD_CARD_PEEK_LIFT_PX]);
+    expect(overrides.written.has(12)).toBe(false);
     extension.dispose!();
   });
 

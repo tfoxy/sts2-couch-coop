@@ -100,7 +100,9 @@ public sealed record BrowserInputRequestEnvelope(
     string? TargetScene = null,
     string? TargetPath = null,
     double? LocalX = null,
-    double? LocalY = null)
+    double? LocalY = null,
+    // Decimal Godot instance id; when present it is authoritative over scene/path.
+    string? TargetInstance = null)
 {
     // Stamped at receipt. A peer cannot revive input admitted before host access was revoked.
     [System.Text.Json.Serialization.JsonIgnore]

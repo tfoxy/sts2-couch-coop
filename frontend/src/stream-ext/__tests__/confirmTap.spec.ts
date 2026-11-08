@@ -80,6 +80,21 @@ describe("confirmTap — identity + button state", () => {
     extension.dispose!();
   });
 
+  it("classifies a card holder's Hitbox (Godot's tree pick) as the one reward card beside it", () => {
+    // grid holder 30: its undrawn Hitbox 31 and the reward card 32 are siblings. Row 40: a Control 41 beside two cards.
+    const { extension, controller } = createConfirmTapExtension();
+    const parents: Record<number, number | null> = { 31: 30, 32: 30, 30: null, 41: 40, 42: 40, 43: 40, 40: null };
+    const children: Record<number, number[]> = { 30: [31, 32], 40: [41, 42, 43] };
+    const query: ItemQuery = { ...fakeQuery(parents), children: (id) => Uint32Array.from(children[id] ?? []) };
+    extension.onItemMeta!(batch([32, 42, 43].map((id) => meta(id, [RS_GROUP_CARD_REWARD_CARD]))));
+    extension.beforeDraw!(frame(query));
+
+    expect(controller.classify(31)).toEqual({ id: 32, kind: "reward" });
+    // A hit beside two cards is no holder's Hitbox: never a guess.
+    expect(controller.classify(41)).toBeNull();
+    extension.dispose!();
+  });
+
   it("show raises the button anchored to the widget's rect, and hide clears it", () => {
     const { extension, controller } = createConfirmTapExtension();
     const query = fakeQuery({ 20: 10, 10: null }, { 10: { x: 100, y: 200, w: 300, h: 80 } });

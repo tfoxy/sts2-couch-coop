@@ -14,6 +14,7 @@ internal static class EnvelopeTests
         RejectsMalformedCurrentSessionFields();
         RejectsNonSessionType();
         SerializesClientMessagesCamelCaseOmitNull();
+        PointerInstanceRoundTrips();
     }
 
     private static void ParsesAFullSessionEnvelope()
@@ -308,6 +309,23 @@ internal static class EnvelopeTests
         }, "settings");
         AssertNoKey(settings, "freezeSpines", "settings omits null freezeSpines");
         AssertNoKey(settings, "tweenReplay", "settings omits null tweenReplay");
+    }
+
+    private static void PointerInstanceRoundTrips()
+    {
+        foreach (var instance in new string?[] { null, "18446744073709551615" })
+        {
+            var input = new InputMessage("input:3", "hover", CoordX: 10, CoordY: 20,
+                TargetScene: "res://button.tscn", TargetPath: ".", LocalX: 1, LocalY: 2, TargetInstance: instance);
+            var json = ProtocolJson.Serialize(input);
+            var restored = JsonSerializer.Deserialize<InputMessage>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Check.That(restored == input, "pointer input round-trips with and without instance");
+            using var doc = JsonDocument.Parse(json);
+            Check.That(doc.RootElement.TryGetProperty("targetInstance", out var field) == (instance is not null),
+                "targetInstance omitted when absent");
+            if (instance is not null) Check.Equal(field.GetString(), instance, "instance stays a decimal string");
+        }
     }
 
     private static void AssertKeys(string json, Dictionary<string, object?> expected, string label)

@@ -21,6 +21,10 @@ internal static class PointerTargetPlacementTests
         ANode2DLandsWithinTolerance();
         AmbiguousInstancesPickTheLandedOneOrNone();
         AFreedOrHiddenTargetFallsBackToTheCoordinate();
+        AnInstanceIsAuthoritativeAndMismatchIsLogged();
+        InvalidInstancesNeverFallBackToAPath();
+        InputTargetInstanceRoundTrips();
+        IdentityFollowsTheCapturesInstanceRoot();
         APressBindsUntilEveryButtonIsUp();
         AStalePressStartsOver();
         AFullClickDoesNotBind();
@@ -110,6 +114,76 @@ internal static class PointerTargetPlacementTests
         Assert(placement.Place(new(450, 320), Target("Nowhere", 50, 20), null, null) == new Vector2(450, 320),
             "an unresolved target: the coordinate");
         Assert(placement.Stats.Missing == 3, "each counted missing");
+    }
+
+    private static void AnInstanceIsAuthoritativeAndMismatchIsLogged()
+    {
+        var button = FakeNode.Control(origin: new(700, 300), size: new(200, 80));
+        button.IdentityPath = "Actual";
+        var finder = new Finder { ["Wrong"] = [FakeNode.Control(origin: new(900, 300), size: new(200, 80))] };
+        finder.Instances[ulong.MaxValue] = button;
+        var logs = new List<string>();
+        var placement = new PointerTargetPlacement(finder, logs.Add);
+        var target = Target("Wrong", 50, 20) with { Instance = ulong.MaxValue.ToString() };
+        Assert(placement.Place(new(450, 320), target, null, null) == new Vector2(750, 320), "instance wins over mismatched path");
+        placement.Place(new(450, 320), target, null, null);
+        Assert(logs.Count == 1 && logs[0].StartsWith("[pointer-target] instance-mismatch", StringComparison.Ordinal),
+            "mismatch logged once, with repeated messages rate-limited");
+        Assert(finder.PathCalls == 0 && placement.Stats.Moved == 2, "instance target never searches paths");
+        Assert(placement.Place(new(450, 320), new(null, null, new(50, 20), ulong.MaxValue.ToString()), null, null)
+               == new Vector2(750, 320), "an instance-only target is placed");
+        Assert(logs.Count == 1, "no mismatch when no scene/path was sent");
+    }
+
+    private static void InvalidInstancesNeverFallBackToAPath()
+    {
+        var freed = FakeNode.Control(origin: new(700, 300), size: new(200, 80));
+        freed.Alive = false;
+        var finder = new Finder { ["Button"] = [FakeNode.Control(origin: new(900, 300), size: new(200, 80))] };
+        finder.Instances[42] = freed;
+        var placement = new PointerTargetPlacement(finder);
+        foreach (var instance in new[] { "42", "43", "bad", "", "-1", "18446744073709551616" })
+        {
+            var target = Target("Button", 50, 20) with { Instance = instance };
+            Assert(placement.Place(new(450, 320), target, null, null) == new Vector2(450, 320),
+                $"unusable instance {instance} keeps the coordinate");
+        }
+        Assert(placement.Stats.Missing == 6 && finder.PathCalls == 0, "every invalid instance is Missing without path fallback");
+        Assert(placement.Place(new(450, 320), Target("Button", 50, 20), null, null) == new Vector2(950, 320),
+            "absent instance preserves the scene/path result");
+    }
+
+    private static void InputTargetInstanceRoundTrips()
+    {
+        foreach (var instance in new string?[] { null, "18446744073709551615" })
+        {
+            var request = Hover(450, 320) with { TargetScene = Scene, TargetPath = "Button", LocalX = 50, LocalY = 20,
+                TargetInstance = instance };
+            var json = BrowserJson.Serialize(request);
+            var restored = System.Text.Json.JsonSerializer.Deserialize<BrowserInputRequestEnvelope>(json,
+                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+            Assert(restored == request, "input envelope round-trips with and without instance");
+            Assert(json.Contains("targetInstance", StringComparison.Ordinal) == (instance is not null), "absent instance omitted");
+            Assert(PointerTargetRef.From(restored)?.Instance == instance, "placement receives instance");
+        }
+        Assert(PointerTargetRef.From(Hover(1, 2) with { TargetInstance = "42", LocalX = 1, LocalY = 2 }) is { Instance: "42" },
+            "instance-only input forms a target");
+    }
+
+    private static void IdentityFollowsTheCapturesInstanceRoot()
+    {
+        const string outer = "res://scenes/combat/creature_state_display.tscn";
+        const string inner = "res://scenes/combat/health_bar.tscn";
+        // An editable child added under a nested instance is owned, and named, by the outer scene.
+        Assert(GodotPointerTargetFinder.IdentityMatches(null, outer, "HealthBar/HpBarHitbox", outer, "HealthBar/HpBarHitbox"),
+            "an owned node under a nested instance matches its owner's scene/path");
+        Assert(!GodotPointerTargetFinder.IdentityMatches(null, outer, "HealthBar/HpBarHitbox", inner, "HpBarHitbox"),
+            "the nearest scene-file ancestor is not the identity");
+        Assert(GodotPointerTargetFinder.IdentityMatches(inner, outer, "HealthBar", inner, "."),
+            "an instance root is named by its own scene");
+        Assert(!GodotPointerTargetFinder.IdentityMatches(inner, outer, "HealthBar", outer, "HealthBar"),
+            "an instance root is not named by its owner");
+        Assert(!GodotPointerTargetFinder.IdentityMatches(null, null, null, outer, "Hitbox"), "no owner and no scene file never matches");
     }
 
     private static void APressBindsUntilEveryButtonIsUp()
@@ -224,6 +298,8 @@ internal static class PointerTargetPlacementTests
             set => _xf.Origin = value;
         }
 
+        public string IdentityPath { get; set; } = "Button";
+        public bool MatchesIdentity(string scene, string path) => scene == Scene && path == IdentityPath;
         public bool IsAlive => Alive;
         public bool IsVisibleCanvasItem => Visible;
         public Transform2D CanvasTransform => _xf;
@@ -234,9 +310,13 @@ internal static class PointerTargetPlacementTests
     {
         public Dictionary<string, IPointerTargetNode[]> FreshAnswers { get; } = new();
         public int FreshCalls { get; private set; }
+        public int PathCalls { get; private set; }
+        public Dictionary<ulong, IPointerTargetNode> Instances { get; } = new();
+        public IPointerTargetNode? FindInstance(ulong id) => Instances.GetValueOrDefault(id);
 
         public IReadOnlyList<IPointerTargetNode> Find(string scene, string path, bool fresh)
         {
+            PathCalls++;
             if (scene != Scene) return [];
             if (fresh)
             {

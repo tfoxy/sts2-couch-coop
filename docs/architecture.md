@@ -67,6 +67,16 @@ The browser translates touch gestures into the same classes of input expected by
 - Long presses expose card details that would normally be reached through mouse input.
 - Layout and input coordinates are adjusted together when controls are enlarged or spread across a wider display.
 
+For the new renderer, streaming seats grant the browser each item's instance ID and effective mouse filter.
+The render-stream client uses those host filters and Godot tree order to pick pointer targets. CouchCoop's
+role groups identify widgets for touch adaptations; they do not override the host's filters.
+
+Pointer messages can carry `targetInstance` as a decimal string alongside the target's scene, path and local
+coordinates. The seat resolves the instance first and uses it even if the scene or path has changed. An invalid
+or stale instance preserves the supplied coordinate without trying scene and path. Messages without an instance
+retain scene-and-path resolution. A resolved target only moves the input coordinate when that coordinate would
+miss it; the game handles the resulting input normally.
+
 ## Validation
 
 The project uses several layers of validation because a browser mirror can be functionally correct while still looking or feeling wrong:

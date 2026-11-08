@@ -6,19 +6,8 @@ using Godot;
 namespace CouchCoop.Mod.Protocol;
 
 /// <summary>
-/// <see cref="IPointerTargetFinder"/> over the live scene tree (game thread only). A target identity is the render
-/// stream's <c>item_meta</c> pair: <c>scene</c> is the <c>scene_file_path</c> of the node's instance root and
-/// <c>path</c> the node's path under that root (<c>.</c> is the root itself). So every node whose
-/// <c>SceneFilePath</c> is <c>scene</c> is an instance root, and <c>GetNodeOrNull(path)</c> under each is a
-/// candidate.
-///
-/// <para><b>Cost.</b> On the streaming seat (where viewers' targets come from) the instance roots are indexed as
-/// nodes enter the tree (<see cref="PointerTargetInstanceIndex"/>), so nothing walks. Elsewhere finding instance roots
-/// is one walk of the tree (3449 nodes took 4.3 ms in a combat), so the roots of a scene are cached by instance
-/// id. A cached answer is used while all of it is still alive; a <c>fresh</c> request (the placement asks for one
-/// before it would MOVE an event or call a target missing or ambiguous, never for an event that simply lands) walks
-/// again unless this frame already did, so a newly created instance is never missed on the decisions that matter.
-/// Nothing runs unless a viewer's message names a target.</para>
+/// Resolves instance ids directly. Legacy scene/path targets use an on-demand tree walk, with scene roots cached
+/// until freed or a fresh answer is requested. No tree work runs for an instance target.
 /// </summary>
 internal sealed class GodotPointerTargetFinder : IPointerTargetFinder
 {
@@ -35,26 +24,16 @@ internal sealed class GodotPointerTargetFinder : IPointerTargetFinder
             return [];
         }
 
-        IReadOnlyList<ulong> ids;
-        if (PointerTargetInstanceIndex.IsTracking)
+        var frame = Engine.GetProcessFrames();
+        if (!_roots.TryGetValue(scene, out var roots) || (fresh && roots.Frame != frame) || !AllAlive(roots.Ids))
         {
-            // The streaming seat indexes instance roots as they enter the tree: always complete, never a walk.
-            ids = PointerTargetInstanceIndex.Instances(scene);
-        }
-        else
-        {
-            var frame = Engine.GetProcessFrames();
-            if (!_roots.TryGetValue(scene, out var roots) || (fresh && roots.Frame != frame) || !AllAlive(roots.Ids))
-            {
-                roots = new Roots(Walk(root, scene), frame);
-                _roots[scene] = roots;
-            }
-
-            ids = roots.Ids;
+            roots = new Roots(Walk(root, scene), frame);
+            _roots[scene] = roots;
         }
 
+        var ids = roots.Ids;
         var nodePath = new NodePath(path);
-        var found = new List<IPointerTargetNode>(ids.Count);
+        var found = new List<IPointerTargetNode>(ids.Length);
         foreach (var id in ids)
         {
             if (GodotObject.InstanceFromId(id) is Node instance && instance.GetNodeOrNull(nodePath) is { } node)
@@ -65,6 +44,10 @@ internal sealed class GodotPointerTargetFinder : IPointerTargetFinder
 
         return found;
     }
+
+    public IPointerTargetNode? FindInstance(ulong instanceId)
+        => GodotObject.InstanceFromId(instanceId) is CanvasItem item && item.IsInsideTree()
+            ? new LiveNode(instanceId) : null;
 
     private static bool AllAlive(ulong[] ids)
     {
@@ -119,5 +102,19 @@ internal sealed class GodotPointerTargetFinder : IPointerTargetFinder
         public Transform2D CanvasTransform => Node is CanvasItem item ? item.GetGlobalTransformWithCanvas() : Transform2D.Identity;
 
         public Vector2? ControlSize => Node is Control control ? control.Size : null;
+
+        public bool MatchesIdentity(string scene, string path)
+            => Node is { } node && IdentityMatches(node.SceneFilePath, node.Owner?.SceneFilePath,
+                node.Owner?.GetPathTo(node).ToString(), scene, path);
     }
+
+    /// <summary>
+    /// Whether scene/path is the capture's item_meta identity of a node: its instance root is the node itself when it
+    /// has a scene file, else its owner. The owner, not the nearest scene-file ancestor: an editable child added under
+    /// a nested instance is owned by the outer scene and named by it.
+    /// </summary>
+    internal static bool IdentityMatches(string? selfScene, string? ownerScene, string? pathFromOwner, string scene, string path)
+        => !string.IsNullOrEmpty(selfScene)
+            ? selfScene == scene && path == "."
+            : !string.IsNullOrEmpty(ownerScene) && ownerScene == scene && pathFromOwner == path;
 }
