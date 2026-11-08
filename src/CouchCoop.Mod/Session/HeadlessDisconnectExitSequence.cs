@@ -23,7 +23,8 @@ namespace CouchCoop.Mod.Session;
 ///   socket close, which is the same outcome minus the copy.
 ///   </description></item>
 ///   <item><description>
-///   QUIT CLEANLY. A deferred <c>SceneTree.Quit()</c> lets Godot unwind on its own main loop (mod shutdown, FMOD,
+///   QUIT CLEANLY. Capture disarms first (see <see cref="RenderStreamCaptureQuit"/>), then a deferred
+///   <c>SceneTree.Quit()</c> lets Godot unwind on its own main loop (mod shutdown, FMOD,
 ///   the user profile) instead of being shot in the head. If it lands, the process is gone long before the
 ///   backstop fires.
 ///   </description></item>
@@ -75,7 +76,7 @@ internal sealed class HeadlessDisconnectExitSequence
     private bool _refined;
 
     /// <param name="notifyViewers">Sends the last-gasp envelope + closes viewer sockets (reason, cancellation).</param>
-    /// <param name="quit">Requests the clean game shutdown (production: a deferred <c>SceneTree.Quit()</c>).</param>
+    /// <param name="quit">Requests the clean game shutdown (production: disarm capture, then defer quit).</param>
     /// <param name="forceExit">The untrappable exit used when the clean quit doesn't land in time.</param>
     /// <param name="schedule">Runs an action after a delay off the calling thread (production: a background thread).</param>
     /// <param name="refineReason">

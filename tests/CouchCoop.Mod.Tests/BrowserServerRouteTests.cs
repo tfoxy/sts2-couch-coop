@@ -563,6 +563,12 @@ if (args is ["host-ui", ..])
     return;
 }
 
+if (args is ["capture-quit", ..])
+{
+    RenderStreamCaptureQuitTests.Run();
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- decor-freeze` runs the decorative-freeze policy ALONE: which
 // mechanism each frozen animator type gets, and the ONE type that must never be in the table at all (the star
 // counter — freezing it strands the browser's star count at its pre-gain value). Pure metadata reflection over the
@@ -897,6 +903,7 @@ HeadlessParticleFinishNudgeTests.Run();
 // Headless clean-exit on a permanent host disconnect — Harmony target resolution (incl. the NErrorPopup.Create
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
+RenderStreamCaptureQuitTests.Run();
 ConnectionRegistryTests.Run();
 ConnectionDeviceLabelTests.Run();
 ClientVitalsReceiptTests.Run();

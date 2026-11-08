@@ -109,8 +109,8 @@ internal static class HeadlessDisconnectExitPatch
     }
 
     // Production wiring for the sequence: the last gasp goes out over THIS instance's own browser server (the
-    // viewers attached to the headless), the clean quit is a deferred SceneTree.Quit(), and the backstop is a
-    // SIGKILL. Kept here rather than in the sequence so the sequence stays game-free and testable.
+    // viewers attached to the headless), the clean quit disarms capture before SceneTree.Quit(), and the backstop
+    // is a SIGKILL. Kept here rather than in the sequence so the sequence stays game-free and testable.
     // The sequence's `reason` is the human/log rendering of NetErrorInfo; what goes on the WIRE is the fixed
     // machine-readable code both clients branch on (the viewer's copy is client-side, and a raw NetError name
     // would be meaningless to a player anyway).
@@ -120,7 +120,7 @@ internal static class HeadlessDisconnectExitPatch
             await HeadlessConnectionReporter.FlushAsync(cancellationToken).ConfigureAwait(false);
             await CouchCoopMod.CloseBrowserConnectionsAsync(BrowserServerReloadReasons.HeadlessHostDisconnected, cancellationToken).ConfigureAwait(false);
         },
-        quit: QuitGameDeferred,
+        quit: RenderStreamCaptureQuit.RequestQuitDeferred,
         // A reason that arrives after the shutdown has started still has somewhere to go: one terminal status to
         // the HOST, which is the only surface that outlives this process. Without it the refinement would be a
         // log line in a file nobody reads, in a seat that is about to disappear.
@@ -155,20 +155,6 @@ internal static class HeadlessDisconnectExitPatch
                     $"reporting the refined disconnect reason failed: {exception.GetType().Name}: {exception.Message}");
             }
         });
-    }
-
-    // Ask Godot to shut down on ITS OWN main loop. CallDeferred (not a direct Quit()) because the disconnect can
-    // be reported from the net update path mid-frame and, in the failure case we care about, from a state where
-    // the game is already unwinding a run — queuing the quit lets the current frame finish first. Godot's message
-    // queue is thread-safe, so this is also correct if a future transport reports the drop off-thread.
-    private static void QuitGameDeferred()
-    {
-        if (Godot.Engine.GetMainLoop() is not Godot.SceneTree tree)
-        {
-            throw new InvalidOperationException("No SceneTree main loop to quit.");
-        }
-
-        tree.CallDeferred(Godot.SceneTree.MethodName.Quit, 0);
     }
 
     private static void PatchOne(
