@@ -217,12 +217,13 @@ GUARD='"$CLAUDE_PROJECT_DIR"/scripts/claude-guard-bash.sh'
 mkdir -p "$REPO/.claude"
 [ -s "$SETTINGS" ] || echo '{}' > "$SETTINGS"   # -s: see the settings.local.json note above
 
-# Drop any previous registration of our guard, then add exactly one. Other hooks are preserved.
+# Drop previous repo registrations and the orchestration guard, which belongs to dispatched workers.
+# Interactive Claude uses only the repo guard; unrelated hooks are preserved.
 tmp="$(mktemp)"
 jq --arg guard "$GUARD" '
   .hooks //= {} |
   .hooks.PreToolUse //= [] |
-  .hooks.PreToolUse |= (map(.hooks |= map(select(.command != $guard))) | map(select((.hooks | length) > 0))) |
+  .hooks.PreToolUse |= (map(.hooks |= map(select(.command != $guard and ((.command // "") | contains("agent_guard.py") | not)))) | map(select((.hooks | length) > 0))) |
   .hooks.PreToolUse += [{matcher: "Bash", hooks: [{type: "command", command: $guard, timeout: 10}]}]
 ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
 echo "    .claude/settings.json  PreToolUse(Bash) -> scripts/claude-guard-bash.sh"

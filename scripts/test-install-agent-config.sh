@@ -113,8 +113,16 @@ printf -- '---\nname: kept-real-dir\ndescription: stub\n---\n' > "$WT/.claude/sk
 
 # Pre-existing settings that must survive the jq merges.
 printf '%s' '{"permissions":{"allow":["Bash(echo:*)"]}}' > "$WT/.claude/settings.local.json"
-printf '%s' '{"hooks":{"PreToolUse":[{"matcher":"Write","hooks":[{"type":"command","command":"echo other"}]}]}}' \
-  > "$WT/.claude/settings.json"
+ORCHESTRATION_GUARD="python3 \"$TMP/orchestration/scripts/agent_guard.py\""
+jq -n --arg guard "$ORCHESTRATION_GUARD" '{hooks: {PreToolUse: [
+  {matcher: "Write", hooks: [{type: "command", command: "echo other"}]},
+  {matcher: "Bash", hooks: [{type: "command", command: $guard}, {type: "command", command: "echo shared"}]},
+  {matcher: "Bash", hooks: [{type: "command", command: $guard}]}
+]}}' > "$WT/.claude/settings.json"
+mkdir -p "$WT/.codex"
+jq -n --arg guard "$ORCHESTRATION_GUARD" '{hooks: {PreToolUse: [
+  {matcher: "^Bash$", hooks: [{type: "command", command: $guard}]}
+]}}' > "$WT/.codex/hooks.json"
 
 # NOTE: no /.mcp.json is seeded here on purpose — a fresh worktree genuinely has none, and the first
 # install has to be the one that links the main checkout's copy in.
@@ -193,6 +201,12 @@ eq "settings.json keeps exactly one guard hook" 1 \
   "$(jq '[.hooks.PreToolUse[].hooks[] | select(.command | test("claude-guard-bash"))] | length' "$WT/.claude/settings.json")"
 eq "settings.json preserves a foreign hook" "echo other" \
   "$(jq -r '[.hooks.PreToolUse[].hooks[] | select(.command == "echo other")][0].command' "$WT/.claude/settings.json")"
+eq "settings.json removes orchestration guards" 0 \
+  "$(jq '[.hooks.PreToolUse[].hooks[] | select(.command | contains("agent_guard.py"))] | length' "$WT/.claude/settings.json")"
+eq "settings.json preserves hooks sharing the orchestration matcher" "echo shared" \
+  "$(jq -r '[.hooks.PreToolUse[].hooks[] | select(.command == "echo shared")][0].command' "$WT/.claude/settings.json")"
+eq "settings.json drops empty hook groups" 0 \
+  "$(jq '[.hooks.PreToolUse[] | select(.hooks | length == 0)] | length' "$WT/.claude/settings.json")"
 eq "settings.local.json autoMemoryDirectory" "$MEMORY" \
   "$(jq -r '.autoMemoryDirectory' "$WT/.claude/settings.local.json")"
 eq "settings.local.json preserves pre-existing keys" "Bash(echo:*)" \
@@ -387,6 +401,8 @@ ok "generator warns about unknown type"     grep -q 'unknown transport' "$GENERR
 
 echo "== codex hook =="
 HOOKS="$WT/.codex/hooks.json"
+eq "Codex keeps the absolute orchestration guard command" "$ORCHESTRATION_GUARD" \
+  "$(jq -r '[.hooks.PreToolUse[].hooks[] | select(.command | contains("agent_guard.py"))][0].command' "$HOOKS")"
 eq "hooks.json has exactly one guard entry" 1 \
   "$(jq '[.hooks.PreToolUse[].hooks[] | select(.command | test("claude-guard-bash"))] | length' "$HOOKS")"
 eq "hooks.json matcher" "^Bash$" \
