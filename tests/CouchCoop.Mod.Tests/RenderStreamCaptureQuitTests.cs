@@ -44,7 +44,7 @@ internal static class RenderStreamCaptureQuitTests
     {
         var fixture = new Fixture();
         fixture.Run();
-        Assert(fixture.Done == 0, "a scheduled disarm keeps the main loop alive");
+        Assert(fixture.Done == 0, "a scheduled disarm keeps completion pending before process exit");
         Assert(fixture.Capture.DisarmCalls == 1, "armed capture receives one disarm");
         Assert(fixture.Capture.Reason == "seat-quit" && fixture.Capture.LingerMs == 0,
             "seat shutdown disarms without lingering for the departed host");

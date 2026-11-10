@@ -268,6 +268,7 @@ if (args is ["host-guards", ..])
 // sequence used to die partway through — see the note above HeadlessAudioMuteTargetsTests — and now does not.)
 if (args is ["seats", ..])
 {
+    HeadlessProcessExitTests.Run();
     await HeadlessClientManagerTests.RunAsync();
     // Run presence for a browser disconnect and a seat launch: the typed read, its failure semantics, and that a
     // disconnect and a launch refusal cost no state snapshot. Beside the seat manager because it drives one.
@@ -904,6 +905,7 @@ HeadlessParticleFinishNudgeTests.Run();
 // Headless clean-exit on a permanent host disconnect — Harmony target resolution (incl. the NErrorPopup.Create
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
+HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
 HeadlessTermSignalTests.Run();
 ConnectionRegistryTests.Run();

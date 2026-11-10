@@ -11,10 +11,9 @@ internal interface IRenderStreamCapture
 }
 
 /// <summary>
-/// Disarms arming, armed or ended captures and waits for disarming captures to finish before the seat quits.
-/// Every exit path owned by the exit sequence disarms capture so its evidence is written before quitting.
-/// All effects run on the main thread; the fallback bounds the wait without blocking frame callbacks.
-/// HeadlessForceExit is the bounded fallback when the clean exit cannot complete.
+/// Disarms arming, armed or ended captures and waits for disarming captures to finish before the seat exits.
+/// The exit sequence awaits this disarm so capture evidence is written before the immediate process exit.
+/// Capture effects run on the main thread; the fallback bounds the wait without blocking frame callbacks.
 /// </summary>
 internal sealed class RenderStreamCaptureQuit
 {
@@ -91,20 +90,6 @@ internal sealed class RenderStreamCaptureQuit
             }
         }).CallDeferred();
         return completion.Task;
-    }
-
-    internal static void QuitDeferred()
-    {
-        Callable.From(() =>
-        {
-            if (Engine.GetMainLoop() is not SceneTree tree)
-            {
-                HeadlessLog.Write("No SceneTree main loop to quit; leaving the force-exit backstop armed.");
-                return;
-            }
-
-            tree.Quit(0);
-        }).CallDeferred();
     }
 
     private sealed class GodotRenderStreamCapture : IRenderStreamCapture

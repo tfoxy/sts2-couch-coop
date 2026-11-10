@@ -13,7 +13,7 @@ namespace CouchCoop.Mod.Session;
 /// <para>
 /// Shared by the two paths that must guarantee a headless goes away: <see cref="HeadlessHostWatchdog"/> (the host
 /// process vanished) and <see cref="HeadlessDisconnectExitSequence"/> (the game connection is permanently gone and
-/// a clean <c>SceneTree.Quit()</c> did not land in time).
+/// the direct process exit did not land in time).
 /// </para>
 /// </summary>
 internal static class HeadlessForceExit

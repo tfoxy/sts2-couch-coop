@@ -110,8 +110,8 @@ internal static class HeadlessDisconnectExitPatch
     }
 
     // Production wiring for the sequence: the last gasp goes out over THIS instance's own browser server (the
-    // viewers attached to the headless), capture disarms beside the notify before SceneTree.Quit(), and the backstop
-    // is a SIGKILL. Kept here rather than in the sequence so the sequence stays game-free and testable.
+    // viewers attached to the headless), capture disarms beside the notify, then the seat leaves the process
+    // without SceneTree.Quit(). The backstop is a SIGKILL. Kept here so the sequence stays game-free and testable.
     // The sequence's `reason` is the human/log rendering of NetErrorInfo; what goes on the WIRE is the fixed
     // machine-readable code both clients branch on (the viewer's copy is client-side, and a raw NetError name
     // would be meaningless to a player anyway).
@@ -121,7 +121,7 @@ internal static class HeadlessDisconnectExitPatch
             await HeadlessConnectionReporter.FlushAsync(cancellationToken).ConfigureAwait(false);
             await CouchCoopMod.CloseBrowserConnectionsAsync(BrowserServerReloadReasons.HeadlessHostDisconnected, cancellationToken).ConfigureAwait(false);
         },
-        quit: RenderStreamCaptureQuit.QuitDeferred,
+        quit: HeadlessProcessExit.Now,
         disarm: RenderStreamCaptureQuit.DisarmDeferredAsync,
         // A reason that arrives after the shutdown has started still has somewhere to go: one terminal status to
         // the HOST, which is the only surface that outlives this process. Without it the refinement would be a
@@ -132,31 +132,28 @@ internal static class HeadlessDisconnectExitPatch
     /// Send the refined disconnect reason to the host as this seat's terminal status, best-effort and bounded.
     /// </summary>
     /// <remarks>
-    /// Fire-and-forget under the force-exit backstop's budget: the process is already quitting, so this is a
-    /// short window in which the host may or may not hear us, and it must not be able to hold the exit open. The
+    /// The exit sequence awaits this report under its notify bound if it starts before the quit step;
+    /// a later report is best-effort. The force-exit backstop stays armed throughout. The
     /// host treats a specific seat code as a refinement of the generic one it has already recorded (see
     /// <c>HeadlessClientManager.SetTerminalFailure</c>), so a late arrival still corrects the panel and a lost
     /// one leaves it exactly as it was.
     /// </remarks>
-    private static void ReportRefinedReason(string reason)
+    private static async Task ReportRefinedReason(string reason)
     {
-        _ = Task.Run(async () =>
+        try
         {
-            try
-            {
-                using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                await HeadlessConnectionReporter.ReportTerminalFailureAsync(
-                    reason,
-                    "The host refused this player's game after the connection had already been reported lost, "
-                    + "so this is the specific reason behind that generic drop.",
-                    cancel.Token).ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                HeadlessLog.Write(
-                    $"reporting the refined disconnect reason failed: {exception.GetType().Name}: {exception.Message}");
-            }
-        });
+            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await HeadlessConnectionReporter.ReportTerminalFailureAsync(
+                reason,
+                "The host refused this player's game after the connection had already been reported lost, "
+                + "so this is the specific reason behind that generic drop.",
+                cancel.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            HeadlessLog.Write(
+                $"reporting the refined disconnect reason failed: {exception.GetType().Name}: {exception.Message}");
+        }
     }
 
     private static void PatchOne(

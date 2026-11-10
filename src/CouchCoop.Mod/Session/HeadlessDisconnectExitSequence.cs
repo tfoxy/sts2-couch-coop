@@ -8,12 +8,10 @@ namespace CouchCoop.Mod.Session;
 /// <para>THE ORDER IS THE CONTRACT:</para>
 /// <list type="number">
 ///   <item><description>
-///   ARM THE BACKSTOP FIRST. Everything after this point can hang — the notify awaits sockets, and
-///   <c>SceneTree.Quit()</c> asks a game whose main loop may already be wedged behind the (now suppressed) network
-///   error modal, a native FMOD/ENet teardown, or a save flush. The force-exit timer is therefore armed BEFORE any
-///   of it, so a hang can only delay the exit by <see cref="ForceExitDelay"/>, never prevent it. This is the whole
-///   reason the sequence exists rather than a bare <c>Quit()</c> call: a headless nobody can see must not be able
-///   to survive its own shutdown.
+///   ARM THE BACKSTOP FIRST. Everything after this point can hang — capture disarm needs the main loop, notify
+///   awaits sockets, and exit logging can block. The force-exit timer is therefore armed BEFORE any of it, so a
+///   hang can only delay the exit by <see cref="ForceExitDelay"/>, never prevent it. A headless nobody can see
+///   must not be able to survive its own shutdown.
 ///   </description></item>
 ///   <item><description>
 ///   DISARM CAPTURE AND NOTIFY VIEWERS in parallel (best-effort, time-boxed). The browsers attached to THIS instance are about to lose their
@@ -23,10 +21,11 @@ namespace CouchCoop.Mod.Session;
 ///   socket close, which is the same outcome minus the copy.
 ///   </description></item>
 ///   <item><description>
-///   QUIT CLEANLY after both disarm and notify finish. Capture disarms first (see <see cref="RenderStreamCaptureQuit"/>), then a deferred
-///   <c>SceneTree.Quit()</c> lets Godot unwind on its own main loop (mod shutdown, FMOD,
-///   the user profile) instead of being shot in the head. If it lands, the process is gone long before the
-///   backstop fires.
+///   LEAVE THE PROCESS after both disarm and notify finish or reach their bounds. Capture disarms first
+///   (see <see cref="RenderStreamCaptureQuit"/>) to preserve its evidence. A refined-reason report already
+///   started is bounded from its own start, overlapping notify and disarm, then the seat exits immediately
+///   without <c>SceneTree.Quit()</c>, because the game's shutdown path faults on seats. The backstop remains
+///   armed through the exit.
 ///   </description></item>
 /// </list>
 ///
@@ -53,52 +52,56 @@ namespace CouchCoop.Mod.Session;
 internal sealed class HeadlessDisconnectExitSequence
 {
     /// <summary>
-    /// Notify/disarm in parallel (up to 5 s), quit and its crash handler (up to 1.5 s), plus 1 s margin.
-    /// It is a backstop: the healthy path exits before it elapses.
+    /// Covers the parallel notify/disarm bounds, the bounded refinement report and margin for process exit.
+    /// It remains a backstop: the healthy path exits before it elapses.
     /// </summary>
     public static readonly TimeSpan ForceExitDelay = TimeSpan.FromSeconds(7.5);
 
     public static readonly TimeSpan DisarmGuard = RenderStreamCaptureQuit.DisarmTimeout + TimeSpan.FromSeconds(0.5);
 
-    /// <summary>Ceiling on the best-effort last-gasp send, so a stuck socket can't eat the force-exit budget.</summary>
+    /// <summary>Ceiling on last-gasp and refined-reason sends, so a stuck socket can't eat the force-exit budget.</summary>
     public static readonly TimeSpan NotifyTimeout = TimeSpan.FromSeconds(1);
 
     private readonly Func<string, CancellationToken, Task> _notifyViewers;
     private readonly Func<Task> _disarm;
     private readonly TimeSpan _disarmGuard;
-    private readonly Action _quit;
+    private readonly Action<string> _quit;
     private readonly Action _forceExit;
     private readonly Action<TimeSpan, Action> _schedule;
     private readonly Action<string> _log;
-    private readonly Action<string>? _refineReason;
+    private readonly Func<string, Task>? _refineReason;
     private readonly TimeSpan _forceExitDelay;
     private readonly TimeSpan _notifyTimeout;
+    private readonly TimeProvider _timeProvider;
     private int _started;
     private readonly object _reasonGate = new();
     private string? _reason;
     private bool _refined;
+    private Task? _refinementReport;
 
     /// <param name="notifyViewers">Sends the last-gasp envelope + closes viewer sockets (reason, cancellation).</param>
-    /// <param name="quit">Requests the clean game shutdown (production: defer quit).</param>
-    /// <param name="forceExit">The untrappable exit used when the clean quit doesn't land in time.</param>
+    /// <param name="quit">Leaves the process with the current reason (production: immediate process exit).</param>
+    /// <param name="forceExit">The untrappable exit used when the process exit doesn't land in time.</param>
     /// <param name="schedule">Runs an action after a delay off the calling thread (production: a background thread).</param>
     /// <param name="refineReason">
     /// Called at most once, with a SPECIFIC reason that arrived after a generic one had already started the
     /// shutdown (see the class remarks). Production reports it upstream so the host can name the real cause;
-    /// null simply keeps the refinement in the log. Never allowed to throw into the caller — a diagnosis must
-    /// not be able to delay an exit.
+    /// null simply keeps the refinement in the log. A report started before the quit step is awaited under
+    /// the notify bound measured from the report's start; a later one is best-effort. Failures never prevent
+    /// the exit.
     /// </param>
     public HeadlessDisconnectExitSequence(
         Func<string, CancellationToken, Task> notifyViewers,
-        Action quit,
+        Action<string> quit,
         Action? forceExit = null,
         Action<TimeSpan, Action>? schedule = null,
         Action<string>? log = null,
         TimeSpan? forceExitDelay = null,
         TimeSpan? notifyTimeout = null,
-        Action<string>? refineReason = null,
+        Func<string, Task>? refineReason = null,
         Func<Task>? disarm = null,
-        TimeSpan? disarmGuard = null)
+        TimeSpan? disarmGuard = null,
+        TimeProvider? timeProvider = null)
     {
         _disarm = disarm ?? (() => Task.CompletedTask);
         _disarmGuard = disarmGuard ?? DisarmGuard;
@@ -112,6 +115,7 @@ internal sealed class HeadlessDisconnectExitSequence
         _log = log ?? HeadlessLog.Write;
         _forceExitDelay = forceExitDelay ?? ForceExitDelay;
         _notifyTimeout = notifyTimeout ?? NotifyTimeout;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>Whether the sequence has already been started (by any caller).</summary>
@@ -157,7 +161,7 @@ internal sealed class HeadlessDisconnectExitSequence
 
         // (2) Start capture teardown beside the bounded last gasp, then wait for both.
         var disarm = StartDisarm();
-        var guardedDisarm = disarm.WaitAsync(_disarmGuard);
+        var guardedDisarm = disarm.WaitAsync(_disarmGuard, _timeProvider);
         await NotifyViewersAsync(reason).ConfigureAwait(false);
         try
         {
@@ -172,14 +176,21 @@ internal sealed class HeadlessDisconnectExitSequence
             _log($"headless disconnect-exit disarm failed: {exception.GetType().Name}: {exception.Message}");
         }
 
-        // (3) Clean quit.
+        // (3) Wait for a report already started, then leave with the best reason available at this step.
+        Task? refinementReport;
+        lock (_reasonGate) refinementReport = _refinementReport;
+        if (refinementReport is not null)
+        {
+            await refinementReport.ConfigureAwait(false);
+        }
+
         try
         {
-            _quit();
+            _quit(Reason ?? reason);
         }
         catch (Exception exception)
         {
-            _log($"headless disconnect-exit clean quit failed: {exception.GetType().Name}: {exception.Message} — waiting for the force-exit backstop.");
+            _log($"headless disconnect-exit process exit failed: {exception.GetType().Name}: {exception.Message} — waiting for the force-exit backstop.");
         }
 
         return true;
@@ -197,6 +208,7 @@ internal sealed class HeadlessDisconnectExitSequence
     private bool TryRefineReason(string reason)
     {
         string previous;
+        TaskCompletionSource<Task> report;
         lock (_reasonGate)
         {
             if (_refined
@@ -209,19 +221,35 @@ internal sealed class HeadlessDisconnectExitSequence
             previous = _reason ?? "none";
             _reason = reason;
             _refined = true;
+            // Publish the bounded report with the reason, before calling the hook outside the lock.
+            report = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _refinementReport = ReportWithinNotifyTimeoutAsync(report.Task.Unwrap());
         }
 
         _log($"headless disconnect-exit reason refined: {previous} -> {reason}");
         try
         {
-            _refineReason?.Invoke(reason);
+            report.SetResult(_refineReason?.Invoke(reason) ?? Task.CompletedTask);
+        }
+        catch (Exception exception)
+        {
+            report.SetResult(Task.CompletedTask);
+            _log($"headless disconnect-exit could not report the refined reason: {exception.GetType().Name}: {exception.Message}");
+        }
+
+        return true;
+    }
+
+    private async Task ReportWithinNotifyTimeoutAsync(Task report)
+    {
+        try
+        {
+            await report.WaitAsync(_notifyTimeout, _timeProvider).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
             _log($"headless disconnect-exit could not report the refined reason: {exception.GetType().Name}: {exception.Message}");
         }
-
-        return true;
     }
 
     private Task StartDisarm()
@@ -239,11 +267,11 @@ internal sealed class HeadlessDisconnectExitSequence
 
     private async Task NotifyViewersAsync(string reason)
     {
-        using var cancel = new CancellationTokenSource(_notifyTimeout);
+        using var cancel = new CancellationTokenSource(_notifyTimeout, _timeProvider);
         try
         {
             // WaitAsync bounds a notify that ignores its token as well (the token alone is only a request).
-            await _notifyViewers(reason, cancel.Token).WaitAsync(_notifyTimeout).ConfigureAwait(false);
+            await _notifyViewers(reason, cancel.Token).WaitAsync(_notifyTimeout, _timeProvider).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -255,7 +283,7 @@ internal sealed class HeadlessDisconnectExitSequence
     {
         try
         {
-            Task.Run(() => _log("headless disconnect-exit: clean quit did not land — force-exiting."))
+            Task.Run(() => _log("headless disconnect-exit: process exit did not land — force-exiting."))
                 .Wait(TimeSpan.FromMilliseconds(200));
         }
         catch
@@ -267,7 +295,7 @@ internal sealed class HeadlessDisconnectExitSequence
     }
 
     // A background thread (not a Timer) so it matches HeadlessHostWatchdog's shape and, being IsBackground, never
-    // keeps the process alive on its own: if the clean quit lands, this thread simply dies with the process.
+    // keeps the process alive on its own: if the process exit lands, this thread simply dies with the process.
     private static void ScheduleOnBackgroundThread(TimeSpan delay, Action action)
     {
         var thread = new Thread(() =>
