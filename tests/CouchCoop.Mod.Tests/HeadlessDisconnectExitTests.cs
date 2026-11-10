@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CouchCoop.Mod.Patches;
 using CouchCoop.Mod.Session;
 using HarmonyLib;
@@ -19,6 +20,13 @@ internal static class HeadlessDisconnectExitTests
         PatchTargetsResolve();
         NetworkErrorPopupOverloadIsResolvedByParameterType();
         await ArmsTheForceExitBackstopBeforeNotifyAndQuit();
+        await DisarmStartsBeforeTheNotifyFinishes();
+        await QuitWaitsForTheDisarm();
+        await ADisarmThatNeverFinishesIsGuarded();
+        await TheDisarmGuardStartsAtTheSequenceStart();
+        await ADisarmThatThrowsStillQuits();
+        TheBackstopCoversTheWholeBoundedExit();
+        await ForceExitDoesNotWaitOnABlockedLog();
         await SecondTriggerIsIgnored();
         await NotifyFailureStillQuits();
         await NotifyThatNeverCompletesIsTimeBoxed();
@@ -29,6 +37,7 @@ internal static class HeadlessDisconnectExitTests
         await ASpecificReasonRefinesTheGenericOneThatStartedTheShutdown();
         await AGenericSecondReasonNeverDisplacesASpecificOne();
         await RefinementHappensAtMostOnceAndNeverThrows();
+        Console.WriteLine("HeadlessDisconnectExitTests: 20 passed.");
     }
 
     // The seat learns its refusal as a rendered NetErrorInfo — free text — and the host panel resolves its copy
@@ -84,12 +93,14 @@ internal static class HeadlessDisconnectExitTests
     private static async Task ASpecificReasonRefinesTheGenericOneThatStartedTheShutdown()
     {
         var refined = new List<string>();
+        var disarms = 0;
         var notifies = 0;
         var quits = 0;
         var arms = 0;
         var sequence = new HeadlessDisconnectExitSequence(
             notifyViewers: (_, _) => { notifies++; return Task.CompletedTask; },
             quit: () => quits++,
+            disarm: () => { disarms++; return Task.CompletedTask; },
             forceExit: () => { },
             schedule: (_, _) => arms++,
             log: _ => { },
@@ -102,7 +113,7 @@ internal static class HeadlessDisconnectExitTests
             "…but it becomes the recorded reason");
         Assert(refined.Count == 1 && refined[0] == HeadlessDisconnectReason.RunInProgressCode,
             "…and is handed to the hook that reports it upstream");
-        Assert(notifies == 1 && quits == 1 && arms == 1,
+        Assert(disarms == 1 && notifies == 1 && quits == 1 && arms == 1,
             $"refinement changes nothing about the shutdown itself (notify={notifies} quit={quits} arm={arms})");
     }
 
@@ -201,6 +212,7 @@ internal static class HeadlessDisconnectExitTests
         var sequence = new HeadlessDisconnectExitSequence(
             notifyViewers: (reason, _) => { trace.Add($"notify:{reason}"); return Task.CompletedTask; },
             quit: () => trace.Add("quit"),
+            disarm: () => { trace.Add("disarm"); return Task.CompletedTask; },
             forceExit: () => trace.Add("force-exit"),
             schedule: (delay, _) => trace.Add($"arm:{delay.TotalSeconds}"),
             log: _ => { });
@@ -209,28 +221,152 @@ internal static class HeadlessDisconnectExitTests
 
         Assert(started, "the first trigger starts the sequence");
         Assert(sequence.Started, "the sequence reports itself started");
-        Assert(string.Join(",", trace) == $"arm:{HeadlessDisconnectExitSequence.ForceExitDelay.TotalSeconds},notify:DisconnectionReason UnknownNetworkError False,quit",
-            $"order is arm-backstop → notify viewers → clean quit (got: {string.Join(",", trace)})");
+        Assert(string.Join(",", trace) == $"arm:{HeadlessDisconnectExitSequence.ForceExitDelay.TotalSeconds},disarm,notify:DisconnectionReason UnknownNetworkError False,quit",
+            $"order is arm-backstop → disarm → notify viewers → clean quit (got: {string.Join(",", trace)})");
         Assert(!trace.Contains("force-exit"), "the backstop is only armed, never fired inline");
+    }
+
+    private static async Task DisarmStartsBeforeTheNotifyFinishes()
+    {
+        var notify = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trace = new List<string>();
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => { trace.Add("notify"); return notify.Task; },
+            disarm: () => { trace.Add("disarm"); return Task.CompletedTask; },
+            quit: () => trace.Add("quit"),
+            schedule: (_, _) => { }, log: _ => { });
+
+        var run = sequence.StartAsync("host-gone");
+        Assert(string.Join(",", trace) == "disarm,notify", "disarm starts while the notify is still pending");
+        Assert(!run.IsCompleted, "quit waits for the pending notify");
+        notify.SetResult();
+        await run;
+        Assert(trace[^1] == "quit", "quit follows the notify");
+    }
+
+    private static async Task QuitWaitsForTheDisarm()
+    {
+        var disarm = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var quit = false;
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => Task.CompletedTask,
+            disarm: () => disarm.Task,
+            quit: () => quit = true,
+            schedule: (_, _) => { }, log: _ => { });
+
+        var run = sequence.StartAsync("host-gone");
+        Assert(!quit && !run.IsCompleted, "a completed notify does not quit before disarm");
+        disarm.SetResult();
+        await run;
+        Assert(quit, "disarm completion allows quit");
+    }
+
+    private static async Task ADisarmThatNeverFinishesIsGuarded()
+    {
+        var logs = new List<string>();
+        var quit = false;
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => Task.CompletedTask,
+            disarm: () => new TaskCompletionSource().Task,
+            disarmGuard: TimeSpan.FromMilliseconds(100),
+            quit: () => quit = true,
+            schedule: (_, _) => { }, log: logs.Add);
+
+        await sequence.StartAsync("host-gone").WaitAsync(TimeSpan.FromSeconds(1));
+        Assert(quit, "a missing disarm callback is bounded");
+        Assert(logs.Any(line => line.Contains("capture disarm did not finish within")), "the guard timeout is logged");
+    }
+
+    private static async Task TheDisarmGuardStartsAtTheSequenceStart()
+    {
+        var logs = new List<string>();
+        var clock = Stopwatch.StartNew();
+        TimeSpan? quitAfter = null;
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => new TaskCompletionSource().Task,
+            disarm: () => new TaskCompletionSource().Task,
+            notifyTimeout: TimeSpan.FromMilliseconds(300),
+            disarmGuard: TimeSpan.FromMilliseconds(500),
+            quit: () => quitAfter = clock.Elapsed,
+            schedule: (_, _) => { }, log: logs.Add);
+
+        await sequence.StartAsync("host-gone").WaitAsync(TimeSpan.FromSeconds(2));
+        Assert(quitAfter is not null, "pending notify and disarm still allow quit");
+        Assert(logs.Any(line => line.Contains("capture disarm did not finish within")), "the disarm guard timeout is logged");
+        Assert(quitAfter < TimeSpan.FromMilliseconds(700),
+            $"the guard starts beside notify, so quit follows the larger timeout, not their sum (took {quitAfter!.Value.TotalMilliseconds:0}ms)");
+        Console.WriteLine($"HeadlessDisconnectExitTests guard start: quit after {quitAfter!.Value.TotalMilliseconds:0}ms.");
+    }
+
+    private static async Task ADisarmThatThrowsStillQuits()
+    {
+        foreach (var asynchronous in new[] { false, true })
+        {
+            var quit = false;
+            var logs = new List<string>();
+            var sequence = new HeadlessDisconnectExitSequence(
+                notifyViewers: (_, _) => Task.CompletedTask,
+                disarm: () => asynchronous ? Task.FromException(new IOException("disarm failed")) : throw new IOException("disarm failed"),
+                quit: () => quit = true,
+                schedule: (_, _) => { }, log: logs.Add);
+
+            await sequence.StartAsync("host-gone");
+            Assert(quit && logs.Any(line => line.Contains("disarm failed:")), "a failed disarm logs and still quits");
+        }
+    }
+
+    private static void TheBackstopCoversTheWholeBoundedExit()
+    {
+        Assert(HeadlessDisconnectExitSequence.DisarmGuard == TimeSpan.FromSeconds(5), "deferred disarm guard is five seconds");
+        Assert(HeadlessDisconnectExitSequence.ForceExitDelay == TimeSpan.FromSeconds(7.5), "seat backstop is 7.5 seconds");
+        Assert(HeadlessDisconnectExitSequence.ForceExitDelay >= HeadlessDisconnectExitSequence.DisarmGuard + TimeSpan.FromSeconds(1.5),
+            "backstop covers disarm guard and quit-time crash handler");
+        Assert(HeadlessDisconnectExitSequence.ForceExitDelay > HeadlessDisconnectExitSequence.NotifyTimeout,
+            "notify cannot consume the backstop");
+    }
+
+    private static async Task ForceExitDoesNotWaitOnABlockedLog()
+    {
+        using var unblockLog = new ManualResetEventSlim();
+        var forced = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action? backstop = null;
+        var sequence = new HeadlessDisconnectExitSequence(
+            notifyViewers: (_, _) => Task.CompletedTask,
+            quit: () => { }, forceExit: () => forced.TrySetResult(),
+            schedule: (_, callback) => backstop = callback,
+            log: line => { if (line.Contains("force-exiting")) unblockLog.Wait(); });
+        await sequence.StartAsync("host-gone");
+        var run = Task.Run(backstop!);
+        try
+        {
+            await forced.Task.WaitAsync(TimeSpan.FromMilliseconds(500));
+            await run;
+        }
+        finally
+        {
+            unblockLog.Set();
+        }
     }
 
     // The game can report the same drop through more than one path (transport event, then a handler's own
     // Disconnect call). A re-entry must not re-send the last gasp or arm a second SIGKILL timer.
     private static async Task SecondTriggerIsIgnored()
     {
+        var disarms = 0;
         var notifies = 0;
         var quits = 0;
         var arms = 0;
         var sequence = new HeadlessDisconnectExitSequence(
             notifyViewers: (_, _) => { notifies++; return Task.CompletedTask; },
             quit: () => quits++,
+            disarm: () => { disarms++; return Task.CompletedTask; },
             forceExit: () => { },
             schedule: (_, _) => arms++,
             log: _ => { });
 
         Assert(await sequence.StartAsync("first"), "first trigger runs");
         Assert(!await sequence.StartAsync("second"), "second trigger is refused");
-        Assert(notifies == 1 && quits == 1 && arms == 1,
+        Assert(disarms == 1 && notifies == 1 && quits == 1 && arms == 1,
             $"each effect happened exactly once (notify={notifies} quit={quits} arm={arms})");
     }
 

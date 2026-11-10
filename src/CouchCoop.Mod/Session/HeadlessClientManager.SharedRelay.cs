@@ -15,8 +15,10 @@ public sealed partial class HeadlessClientManager
     internal HeadlessClientManager(
         Func<int, IHeadlessProcess?> launcher,
         Func<int, CancellationToken, Task<bool>>? readinessProbe,
-        bool sharedRelay)
-        : this(launcher, readinessProbe)
+        bool sharedRelay,
+        TimeSpan? seatShutdownGrace = null,
+        bool registerProcessExit = true)
+        : this(launcher, readinessProbe, seatShutdownGrace: seatShutdownGrace, registerProcessExit: registerProcessExit)
     {
         _supportsSharedRelay = sharedRelay;
     }

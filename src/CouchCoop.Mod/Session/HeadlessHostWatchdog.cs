@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CouchCoop.Mod.Patches;
 using System.Globalization;
 using System.Runtime.InteropServices;
 
@@ -10,7 +11,7 @@ namespace CouchCoop.Mod.Session;
 /// those paths runs HOST code — so a host CRASH (a segfault bypasses Dispose) leaves the headless orphaned:
 /// reparented to init/systemd, invisibly running with no display, with the user unaware a game instance is
 /// still alive. The host stamps its own PID into <c>COUCHCOOP_HOST_PID</c> when it launches a headless;
-/// this watchdog polls that PID and force-terminates THIS process the instant the host is gone.
+/// this watchdog polls that PID and starts the seat's bounded exit when the host is gone; SIGKILL is the fallback.
 /// <para>
 /// No-op when the env var is absent (e.g. a manually launched headless for testing) or on a platform with
 /// neither probe below. The poll is wrapper-agnostic (it watches the host PID directly, not our immediate
@@ -32,6 +33,7 @@ namespace CouchCoop.Mod.Session;
 internal static class HeadlessHostWatchdog
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan HardKillDelay = HeadlessDisconnectExitSequence.ForceExitDelay + TimeSpan.FromSeconds(2);
     private static int _started;
 
     /// <summary>"No such process" — the ONLY <c>kill</c> error that means the pid is dead.</summary>
@@ -90,14 +92,45 @@ internal static class HeadlessHostWatchdog
                 continue;
             }
 
-            // stderr and godot.log: the per-slot file keeps "the instance just vanished" diagnosable after the
-            // process and launcher-side stdio capture are gone (see HeadlessLog).
-            HeadlessLog.Write(
-                $"headless host-watchdog: host pid={hostPid} is gone — terminating orphaned headless.");
-            // SIGKILL ourselves: the game traps SIGTERM, but SIGKILL is untrappable so the orphan can't linger.
-            HeadlessForceExit.Now();
+            OnHostGone(hostPid, HeadlessDisconnectExitPatch.RequestExit,
+                ScheduleOnBackgroundThread, HeadlessForceExit.Now, HeadlessLog.Write);
             return;
         }
+    }
+
+    internal static void OnHostGone(int hostPid, Func<string, bool> requestExit,
+        Action<TimeSpan, Action> schedule, Action forceExit, Action<string> log)
+    {
+        log($"headless host-watchdog: host pid={hostPid} is gone — starting the seat's exit sequence.");
+        bool started;
+        try { started = requestExit("host-process-gone"); }
+        catch { started = false; }
+        if (!started)
+        {
+            log("headless host-watchdog: no exit sequence to run — terminating now.");
+            forceExit();
+            return;
+        }
+
+        schedule(HardKillDelay, () =>
+        {
+            log("headless host-watchdog: exit sequence did not end the process — terminating.");
+            forceExit();
+        });
+    }
+
+    private static void ScheduleOnBackgroundThread(TimeSpan delay, Action action)
+    {
+        var thread = new Thread(() =>
+        {
+            Thread.Sleep(delay);
+            action();
+        })
+        {
+            IsBackground = true,
+            Name = "couchcoop-host-watchdog-exit",
+        };
+        thread.Start();
     }
 
     // LINUX ONLY, and deliberately left exactly as it shipped.

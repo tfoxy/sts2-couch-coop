@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Contracts;
@@ -925,11 +926,13 @@ public sealed partial class HeadlessClientManager
         foreach (var id in clients) ApplyToAttempt(id, owned, registry => registry.Fail(id, issue.Code, issue.Summary, issue.Action, issue.Detail));
         var started = Stopwatch.GetTimestamp();
         HeadlessConnectionControl.Shared.RequestShutdown(owned.Slot, owned.Generation);
+        try { owned.Process!.RequestGracefulStop(); }
+        catch { /* The control request and bounded hard-kill fallback still cover a failed signal. */ }
         var forced = false;
         Exception? killFailure = null;
         try
         {
-            while (IsCurrent(owned) && !owned.Process!.HasExited && Stopwatch.GetElapsedTime(started) < TimeSpan.FromSeconds(5))
+            while (IsCurrent(owned) && !owned.Process!.HasExited && Stopwatch.GetElapsedTime(started) < SeatShutdownGrace)
                 await Task.Delay(100).ConfigureAwait(false);
             if (IsCurrent(owned) && !owned.Process!.HasExited)
             {
@@ -955,7 +958,7 @@ public sealed partial class HeadlessClientManager
             {
                 ApplyToAttempt(id, owned, registry =>
                 {
-                    registry.RecordDiagnostic(id, "cleanup", forced ? "Forced exit after the five-second graceful shutdown deadline." : "Client exited before the forced shutdown deadline.");
+                    registry.RecordDiagnostic(id, "cleanup", forced ? $"Forced exit after the {SeatShutdownGrace.TotalSeconds.ToString(CultureInfo.InvariantCulture)}-second graceful shutdown deadline." : "Client exited before the forced shutdown deadline.");
                     foreach (var log in logs) registry.AttachLogExcerpt(id, log.Source, log.Text, log.Status);
                     if (killFailure is not null) registry.RecordDiagnostic(id, "cleanupKillFailed", killFailure.ToString());
                 });

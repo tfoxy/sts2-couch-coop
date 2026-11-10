@@ -326,7 +326,7 @@ internal static class JoinFactsTests
             },
             readinessProbe: (_, _) => Task.FromResult(true),
             maxSeatsProbe: probes.ProbeCap,
-            runInProgressProbe: probes.ProbeRun);
+            runInProgressProbe: probes.ProbeRun, registerProcessExit: false);
 
     private static async Task TheSeatManagerIsHandedTheFactsItWouldHaveProbed()
     {
@@ -368,7 +368,7 @@ internal static class JoinFactsTests
     {
         using var manager = new HeadlessClientManager(
             launcher: slot => new FakeProcess(slot),
-            readinessProbe: (_, _) => Task.FromResult(true));
+            readinessProbe: (_, _) => Task.FromResult(true), registerProcessExit: false);
         var facts = new JoinSeatFacts(MaxCouchSeats: 1, RunInProgress: true);
         for (var i = 0; i < 3; i++)
         {
@@ -512,7 +512,7 @@ internal static class JoinFactsTests
         var process = new HeadlessConnectionLifecycleTests.FakeProcess(34);
         await CouchCoopGameFactsTests.WithSourceAsync(facts, async () =>
         {
-            using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true));
+            using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true), registerProcessExit: false);
             manager.ConfigureConnectionMonitoring(lobby.IsGamePlayerConnected, () => 12345, lobby.IsSeatPeerConnected);
             try
             {

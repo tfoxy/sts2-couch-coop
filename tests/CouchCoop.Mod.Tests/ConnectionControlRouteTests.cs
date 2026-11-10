@@ -43,7 +43,7 @@ internal static class ConnectionControlRouteTests
                     throw new TimeoutException("The test did not release the second seat's launch.");
             }
             return new HeadlessConnectionLifecycleTests.FakeProcess(800 + slot);
-        }, (_, _) => Task.FromResult(true));
+        }, (_, _) => Task.FromResult(true), registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
         Task<int?>? secondJoin = null;
         try
@@ -140,7 +140,7 @@ internal static class ConnectionControlRouteTests
             var id = HeadlessConnectionLifecycleTests.BeginAttempt();
             using var stop = new CancellationTokenSource();
             using var manager = new HeadlessClientManager(
-                _ => new HeadlessConnectionLifecycleTests.FakeProcess(890), (_, _) => Task.FromResult(true));
+                _ => new HeadlessConnectionLifecycleTests.FakeProcess(890), (_, _) => Task.FromResult(true), registerProcessExit: false);
             manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
             var pending = manager.EnsureHeadlessAsync(id, "terminal-seat", stop.Token);
             try

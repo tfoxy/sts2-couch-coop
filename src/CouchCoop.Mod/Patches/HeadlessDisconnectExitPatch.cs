@@ -42,7 +42,7 @@ namespace CouchCoop.Mod.Patches;
 ///
 /// <para>
 /// RELATIONSHIP TO <see cref="HeadlessHostWatchdog"/>: that watchdog covers a different (narrower) case — the host
-/// PROCESS is gone, which it detects by polling the host pid and answers with SIGKILL. It cannot see a host that is
+/// PROCESS is gone, which it detects by polling the host pid and answers with this same exit sequence. It cannot see a host that is
 /// alive but has dropped us: returning to the main menu, abandoning the run, a checksum divergence, an ENet
 /// timeout. Those are precisely the cases that left an instance parked behind the modal, and they are what this
 /// patch answers. Where both apply (host killed) either may fire first; both end in the process exiting, and the
@@ -96,20 +96,21 @@ internal static class HeadlessDisconnectExitPatch
         }
     }
 
-    internal static void RequestExit(string reason)
+    internal static bool RequestExit(string reason)
     {
         CouchCoop.Mod.Connections.ConnectionInputAvailability.Stop();
         var sequence = Volatile.Read(ref _sequence);
         if (sequence is null)
         {
-            return;
+            return false;
         }
 
         _ = Task.Run(() => sequence.StartAsync(string.IsNullOrWhiteSpace(reason) ? "connection-ended" : reason));
+        return true;
     }
 
     // Production wiring for the sequence: the last gasp goes out over THIS instance's own browser server (the
-    // viewers attached to the headless), the clean quit disarms capture before SceneTree.Quit(), and the backstop
+    // viewers attached to the headless), capture disarms beside the notify before SceneTree.Quit(), and the backstop
     // is a SIGKILL. Kept here rather than in the sequence so the sequence stays game-free and testable.
     // The sequence's `reason` is the human/log rendering of NetErrorInfo; what goes on the WIRE is the fixed
     // machine-readable code both clients branch on (the viewer's copy is client-side, and a raw NetError name
@@ -120,7 +121,8 @@ internal static class HeadlessDisconnectExitPatch
             await HeadlessConnectionReporter.FlushAsync(cancellationToken).ConfigureAwait(false);
             await CouchCoopMod.CloseBrowserConnectionsAsync(BrowserServerReloadReasons.HeadlessHostDisconnected, cancellationToken).ConfigureAwait(false);
         },
-        quit: RenderStreamCaptureQuit.RequestQuitDeferred,
+        quit: RenderStreamCaptureQuit.QuitDeferred,
+        disarm: RenderStreamCaptureQuit.DisarmDeferredAsync,
         // A reason that arrives after the shutdown has started still has somewhere to go: one terminal status to
         // the HOST, which is the only surface that outlives this process. Without it the refinement would be a
         // log line in a file nobody reads, in a seat that is about to disappear.

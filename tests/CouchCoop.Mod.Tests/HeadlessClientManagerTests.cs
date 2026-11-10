@@ -4,8 +4,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 
 // Unit checks for HeadlessClientManager's slot bookkeeping: allocation, same-name reuse (the dedup that
-// stops a reconnect duplicating a lobby player), Release teardown (immediate SIGKILL — the game ignores
-// SIGTERM — returning the freed netId so the host can evict the now-dead ENet peer, or null on a no-op /
+// stops a reconnect duplicating a lobby player), Release teardown (immediate SIGKILL for slot reuse,
+// returning the freed netId so the host can evict the now-dead ENet peer, or null on a no-op /
 // reuse-transfer), and reaping of orphaned/dead headless processes whose Release never ran. A fake
 // IHeadlessProcess + instant readiness probe keep these pure (no real game process, no HTTP server).
 internal static class HeadlessClientManagerTests
@@ -59,6 +59,12 @@ internal static class HeadlessClientManagerTests
         OnlySeatsScopeTheBrowserPortFile();
         SeatBuildMismatchExplainsAnUnisolatedHost();
         HostWatchdogIdentityRule();
+        HostGoneStartsTheExitSequenceInsteadOfKilling();
+        HostGoneWithoutASequenceKillsAtOnce();
+        HostGoneWhenRequestExitThrows();
+        TheWatchdogHardKillOutlastsTheSeatBackstop();
+        await BeginHostExitSignalsEverySeatOnceAndKillsNone();
+        await NoSeatIsSpawnedOnceTheHostIsExiting();
         SeatEnvironmentCarriesTheJoinContract();
         SeatIsToldTheSteamHostsNetId();
         SeatMemoryTuningIsSeparateFromTheJoinContract();
@@ -93,6 +99,7 @@ internal static class HeadlessClientManagerTests
         public int Slot { get; }
         public bool Exited { get; private set; }
         public bool GracefulStopRequested { get; private set; }
+        public int GracefulStopRequests { get; private set; }
         public bool HardKilled { get; private set; }
         public bool Disposed { get; private set; }
 
@@ -105,6 +112,7 @@ internal static class HeadlessClientManagerTests
         public bool RequestGracefulStop()
         {
             GracefulStopRequested = true;
+            GracefulStopRequests++;
             if (!_gracefulStopExits) return false; // e.g. non-Unix: no graceful signal
             Exited = true;
             return true;
@@ -159,7 +167,7 @@ internal static class HeadlessClientManagerTests
                     return MaxSeats;
                 },
                 runInProgressProbe: () => RunInProgress,
-                ownedSeatCountChanged: ownedSeatCountChanged);
+                ownedSeatCountChanged: ownedSeatCountChanged, registerProcessExit: false);
         }
 
         // Records the slot-bound callback into the same ordered trace as the launcher.
@@ -239,7 +247,7 @@ internal static class HeadlessClientManagerTests
         var evicted = new List<ulong>();
         using var manager = new HeadlessClientManager(
             slot => { var child = new FakeProcess(slot, gracefulStopExits: false); spawned.Add(child); return child; },
-            (_, _) => Task.FromResult(true), evictStalePeer: evicted.Add, browserReconnectTime: time);
+            (_, _) => Task.FromResult(true), evictStalePeer: evicted.Add, browserReconnectTime: time, registerProcessExit: false);
         for (var refresh = 0; refresh < 3; refresh++)
         {
             var session = Guid.NewGuid();
@@ -263,7 +271,7 @@ internal static class HeadlessClientManagerTests
         var evicted = new List<ulong>();
         using var manager = new HeadlessClientManager(
             slot => { var child = new FakeProcess(slot, false); children.Add(child); return child; },
-            (_, _) => Task.FromResult(true), browserReconnectTime: time);
+            (_, _) => Task.FromResult(true), browserReconnectTime: time, registerProcessExit: false);
         var first = Guid.NewGuid();
         await manager.EnsureHeadlessAsync(first, "Ann", default);
         await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
@@ -293,7 +301,7 @@ internal static class HeadlessClientManagerTests
         var run = false;
         var child = new FakeProcess(2, false);
         using var manager = new HeadlessClientManager(_ => child, (_, _) => Task.FromResult(true),
-            runInProgressProbe: () => run, browserReconnectTime: time);
+            runInProgressProbe: () => run, browserReconnectTime: time, registerProcessExit: false);
         var first = Guid.NewGuid();
         await manager.EnsureHeadlessAsync(first, "Ann", default);
         BrowserDisconnectSeat.Apply(manager, first, () => run,
@@ -316,7 +324,7 @@ internal static class HeadlessClientManagerTests
             var children = new List<FakeProcess>();
             using var manager = new HeadlessClientManager(
                 slot => { var child = new FakeProcess(slot, false); children.Add(child); return child; },
-                (_, _) => Task.FromResult(true), browserReconnectTime: time);
+                (_, _) => Task.FromResult(true), browserReconnectTime: time, registerProcessExit: false);
             var first = Guid.NewGuid();
             await manager.EnsureHeadlessAsync(first, "Ann", default);
             BrowserDisconnectSeat.Apply(manager, first, () => false,
@@ -341,7 +349,7 @@ internal static class HeadlessClientManagerTests
         var time = new ReconnectClock();
         var child = new FakeProcess(2, false);
         using var manager = new HeadlessClientManager(_ => child, (_, _) => Task.FromResult(true),
-            browserReconnectTime: time);
+            browserReconnectTime: time, registerProcessExit: false);
         using var expiryEntered = new ManualResetEventSlim();
         using var resumeExpiry = new ManualResetEventSlim();
         var probingExpiry = false;
@@ -423,7 +431,7 @@ internal static class HeadlessClientManagerTests
         }
         using var manager = new HeadlessClientManager(
             slot => { var child = new FakeProcess(slot, gracefulStopExits: false); spawned.Add(child); return child; },
-            (_, _) => Task.FromResult(true), evictStalePeer: Evict);
+            (_, _) => Task.FromResult(true), evictStalePeer: Evict, registerProcessExit: false);
         var first = Guid.NewGuid();
         Assert(await manager.EnsureHeadlessAsync(first, "Ann", default) == HeadlessClientManager.SlotToPort(2),
             "initial join starts Ann's seat");
@@ -455,7 +463,7 @@ internal static class HeadlessClientManagerTests
         }
         using var manager = new HeadlessClientManager(
             slot => { Interlocked.Increment(ref spawned); return new FakeProcess(slot, gracefulStopExits: false); },
-            (_, _) => Task.FromResult(true), evictStalePeer: Evict);
+            (_, _) => Task.FromResult(true), evictStalePeer: Evict, registerProcessExit: false);
         var first = Guid.NewGuid();
         Assert(await manager.EnsureHeadlessAsync(first, "Ann", default) is not null, "first child launched");
         var disconnect = Task.Run(() => BrowserDisconnectSeat.ApplyAfterGrace(manager, first, () => false, Evict, _ => { }));
@@ -585,7 +593,7 @@ internal static class HeadlessClientManagerTests
         using var manager = new HeadlessClientManager(
             launcher: _ => null,
             readinessProbe: (_, _) => Task.FromResult(true),
-            ownedSeatCountChanged: (count, generation) => changes.Enqueue((count, generation)));
+            ownedSeatCountChanged: (count, generation) => changes.Enqueue((count, generation)), registerProcessExit: false);
 
         var port = await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
         Assert(port is null, "the failed launch is surfaced to the joiner");
@@ -876,7 +884,7 @@ internal static class HeadlessClientManagerTests
         Assert(byProbe.SequenceEqual(h.Manager.DescribeSeats(7)), "the two forms describe the same seats for the same cap");
 
         // A manager nobody gave a probe was never told there is a lobby, and keeps the stock three whatever it is handed.
-        using var unprobed = new HeadlessClientManager(launcher: _ => null);
+        using var unprobed = new HeadlessClientManager(launcher: _ => null, registerProcessExit: false);
         Assert(unprobed.DescribeSeats(15).Count == 3 && unprobed.DescribeSeats(null).Count == 3,
             "an unprobed manager keeps the historical three seats");
         return Task.CompletedTask;
@@ -946,7 +954,7 @@ internal static class HeadlessClientManagerTests
                 probeEntered.Set();
                 release.Wait(TimeSpan.FromSeconds(10));
                 return 3;
-            });
+            }, registerProcessExit: false);
 
     // Asserts that `entry` reaches the seat-cap probe WITHOUT holding the manager's lock: while the probe is
     // parked, a lock-taking call (HasNameClaim) from another thread must complete promptly.
@@ -1183,9 +1191,70 @@ internal static class HeadlessClientManagerTests
             $"an inherited {firstKey} is never overwritten by the seat default ({firstDefault})");
     }
 
-    // The seat's crash-proof self-reaper, on the platform with no /proc: it decides whether the HOST is still
-    // alive, and the only mistake it can make — calling a live host gone — SIGKILLs a healthy seat. Both probes
-    // are injected so every branch is reachable without a second process to kill.
+    private static async Task BeginHostExitSignalsEverySeatOnceAndKillsNone()
+    {
+        var h = new Harness { GracefulStopExits = false };
+        using var manager = h.Manager;
+        await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+        Assert(h.Spawned.Count == 2, "two live seats are owned");
+        manager.BeginHostExit();
+        manager.BeginHostExit();
+        Assert(h.Spawned.All(p => p.GracefulStopRequested && p.GracefulStopRequests == 1),
+            "host exit signals each live seat exactly once, even when signal delivery returns false");
+        Assert(h.Spawned.All(p => !p.HardKilled && !p.Disposed), "host exit neither kills nor disposes seats");
+    }
+
+    private static async Task NoSeatIsSpawnedOnceTheHostIsExiting()
+    {
+        var h = new Harness();
+        using var manager = h.Manager;
+        manager.BeginHostExit();
+        Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null,
+            "host exit refuses new allocations");
+        Assert(h.Spawned.Count == 0, "host exit never invokes the launcher");
+    }
+
+    private static void HostGoneStartsTheExitSequenceInsteadOfKilling()
+    {
+        var reasons = new List<string>();
+        var scheduled = new List<(TimeSpan Delay, Action Action)>();
+        var kills = 0;
+        HeadlessHostWatchdog.OnHostGone(123, reason => { reasons.Add(reason); return true; },
+            (delay, action) => scheduled.Add((delay, action)), () => kills++, _ => { });
+        Assert(reasons.SequenceEqual(new[] { "host-process-gone" }), "host gone requests the common sequence once");
+        Assert(kills == 0, "host gone does not kill inline when a sequence exists");
+        Assert(scheduled.Count == 1 && scheduled[0].Delay == HeadlessHostWatchdog.HardKillDelay,
+            "host gone schedules exactly the secondary kill deadline");
+        scheduled[0].Action();
+        Assert(kills == 1, "the secondary fallback kills if still alive");
+    }
+
+    private static void HostGoneWithoutASequenceKillsAtOnce()
+    {
+        var kills = 0;
+        HeadlessHostWatchdog.OnHostGone(123, _ => false,
+            (_, _) => throw new Exception("no delay without a sequence"), () => kills++, _ => { });
+        Assert(kills == 1, "no sequence retains immediate orphan termination");
+    }
+
+    private static void HostGoneWhenRequestExitThrows()
+    {
+        var kills = 0;
+        HeadlessHostWatchdog.OnHostGone(123, _ => throw new Exception("no sequence"),
+            (_, _) => throw new Exception("no delay without a sequence"), () => kills++, _ => { });
+        Assert(kills == 1, "request failure retains immediate orphan termination");
+    }
+
+    private static void TheWatchdogHardKillOutlastsTheSeatBackstop()
+    {
+        Assert(HeadlessHostWatchdog.HardKillDelay == TimeSpan.FromSeconds(9.5), "watchdog fallback is 9.5 seconds");
+        Assert(HeadlessHostWatchdog.HardKillDelay > HeadlessDisconnectExitSequence.ForceExitDelay,
+            "watchdog secondary kill allows the seat's own backstop to finish first");
+    }
+
+    // Host identity probes are injected so every branch is reachable without another process. A false
+    // host-gone verdict starts the exit of a healthy seat, so an unanswered identity read must mean alive.
     private static void HostWatchdogIdentityRule()
     {
         const string armed = "638600000000000000";

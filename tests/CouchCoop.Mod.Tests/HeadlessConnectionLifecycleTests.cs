@@ -36,6 +36,7 @@ internal static class HeadlessConnectionLifecycleTests
         await ASilentSeatOnTheSharedRelayThatJoinedKeepsTheAfterJoinIssue();
         await ASeatWhoseReportIsBlockedStillJoinsThroughItsStatusFile();
         await EarlyProcessExitFailsTheAttempt();
+        DefaultSeatShutdownGraceOutlastsTheSeatBackstop();
         await StalledShutdownIsForcedBeforeEnsureReturns();
         await RetryFencesOldGenerationAndEvictsTheOldPeer();
         await CleanLiveReuseUsesShortPath();
@@ -61,7 +62,7 @@ internal static class HeadlessConnectionLifecycleTests
         var id = BeginAttempt();
         var time = new AdvanceableTime();
         var process = new FakeProcess(37);
-        var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true), seatNoticeTime: time);
+        var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true), seatNoticeTime: time, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
         using var _manager = manager;
         try
@@ -164,7 +165,7 @@ internal static class HeadlessConnectionLifecycleTests
         var process = new FakeProcess(330);
         var lobbyChecks = 0;
         var peerChecks = 0;
-        using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true));
+        using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(true), registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(
             _ => { Interlocked.Increment(ref lobbyChecks); return true; },
             () => 12345,
@@ -194,7 +195,7 @@ internal static class HeadlessConnectionLifecycleTests
         var process = new FakeProcess(321);
         using var manager = new HeadlessClientManager(
             _ => process,
-            async (_, _) => { probeEntered.TrySetResult(); await finishProbe.Task; return true; });
+            async (_, _) => { probeEntered.TrySetResult(); await finishProbe.Task; return true; }, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => true, () => 12345);
         try
         {
@@ -224,7 +225,7 @@ internal static class HeadlessConnectionLifecycleTests
         var process = new FakeProcess(322);
         var member = true;
         using var manager = new HeadlessClientManager(_ => process,
-            async (_, _) => { probeEntered.TrySetResult(); await finishProbe.Task; return true; });
+            async (_, _) => { probeEntered.TrySetResult(); await finishProbe.Task; return true; }, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => member, () => 12345);
         try
         {
@@ -720,7 +721,7 @@ internal static class HeadlessConnectionLifecycleTests
         using var manager = new HeadlessClientManager(
             _ => process,
             (_, _) => { Interlocked.Increment(ref probes); return Task.FromResult(true); },
-            sharedRelay: true);
+            sharedRelay: true, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => member, () => 12345);
         ConnectionStatusRow? row = null;
         try
@@ -827,13 +828,20 @@ internal static class HeadlessConnectionLifecycleTests
         finally { CleanupControl(id); ConnectionRegistry.Shared.Clear(); }
     }
 
+    private static void DefaultSeatShutdownGraceOutlastsTheSeatBackstop()
+    {
+        Assert(HeadlessClientManager.DefaultSeatShutdownGrace == TimeSpan.FromSeconds(10), "host shutdown grace is ten seconds");
+        Assert(HeadlessClientManager.DefaultSeatShutdownGrace > HeadlessDisconnectExitSequence.ForceExitDelay,
+            "host grace lets the seat's backstop finish first");
+    }
+
     private static async Task StalledShutdownIsForcedBeforeEnsureReturns()
     {
         var prior = Environment.GetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable);
         Environment.SetEnvironmentVariable(HeadlessClientManager.SeatReadyTimeoutEnvironmentVariable, "1");
         var id = BeginAttempt();
         var process = new FakeProcess(35);
-        using var manager = NewManager(_ => process, () => true, () => false);
+        using var manager = NewManager(_ => process, () => true, () => false, seatShutdownGrace: TimeSpan.FromSeconds(1));
         try
         {
             var started = Stopwatch.GetTimestamp();
@@ -854,8 +862,11 @@ internal static class HeadlessConnectionLifecycleTests
                    && report.Contains("port this player's game reports it bound: not reported", StringComparison.Ordinal)
                    && report.Contains("host loopback probe of the assigned port: not yet probed", StringComparison.Ordinal),
                 "timeout distinguishes a missing authenticated heartbeat from the known membership and untested listener");
-            Assert(process.Killed, "the parent force-kills a child that outlives its five-second shutdown grace");
-            Assert(elapsed >= TimeSpan.FromSeconds(5), "Ensure waits through the five-second forced-cleanup fence");
+            Assert(process.Killed, "the parent force-kills a child that outlives its shutdown grace");
+            Assert(process.GracefulStopRequested, "the shutdown request also signals the child");
+            Assert(elapsed >= TimeSpan.FromSeconds(1), "Ensure waits through the shutdown grace fence");
+            Assert(report.Contains("Forced exit after the 1-second graceful shutdown deadline.", StringComparison.Ordinal),
+                "cleanup diagnostics use the configured shutdown grace");
         }
         finally
         {
@@ -874,7 +885,7 @@ internal static class HeadlessConnectionLifecycleTests
         using var manager = new HeadlessClientManager(
             _ => { var process = new FakeProcess(40 + launched.Count); launched.Add(process); return process; },
             (_, _) => Task.FromResult(true),
-            evicted.Add);
+            evicted.Add, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => member, () => 12345);
         try
         {
@@ -938,7 +949,7 @@ internal static class HeadlessConnectionLifecycleTests
         var process = new FakeProcess(61, throwOnKill: true);
         using var manager = new HeadlessClientManager(
             _ => { launches++; return process; },
-            (_, _) => Task.FromResult(false));
+            (_, _) => Task.FromResult(false), seatShutdownGrace: TimeSpan.FromSeconds(1), registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => false, () => 12345);
         try
         {
@@ -1017,7 +1028,7 @@ internal static class HeadlessConnectionLifecycleTests
         var id = BeginAttempt();
         var process = new FakeProcess(64);
         var evictions = new List<ulong>();
-        using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(false), evictions.Add);
+        using var manager = new HeadlessClientManager(_ => process, (_, _) => Task.FromResult(false), evictions.Add, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => false, () => 12345);
         try
         {
@@ -1053,9 +1064,9 @@ internal static class HeadlessConnectionLifecycleTests
         return id;
     }
 
-    private static HeadlessClientManager NewManager(Func<int, IHeadlessProcess?> launcher, Func<bool> member, Func<bool> httpReady)
+    private static HeadlessClientManager NewManager(Func<int, IHeadlessProcess?> launcher, Func<bool> member, Func<bool> httpReady, TimeSpan? seatShutdownGrace = null)
     {
-        var manager = new HeadlessClientManager(launcher, (_, _) => Task.FromResult(httpReady()));
+        var manager = new HeadlessClientManager(launcher, (_, _) => Task.FromResult(httpReady()), seatShutdownGrace: seatShutdownGrace, registerProcessExit: false);
         manager.ConfigureConnectionMonitoring(_ => member(), () => 12345);
         return manager;
     }

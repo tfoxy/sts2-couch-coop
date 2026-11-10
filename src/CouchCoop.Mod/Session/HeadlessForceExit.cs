@@ -5,9 +5,9 @@ namespace CouchCoop.Mod.Session;
 /// <summary>
 /// Terminate THIS headless process for real, right now.
 /// <para>
-/// STS2 traps SIGTERM (it runs its own shutdown), and a Godot process that is mid-teardown — or wedged behind a
-/// modal error popup, a blocked main loop, or a native FMOD/ENet thread — can outlive every polite request. So the
-/// only reliable exit is SIGKILL, which is untrappable. <see cref="Environment.Exit"/> is the managed fallback for
+/// Seat SIGTERM starts the bounded exit sequence, but a Godot process that is mid-teardown — or wedged behind
+/// a modal error popup, a blocked main loop, or a native FMOD/ENet thread — can outlive a polite request.
+/// SIGKILL is the untrappable fallback. <see cref="Environment.Exit"/> is the managed fallback for
 /// non-Linux / a failed p/invoke; it can still block on finalizers, which is exactly why it is second choice.
 /// </para>
 /// <para>

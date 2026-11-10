@@ -923,7 +923,7 @@ internal static class RenderStreamPairingTests
                     return process;
                 },
                 readinessProbe: (_, _) => Task.FromResult(true),
-                streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration, maxWidth) : null);
+                streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration, maxWidth) : null, registerProcessExit: false);
         }
     }
 

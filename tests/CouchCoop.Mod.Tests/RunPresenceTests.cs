@@ -159,7 +159,7 @@ internal static class RunPresenceTests
                 readinessProbe: (_, _) => Task.FromResult(true),
                 maxSeatsProbe: () => 3,
                 runInProgressProbe: Lobby.IsRunInProgress,
-                browserReconnectTime: ReconnectTime);
+                browserReconnectTime: ReconnectTime, registerProcessExit: false);
         }
 
         public CouchCoopLobbyParticipation Lobby => new(Host);

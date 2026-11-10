@@ -119,7 +119,7 @@ internal static class SeatReadyTimeoutTests
             using var manager = new HeadlessClientManager(
                 launcher: _ => process,
                 // A seat that is up and healthy but has not started serving yet.
-                readinessProbe: (_, _) => Task.FromResult(false));
+                readinessProbe: (_, _) => Task.FromResult(false), registerProcessExit: false);
 
             var started = DateTimeOffset.UtcNow;
             Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null,
@@ -146,7 +146,7 @@ internal static class SeatReadyTimeoutTests
                     process.ForceExit();
                     return process;
                 },
-                readinessProbe: (_, _) => Task.FromResult(false));
+                readinessProbe: (_, _) => Task.FromResult(false), registerProcessExit: false);
 
             var started = DateTimeOffset.UtcNow;
             Assert(await manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default) is null,

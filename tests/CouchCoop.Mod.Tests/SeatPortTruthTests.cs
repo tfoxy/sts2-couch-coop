@@ -862,7 +862,7 @@ internal static class SeatPortTruthTests
                 readinessProbe: (_, _) => Task.FromResult(true),
                 maxSeatsProbe: () => 3,
                 seatPortProbe: (port, _) => Task.FromResult(
-                    Occupied.Contains(port) ? $"a test squatter holds 127.0.0.1:{port}" : null));
+                    Occupied.Contains(port) ? $"a test squatter holds 127.0.0.1:{port}" : null), registerProcessExit: false);
         }
     }
 

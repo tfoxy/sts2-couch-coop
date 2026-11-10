@@ -12,26 +12,27 @@ internal interface IRenderStreamCapture
 
 /// <summary>
 /// Disarms arming, armed or ended captures and waits for disarming captures to finish before the seat quits.
-/// All effects run on the main thread; the fallback bounds the wait without blocking the capture's frame
-/// callbacks. Only this clean quit path writes capture evidence: HeadlessHostWatchdog and HeadlessForceExit
-/// remain last-resort kills.
+/// Every exit path owned by the exit sequence disarms capture so its evidence is written before quitting.
+/// All effects run on the main thread; the fallback bounds the wait without blocking frame callbacks.
+/// HeadlessForceExit is the bounded fallback when the clean exit cannot complete.
 /// </summary>
 internal sealed class RenderStreamCaptureQuit
 {
-    internal static readonly TimeSpan DisarmTimeout = TimeSpan.FromSeconds(1.5);
+    // Sequential carrier stops: websocket flush (2 s), WebTransport stop (1.75 s), then release, plus 0.6 s margin.
+    internal static readonly TimeSpan DisarmTimeout = TimeSpan.FromSeconds(4.5);
 
     private readonly IRenderStreamCapture _capture;
-    private readonly Action _quit;
+    private readonly Action _done;
     private readonly Action<TimeSpan, Action> _schedule;
-    private bool _quitRequested;
+    private bool _doneRequested;
 
     internal RenderStreamCaptureQuit(
         IRenderStreamCapture capture,
-        Action quit,
+        Action done,
         Action<TimeSpan, Action> schedule)
     {
         _capture = capture;
-        _quit = quit;
+        _done = done;
         _schedule = schedule;
     }
 
@@ -40,28 +41,60 @@ internal sealed class RenderStreamCaptureQuit
         var state = _capture.HasSingleton ? _capture.State() : null;
         if (state is not ("arming" or "armed" or "ended" or "disarming"))
         {
-            QuitOnce();
+            DoneOnce();
             return;
         }
 
-        _capture.ConnectOneShot("disarmed", QuitOnce);
-        _schedule(DisarmTimeout, QuitOnce);
+        _capture.ConnectOneShot("disarmed", DoneOnce);
+        _schedule(DisarmTimeout, DoneOnce);
         if (state != "disarming" && _capture.Disarm("seat-quit", lingerMs: 0) != 0)
         {
-            QuitOnce();
+            DoneOnce();
         }
     }
 
-    private void QuitOnce()
+    private void DoneOnce()
     {
-        if (_quitRequested) return;
-        _quitRequested = true;
-        _quit();
+        if (_doneRequested) return;
+        _doneRequested = true;
+        _done();
     }
 
-    internal static void RequestQuitDeferred()
+    internal static Task DisarmDeferredAsync()
     {
-        // The disconnect sequence can run off-thread. Even singleton discovery belongs on the main thread.
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // The exit sequence can run off-thread. Even singleton discovery belongs on the main thread.
+        Callable.From(() =>
+        {
+            try
+            {
+                if (Engine.GetMainLoop() is not SceneTree tree)
+                {
+                    HeadlessLog.Write("No SceneTree main loop to disarm capture; leaving the force-exit backstop armed.");
+                    completion.TrySetResult();
+                    return;
+                }
+
+                var sequence = new RenderStreamCaptureQuit(
+                    new GodotRenderStreamCapture(),
+                    () => completion.TrySetResult(),
+                    (delay, callback) => tree.CreateTimer(delay.TotalSeconds, ignoreTimeScale: true).Connect(
+                        SceneTreeTimer.SignalName.Timeout,
+                        Callable.From(callback),
+                        (uint)GodotObject.ConnectFlags.OneShot));
+                sequence.Run();
+            }
+            catch (Exception exception)
+            {
+                HeadlessLog.Write($"render-stream disarm failed: {exception.GetType().Name}: {exception.Message}");
+                completion.TrySetResult();
+            }
+        }).CallDeferred();
+        return completion.Task;
+    }
+
+    internal static void QuitDeferred()
+    {
         Callable.From(() =>
         {
             if (Engine.GetMainLoop() is not SceneTree tree)
@@ -70,22 +103,7 @@ internal sealed class RenderStreamCaptureQuit
                 return;
             }
 
-            var sequence = new RenderStreamCaptureQuit(
-                new GodotRenderStreamCapture(),
-                () => tree.CallDeferred(SceneTree.MethodName.Quit, 0),
-                (delay, callback) => tree.CreateTimer(delay.TotalSeconds, ignoreTimeScale: true).Connect(
-                    SceneTreeTimer.SignalName.Timeout,
-                    Callable.From(callback),
-                    (uint)GodotObject.ConnectFlags.OneShot));
-            try
-            {
-                sequence.Run();
-            }
-            catch (Exception exception)
-            {
-                HeadlessLog.Write($"render-stream disarm failed: {exception.GetType().Name}: {exception.Message}");
-                sequence.QuitOnce();
-            }
+            tree.Quit(0);
         }).CallDeferred();
     }
 

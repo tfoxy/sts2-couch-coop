@@ -127,7 +127,7 @@ internal sealed partial class BrowserServerRouteTests
                     {
                         Interlocked.Increment(ref _capProbes);
                         return 3;
-                    });
+                    }, registerProcessExit: false);
             Server = new CouchCoopBrowserServer(
                 new StaticSpaFileProvider(rootPath),
                 new CapturingAssetAdapter(),

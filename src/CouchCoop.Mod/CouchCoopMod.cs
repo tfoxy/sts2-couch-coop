@@ -171,7 +171,11 @@ public static class CouchCoopMod
 
             // Crash-proof self-reaper: if the host dies without killing us (e.g. it segfaults), terminate this
             // orphaned headless instead of lingering invisibly. Idempotent + no-op when not host-spawned.
-            if (IsHeadlessClient) HeadlessHostWatchdog.Start();
+            if (IsHeadlessClient)
+            {
+                HeadlessHostWatchdog.Start();
+                HeadlessTermSignal.Start();
+            }
 
             if (_runtime is not null)
             {
@@ -357,7 +361,7 @@ public static class CouchCoopMod
             if (IsHeadlessClient) Session.HeadlessClientNameSync.Start(_runtime);
             if (IsHeadlessClient) Session.HeadlessConnectionReporter.Initialize(
                 _runtime,
-                HeadlessDisconnectExitPatch.RequestExit);
+                reason => HeadlessDisconnectExitPatch.RequestExit(reason));
             StartHostUiServices(_runtime);
             StartSpinePrerenderIfRequested(_runtime);
             StartGeoclipPrerenderIfRequested(_runtime);

@@ -566,6 +566,7 @@ if (args is ["host-ui", ..])
 if (args is ["capture-quit", ..])
 {
     RenderStreamCaptureQuitTests.Run();
+    HeadlessTermSignalTests.Run();
     return;
 }
 
@@ -904,6 +905,7 @@ HeadlessParticleFinishNudgeTests.Run();
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
 RenderStreamCaptureQuitTests.Run();
+HeadlessTermSignalTests.Run();
 ConnectionRegistryTests.Run();
 ConnectionDeviceLabelTests.Run();
 ClientVitalsReceiptTests.Run();
@@ -1152,7 +1154,7 @@ internal sealed partial class BrowserServerRouteTests
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host" };
         // The join reads the game through the typed facts now, so the harness's game is described to them as well.
         using var facts = runtime.InstallGameFacts();
-        using var manager = new HeadlessClientManager(launcher: _ => throw new KeyNotFoundException(faultText));
+        using var manager = new HeadlessClientManager(launcher: _ => throw new KeyNotFoundException(faultText), registerProcessExit: false);
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(staticRoot),
             new CapturingAssetAdapter(),
@@ -2861,7 +2863,7 @@ internal sealed partial class BrowserServerRouteTests
         var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.Lobby, LobbyNetGameType = "host" };
         using var gameFacts = runtime.InstallGameFacts();
         var envelopeFactory = runtime.NewEnvelopeFactory();
-        using var manager = new HeadlessClientManager(launcher: _ => throw new KeyNotFoundException(faultText));
+        using var manager = new HeadlessClientManager(launcher: _ => throw new KeyNotFoundException(faultText), registerProcessExit: false);
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(staticRoot),
             new CapturingAssetAdapter(),
@@ -4127,7 +4129,7 @@ internal sealed partial class BrowserServerRouteTests
             launcher: _ => seat,
             readinessProbe: (_, _) => Task.FromResult(true),
             maxSeatsProbe: () => { Interlocked.Increment(ref capProbes); return 3; },
-            runInProgressProbe: () => { Interlocked.Increment(ref runProbes); return false; });
+            runInProgressProbe: () => { Interlocked.Increment(ref runProbes); return false; }, registerProcessExit: false);
         var envelopeFactory = new BrowserStateEnvelopeFactory(new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime)));
         // The roster observer is a reader of the same roster (it reads on signals, and the join's own name change is one):
         // a feed of our own keeps it out of the join's count, which is what is being measured here.
@@ -4245,7 +4247,7 @@ internal sealed partial class BrowserServerRouteTests
         using var manager = new HeadlessClientManager(
             launcher: _ => seat,
             readinessProbe: (_, _) => Task.FromResult(true),
-            maxSeatsProbe: () => 3);
+            maxSeatsProbe: () => 3, registerProcessExit: false);
         var browser = Guid.NewGuid();
         Expect(await manager.EnsureHeadlessAsync(browser, "Ann", default) is not null, "a seat is launched for the browser");
         manager.MarkDetached(browser); // the browser dropped mid-run and never came back
@@ -5162,7 +5164,7 @@ internal sealed partial class BrowserServerRouteTests
     {
         using var root = new TempStaticRoot();
         var envelopeFactory = new RecordingSpirectlRuntime().NewEnvelopeFactory();
-        using var manager = new HeadlessClientManager(launcher: _ => null);
+        using var manager = new HeadlessClientManager(launcher: _ => null, registerProcessExit: false);
         await using var server = new CouchCoopBrowserServer(
             new StaticSpaFileProvider(root.Path),
             new CapturingAssetAdapter(),

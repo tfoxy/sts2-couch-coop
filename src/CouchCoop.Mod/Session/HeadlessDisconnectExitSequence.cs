@@ -16,14 +16,14 @@ namespace CouchCoop.Mod.Session;
 ///   to survive its own shutdown.
 ///   </description></item>
 ///   <item><description>
-///   NOTIFY VIEWERS (best-effort, time-boxed). The browsers attached to THIS instance are about to lose their
+///   DISARM CAPTURE AND NOTIFY VIEWERS in parallel (best-effort, time-boxed). The browsers attached to THIS instance are about to lose their
 ///   socket; the last-gasp envelope is the only chance to tell them WHY, so they show the "the host must reload
 ///   the saved run" guidance and reconnect to the host instead of retrying this dead port. Bounded by
 ///   <see cref="NotifyTimeout"/> and never allowed to throw — a viewer that misses the message still sees the
 ///   socket close, which is the same outcome minus the copy.
 ///   </description></item>
 ///   <item><description>
-///   QUIT CLEANLY. Capture disarms first (see <see cref="RenderStreamCaptureQuit"/>), then a deferred
+///   QUIT CLEANLY after both disarm and notify finish. Capture disarms first (see <see cref="RenderStreamCaptureQuit"/>), then a deferred
 ///   <c>SceneTree.Quit()</c> lets Godot unwind on its own main loop (mod shutdown, FMOD,
 ///   the user profile) instead of being shot in the head. If it lands, the process is gone long before the
 ///   backstop fires.
@@ -53,16 +53,19 @@ namespace CouchCoop.Mod.Session;
 internal sealed class HeadlessDisconnectExitSequence
 {
     /// <summary>
-    /// How long a clean quit gets before we SIGKILL. Long enough for Godot's normal teardown (which on this box
-    /// takes well under a second for a headless), short enough that a wedged instance doesn't outlive the run it
-    /// was serving. It is a BACKSTOP, not a schedule: the healthy path exits long before it elapses.
+    /// Notify/disarm in parallel (up to 5 s), quit and its crash handler (up to 1.5 s), plus 1 s margin.
+    /// It is a backstop: the healthy path exits before it elapses.
     /// </summary>
-    public static readonly TimeSpan ForceExitDelay = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan ForceExitDelay = TimeSpan.FromSeconds(7.5);
+
+    public static readonly TimeSpan DisarmGuard = RenderStreamCaptureQuit.DisarmTimeout + TimeSpan.FromSeconds(0.5);
 
     /// <summary>Ceiling on the best-effort last-gasp send, so a stuck socket can't eat the force-exit budget.</summary>
     public static readonly TimeSpan NotifyTimeout = TimeSpan.FromSeconds(1);
 
     private readonly Func<string, CancellationToken, Task> _notifyViewers;
+    private readonly Func<Task> _disarm;
+    private readonly TimeSpan _disarmGuard;
     private readonly Action _quit;
     private readonly Action _forceExit;
     private readonly Action<TimeSpan, Action> _schedule;
@@ -76,7 +79,7 @@ internal sealed class HeadlessDisconnectExitSequence
     private bool _refined;
 
     /// <param name="notifyViewers">Sends the last-gasp envelope + closes viewer sockets (reason, cancellation).</param>
-    /// <param name="quit">Requests the clean game shutdown (production: disarm capture, then defer quit).</param>
+    /// <param name="quit">Requests the clean game shutdown (production: defer quit).</param>
     /// <param name="forceExit">The untrappable exit used when the clean quit doesn't land in time.</param>
     /// <param name="schedule">Runs an action after a delay off the calling thread (production: a background thread).</param>
     /// <param name="refineReason">
@@ -93,8 +96,12 @@ internal sealed class HeadlessDisconnectExitSequence
         Action<string>? log = null,
         TimeSpan? forceExitDelay = null,
         TimeSpan? notifyTimeout = null,
-        Action<string>? refineReason = null)
+        Action<string>? refineReason = null,
+        Func<Task>? disarm = null,
+        TimeSpan? disarmGuard = null)
     {
+        _disarm = disarm ?? (() => Task.CompletedTask);
+        _disarmGuard = disarmGuard ?? DisarmGuard;
         _refineReason = refineReason;
         _notifyViewers = notifyViewers ?? throw new ArgumentNullException(nameof(notifyViewers));
         _quit = quit ?? throw new ArgumentNullException(nameof(quit));
@@ -148,8 +155,22 @@ internal sealed class HeadlessDisconnectExitSequence
             _log($"headless disconnect-exit could not arm the force-exit backstop: {exception.GetType().Name}: {exception.Message}");
         }
 
-        // (2) Best-effort, time-boxed last gasp to the attached viewers.
+        // (2) Start capture teardown beside the bounded last gasp, then wait for both.
+        var disarm = StartDisarm();
+        var guardedDisarm = disarm.WaitAsync(_disarmGuard);
         await NotifyViewersAsync(reason).ConfigureAwait(false);
+        try
+        {
+            await guardedDisarm.ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _log($"headless disconnect-exit: capture disarm did not finish within {_disarmGuard} — quitting anyway.");
+        }
+        catch (Exception exception)
+        {
+            _log($"headless disconnect-exit disarm failed: {exception.GetType().Name}: {exception.Message}");
+        }
 
         // (3) Clean quit.
         try
@@ -203,6 +224,19 @@ internal sealed class HeadlessDisconnectExitSequence
         return true;
     }
 
+    private Task StartDisarm()
+    {
+        try
+        {
+            return _disarm();
+        }
+        catch (Exception exception)
+        {
+            _log($"headless disconnect-exit disarm failed: {exception.GetType().Name}: {exception.Message}");
+            return Task.CompletedTask;
+        }
+    }
+
     private async Task NotifyViewersAsync(string reason)
     {
         using var cancel = new CancellationTokenSource(_notifyTimeout);
@@ -219,7 +253,16 @@ internal sealed class HeadlessDisconnectExitSequence
 
     private void ForceExitNow()
     {
-        _log("headless disconnect-exit: clean quit did not land — force-exiting.");
+        try
+        {
+            Task.Run(() => _log("headless disconnect-exit: clean quit did not land — force-exiting."))
+                .Wait(TimeSpan.FromMilliseconds(200));
+        }
+        catch
+        {
+            // Logging must never prevent the bounded exit.
+        }
+
         _forceExit();
     }
 

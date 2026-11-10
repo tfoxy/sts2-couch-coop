@@ -91,6 +91,9 @@ public sealed partial class HeadlessClientManager : IDisposable
     // short enough that slot reuse on reconnect isn't noticeably delayed.
     private static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(3);
 
+    internal static readonly TimeSpan DefaultSeatShutdownGrace = HeadlessDisconnectExitSequence.ForceExitDelay + TimeSpan.FromSeconds(2.5);
+    internal TimeSpan SeatShutdownGrace { get; } = DefaultSeatShutdownGrace;
+
     /// <summary>
     /// TUNING knob for <see cref="SeatReadyTimeout"/>, in seconds. Same polarity as
     /// <see cref="SeatMemoryTuningEnvironment"/>: an operator value WINS over ours — the default is a guess about
@@ -249,6 +252,9 @@ public sealed partial class HeadlessClientManager : IDisposable
     // process (the unit suite, the hosted-server harness) that builds a real manager would crash on it.
     private readonly Lazy<string?> _hostForceSteam = new(HostForceSteamValue);
     private bool _disposed;
+    private bool _hostExiting;
+    private EventHandler? _processExitHandler;
+    private PosixSignalRegistration? _termSignal;
 
     // "Use new renderer (Beta)" (StreamingSeatLaunch): what the operator configured for a streaming seat (null: no
     // seat on this host ever streams), the ONE slot whose current process was launched as the streaming seat, and
@@ -485,8 +491,11 @@ public sealed partial class HeadlessClientManager : IDisposable
         TimeProvider? seatNoticeTime = null,
         Action<int, long>? ownedSeatCountChanged = null,
         TimeProvider? browserReconnectTime = null,
-        StreamingSeatLaunch.Config? streamingConfig = null)
+        StreamingSeatLaunch.Config? streamingConfig = null,
+        TimeSpan? seatShutdownGrace = null,
+        bool registerProcessExit = true)
     {
+        SeatShutdownGrace = seatShutdownGrace ?? DefaultSeatShutdownGrace;
         _streamingConfig = streamingConfig;
         _seatNoticeTime = seatNoticeTime;
         _browserReconnectTime = browserReconnectTime ?? TimeProvider.System;
@@ -511,6 +520,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         // pre-existing seat test was written against.
         _seatPortProbe = seatPortProbe ?? ((_, _) => Task.FromResult<string?>(null));
         _ownedSeatCountChanged = ownedSeatCountChanged;
+        if (registerProcessExit) RegisterHostExit();
     }
 
     private HeadlessClientManager(
@@ -544,6 +554,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             CouchCoopLog.Warn($"streaming seat unavailable: {refusal}");
         }
+        RegisterHostExit();
     }
 
     /// <summary>
@@ -660,7 +671,11 @@ public sealed partial class HeadlessClientManager : IDisposable
         var evictNetIdAfterSpawn = (ulong?)null;
         lock (_lock)
         {
-            if (_disposed) return null;
+            if (_disposed || _hostExiting)
+            {
+                if (_hostExiting) CouchCoopLog.Stderr("headless spawn refused: host is exiting");
+                return null;
+            }
             ReapDeadSlotsLocked();
 
             // Already assigned to this session (e.g. caller re-entered). A netId-BOUND request short-circuits only
@@ -1201,8 +1216,8 @@ public sealed partial class HeadlessClientManager : IDisposable
                 _sessionToSlot.Remove(sk);
             _detachedSlots.Remove(slot);
             RemoveNameForSlotLocked(slot);
-            // The game IGNORES SIGTERM (see Release), so a graceful stop would only cost the caller three seconds
-            // under the lock before the same SIGKILL. A zombie has no ENet leave to flush anyway.
+            // Slot reuse needs immediate termination; a graceful stop would delay it while holding _lock.
+            // A zombie has no ENet leave to flush anyway.
             return ShutdownSlotLocked(slot, graceful: false);
         }
     }
@@ -1304,8 +1319,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
             // KEEP the name→slot claim so the player can reconnect to the SAME netId and land the game's native
             // mid-run rejoin (the host holds their RunState seat keyed by that netId). The claim is reclaimed for
-            // a different player only if every slot fills up. We still SIGKILL the process (the game IGNORES
-            // SIGTERM) and return the netId so the caller evicts the now-dead ENet peer, freeing the netId for
+            // a different player only if every slot fills up. We still SIGKILL for immediate slot reuse
+            // and return the netId so the caller evicts the now-dead ENet peer, freeing the netId for
             // the reconnecting headless to reuse.
             var stopped = ShutdownSlotLocked(slot, graceful: false);
             ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "cleanup", stopped
@@ -1432,8 +1447,49 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
     }
 
+    private void RegisterHostExit()
+    {
+        if (CouchCoopMod.IsHeadlessClient) return;
+        _processExitHandler = (_, _) => BeginHostExit();
+        AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            // The host's default TERM handling continues; only seats cancel it to finish their exit sequence.
+            _termSignal = PosixSignalRegistration.Create(PosixSignal.SIGTERM, _ => BeginHostExit());
+        }
+    }
+
+    /// <summary>Signals every live seat once without waiting, freeing slots or disposing process handles.</summary>
+    internal void BeginHostExit()
+    {
+        var signalled = 0;
+        lock (_lock)
+        {
+            if (_hostExiting) return;
+            _hostExiting = true;
+            foreach (var process in _processBySlot.Values)
+            {
+                try
+                {
+                    if (process.HasExited) continue;
+                    signalled++;
+                    process.RequestGracefulStop();
+                }
+                catch
+                {
+                    // A failed signal cannot prevent the other seats being asked to stop; their watchdogs remain.
+                }
+            }
+        }
+
+        CouchCoopLog.Stderr($"headless host exit: asked {signalled} seat(s) to stop (SIGTERM).");
+    }
+
     public void Dispose()
     {
+        // Dispose signal registration before taking _lock: its callback can itself be waiting for that lock.
+        _termSignal?.Dispose();
+        if (_processExitHandler is not null) AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
         CouchCoop.Mod.Connections.HeadlessConnectionControl.Shared.StatusChanged -= OnChildStatus;
         lock (_lock)
         {
@@ -2822,7 +2878,7 @@ internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess, IHe
     {
         // .NET's Process.Kill() always sends SIGKILL on Unix, which gives the headless no chance to
         // disconnect from ENet → the host keeps a stale peer (the phantom lobby player). Send SIGTERM
-        // directly so the game runs its normal shutdown (including the ENet leave) instead.
+        // directly so the seat disarms capture and runs its bounded exit sequence instead.
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
             && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {

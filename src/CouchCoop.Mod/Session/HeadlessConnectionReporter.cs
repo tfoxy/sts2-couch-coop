@@ -346,10 +346,8 @@ public sealed class HeadlessConnectionReporter : IDisposable
             NoteAccepted();
             ClearFallback();
             // The host's answer, which is also the ONE THING THE FALLBACK CANNOT CARRY: a status recovered from
-            // the seat's file gets no response, so a seat whose POST is blocked never learns it has been asked to
-            // stop and is killed after the five-second graceful deadline instead — today's behaviour for any seat
-            // that cannot answer. A host→seat command file would recover it; deliberately out of scope here
-            // rather than overlooked.
+            // the seat's file gets no response. The host also sends SIGTERM when asking a failed seat to stop,
+            // so a blocked POST no longer prevents capture disarm; the host's bounded shutdown grace covers it.
             var command = await response.Content.ReadFromJsonAsync<HeadlessConnectionControlResponse>().ConfigureAwait(false);
             if (command?.Shutdown == true) _requestShutdown("host-requested-shutdown");
         }
