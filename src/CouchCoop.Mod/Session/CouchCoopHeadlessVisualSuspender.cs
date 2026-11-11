@@ -6,14 +6,14 @@ using System.Threading.Tasks;
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// Headless-only CPU saver. It permanently freezes the game-side visual simulation the browser mirror never
+/// Headless-only CPU saver. It freezes the game-side visual simulation the browser mirror never
 /// consumes — decorative per-frame animators (<see cref="FreezeDecorativeAnimators"/>), particle nodes
 /// (<see cref="FreezeAllParticles"/>), and spine skeletons (<see cref="FreezeAllSpine"/>) — using base
 /// <see cref="Node"/> APIs only. Particles and spine flip <see cref="Node.ProcessMode"/> to
 /// <see cref="Node.ProcessModeEnum.Disabled"/>; the decorative freeze picks per type between that and the
 /// narrower <see cref="Node.SetProcess"/>(false), because ProcessMode=Disabled ALSO pauses the node's own
 /// TWEEN_PAUSE_BOUND tweens (see <see cref="DecorativeAnimatorTypes"/> — this is what used to strand the combat
-/// energy orb off-position). Once applied, all three freezes remain until scene teardown. Periodic scans for
+/// energy orb off-position). Each freeze preserves the prior node state for runtime thaw. Periodic scans for
 /// new nodes run only while a browser mirror streams. The remaining idle-gated lever is the frame-rate throttle:
 /// after <see cref="IdleThresholdMs"/> of no activity it drops <see cref="Engine.MaxFps"/> and restores it on
 /// the next input/scene-delta. Pending asset loads keep the normal frame rate until their completion tasks finish.
@@ -126,6 +126,7 @@ public static class CouchCoopHeadlessVisualSuspender
     // Written under Gate, read from any thread (the effective-state accessor the session envelope calls, and the
     // runtime setters) — volatile so a browser thread never sees a stale "not installed".
     private static volatile bool _started;
+    private static volatile bool _enabled = true;
     // RESCAN-ONLY install (see EnsureFreezeMachinery): the Timer, viewer-gated once-per-second freeze rescan,
     // and owed finish nudges run; there is no idle Engine.MaxFps throttle or baseline capture. A WINDOWED host gets
     // when a viewer turns a freeze on from the browser Settings panel; the windowless startup path installs the
@@ -151,7 +152,7 @@ public static class CouchCoopHeadlessVisualSuspender
     // the churn so a "thinking" combat goes quiet; the browser reproduces the motion on its own clock (see
     // `animAttributes.ts` / `CosmeticAnimator.cs` + the presentation catalog's `animation` bindings). Matched by C#
     // type NAME (GetType().Name) — these are script classes on native Control/Node2D bases, so GetClass() would be
-    // ambiguous. Never restored (decorative; freed on scene teardown), so no saved-mode list — just dedup sets.
+    // ambiguous. Prior state is retained until thaw; freed nodes are ignored when restoring.
     //
     // TWO MECHANISMS, because "decorative" nodes come in two shapes, and using the wrong one strands the node:
     //
@@ -231,10 +232,10 @@ public static class CouchCoopHeadlessVisualSuspender
         ["NRestSiteFireVfx"] = DecorFreeze.WholeNode,
     };
 
-    // Frozen-node bookkeeping, split by mechanism so the runtime SetFreezeDecor(false) toggle can undo each
-    // correctly (ProcessMode=Inherit vs SetProcess(true)).
-    private static readonly HashSet<ulong> _decorativeFrozenIds = [];
-    private static readonly HashSet<ulong> _decorativeProcessFrozenIds = [];
+    // Preserve the first pre-freeze state across rescans, separately for the two freeze mechanisms.
+    private static readonly FrozenNodeStates<Node.ProcessModeEnum> _decorativeFrozenIds = new();
+    private static readonly FrozenNodeStates<ProcessFlags> _decorativeProcessFrozenIds = new();
+    internal readonly record struct ProcessFlags(bool Process, bool PhysicsProcess);
     private static long _lastDecorativeScanMs;
     // Mutable + volatile: the browser Settings panel can flip it at runtime (SetFreezeDecor), read here on the
     // main-thread scan and written from a WS background thread.
@@ -243,13 +244,12 @@ public static class CouchCoopHeadlessVisualSuspender
     // ALWAYS-ON particle freeze (independent of idle). Particle nodes run a per-frame CPU simulation that the
     // browser reproduces itself from the streamed particle spec, so the game-side sim is pure waste at ALL times.
     // Freezing them once (ProcessMode.Disabled) reclaims the particle-sim CPU during active play too, not just
-    // idle. Never restored — the browser owns the sim (freed on scene teardown), so no saved-mode list, just a
-    // dedup set. Kept separate from the spine idle suspend/resume path (spine still resumes on activity). The one
-    // exception is <see cref="ParticleFreezeExemptScriptTypes"/>: self-freeing one-shot VFX overlays, which need
+    // idle. The original process mode is retained for runtime thaw. The one exception is
+    // <see cref="ParticleFreezeExemptScriptTypes"/>: self-freeing one-shot VFX overlays, which need
     // their own particles' `finished` signal to fire in order to disappear (the particle twin of the spine
     // exemption above). What a frozen node can no longer do FOR ITSELF — end a one-shot cycle: emit `finished`,
     // clear `Emitting` — is synthesized at the burst's natural end (see the end-of-burst nudge section below).
-    private static readonly HashSet<ulong> _particleFrozenIds = [];
+    private static readonly FrozenNodeStates<Node.ProcessModeEnum> _particleFrozenIds = new();
     // Mutable + volatile so the browser Settings panel can toggle it at runtime (SetFreezeParticles).
     private static volatile bool _freezeParticles = true;
 
@@ -300,10 +300,10 @@ public static class CouchCoopHeadlessVisualSuspender
     // ALWAYS-ON spine freeze (independent of idle). Spine nodes run per-frame skeletal mesh deformation that the
     // browser reproduces itself by playing a server-baked clip off its own wall-clock, so the game-side sim is
     // pure waste at ALL times. Freezing them once (ProcessMode.Disabled) reclaims that CPU during active play too.
-    // Never restored — the browser owns playback (freed on scene teardown), so no saved-mode list, just a dedup
-    // set. Anim-TYPE changes still reach the mirror because the producer captures them where the animation is
-    // REQUESTED (spirectl Sts2SpineAnimationHooks), not from the node's now-frozen per-frame process.
-    private static readonly HashSet<ulong> _spineFrozenIds = [];
+    // The original process mode is retained for runtime thaw. Anim-TYPE changes still reach the mirror because
+    // the producer captures them where the animation is requested (spirectl Sts2SpineAnimationHooks), not from
+    // the node's now-frozen per-frame process.
+    private static readonly FrozenNodeStates<Node.ProcessModeEnum> _spineFrozenIds = new();
     // Mutable + volatile so the browser Settings panel can toggle it at runtime (SetFreezeSpines).
     private static volatile bool _freezeSpine = true;
 
@@ -365,19 +365,67 @@ public static class CouchCoopHeadlessVisualSuspender
     }
 
     /// <summary>
-    /// True when the freeze machinery (the Timer + its once-per-<see cref="RescanIntervalMs"/> rescan) is running in
-    /// THIS process. False on a WINDOWED host that never installed it — where the <c>_freeze*</c> flags still hold
+    /// True once the freeze machinery is installed in this process, including while disabled.
+    /// False on a WINDOWED host that never installed it — where the <c>_freeze*</c> flags still hold
     /// their startup defaults but NOTHING is frozen, which is why <see cref="EffectiveFreezes"/> and not the raw flags is
     /// what the session envelope reports.
     /// </summary>
     public static bool IsInstalled => _started;
+
+    /// <summary>Whether the suspender is enabled, including before its Timer attaches. Defaults to true.</summary>
+    public static bool IsEnabled => _enabled;
+
+    /// <summary>
+    /// Enable or fully release the suspender without changing the per-category configuration.
+    /// Calls from other threads defer the transition to the game main thread.
+    /// </summary>
+    public static void SetEnabled(bool on)
+    {
+        // Remember demand immediately, even if installation has queued attachment but has not run it yet.
+        _enabled = on;
+        if (!_started) return;
+
+        if (OS.GetThreadCallerId() == OS.GetMainThreadId()) ReconcileEnabledStateOnMainThread();
+        else Callable.From(ReconcileEnabledStateOnMainThread).CallDeferred();
+    }
+
+    internal readonly record struct EnableActions(bool ReleaseAll, FreezeStates FreezeNow);
+
+    internal static EnableActions ComputeEnableActions(bool enabled, bool hasViewers, FreezeStates configured)
+        => new(!enabled, enabled && hasViewers ? configured : default);
+
+    private static void ReconcileEnabledStateOnMainThread()
+    {
+        var actions = ComputeEnableActions(_enabled, StreamingViewers.HasViewers,
+            new FreezeStates(_freezeParticles, _freezeSpine, _freezeDecor));
+        // Stop first on disable, before restoring nodes or clearing owed particle work.
+        ReconcileTimerDemandOnMainThread();
+        if (actions.ReleaseAll)
+        {
+            RestoreFps();
+            _suspended = false;
+            _fpsThrottled = false;
+            Unfreeze(_particleFrozenIds);
+            Unfreeze(_spineFrozenIds);
+            Unfreeze(_decorativeFrozenIds);
+            UnfreezeProcess(_decorativeProcessFrozenIds);
+            ClearPendingFinishNudges();
+        }
+        else if (actions.FreezeNow != default && RootOrNull() is { } root)
+        {
+            if (actions.FreezeNow.Decor) FreezeDecorativeAnimators(root);
+            if (actions.FreezeNow.Particles) FreezeAllParticles(root);
+            if (actions.FreezeNow.Spines) FreezeAllSpine(root);
+            _lastDecorativeScanMs = System.Environment.TickCount64;
+        }
+    }
 
     /// <summary>The three always-on freezes as they are EFFECTIVELY applied in one process.</summary>
     public readonly record struct FreezeStates(bool Particles, bool Spines, bool Decor);
 
     /// <summary>
     /// The effective-state RULE, pure so <c>HostPerformanceEnvelopeTests</c> can assert it with no live process:
-    /// an installed suspender applies its flags verbatim; a process that never installed the machinery applies
+    /// an active suspender applies its flags verbatim; a process without active machinery applies
     /// NOTHING, whatever its env-seeded flags say (a windowed host — <c>CouchCoopMod.Init</c> only installs for
     /// <c>IsHeadlessClient || IsHeadlessDisplay()</c>).
     /// </summary>
@@ -392,7 +440,7 @@ public static class CouchCoopHeadlessVisualSuspender
     /// <see cref="GetEffectiveBaselineMaxFpsAsync"/>, which reads <see cref="Engine.MaxFps"/>).
     /// </summary>
     public static FreezeStates EffectiveFreezes()
-        => ComputeEffectiveFreezes(_started, _freezeParticles, _freezeSpine, _freezeDecor);
+        => ComputeEffectiveFreezes(_started && _enabled, _freezeParticles, _freezeSpine, _freezeDecor);
 
     /// <summary>
     /// Make sure the freeze machinery is RUNNING before a runtime toggle turns a freeze on, installing it in
@@ -445,7 +493,7 @@ public static class CouchCoopHeadlessVisualSuspender
             Name = NodeName,
             WaitTime = CheckIntervalSeconds,
             OneShot = false,
-            Autostart = !_rescanOnly,
+            Autostart = false,
             // Always so the idle check keeps running even if the tree pauses; also keeps THIS timer node out of
             // the set of things that could ever freeze itself (it's a Timer, not a spine/particle node anyway).
             ProcessMode = Node.ProcessModeEnum.Always,
@@ -453,7 +501,7 @@ public static class CouchCoopHeadlessVisualSuspender
         timer.Timeout += () => Tick(root);
         root.AddChild(timer);
         _tickTimer = timer;
-        ReconcileTimerDemandOnMainThread();
+        ReconcileEnabledStateOnMainThread();
         CouchCoopLog.Info(
             $"[suspend] headless idle visual suspend ready (idle>={IdleThresholdMs}ms, check={CheckIntervalSeconds:0.##}s, "
             + $"idle fps cap={(_idleFps > 0 ? _idleFps.ToString() : "off")})");
@@ -463,18 +511,18 @@ public static class CouchCoopHeadlessVisualSuspender
     // It reads current demand, so an older queued callback cannot undo a newer viewer transition.
     private static void QueueTimerDemandReconcile()
     {
-        if (_started && _rescanOnly)
+        if (_started && _enabled && _rescanOnly)
         {
             Callable.From(ReconcileTimerDemandOnMainThread).CallDeferred();
         }
     }
 
-    public static bool ShouldRunTimer(bool rescanOnly, bool hasViewers, bool hasPendingFinishNudges) =>
-        !rescanOnly || hasViewers || hasPendingFinishNudges;
+    public static bool ShouldRunTimer(bool enabled, bool rescanOnly, bool hasViewers, bool hasPendingFinishNudges) =>
+        enabled && (!rescanOnly || hasViewers || hasPendingFinishNudges);
 
     private static void ReconcileTimerDemandOnMainThread()
     {
-        if (!_rescanOnly || _tickTimer is not { } timer || !GodotObject.IsInstanceValid(timer)
+        if (_tickTimer is not { } timer || !GodotObject.IsInstanceValid(timer)
             || !timer.IsInsideTree())
         {
             return;
@@ -486,7 +534,7 @@ public static class CouchCoopHeadlessVisualSuspender
             hasPendingFinishNudges = _pendingFinishNudges.Count > 0;
         }
 
-        if (ShouldRunTimer(_rescanOnly, StreamingViewers.HasViewers, hasPendingFinishNudges))
+        if (ShouldRunTimer(_enabled, _rescanOnly, StreamingViewers.HasViewers, hasPendingFinishNudges))
         {
             // An overdue repeating Timer can report IsStopped=true while still processing internally.
             if (!timer.IsProcessingInternal()) timer.Start();
@@ -501,7 +549,7 @@ public static class CouchCoopHeadlessVisualSuspender
     // the idle transition and then throttled while suspended.
     private static void Tick(Node root)
     {
-        if (!GodotObject.IsInstanceValid(root))
+        if (!_enabled || !GodotObject.IsInstanceValid(root))
         {
             return;
         }
@@ -571,8 +619,8 @@ public static class CouchCoopHeadlessVisualSuspender
 
     // Walk the tree and freeze every decorative per-frame animator (by C# type name) not already frozen, using the
     // per-type mechanism from <see cref="DecorativeAnimatorTypes"/>. Runs ALWAYS (not idle-gated) so their transform
-    // churn never reaches the mirror producer; the browser reproduces the motion on its own clock. Never restored —
-    // decorative, and freed on scene teardown. Alloc-free DFS, main thread only (SetProcess is thread-guarded).
+    // churn never reaches the mirror producer; the browser reproduces the motion on its own clock.
+    // Alloc-free DFS, main thread only (SetProcess is thread-guarded).
     //
     // The ProcessOnly branch RE-ASSERTS on every scan (two cheap bool reads) instead of gating on the dedup set,
     // because Godot re-enables processing at NOTIFICATION_READY for any node whose script overrides `_Process`
@@ -599,7 +647,7 @@ public static class CouchCoopHeadlessVisualSuspender
             {
                 if (how == DecorFreeze.WholeNode)
                 {
-                    if (_decorativeFrozenIds.Add(node.GetInstanceId()))
+                    if (_decorativeFrozenIds.Remember(node.GetInstanceId(), node.ProcessMode))
                     {
                         node.ProcessMode = Node.ProcessModeEnum.Disabled;
                         froze++;
@@ -607,12 +655,13 @@ public static class CouchCoopHeadlessVisualSuspender
                 }
                 else if (node.IsProcessing() || node.IsPhysicsProcessing())
                 {
-                    node.SetProcess(false);
-                    node.SetPhysicsProcess(false);
-                    if (_decorativeProcessFrozenIds.Add(node.GetInstanceId()))
+                    if (_decorativeProcessFrozenIds.Remember(node.GetInstanceId(),
+                            new ProcessFlags(node.IsProcessing(), node.IsPhysicsProcessing())))
                     {
                         froze++;
                     }
+                    node.SetProcess(false);
+                    node.SetPhysicsProcess(false);
                 }
             }
 
@@ -633,9 +682,8 @@ public static class CouchCoopHeadlessVisualSuspender
 
     // Walk the tree and freeze every particle node (GpuParticles2D / CpuParticles2D) not already frozen. Runs
     // ALWAYS (not idle-gated) so the game-side particle sim never runs — the browser re-runs it from the streamed
-    // particle spec. Never restored — the browser owns the sim, freed on scene teardown, so no saved-mode list,
-    // just a dedup set. Alloc-free DFS. Base-Node APIs only. Subtrees under a
-    // <see cref="ParticleFreezeExemptScriptTypes"/> root are skipped whole (self-freeing one-shot VFX).
+    // particle spec. The original process mode is retained for runtime thaw. Alloc-free DFS. Base-Node APIs only.
+    // Subtrees under a <see cref="ParticleFreezeExemptScriptTypes"/> root are skipped whole (self-freeing VFX).
     private static int FreezeAllParticles(Node root)
     {
         var froze = 0;
@@ -661,7 +709,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
             if (node.ProcessMode != Node.ProcessModeEnum.Disabled
                 && node is GpuParticles2D or CpuParticles2D
-                && _particleFrozenIds.Add(node.GetInstanceId()))
+                && _particleFrozenIds.Remember(node.GetInstanceId(), node.ProcessMode))
             {
                 node.ProcessMode = Node.ProcessModeEnum.Disabled;
                 froze++;
@@ -730,6 +778,10 @@ public static class CouchCoopHeadlessVisualSuspender
     /// Pure, for the same reason as <see cref="ShouldNudgeOnFreeze"/>.
     /// </summary>
     public static bool ShouldNudgeOnRestart(bool alreadyFrozen, bool oneShot) => alreadyFrozen && oneShot;
+
+    // Gate before any native node access: disabled machinery cannot owe a synthesized finish.
+    internal static bool ShouldObserveParticleRestart(bool enabled, bool hasFrozenParticles)
+        => enabled && hasFrozenParticles;
 
     /// <summary>
     /// How long after the burst starts Godot itself would emit <c>finished</c>, plus a margin. Godot's one-shot
@@ -827,6 +879,8 @@ public static class CouchCoopHeadlessVisualSuspender
     /// </summary>
     public static void NotifyParticleRestarted(GodotObject node)
     {
+        if (!ShouldObserveParticleRestart(_enabled, _particleFrozenIds.Count > 0)) return;
+
         try
         {
             if (node is not (GpuParticles2D or CpuParticles2D) || !GodotObject.IsInstanceValid(node))
@@ -949,9 +1003,9 @@ public static class CouchCoopHeadlessVisualSuspender
     // Walk the tree and freeze every spine node (SpineSprite / SpineMesh2D / SpineSlotNode / SpineBoneNode) not
     // already frozen. Runs ALWAYS (not idle-gated) so the game-side skeletal deformation never runs — the browser
     // plays a baked clip off its own wall-clock and the producer's CreatureAnimator hook keeps anim-type changes
-    // flowing. Never restored — the browser owns playback, freed on scene teardown, so no saved-mode list, just a
-    // dedup set. Alloc-free DFS; base-Node APIs only (identifies spine by native class string, never calls a
-    // spine-godot method). The cheap ProcessMode check runs before LooksLikeSpine's GetClass() native read.
+    // flowing. The original process mode is retained for runtime thaw. Alloc-free DFS; base-Node APIs only
+    // (identifies spine by native class string, never calls a spine-godot method). The cheap ProcessMode check
+    // runs before LooksLikeSpine's GetClass() native read.
     //
     // RE-ASSERTS on every scan, like the decorative walk's ProcessOnly branch above and for the same reason: the
     // dedup set is a REPORTING set (how many nodes we hold), never the gate. It used to be the gate —
@@ -992,8 +1046,9 @@ public static class CouchCoopHeadlessVisualSuspender
             var frozenAlready = node.ProcessMode == Node.ProcessModeEnum.Disabled;
             if (ShouldAssertSpineFreeze(frozenAlready, !frozenAlready && LooksLikeSpine(node)))
             {
+                var firstFreeze = _spineFrozenIds.Remember(node.GetInstanceId(), node.ProcessMode);
                 node.ProcessMode = Node.ProcessModeEnum.Disabled;
-                if (_spineFrozenIds.Add(node.GetInstanceId()))
+                if (firstFreeze)
                 {
                     froze++;
                 }
@@ -1020,8 +1075,7 @@ public static class CouchCoopHeadlessVisualSuspender
         return froze;
     }
 
-    // Resume the idle FPS throttle on activity. The node freezes (decor/particles/spine) are always-on and never
-    // restored, so there is nothing else to undo here (RestoreFps logs the frame-rate restore).
+    // Activity restores only the FPS throttle; node freezes remain until explicitly released.
     private static void Resume()
     {
         RestoreFps();
@@ -1045,9 +1099,12 @@ public static class CouchCoopHeadlessVisualSuspender
         Callable.From(RestoreFps).CallDeferred();
     }
 
+    internal static bool ShouldTrackAssetLoading(bool enabled, bool started, bool rescanOnly, bool completed)
+        => enabled && started && !rescanOnly && !completed;
+
     internal static void TrackAssetLoading(Task task)
     {
-        if (!_started || _rescanOnly || task.IsCompleted) return;
+        if (!ShouldTrackAssetLoading(_enabled, _started, _rescanOnly, task.IsCompleted)) return;
 
         _ = AssetLoads.Track(task);
         HeadlessIdleActivity.Mark();
@@ -1255,14 +1312,12 @@ public static class CouchCoopHeadlessVisualSuspender
     // These flip the always-on freezes / frame-rate at runtime so a viewer can A/B the optimizations from the
     // mirror. Safe from any thread: every Godot touch (ProcessMode / SetProcess / Engine.MaxFps / tree walk) is
     // marshalled onto the game main thread via Callable.From(...).CallDeferred(), exactly like
-    // Install/NotifyMainThreadActivity. Turning a freeze OFF resumes the currently-frozen nodes (ProcessMode.Inherit,
-    // or SetProcess(true) for the decorative process-only mechanism) and clears the dedup set; turning it ON
-    // re-freezes immediately (not just on the next scan) so the effect is instant.
+    // Install/NotifyMainThreadActivity. Turning a freeze OFF restores the saved node state and clears the
+    // bookkeeping; turning it ON re-freezes immediately (not just on the next scan) so the effect is instant.
     //
-    // ANY instance, not just a headless one. Each setter compares against the EFFECTIVE state (see
-    // EffectiveFreezes) rather than the raw flag, and an ON that finds no machinery installs it in rescan-only
-    // mode first (EnsureFreezeMachinery) — so the same checkbox works on the host's own windowed game, where it
-    // freezes what the host is actually looking at, and keeps working for nodes that spawn afterwards.
+    // ANY instance, not just a headless one. An ON that finds no machinery installs it in rescan-only mode
+    // first (EnsureFreezeMachinery). While disabled, setters update only the configuration for the next enable.
+    // The same checkbox works on the host's own windowed game, including nodes that spawn afterwards.
 
     /// <summary>
     /// Toggle the always-on particle freeze at runtime. OFF resumes frozen particle sims; ON re-freezes.
@@ -1272,7 +1327,7 @@ public static class CouchCoopHeadlessVisualSuspender
     /// </summary>
     public static void SetFreezeParticles(bool on)
     {
-        if (EffectiveFreezes().Particles == on) return;
+        if ((_started && _freezeParticles) == on) return;
         if (on && !EnsureFreezeMachinery()) return;
         _freezeParticles = on;
         // Frozen one-shots owe their listeners a `finished` they can no longer emit; the freeze walk schedules one
@@ -1282,10 +1337,9 @@ public static class CouchCoopHeadlessVisualSuspender
         if (on) Patches.HeadlessParticleRestartNudgePatch.Apply();
         Callable.From(() =>
         {
-            if (RootOrNull() is not { } root) return;
-            if (on)
+            if (_enabled && _freezeParticles)
             {
-                FreezeAllParticles(root);
+                if (RootOrNull() is { } root) FreezeAllParticles(root);
             }
             else
             {
@@ -1316,7 +1370,7 @@ public static class CouchCoopHeadlessVisualSuspender
     /// <summary>Toggle the always-on spine freeze at runtime. OFF resumes frozen skeletons; ON re-freezes.</summary>
     public static void SetFreezeSpines(bool on)
     {
-        if (EffectiveFreezes().Spines == on) return;
+        if ((_started && _freezeSpine) == on) return;
         if (on && !EnsureFreezeMachinery()) return;
         _freezeSpine = on;
         // A frozen spine never raises the `deathParticles` animation event the beast's death delay waits on, and
@@ -1326,28 +1380,28 @@ public static class CouchCoopHeadlessVisualSuspender
         if (on) Patches.HeadlessDeathDelayCapPatch.Apply();
         Callable.From(() =>
         {
-            if (RootOrNull() is not { } root) return;
-            if (on) FreezeAllSpine(root);
+            if (_enabled && _freezeSpine)
+            {
+                if (RootOrNull() is { } root) FreezeAllSpine(root);
+            }
             else Unfreeze(_spineFrozenIds);
         }).CallDeferred();
     }
 
     /// <summary>
     /// Toggle the always-on decorative freeze (intent/counter/flame animators) at runtime. OFF resumes BOTH
-    /// mechanisms — ProcessMode=Inherit for the whole-node freezes (which also un-pauses their self-bound tween
-    /// chains) and SetProcess(true) for the process-only ones; ON re-freezes immediately.
+    /// mechanisms, restoring the original process mode or callback flags; ON re-freezes immediately.
     /// </summary>
     public static void SetFreezeDecor(bool on)
     {
-        if (EffectiveFreezes().Decor == on) return;
+        if ((_started && _freezeDecor) == on) return;
         if (on && !EnsureFreezeMachinery()) return;
         _freezeDecor = on;
         Callable.From(() =>
         {
-            if (RootOrNull() is not { } root) return;
-            if (on)
+            if (_enabled && _freezeDecor)
             {
-                FreezeDecorativeAnimators(root);
+                if (RootOrNull() is { } root) FreezeDecorativeAnimators(root);
             }
             else
             {
@@ -1442,21 +1496,18 @@ public static class CouchCoopHeadlessVisualSuspender
         }
     }
 
-    // Resume a set of frozen nodes: restore ProcessMode to Inherit (the default the freeze overwrote) and clear the
-    // dedup set so a later re-enable freezes them again. Runs on the main thread (called from the deferred setters).
-    private static void Unfreeze(HashSet<ulong> frozenIds)
+    // Restore exactly the state captured before the first freeze, then release the ids, including freed nodes.
+    private static void Unfreeze(FrozenNodeStates<Node.ProcessModeEnum> frozenIds)
     {
         var resumed = 0;
-        foreach (var id in frozenIds)
+        frozenIds.Restore((id, mode) =>
         {
             if (GodotObject.InstanceFromId(id) is Node node && GodotObject.IsInstanceValid(node))
             {
-                node.ProcessMode = Node.ProcessModeEnum.Inherit;
+                node.ProcessMode = mode;
                 resumed++;
             }
-        }
-
-        frozenIds.Clear();
+        });
         if (resumed > 0)
         {
             CouchCoopLog.Info($"[suspend] runtime toggle — resumed {resumed} frozen node(s)");
@@ -1466,20 +1517,18 @@ public static class CouchCoopHeadlessVisualSuspender
     // Twin of Unfreeze for the ProcessOnly mechanism: restore the `_Process`/`_PhysicsProcess` callbacks the freeze
     // cleared (ProcessMode was never touched, so there is nothing to restore there) and clear the dedup set so a
     // later re-enable freezes them again. Runs on the main thread (called from the deferred setter).
-    private static void UnfreezeProcess(HashSet<ulong> frozenIds)
+    private static void UnfreezeProcess(FrozenNodeStates<ProcessFlags> frozenIds)
     {
         var resumed = 0;
-        foreach (var id in frozenIds)
+        frozenIds.Restore((id, flags) =>
         {
             if (GodotObject.InstanceFromId(id) is Node node && GodotObject.IsInstanceValid(node))
             {
-                node.SetProcess(true);
-                node.SetPhysicsProcess(true);
+                node.SetProcess(flags.Process);
+                node.SetPhysicsProcess(flags.PhysicsProcess);
                 resumed++;
             }
-        }
-
-        frozenIds.Clear();
+        });
         if (resumed > 0)
         {
             CouchCoopLog.Info($"[suspend] runtime toggle — resumed _process on {resumed} decorative node(s)");
@@ -1488,4 +1537,20 @@ public static class CouchCoopHeadlessVisualSuspender
 
     private static Node? RootOrNull()
         => Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root) ? root : null;
+}
+
+/// <summary>First-write-wins prior state, independent of Godot so freeze/thaw round-trips can be tested.</summary>
+internal sealed class FrozenNodeStates<T>
+{
+    private readonly Dictionary<ulong, T> _prior = [];
+
+    public int Count => _prior.Count;
+    public bool Contains(ulong id) => _prior.ContainsKey(id);
+    public bool Remember(ulong id, T state) => _prior.TryAdd(id, state);
+
+    public void Restore(Action<ulong, T> restore)
+    {
+        foreach (var (id, state) in _prior) restore(id, state);
+        _prior.Clear();
+    }
 }

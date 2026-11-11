@@ -46,6 +46,12 @@ if (args is ["player-names", ..])
     return;
 }
 
+if (args is ["suspender-enable", ..])
+{
+    HeadlessSuspenderEnableTests.Run();
+    return;
+}
+
 if (args is ["headless-loading", ..])
 {
     await HeadlessAssetLoadingActivityTests.RunAsync();
@@ -888,6 +894,7 @@ HostTransportCapacityTests.Run();
 ModManifestGameplayRelevanceTests.Run();
 // Energy orb: the decorative freeze must use the tween-safe mechanism per node type (see the file header).
 HeadlessDecorativeFreezeTests.Run();
+HeadlessSuspenderEnableTests.Run();
 // Phantom potion: the particle freeze must exempt the self-freeing potion-flash VFX (see the file header).
 HeadlessParticleFreezeExemptionTests.Run();
 // Idle wire: the spine freeze re-asserts on every scan — its dedup set is a reporting set, never the gate

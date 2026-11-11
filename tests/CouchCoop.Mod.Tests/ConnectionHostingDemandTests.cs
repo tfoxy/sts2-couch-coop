@@ -123,7 +123,7 @@ internal static class ConnectionHostingDemandTests
     private static void RescanTimerDemandKeepsOwedFinishNudgesAlive()
     {
         static bool Runs(bool rescanOnly, bool viewers, bool nudges) =>
-            CouchCoopHeadlessVisualSuspender.ShouldRunTimer(rescanOnly, viewers, nudges);
+            CouchCoopHeadlessVisualSuspender.ShouldRunTimer(true, rescanOnly, viewers, nudges);
         Assert(!Runs(true, false, false), "an empty windowed host parks the rescan timer");
         Assert(Runs(true, true, false), "a streaming viewer wakes the rescan timer");
         Assert(Runs(true, false, true), "an owed finish nudge keeps the timer running after viewers leave");
