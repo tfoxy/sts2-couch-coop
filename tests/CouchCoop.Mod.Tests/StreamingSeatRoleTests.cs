@@ -2,11 +2,8 @@ using System.Diagnostics;
 using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Session;
 
-// The streaming seat role. What matters: unflagged, every instance installs exactly the savers it did before and
-// loads nothing; flagged, both savers are skipped and the capture is loaded — or the instance refuses to start.
-// Then two wiring pins over the source, because the decisions above only matter if mod init asks them.
-//
-// Pure decisions plus a real ProcessStartInfo; no engine, and the loader is a recording stand-in.
+// A capture seat keeps the windowless suspender in standby and leaves texture release to the capture.
+// Pure decisions plus real ProcessStartInfo environments and source pins; no engine is loaded.
 internal static class StreamingSeatRoleTests
 {
     public const string Verb = "streaming-seat";
@@ -17,7 +14,7 @@ internal static class StreamingSeatRoleTests
     {
         OnlyExactlyOneRequestsTheRole();
         UnflaggedInstallsBothSaversAsBefore();
-        FlaggedSkipsBothSavers();
+        FlaggedKeepsTheVisualSuspender();
         UnflaggedLoadsNothing();
         UnflaggedIgnoresANamedExtension();
         FlaggedLoadsTheCapture();
@@ -55,12 +52,13 @@ internal static class StreamingSeatRoleTests
         }
     }
 
-    private static void FlaggedSkipsBothSavers()
+    private static void FlaggedKeepsTheVisualSuspender()
     {
         foreach (var instance in new[] { false, true })
         {
             Assert(!StreamingSeatRole.InstallsTextureEvictor(streamingSeat: true, instance), "the streaming seat has no evictor");
-            Assert(!StreamingSeatRole.InstallsVisualSuspender(streamingSeat: true, instance), "the streaming seat has no suspender");
+            Assert(StreamingSeatRole.InstallsVisualSuspender(streamingSeat: true, instance) == instance,
+                "a capture seat installs the suspender when windowless");
         }
     }
 
@@ -91,6 +89,8 @@ internal static class StreamingSeatRoleTests
         var outcome = StreamingSeatRole.StartCapture(true, $" {Extension}\n", path => path == Extension, loader.Load);
         Assert(outcome.Kind == StreamingSeatRole.CaptureOutcomeKind.Loaded, "the streaming seat loads its capture");
         Assert(loader.Calls is [Extension], "the loader is called once, with the trimmed path");
+        Assert(outcome.Message!.Contains("capture in standby", StringComparison.Ordinal),
+            "the load log describes standby without claiming the suspender is absent");
     }
 
     private static void FlaggedWithoutAnExtensionRefuses()
@@ -164,6 +164,7 @@ internal static class StreamingSeatRoleTests
 
         AssertGated(init, "HeadlessTextureImageEvictor.Install();", "StreamingSeatRole.InstallsTextureEvictor(");
         AssertGated(init, "CouchCoopHeadlessVisualSuspender.Install();", "StreamingSeatRole.InstallsVisualSuspender(");
+        AssertGated(init, "Session.RenderStreamItemTagger.Install();", "if (StreamingSeatRole.IsStreamingSeat)");
 
         var launcher = File.ReadAllText(
             Path.Combine(root, "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));

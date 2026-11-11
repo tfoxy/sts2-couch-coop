@@ -40,7 +40,8 @@ public sealed class CouchCoopBrowserServer(
     Func<Action<RosterFacts?>, IDisposable?>? subscribeRoster = null,
     AudioService? injectedAudioService = null,
     Action? requestSecureOrigin = null,
-    IHostBrowserAccess? hostBrowserAccess = null) : IAsyncDisposable
+    IHostBrowserAccess? hostBrowserAccess = null,
+    IHotRendererSwapHost? rendererSwapHost = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -354,6 +355,15 @@ public sealed class CouchCoopBrowserServer(
         throw new InvalidOperationException($"No local port was available at or above {preferredPort}.");
     }
 
+    private IDisposable? _rendererSubscription;
+
+    private void OnRendererChanged()
+    {
+        // Capture signals must not read game state in their callback. Session facts are read after it returns.
+        if (CouchCoopMod.EngineAvailable) Godot.Callable.From(ResendSessions).CallDeferred();
+        else ResendSessions();
+    }
+
     private void RegisterConnection()
     {
         int count;
@@ -363,6 +373,7 @@ public sealed class CouchCoopBrowserServer(
             // A dispatched old-generation request may finish its handshake after StopGenerationAsync took
             // the connection snapshot. Reject it before it can remain usable without a scene stream.
             if (_generationStopped) throw new OperationCanceledException("Browser server generation stopped.");
+            _rendererSubscription ??= _isHeadlessClient ? rendererSwapHost?.SubscribeRendererChanged(OnRendererChanged) : null;
             _mirrorConnectionCount++;
             RefreshObserversLocked();
             count = _mirrorConnectionCount;
@@ -1423,6 +1434,8 @@ public sealed class CouchCoopBrowserServer(
         lock (_observerGate)
         {
             _generationStopped = true;
+            _rendererSubscription?.Dispose();
+            _rendererSubscription = null;
             _mirrorConnectionCount = 0;
             _streamingMirrorConnectionCount = 0;
             _gatedStaticBgViewerCount = 0;
@@ -1886,7 +1899,7 @@ public sealed class CouchCoopBrowserServer(
                         _onSceneAck,
                         cancellationToken,
                         HostBrowserAccess,
-                        PrepareDirectIpSeatAsync, RegisterHostWatch).ConfigureAwait(false);
+                        PrepareDirectIpSeatAsync, RegisterHostWatch, rendererSwapHost).ConfigureAwait(false);
             }
             catch
             {

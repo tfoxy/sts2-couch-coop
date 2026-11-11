@@ -211,6 +211,8 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // and is validated by it before use (mirror/renderStreamAvailability.ts). The token is a credential: never log
   // it, never put it in a URL.
   renderStream?: BrowserRenderStreamDescriptor | null;
+  // The seat's renderer request status. Unknown states and malformed values are treated as absent.
+  rendererState?: BrowserRendererState;
   // The new renderer on the LAN (CAR7b): on the HOST's connection only, while the host has a capture, what its
   // streaming seat offers this page ({ webTransport, tls, ws }). Absent with no capture. Parsed where it is used
   // (renderStreamAvailability's parseLanOffer).
@@ -223,6 +225,21 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
 export interface BrowserStaticBackgroundDescriptor {
   scenePath: string;
   url: string;
+}
+
+export interface BrowserRendererState {
+  state: "mirror" | "arming" | "armed" | "failed";
+  reason?: string;
+}
+
+function normalizeRendererState(raw: unknown): BrowserRendererState | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as { state?: unknown; reason?: unknown };
+  if (value.state !== "mirror" && value.state !== "arming" && value.state !== "armed" && value.state !== "failed") {
+    return undefined;
+  }
+  if (value.reason !== undefined && typeof value.reason !== "string") return undefined;
+  return { state: value.state, ...(value.reason !== undefined ? { reason: value.reason } : {}) };
 }
 
 // The `renderStream` descriptor.
@@ -588,6 +605,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       // anything the client could not connect with.
       renderStream: value.renderStream !== null && typeof value.renderStream === "object"
         ? value.renderStream as BrowserRenderStreamDescriptor : null,
+      rendererState: normalizeRendererState(value.rendererState),
       renderStreamLan: value.renderStreamLan !== null && typeof value.renderStreamLan === "object" ? value.renderStreamLan : null,
       scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };

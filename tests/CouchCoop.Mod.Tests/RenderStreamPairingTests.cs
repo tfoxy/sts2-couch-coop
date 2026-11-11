@@ -6,23 +6,11 @@ using CouchCoop.Mod.Diagnostics;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Session;
+using CouchCoop.MirrorProtocol.Envelopes;
 
-// "Use new renderer (Beta)", the host half (MIR-3): which seat launch is the streaming seat, the environment it is
-// launched with, and the descriptor that seat hands to its own viewer.
-//
-// What must hold:
-//   * the launch environment is the acceptance leg's GRC_* table: loopback listener on the slot's port, /12, token
-//     auth, the host's own page origins, and the hook log OFF;
-//   * no seat inherits a capture variable from its host; only the one chosen launch gets the table back;
-//   * at most one live streaming seat per host: the first viewer who asks gets it, a second does not, and it frees
-//     when that seat's process exits — and a host with no capture configured never launches one;
-//   * the descriptor goes only to the streaming seat's connection, only for an Origin the hub allows, only with a
-//     well-formed token; and nothing on this path writes the token to a log;
-//   * PRES-A: the seat is launched at its viewer's aspect: W = clamp(round(1080 * aspect), 1920, cap), even, and
-//     stepped past every width Godot's float32 `expand` arithmetic floors to W-1; no usable aspect is 1920; the cap is
-//     the operator's COUCHCOOP_RENDER_STREAM_MAX_WIDTH (default 2520).
-//
-// Pure decisions, a real ProcessStartInfo and the manager over a fake launcher; no engine, no game.
+// Capture seats launch in standby with isolated environments and a default presentation. Each configured seat
+// can arm independently; legacy join renderer/aspect fields remain parseable without choosing a launch role.
+// Pure decisions, real ProcessStartInfo environments and the manager over a fake launcher; no engine or game.
 internal static class RenderStreamPairingTests
 {
     public const string Verb = "render-stream-pairing";
@@ -41,13 +29,15 @@ internal static class RenderStreamPairingTests
         PresentationWidthFollowsTheAspect();
         TheFloat32GuardMatchesGodot();
         TheCapIsTheOperatorsSetting();
-        AWideLaunchCarriesItsRootSize();
+        LaunchDefaultsToBasePresentation();
         TheAspectIsReadFromTheWire();
         NoSeatInheritsTheCapture();
-        await OneStreamingSeatPerHostAsync();
+        await EveryConfiguredSeatLoadsTheCaptureAsync();
         await AnUnconfiguredHostNeverStreamsAsync();
+        await AnUnavailableHubSkipsOnlyItsCaptureAsync();
+        await AnUnavailableEvidenceDirectorySkipsOnlyItsCaptureAsync();
         await AReusedSeatKeepsItsRoleAsync();
-        await AJoinsAspectSetsItsSeatsWidthAsync();
+        await AJoinsAspectDoesNotSetLaunchWidthAsync();
         DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin();
         DescriptorNeedsAWellFormedToken();
         DescriptorOffersWebTransportWithItsCertificate();
@@ -130,7 +120,9 @@ internal static class RenderStreamPairingTests
         {
             ["COUCHCOOP_STREAMING_SEAT"] = "1",
             ["COUCHCOOP_RENDER_CAPTURE_EXTENSION"] = Extension,
-            ["GRC_MODE"] = "arm",
+            ["GRC_MODE"] = "standby",
+            ["GRC_HEADLESS_TEXTURE_RELEASE"] = "always",
+            [StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable] = "2520",
             ["GRC_CALIBRATION"] = Calibration,
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
             ["GRC_LIVE_CARRIERS"] = "ws",
@@ -159,6 +151,7 @@ internal static class RenderStreamPairingTests
         Assert(env.Count == expected.Count && expected.All(kv => env.TryGetValue(kv.Key, out var v) && v == kv.Value),
             "the streaming seat's environment is exactly the acceptance table: "
             + string.Join(' ', env.Where(kv => !expected.TryGetValue(kv.Key, out var v) || v != kv.Value).Select(kv => $"{kv.Key}={kv.Value}")));
+        Assert(!env.ContainsKey("GRC_VALIDATION_LOG"), "the capture uses its default validation logging");
         Assert(!env.ContainsKey("GRC_RESOURCE_STORE_DIR") && !env.ContainsKey("GRC_STREAM_PATCH_OUT"),
             "a live-only seat writes no recording and no store to disk");
         Assert(StreamingSeatLaunch.HubPortForSlot(3) == HeadlessClientManager.SlotToPort(3) + 9
@@ -258,26 +251,15 @@ internal static class RenderStreamPairingTests
         Assert(StreamingSeatLaunch.ParseMaxPresentationWidth("99999", out _) == 5400, "at most 5:1 at 1080");
     }
 
-    private static void AWideLaunchCarriesItsRootSize()
+    private static void LaunchDefaultsToBasePresentation()
     {
-        var env = StreamingSeatLaunch.Environment(new StreamingSeatLaunch.Config(Extension, Calibration),
-            StreamingSeatLaunch.HubPortForSlot(2), "/home/p/ev", StreamingSeatLaunch.AllowedOrigins(13337, null),
-            StreamingSeatLaunch.PresentationWidth(2340.0 / 1080.0, 2520));
-        Assert(env["GRC_ROOT_SIZE"] == "presentation:2340x1080", $"the seat is launched at its viewer's width: {env["GRC_ROOT_SIZE"]}");
-
-        // ...and the seat's own descriptor hands that size to the page, which sizes its canvas from it.
-        var seat = new Dictionary<string, string>(SeatEnvironment(auth: "token")) { ["GRC_ROOT_SIZE"] = env["GRC_ROOT_SIZE"] };
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", seat.GetValueOrDefault, _ => Token)
-                is { Presentation: [2340, 1080] },
-            "the descriptor carries the wide presentation");
-
-        // The host's launch line names the width, for a live leg to read.
-        var launcher = File.ReadAllText(Path.Combine(RepoRoot(), "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));
-        var apply = launcher.IndexOf("private void ApplyStreamingSeatLocked(", StringComparison.Ordinal);
-        var applyBody = launcher[apply..launcher.IndexOf("\n    }\n", apply, StringComparison.Ordinal)];
-        Assert(applyBody.Contains("streaming seat launching slot=", StringComparison.Ordinal)
-               && applyBody.Contains("presentation={width.ToString(", StringComparison.Ordinal),
-            "the seat-launch log line carries the chosen presentation");
+        var env = StreamingSeatLaunch.Environment(new StreamingSeatLaunch.Config(Extension, Calibration, 2200),
+            StreamingSeatLaunch.HubPortForSlot(2), "/ev", StreamingSeatLaunch.AllowedOrigins(13337, null));
+        Assert(env["GRC_ROOT_SIZE"] == "presentation:1920x1080", "standby starts at the base presentation");
+        Assert(env[StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable] == "2200",
+            "the seat receives the configured cap for per-arm sizing");
+        Assert(StreamingSeatLaunch.RootSize(StreamingSeatLaunch.PresentationWidth(2340.0 / 1080.0, 2520))
+                == "presentation:2340x1080", "per-arm sizing can still request a wide presentation");
     }
 
     private static void TheAspectIsReadFromTheWire()
@@ -337,170 +319,148 @@ internal static class RenderStreamPairingTests
         var apply = launcher.IndexOf("ApplyStreamingSeatLocked(slot, psi,", StringComparison.Ordinal);
         var start = launcher.IndexOf("Process.Start(psi)", StringComparison.Ordinal);
         Assert(clear >= 0 && apply > clear && start > apply,
-            "LaunchReal clears the capture from every seat, then applies it to the chosen one, before starting it");
+            "LaunchReal clears the capture from every seat, then applies standby to each configured seat, before starting it");
     }
 
-    private static async Task OneStreamingSeatPerHostAsync()
+    private static async Task EveryConfiguredSeatLoadsTheCaptureAsync()
     {
-        var h = new Harness(configured: true);
-        var ann = Guid.NewGuid();
-        await h.Manager.EnsureHeadlessAsync(ann, "Ann", default, wantsStreamingSeat: true);
-        Assert(h.Launches is [(2, true)], "the first viewer who asks gets their seat launched as the streaming seat");
-        Assert(h.Manager.StreamingSlot == 2, "slot 2 streams");
-
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default, wantsStreamingSeat: true);
-        Assert(h.Launches[1] == (3, false), "a second viewer who asks gets a normal seat: one streaming seat per host");
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cat", default);
-        Assert(h.Launches[2] == (4, false), "a viewer who does not ask gets a normal seat");
-        Assert(h.Manager.StreamingSlot == 2, "still exactly slot 2");
-
-        // Ann's seat dies: the role frees, and the next launch that asks takes it.
-        h.Spawned[0].ForceExit();
-        Assert(h.Manager.StreamingSlot is null, "an exited streaming seat holds no role");
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Dan", default, wantsStreamingSeat: true);
-        Assert(h.Launches[^1].Streaming, "the next viewer who asks gets the freed role");
-        Assert(h.Manager.StreamingSlot == h.Launches[^1].Slot, "the new seat is the one streaming seat");
+        using var h = new Harness(configured: true);
+        foreach (var name in new[] { "Ann", "Bob", "Cat" })
+            await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), name, default);
+        Assert(h.Launches is [(2, true), (3, true), (4, true)], "every seat loads a capture without a join opt-in");
+        for (var i = 0; i < h.Environments.Count; i++)
+        {
+            var slot = h.Launches[i].Slot;
+            var env = h.Environments[i];
+            Assert(env["GRC_MODE"] == "standby", $"slot {slot} starts in standby");
+            Assert(env["GRC_LIVE_LISTEN"] == $"0.0.0.0:{StreamingSeatLaunch.HubPortForSlot(slot)}",
+                $"slot {slot} gets its own hub port");
+            Assert(env["GRC_EVIDENCE_DIR"] == StreamingSeatLaunch.EvidenceDirectory(h.UserDir, slot),
+                $"slot {slot} gets its own evidence directory");
+        }
     }
 
     private static async Task AnUnconfiguredHostNeverStreamsAsync()
     {
-        var h = new Harness(configured: false);
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true);
-        Assert(h.Launches is [(2, false)] && h.Manager.StreamingSlot is null,
-            "with no capture configured, asking launches a normal seat");
+        using var h = new Harness(configured: false);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Launches is [(2, false)], "with no capture configured, a normal seat launches");
+        Assert(!h.Environments[0].Keys.Any(k => k.StartsWith("GRC_", StringComparison.Ordinal)),
+            "an unconfigured launch has no capture environment");
+    }
+
+    private static async Task AnUnavailableHubSkipsOnlyItsCaptureAsync()
+    {
+        using var h = new Harness(configured: true);
+        using var listener = new System.Net.Sockets.TcpListener(IPAddress.Any, StreamingSeatLaunch.HubPortForSlot(2));
+        listener.Start();
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+        Assert(h.Launches is [(2, false), (3, true)], "a taken hub port skips the capture only on that seat");
+    }
+
+    private static async Task AnUnavailableEvidenceDirectorySkipsOnlyItsCaptureAsync()
+    {
+        using var h = new Harness(configured: true);
+        var evidence = StreamingSeatLaunch.EvidenceDirectory(h.UserDir, 2);
+        Directory.CreateDirectory(Path.GetDirectoryName(evidence)!);
+        File.WriteAllText(evidence, "blocked");
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default);
+        Assert(h.Launches is [(2, false), (3, true)], "an unavailable evidence directory skips only its seat's capture");
     }
 
     private static async Task AReusedSeatKeepsItsRoleAsync()
     {
-        var h = new Harness(configured: true);
+        using var h = new Harness(configured: true);
         await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true);
-        Assert(h.Launches is [(2, false)] && h.Manager.StreamingSlot is null,
-            "a running seat is reused as it is: the choice applies at the seat's next start");
-
-        // Its next start (a respawn on the same slot) honours the request.
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Launches is [(2, true)], "a running capture seat is reused without a relaunch");
         h.Spawned[0].ForceExit();
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true);
-        Assert(h.Launches is [(2, false), (2, true)] && h.Manager.StreamingSlot == 2, "the respawned seat streams");
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default);
+        Assert(h.Launches is [(2, true), (2, true)], "a respawn loads a standby capture again");
     }
 
-    private static async Task AJoinsAspectSetsItsSeatsWidthAsync()
+    private static async Task AJoinsAspectDoesNotSetLaunchWidthAsync()
     {
-        var h = new Harness(configured: true);
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true,
-            streamingAspect: 2340.0 / 1080.0);
-        Assert(h.Launches is [(2, true)] && h.Manager.StreamingSeatPresentationWidth(2) == 2340,
-            "a streaming join's aspect is its seat's width");
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Bob", default, wantsStreamingSeat: true);
-        Assert(h.Manager.StreamingSeatPresentationWidth(3) == 1920, "a join without an aspect (stretch off) is 1920");
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Cat", default, wantsStreamingSeat: true, streamingAspect: double.NaN);
-        Assert(h.Manager.StreamingSeatPresentationWidth(4) == 1920, "an unusable aspect is 1920");
-
-        var capped = new Harness(configured: true, maxWidth: 2200);
-        await capped.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true, streamingAspect: 21.0 / 9.0);
-        Assert(capped.Manager.StreamingSeatPresentationWidth(2) == 2200, "the operator's cap bounds it");
-
-        // Ann's seat is reused by a join asking with another aspect: the running seat keeps its width until its next
-        // start (re-launching on a changed aspect is PRES-R).
-        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), "Ann", default, wantsStreamingSeat: true, streamingAspect: 2.0);
-        Assert(h.Launches.Count == 3 && h.Manager.StreamingSeatPresentationWidth(2) == 2340,
-            "no relaunch, and no new width, for a reused seat");
+        using var h = new Harness(configured: true, maxWidth: 2200);
+        var join = System.Text.Json.JsonSerializer.Deserialize<BrowserJoinRequestEnvelope>(
+            """{"type":"join","requestId":"j","name":"Ann","renderer":"stream","aspect":2.1666}""", BrowserJson.Options)!;
+        Assert(join.Renderer == "stream" && BrowserAspect.Read(join.Aspect) == 2.1666,
+            "legacy join renderer and aspect remain parseable");
+        await h.Manager.EnsureHeadlessAsync(Guid.NewGuid(), join.Name, default);
+        var env = h.Environments[0];
+        Assert(env["GRC_ROOT_SIZE"] == "presentation:1920x1080", "a join's aspect never fixes the seat's launch width");
+        Assert(env[StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable] == "2200",
+            "the configured maximum remains available to the seat");
+        var connection = File.ReadAllText(Path.Combine(RepoRoot(), "src", "CouchCoop.Mod", "Server", "CouchCoopWebSocketConnection.cs"));
+        Assert(!connection.Contains("wantsStreamingSeat:", StringComparison.Ordinal)
+               && !connection.Contains("streamingAspect:", StringComparison.Ordinal), "the join does not select a capture role or width");
     }
+
+    private static (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion) Snapshot(
+        string? token = null, string hash = "", string listen = "127.0.0.1:13366", string rootSize = "1920x1080", int version = 13)
+        => (listen, token ?? Token, hash, rootSize, version);
 
     private static void DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin()
     {
         var env = SeatEnvironment(auth: "token");
-        string? Token_(string _) => Token;
-        var ok = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_);
+        var ok = StreamingSeatDescriptor.Build(Snapshot(), "http://127.0.0.1:13337", env.GetValueOrDefault);
         Assert(ok is not null && ok.Url == "ws://127.0.0.1:13366/render-stream" && ok.ResourceBase == "http://127.0.0.1:13366"
                && ok.Token == Token && ok.Protocol == 13 && ok.Presentation is [1920, 1080],
-            "the streaming seat's own connection from the host page gets the hub, the token, /13 and 1920x1080");
-        Assert(StreamingSeatDescriptor.Build(true, "http://localhost:13337", env.GetValueOrDefault, Token_) is not null,
+            "an armed seat's allowed page gets this arm's descriptor");
+        Assert(StreamingSeatDescriptor.Build(Snapshot(), "http://localhost:13337", env.GetValueOrDefault) is not null,
             "the localhost spelling of the host page too");
-
         foreach (var origin in new string?[] { null, "", "http://192.168.1.20:13337", "https://127.0.0.1:13338",
                      "http://127.0.0.1:13337/", "HTTP://127.0.0.1:13337" })
-        {
-            Assert(StreamingSeatDescriptor.Build(true, origin, env.GetValueOrDefault, Token_) is null,
-                $"no descriptor for origin '{origin}' (the hub would refuse it, or it is not a browser)");
-        }
-
-        Assert(StreamingSeatDescriptor.Build(false, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_) is null,
-            "a seat that is not the streaming seat never sends one");
-
-        var lan = new Dictionary<string, string>(env) { ["GRC_LIVE_LISTEN"] = "0.0.0.0:13366" };
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", lan.GetValueOrDefault, Token_) is null,
-            "a non-loopback listener is never described");
-        var v8 = new Dictionary<string, string>(env) { ["GRC_STREAM_VERSION"] = "8" };
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", v8.GetValueOrDefault, Token_) is null,
+            Assert(StreamingSeatDescriptor.Build(Snapshot(), origin, env.GetValueOrDefault) is null,
+                $"no descriptor for origin '{origin}'");
+        Assert(StreamingSeatDescriptor.Build(null, "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
+            "no armed snapshot: no descriptor");
+        Assert(StreamingSeatDescriptor.Build(Snapshot(listen: "0.0.0.0:13366"), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
+            "a non-loopback listener without LAN exposure is never described");
+        Assert(StreamingSeatDescriptor.Build(Snapshot(version: 8), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
             "only the wire versions the client speaks (11, 12, 13)");
-        var v12 = new Dictionary<string, string>(env) { ["GRC_STREAM_VERSION"] = "12" };
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", v12.GetValueOrDefault, Token_) is { Protocol: 12 },
-            "a seat configured at /12 is still described, at /12");
-
+        Assert(StreamingSeatDescriptor.Build(Snapshot(version: 12), "http://127.0.0.1:13337", env.GetValueOrDefault) is { Protocol: 12 },
+            "the snapshot's wire version is described");
         var open = SeatEnvironment(auth: "none");
-        var none = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", open.GetValueOrDefault,
-            _ => throw new InvalidOperationException("no token file is read without token auth"));
-        Assert(none is not null && none.Token is null, "a hub without token auth is described with no token");
+        Assert(StreamingSeatDescriptor.Build(Snapshot(token: ""), "http://127.0.0.1:13337", open.GetValueOrDefault) is { Token: null },
+            "a hub without token auth is described with no token");
+        var nextToken = new string('8', 64);
+        var next = StreamingSeatDescriptor.Build(Snapshot(nextToken, rootSize: "2340x1080", listen: "127.0.0.1:13376"),
+            "http://127.0.0.1:13337", env.GetValueOrDefault);
+        Assert(next is { Token: var fresh, Presentation: [2340, 1080], Url: "ws://127.0.0.1:13376/render-stream" } && fresh == nextToken,
+            "the next arm's token, listen and presentation replace the launch environment's facts");
     }
 
     private static void DescriptorNeedsAWellFormedToken()
     {
         var env = SeatEnvironment(auth: "token");
-        string? asked = null;
-        var missing = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault,
-            path => { asked = path; return null; });
-        Assert(missing is null, "no token file yet: no descriptor");
-        Assert(asked == Path.Combine("/home/p/ev", StreamingSeatDescriptor.TokenFileName), "the token is the capture's live-token");
         foreach (var bad in new[] { "", new string('A', 64), new string('7', 63), "not hex" })
-        {
-            Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, _ => bad) is null,
-                $"a malformed token ('{bad}') is never handed out");
-        }
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, _ => Token + "\n")?.Token == Token,
-            "the file's trailing newline is not part of the token");
+            Assert(StreamingSeatDescriptor.Build(Snapshot(token: bad), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
+                "a malformed armed token is never handed out");
     }
 
     private static void DescriptorOffersWebTransportWithItsCertificate()
     {
         var hash = new string('c', 64);
-        var env = new Dictionary<string, string>(SeatEnvironment(auth: "token"))
-        {
-            ["GRC_LIVE_CARRIERS"] = "ws,wt",
-            ["GRC_LIVE_WT_LISTEN"] = "127.0.0.1:13366",
-        };
-        string? Token_(string _) => Token;
-        string? asked = null;
-        var both = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_,
-            path => { asked = path; return hash + "\n"; });
+        var env = new Dictionary<string, string>(SeatEnvironment(auth: "token")) { ["GRC_LIVE_CARRIERS"] = "ws,wt" };
+        var both = StreamingSeatDescriptor.Build(Snapshot(hash: hash), "http://127.0.0.1:13337", env.GetValueOrDefault);
         Assert(both?.WebTransport is { Url: "https://127.0.0.1:13366/render-stream", CertificateHashes: [var pinned] } && pinned == hash,
-            "wt listed and its hash written: webTransport on the same port, pinned by that hash");
-        Assert(asked == Path.Combine("/home/p/ev", StreamingSeatDescriptor.CertificateHashFileName),
-            "the hash is the net module's live-cert-sha256");
-        Assert(both!.Url == "ws://127.0.0.1:13366/render-stream", "the WebSocket url stays, as the fallback");
-
-        var defaulted = new Dictionary<string, string>(env);
-        defaulted.Remove("GRC_LIVE_WT_LISTEN");
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", defaulted.GetValueOrDefault, Token_, _ => hash)
-               ?.WebTransport?.Url == "https://127.0.0.1:13366/render-stream",
-            "no GRC_LIVE_WT_LISTEN: the capture's default, GRC_LIVE_LISTEN's host and port");
-
-        foreach (var bad in new string?[] { null, "", new string('C', 64), new string('c', 63) })
-        {
-            var described = StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_, _ => bad);
-            Assert(described is { WebTransport: null }, $"no or a malformed hash ('{bad}'): WebSocket only, never a guess");
-        }
-
+            "wt listed: this arm's certificate pins the hub at the armed listen address");
+        Assert(both!.Url == "ws://127.0.0.1:13366/render-stream", "the WebSocket url stays as the fallback");
+        var nextHash = new string('d', 64);
+        Assert(StreamingSeatDescriptor.Build(Snapshot(hash: nextHash), "http://127.0.0.1:13337", env.GetValueOrDefault)
+            ?.WebTransport?.CertificateHashes is [var fresh] && fresh == nextHash, "a later arm replaces the certificate hash too");
+        foreach (var bad in new[] { "", new string('C', 64), new string('c', 63) })
+            Assert(StreamingSeatDescriptor.Build(Snapshot(hash: bad), "http://127.0.0.1:13337", env.GetValueOrDefault)
+                is { WebTransport: null }, "a missing or malformed hash offers only WebSocket");
         var wsOnly = new Dictionary<string, string>(env) { ["GRC_LIVE_CARRIERS"] = "ws" };
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", wsOnly.GetValueOrDefault, Token_,
-                   _ => throw new InvalidOperationException("no hash is read when wt is not listed")) is { WebTransport: null },
-            "wt not listed: no webTransport, and no hash read");
+        Assert(StreamingSeatDescriptor.Build(Snapshot(hash: hash), "http://127.0.0.1:13337", wsOnly.GetValueOrDefault)
+            is { WebTransport: null }, "wt not listed: no webTransport");
         var lanWt = new Dictionary<string, string>(env) { ["GRC_LIVE_WT_LISTEN"] = "0.0.0.0:13366" };
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", lanWt.GetValueOrDefault, Token_, _ => hash)
-               is { WebTransport: null },
-            "a non-loopback wt listener is not described to a loopback page");
-        Assert(StreamingSeatDescriptor.Build(true, "http://127.0.0.1:13337", env.GetValueOrDefault, Token_) is { WebTransport: null },
-            "no hash reader: no webTransport");
+        Assert(StreamingSeatDescriptor.Build(Snapshot(hash: hash), "http://127.0.0.1:13337", lanWt.GetValueOrDefault)
+            is { WebTransport: null }, "a non-loopback wt listener without LAN exposure is not described");
     }
 
     private static void DescriptorJsonOmitsAbsentMembers()
@@ -514,6 +474,8 @@ internal static class RenderStreamPairingTests
             new BrowserRenderStreamWebTransportDto("https://127.0.0.1:13366/render-stream", [new string('c', 64)])));
         Assert(wt.Contains("\"webTransport\":{\"url\":\"https://127.0.0.1:13366/render-stream\",\"certificateHashes\":[\"", StringComparison.Ordinal),
             $"the client's key names: {wt}");
+        Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror")) == "{\"state\":\"mirror\"}",
+            "a renderer state omits its absent reason");
         var unpinned = BrowserJson.Serialize(new BrowserRenderStreamWebTransportDto("https://h:1/render-stream"));
         Assert(unpinned == "{\"url\":\"https://h:1/render-stream\"}", $"no certificateHashes member when unpinned: {unpinned}");
     }
@@ -570,7 +532,7 @@ internal static class RenderStreamPairingTests
         {
             File.WriteAllText(Path.Combine(dir, StreamingSeatLan.KeyFileName), "stale");
             IReadOnlyList<string> origins;
-            var lanHarness = new Harness(configured: true);
+            using var lanHarness = new Harness(configured: true);
             lanHarness.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, null,
                 new StreamingSeatLan.TlsPair("direct-ip", "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n", "SECRET-KEY"));
             origins = ["http://127.0.0.1:13337"];
@@ -659,7 +621,6 @@ internal static class RenderStreamPairingTests
 
     private static void LanDescriptorMatrix()
     {
-        var hash = new string('c', 64);
         var env = new Dictionary<string, string>(SeatEnvironment(auth: "token"))
         {
             ["GRC_LIVE_EXPOSE"] = "lan",
@@ -670,12 +631,11 @@ internal static class RenderStreamPairingTests
             ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337,http://localhost:13337,http://192.168.1.77:13337,"
                 + "https://192.168.1.77:13337,https://192-168-1-77.my.local-ip.co:13337",
         };
-        string? Token_(string _) => Token;
-        string? Hash(string _) => hash;
         // The pair is the Direct-IP leaf: it names the IP, not the secure-origin host name.
         bool Covers(string path, string host) => path == "/ev/tls-cert.pem" && host == "192.168.1.77";
-        BrowserRenderStreamDto? D(IDictionary<string, string> e, string origin, Func<string, string?>? hashReader = null)
-            => StreamingSeatDescriptor.Build(true, origin, k => e.TryGetValue(k, out var v) ? v : null, Token_, hashReader ?? Hash, Covers);
+        BrowserRenderStreamDto? D(IDictionary<string, string> e, string origin, string certificateHash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+            => StreamingSeatDescriptor.Build(Snapshot(hash: certificateHash, listen: e["GRC_LIVE_LISTEN"]), origin,
+                k => e.TryGetValue(k, out var v) ? v : null, Covers);
 
         var loop = D(env, "http://127.0.0.1:13337");
         Assert(loop is { Url: "ws://127.0.0.1:13366/render-stream", ResourceBase: "http://127.0.0.1:13366" }
@@ -690,7 +650,7 @@ internal static class RenderStreamPairingTests
         var httpsName = D(env, "https://192-168-1-77.my.local-ip.co:13337");
         Assert(httpsName?.WebTransport?.Url == "https://192-168-1-77.my.local-ip.co:13366/render-stream",
             "an https page the certificate does not name: WebTransport (pinned by hash, any host name)");
-        Assert(D(env, "https://192-168-1-77.my.local-ip.co:13337", _ => null) is null,
+        Assert(D(env, "https://192-168-1-77.my.local-ip.co:13337", "") is null,
             "... and with no WebTransport either, nothing it could use: no descriptor");
 
         var httpIp = D(env, "http://192.168.1.77:13337");
@@ -712,7 +672,7 @@ internal static class RenderStreamPairingTests
         var httpsPlain = D(plain, "https://192.168.1.77:13337");
         Assert(httpsPlain?.WebTransport is not null && httpsPlain.Url.StartsWith("ws://", StringComparison.Ordinal),
             "no host certificate, an https page: WebTransport (its ws fallback is mixed content and cannot help)");
-        Assert(D(plain, "https://192.168.1.77:13337", _ => null) is null, "... and without WebTransport: no descriptor");
+        Assert(D(plain, "https://192.168.1.77:13337", "") is null, "... and without WebTransport: no descriptor");
 
         var nameOnly = new Dictionary<string, string>(env) { ["GRC_LIVE_CARRIERS"] = "ws" };
         Assert(D(nameOnly, "http://192-168-1-77.my.local-ip.co:13337") is null, "an origin the host did not allow: none");
@@ -727,14 +687,15 @@ internal static class RenderStreamPairingTests
 
     private static void LanOfferIsAlwaysMade()
     {
-        Assert(new Harness(configured: false).Manager.RenderStreamLanOffer("https://192.168.1.77:13337") is null, "no capture: no offer");
+        using var unconfigured = new Harness(configured: false);
+        Assert(unconfigured.Manager.RenderStreamLanOffer("https://192.168.1.77:13337") is null, "no capture: no offer");
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var request = new CertificateRequest("CN=wild", key, HashAlgorithmName.SHA256);
         var san = new SubjectAlternativeNameBuilder();
         san.AddDnsName("*.my.local-ip.co");
         request.CertificateExtensions.Add(san.Build());
         using var leaf = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(9));
-        var lan = new Harness(configured: true);
+        using var lan = new Harness(configured: true);
         lan.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, "my.local-ip.co",
             new StreamingSeatLan.TlsPair("secure-origin", leaf.ExportCertificatePem(), "k"));
         Assert(lan.Manager.RenderStreamLanOffer("https://192-168-1-77.my.local-ip.co:13337") is (false, true, true),
@@ -742,7 +703,7 @@ internal static class RenderStreamPairingTests
         Assert(lan.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, true),
             "the same certificate does not name an IP page: no tls for it, but plain ws for its plain-http page");
         Assert(lan.Manager.RenderStreamLanOffer(null) is (false, false, true), "no Origin: no certificate it could name");
-        var plain = new Harness(configured: true);
+        using var plain = new Harness(configured: true);
         plain.Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([LanAddress], null, null, null);
         Assert(plain.Manager.RenderStreamLanOffer("http://192.168.1.77:13337") is (false, false, true),
             "no certificate at all: plain ws for a plain-http LAN page (CAR9)");
@@ -765,12 +726,12 @@ internal static class RenderStreamPairingTests
         var connection = File.ReadAllText(Path.Combine(root, "src", "CouchCoop.Mod", "Server", "CouchCoopWebSocketConnection.cs"));
         var at = connection.IndexOf("private BrowserEnvelope WithRenderStream(", StringComparison.Ordinal);
         Assert(at >= 0, "the connection attaches the descriptor in one place");
-        var body = connection[at..connection.IndexOf(';', at)];
+        var body = connection[at..connection.IndexOf("\n    }\n", at, StringComparison.Ordinal)];
         Assert(!body.Contains("Log", StringComparison.Ordinal), "attaching the descriptor logs nothing");
 
         // The host's launch line names the hub and the evidence dir; the token does not exist yet on the host.
         var launcher = File.ReadAllText(Path.Combine(root, "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));
-        var apply = launcher.IndexOf("private void ApplyStreamingSeatLocked(", StringComparison.Ordinal);
+        var apply = launcher.IndexOf("internal void ApplyStreamingSeatLocked(", StringComparison.Ordinal);
         var applyBody = launcher[apply..launcher.IndexOf("\n    }\n", apply, StringComparison.Ordinal)];
         Assert(!applyBody.Contains("live-token\"", StringComparison.Ordinal) && !applyBody.Contains("ReadAllText", StringComparison.Ordinal),
             "the host never reads the token");
@@ -785,9 +746,7 @@ internal static class RenderStreamPairingTests
         var seat = StreamingSeatRole.StartCapture(false, Extension, _ => true, _ => throw new InvalidOperationException(),
             isHeadlessClient: true);
         Assert(seat.Kind == StreamingSeatRole.CaptureOutcomeKind.IgnoredExtension, "a normal seat still warns");
-        Assert(StreamingSeatRole.EnvironmentVariable == StreamingSeatDescriptor.RoleEnvironmentVariable
-               && StreamingSeatRole.EnvironmentVariable == "COUCHCOOP_STREAMING_SEAT",
-            "the role and the descriptor read one flag");
+        Assert(StreamingSeatRole.EnvironmentVariable == "COUCHCOOP_STREAMING_SEAT", "the launch role flag stays compatible");
     }
 
     private static void ItemTaggerGroupsMatchTheModules()
@@ -903,13 +862,14 @@ internal static class RenderStreamPairingTests
         ["GRC_ROOT_SIZE"] = "presentation:1920x1080",
     };
 
-    // The manager over a launcher that records whether each launch was the streaming seat's — asked from inside the
-    // launch, exactly where LaunchReal asks it.
-    private sealed class Harness
+    // The real environment preparation over a fake process launch, with no game or capture loaded.
+    private sealed class Harness : IDisposable
     {
         public readonly List<(int Slot, bool Streaming)> Launches = [];
+        public readonly List<Dictionary<string, string?>> Environments = [];
         public readonly List<FakeProcess> Spawned = [];
         public readonly HeadlessClientManager Manager;
+        public readonly string UserDir = Path.Combine(RepoRoot(), ".local", "stream-pairing-" + Guid.NewGuid().ToString("N"));
 
         public Harness(bool configured, int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth)
         {
@@ -917,13 +877,24 @@ internal static class RenderStreamPairingTests
             Manager = manager = new HeadlessClientManager(
                 launcher: slot =>
                 {
-                    Launches.Add((slot, manager!.IsStreamingLaunch(slot)));
+                    var psi = new ProcessStartInfo();
+                    StreamingSeatLaunch.ClearInherited(psi);
+                    manager!.ApplyStreamingSeatLocked(slot, psi, UserDir);
+                    Environments.Add(new Dictionary<string, string?>(psi.Environment));
+                    Launches.Add((slot, psi.Environment.ContainsKey(StreamingSeatRole.EnvironmentVariable)));
                     var process = new FakeProcess(slot);
                     Spawned.Add(process);
                     return process;
                 },
                 readinessProbe: (_, _) => Task.FromResult(true),
                 streamingConfig: configured ? new StreamingSeatLaunch.Config(Extension, Calibration, maxWidth) : null, registerProcessExit: false);
+            Manager.StreamingSeatLanContext = () => new StreamingSeatLan.Context([], null, null, null);
+        }
+
+        public void Dispose()
+        {
+            Manager.Dispose();
+            if (Directory.Exists(UserDir)) Directory.Delete(UserDir, recursive: true);
         }
     }
 

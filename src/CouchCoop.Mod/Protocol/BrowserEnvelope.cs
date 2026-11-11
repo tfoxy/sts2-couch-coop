@@ -80,14 +80,14 @@ public sealed record BrowserEnvelope(
     string? ConnectionAttemptId = null,
     // Shared-port seat route, mutually exclusive with HeadlessMirrorPort. Opaque to the browser.
     string? HeadlessMirrorPath = null,
-    // "Use new renderer (Beta)": where THIS instance's render-stream hub listens. Only the streaming seat sends it,
-    // and only on a connection whose page Origin the hub allows (Session/StreamingSeatDescriptor.cs). The token is a
+    // This arm's render-stream descriptor, only on a connection whose page Origin the hub allows. The token is a
     // credential: it travels on this already-authorized socket only, never in a log line or a URL.
     BrowserRenderStreamDto? RenderStream = null,
     // The new renderer on the LAN (CAR7b): on the HOST's connections only, while a capture is configured, what its
     // streaming seat would offer this page, so the page can tell whether it could use the stream before it joins.
     // Null (omitted) with no capture.
-    BrowserRenderStreamLanDto? RenderStreamLan = null);
+    BrowserRenderStreamLanDto? RenderStreamLan = null,
+    BrowserRendererStateDto? RendererState = null);
 
 // The `renderStreamLan` wire shape: { "webTransport": true, "tls": true, "ws": false } (camelCased by BrowserJson).
 // `webTransport`: the seat serves WebTransport (any secure-context page can use it). `tls`: the seat serves wss with a
@@ -95,26 +95,6 @@ public sealed record BrowserEnvelope(
 // plain ws to LAN pages, which it always does (beside wss when the host has a certificate). A page reading a host
 // without `ws` (before CAR9) takes `tls: false` as plain ws.
 public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls, bool Ws);
-
-// The `renderStream` wire shape, @godot-scene-web/render-stream-client's endpoint descriptor:
-// { "url": "ws://127.0.0.1:13366/render-stream", "resourceBase": "http://127.0.0.1:13366", "token": "<64 hex>",
-//   "protocol": 12, "presentation": [1920, 1080],
-//   "webTransport": { "url": "https://127.0.0.1:13366/render-stream", "certificateHashes": ["<64 hex>"] } }
-// (camelCased by BrowserJson, whose null-omission matters here: the client's validator refuses an explicit null).
-public sealed record BrowserRenderStreamDto(
-    string Url,
-    string ResourceBase,
-    string? Token,
-    int Protocol,
-    IReadOnlyList<int>? Presentation = null,
-    BrowserRenderStreamWebTransportDto? WebTransport = null);
-
-// The descriptor's `webTransport` (godot-scene-web carrier-design.md Q5, CAR5): the hub's WebTransport carrier.
-// `certificateHashes` pins its self-signed certificate (SHA-256 of the DER, lowercase hex), as
-// `serverCertificateHashes`; omitted when the browser validates the certificate itself.
-public sealed record BrowserRenderStreamWebTransportDto(
-    string Url,
-    IReadOnlyList<string>? CertificateHashes = null);
 
 // The wire shape Stage B also consumes: { "scenePath": "res://scenes/backgrounds/<id>/<id>_background.tscn",
 // "url": "/bg/<id>?layers=<digest>&v=1" } (camelCased by BrowserJson).

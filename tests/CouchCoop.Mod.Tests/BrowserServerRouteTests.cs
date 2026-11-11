@@ -216,7 +216,7 @@ if (args is [PointerTargetPlacementTests.Verb, ..])
 }
 
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- render-stream-pairing` runs the new renderer's host half ALONE:
-// the streaming seat's launch environment, one streaming seat per host, and the seat's descriptor (pure), then the
+// every capture seat's standby launch environment and the seat's descriptor (pure), then the
 // descriptor over a real seat socket relayed through the seat pipe (a child process that IS the streaming seat).
 if (args is [RenderStreamPairingTests.Verb, ..])
 {
@@ -570,6 +570,12 @@ if (args is ["host-ui", ..])
     return;
 }
 
+if (args is ["renderer-swap", ..])
+{
+    RenderStreamSwapTests.Run();
+    return;
+}
+
 if (args is ["capture-quit", ..])
 {
     RenderStreamCaptureQuitTests.Run();
@@ -914,6 +920,7 @@ HeadlessParticleFinishNudgeTests.Run();
 await HeadlessDisconnectExitTests.RunAsync();
 HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
+RenderStreamSwapTests.Run();
 HeadlessTermSignalTests.Run();
 ConnectionRegistryTests.Run();
 ConnectionDeviceLabelTests.Run();

@@ -57,6 +57,8 @@ const props = withDefaults(defineProps<{
   createClient?: (options: RenderStreamClientOptions) => RenderStreamClient;
   /** The upstream input sender (the seat socket's `input` message); absent ⇒ the stage stays view-only. */
   sendInput?: (message: MirrorInputMessage) => void;
+  /** A hidden stage can draw its first frame while the visible mirror still owns input. */
+  inputEnabled?: boolean;
   /**
    * The host-access generation the input belongs to (MirrorApp's `hostAccess.generation`). A new one retires the
    * pointer, keyboard and gamepad captures silently and starts fresh ones that ignore a button, finger or pad
@@ -69,6 +71,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   createClient: undefined,
   sendInput: undefined,
+  inputEnabled: true,
   accessGeneration: undefined,
   hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
   refreshTimeoutMs: 10_000
@@ -285,7 +288,7 @@ function mountClient(): void {
     return;
   }
   inputModules = { heldCard: built.heldCard, confirmTap: built.confirmTap, pointerTargets: built.pointerTargets };
-  if (props.sendInput) {
+  if (props.sendInput && props.inputEnabled) {
     attachStreamInput();
     attachKeyPad(false);
   }
@@ -405,6 +408,16 @@ function remountIfStale(): void {
 }
 
 watch(extensionsKey, remountIfStale);
+
+watch(() => props.inputEnabled, (enabled) => {
+  if (!enabled) {
+    detachStreamInput(false);
+    detachKeyPad(false);
+  } else if (client && !stopped) {
+    attachStreamInput();
+    attachKeyPad(true);
+  }
+});
 
 // KEYBOARD + GAMEPAD settings: both captures read them live, so OFF already stops sending; the refresh releases what
 // is held at the flip and restarts a parked pad poll when the setting comes back ON.

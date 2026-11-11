@@ -32,17 +32,12 @@ public sealed record BrowserJoinRequestEnvelope(
     // one: it selects nothing and authorises nothing, and a value outside the minted shape is dropped. Omitted
     // by a client that has none (a dev-server page, a non-browser client), which joins exactly as before.
     string? Visit = null,
-    // "Use new renderer (Beta)": `"stream"` asks for this viewer's seat to be launched as the host's streaming seat
-    // (HeadlessClientManager / StreamingSeatLaunch). Only the exact value counts; omitted otherwise, so every other
-    // join is byte-identical to before.
+    // Legacy join hints remain parseable. Runtime renderer messages choose the renderer and arm size.
     string? Renderer = null,
-    // With `renderer: "stream"`: width / height of the box the page shows the stream in, sent only while the viewer's
-    // Widescreen stretch is on (PRES-A). The streaming seat is launched that wide (StreamingSeatLaunch.PresentationWidth).
-    // Raw JSON so that a malformed value can never fail the join: BrowserAspect.Read keeps only a finite number.
     JsonElement? Aspect = null);
 
 /// <summary>
-/// The <c>aspect</c> a page sends with its streaming-seat request (<c>join</c>): a finite JSON
+/// The <c>aspect</c> a page sends with its renderer request: a finite JSON
 /// number, or null. The range is the host's to judge (<c>StreamingSeatLaunch.PresentationWidth</c>).
 /// </summary>
 internal static class BrowserAspect

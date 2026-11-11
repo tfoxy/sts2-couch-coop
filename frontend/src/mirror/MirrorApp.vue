@@ -22,7 +22,7 @@ import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
 import {
-  currentJoinRendererRequest,
+  currentSeatRendererRequestFor,
   RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS,
   streamSeatAspect,
   parseLanOffer,
@@ -470,6 +470,9 @@ function onFirstSceneFramePresented(attemptId: string): void {
 // The new renderer's first drawn frame completes the join exactly as MirrorView's does: "the browser displays the
 // game" (the host's LoadingView step waits for it), credited to the attempt this view was bound for.
 function onStreamFirstFrame(): void {
+  if (!showStream.value) return;
+  renderStreamContext.firstFrame = true;
+  holdMirrorForStream.value = false;
   const target = presentationTarget.value;
   if (target) onFirstSceneFramePresented(target.attemptId);
 }
@@ -597,6 +600,7 @@ function syncHostStaticBg(): void {
 }
 
 function makeClient(url?: string, watchStream = false): MirrorClient {
+  let rendererSessionSeen = false;
   if (!sceneAblation.streamsScene) watchStream = false;
   // Seat redirects carry an explicit watched URL; a gate (the app-shell ablation, or the new renderer, which shows
   // no node-geometry scene) must cover the first handshake too, or the seat ships a connect keyframe nobody draws.
@@ -737,6 +741,17 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // "nothing frozen" landing on an instance that freezes by default) until the seeded re-push corrected it.
       if ((joined.value || directView.value) && c.status === "connected" && c.session && !settingsPushed.has(c)) {
         if (pushServerSettings(c)) settingsPushed.add(c);
+      }
+      // A new seat socket applies the saved choice once, after its own first session. Later status changes must
+      // not re-arm a stream another viewer stopped or one the seat failed to start.
+      if (c.status === "connected" && c.session && !rendererSessionSeen) {
+        rendererSessionSeen = true;
+        const state = c.session.rendererState?.state;
+        // An already streaming shared seat withholds its descriptor until this page opts in too.
+        if (mirrorSettings.renderer === "stream" && !c.session.renderStream
+          && (state === "mirror" || state === "arming" || state === "armed")) {
+          requestSeatRenderer(c, "stream");
+        }
       }
       // ESCALATION RULE (b): the reconnect SUCCEEDED (live socket + a fresh roster) but the host still refuses the
       // seat we're reclaiming (`offline` mid-run / `stuck`). No number of further attempts can fix that — the host
@@ -968,12 +983,16 @@ const joinMode = computed(() =>
 
 // ---- "Use new renderer (Beta)" -------------------------------------------------------------------------------
 //
-// While the render-stream draws (`runtimeRenderer === "stream"`, renderStreamAvailability.ts) this app shows
-// RenderStreamStage instead of MirrorView: the node-geometry scene is not watched (its producer idles), MirrorView
-// is unmounted (its pointer capture with it; taps and clicks reach the game through the stage's own input channel,
-// INP2, and keys and pads through the stage's own keyPadInput pair, C1), and the `/ws` socket keeps carrying the
-// session, settings, input and audio. The two renderers are never both live.
+// A mirror already on screen stays mounted and watching while a hidden stream stage draws its first frame.
+// Then the mirror and its input capture unmount, and the node producer idles (`watch:false`). The seat socket
+// keeps carrying session, settings, input and audio throughout the handover.
 const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
+const mirrorView = shallowRef<InstanceType<typeof MirrorView> | null>(null);
+const holdMirrorForStream = ref(false);
+watch(streamRendererOn, (on) => {
+  holdMirrorForStream.value = on && mirrorView.value !== null;
+  renderStreamContext.firstFrame = false;
+}, { flush: "sync" });
 // Loaded on first use: a viewer who never switches the beta on never downloads the client. A chunk that fails or
 // stalls (a flaky phone on the LAN) would leave nothing drawn and no `failed` ever emitted, so the load falls back
 // like a failed stream: `stopRenderStream("stage-load-failed: …")`, MirrorView mounts and completes the join. Vue's
@@ -988,7 +1007,7 @@ function loadRenderStreamStage(attempt: number): Promise<Component> {
       settled = true;
       clearTimeout(timer);
       // Only this attempt's own failure counts: a stopped stream (any reason) or a newer attempt owns the state.
-      if (attempt === stageAttempt.value && renderStreamContext.stopped === null) {
+      if (!unmounted && attempt === stageAttempt.value && renderStreamContext.stopped === null) {
         stopRenderStream(`stage-load-failed: ${detail}`, mirrorSettings);
       }
       resolve(inertStage);
@@ -1027,28 +1046,33 @@ const renderStreamEndpoint = computed(() => {
 // viewer's own seat envelope (MIR-3 sends it; absent means "not streaming"). Only a joined seat's session counts.
 watch(directView, (on) => { renderStreamContext.directView = on; }, { immediate: true });
 watch(
-  () => (joined.value ? joinSession.value?.renderStream ?? null : null),
-  (raw) => {
-    const next = sessionRenderStreamEndpoint(raw);
-    // The seat's descriptor went away while its stream was drawing (the seat stopped streaming, or restarted as a
-    // normal seat): say so ("New renderer stopped: descriptor gone") instead of falling back silently. Only while
-    // joined: a /ws reconnect that has no session yet is not the seat withdrawing anything.
-    if (next === null && joined.value && renderStreamContext.sessionEndpoint !== null
-      && mirrorSettings.runtimeRenderer === "stream" && renderStreamAvailability.value.source === "session") {
+  () => (joined.value ? joinSession.value : null),
+  (session) => {
+    const next = sessionRenderStreamEndpoint(session?.renderStream);
+    const state = session?.rendererState ?? null;
+    if (state?.state === "failed" && mirrorSettings.renderer === "stream") {
+      stopRenderStream(state.reason ?? t("settings.newRendererFailed"), mirrorSettings);
+    } else if (next === null && joined.value && renderStreamContext.sessionEndpoint !== null
+      && mirrorSettings.runtimeRenderer === "stream" && renderStreamAvailability.value.source === "session"
+      && state?.state !== "mirror") {
       stopRenderStream("descriptor gone", mirrorSettings);
     }
+    if (session === null || (state?.state === "mirror" && next === null)) {
+      renderStreamContext.returningToMirror = false;
+    }
+    renderStreamContext.rendererState = state;
     renderStreamContext.sessionEndpoint = next;
   },
   { immediate: true }
 );
-// The page follows this viewer's own seat once it runs (renderStreamAvailability.ts header): the choice rode the join.
+// Only this viewer's own seat can accept renderer requests.
 watch(
   () => [joined.value, directView.value] as const,
   ([isJoined, isDirect]) => { renderStreamContext.seatJoined = isJoined && !isDirect; },
   { immediate: true }
 );
 // CAR7b: the host's LAN offer, on every host session while it has a capture (absent means none). Read before a join
-// too: it decides whether the checkbox can be switched on and whether the join asks for the stream.
+// too: it decides whether the checkbox can be switched on and whether the seat is asked for the stream.
 watch(
   hostSession,
   (session) => { if (session !== null) renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan); },
@@ -1059,16 +1083,32 @@ function onRenderStreamRefresh(): void {
   activeClient.requestSession();
 }
 
+function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"): void {
+  if (client === hostClient || !joined.value || directView.value || client.status !== "connected" || !client.session
+    || mirrorSettings.renderStreamUrl !== null) return;
+  if (renderer === "stream" && currentSeatRendererRequestFor("stream", mirrorSettings) !== "stream") return;
+  renderStreamContext.returningToMirror = renderer === "mirror";
+  syncRuntimeRenderer(mirrorSettings);
+  client.sendRenderer(renderer, renderer === "stream" ? streamSeatAspect(mirrorSettings) : undefined);
+}
+
+watch(() => mirrorSettings.renderer, (renderer) => requestSeatRenderer(activeClient, renderer));
+watch(() => renderStreamContext.retryRequest, () => requestSeatRenderer(activeClient, "stream"));
+
 // Only a granted view requests scene bytes. Unassigned and joining connections are
-// coordination-only, even when the host is on a non-multiplayer screen. The new renderer watches nothing here.
+// coordination-only, even when the host is on a non-multiplayer screen. The mirror watches until the handover.
 const wantsHostStream = computed(() =>
-  sceneAblation.streamsScene && (joined.value || directView.value) && !streamRendererOn.value
+  sceneAblation.streamsScene && (joined.value || directView.value)
+    && (!streamRendererOn.value || holdMirrorForStream.value)
 );
 // The stream shows where the scene would: on a granted view, once it has somewhere to connect.
 const showStream = computed(() =>
   streamRendererOn.value && (joined.value || directView.value) && renderStreamEndpoint.value !== null
   && renderStreamCore !== null
 );
+// Retire a pending chunk load as soon as its stage is no longer wanted. A late rejection or timeout must not
+// turn an intentional switch back into a sticky failure.
+watch(showStream, (on) => { if (!on) stageAttempt.value += 1; }, { flush: "sync" });
 const hostAccess = computed(() => joinSession.value?.hostAccess);
 const hostAccessBlocked = computed(() => !hostAccess.value?.allowed);
 // Keep the picker usable for other seats; privacy replaces only the host view/waiting surface.
@@ -1114,11 +1154,8 @@ const showFixedChrome = computed(() =>
 // fighting over one `panelAnchorTop`) nor both vanish.
 const showStageChrome = computed(() => showScene.value && !showFixedChrome.value);
 
-// THE RENDERER SWITCH, in order: the server overlay goes out
-// FIRST (freezes and static background off under the stream, the saved values back without it), then the watch
-// gate below flips, then MirrorView unmounts / the stage mounts and connects. `flush: "sync"` is what puts the push
-// ahead of the pre-flush watch gate and the render; the store watch further down then sees an identical payload and
-// sends nothing more.
+// Push the stream's server settings before the stage connects. The mirror keeps its watch until the first
+// stream frame; returning to it restores its saved settings before the watch gate opens again.
 watch(
   () => mirrorSettings.runtimeRenderer,
   () => { if (joined.value || directView.value) pushServerSettings(activeClient); },
@@ -1126,7 +1163,8 @@ watch(
 );
 // What renders follows the saved choice, availability and this session's stop (renderStreamAvailability.ts).
 watch(
-  [() => mirrorSettings.renderer, renderStreamAvailability, () => renderStreamContext.stopped],
+  [() => mirrorSettings.renderer, renderStreamAvailability, () => renderStreamContext.stopped,
+    () => renderStreamContext.returningToMirror],
   () => syncRuntimeRenderer(mirrorSettings),
   { immediate: true }
 );
@@ -1348,11 +1386,7 @@ function submitJoin(name: string, playerId?: string): void {
     openSeatView(syntheticPort);
     return;
   }
-  // "Use new renderer (Beta)": ask for this seat to be launched as the host's streaming seat when the viewer chose
-  // the new renderer and this page can draw it (renderStreamAvailability's joinRendererRequest), at this page's
-  // aspect when Widescreen stretch is on (PRES-A; read now, never re-sent on a resize — PRES-R).
-  const joinRenderer = currentJoinRendererRequest(mirrorSettings);
-  activeClient.sendJoin(trimmed, playerId, joinRenderer, joinRenderer ? streamSeatAspect(mirrorSettings) : undefined);
+  activeClient.sendJoin(trimmed, playerId);
 }
 
 // Retiring an initial attempt also undoes its URL selection. A previously granted
@@ -1694,6 +1728,7 @@ onBeforeUnmount(() => {
   >
     <MirrorView
       v-if="showScene"
+      ref="mirrorView"
       :key="`${rendererComparisonViewRevision}:${hostAccess?.sceneResetGeneration ?? 0}`"
       :state="mirrorState"
       :revision="revision"
@@ -1774,22 +1809,31 @@ onBeforeUnmount(() => {
          the keyboard and gamepad (keyPadInput.ts, the same pair MirrorView creates). The gear/fullscreen pair still
          uses the fixed browser-space chrome (no scaled DOM stage hosts it). A stop falls back to MirrorView above for
          the session. -->
-    <RenderStreamStage
-      v-else-if="showStream && renderStreamEndpoint && renderStreamCore"
-      :endpoint="renderStreamEndpoint"
-      :core="renderStreamCore"
-      :send-input="viewControls.sendInput"
-      :access-generation="hostAccess?.generation"
-      @failed="onRenderStreamFailed"
-      @first-frame="onStreamFirstFrame"
-      @refresh-endpoint="onRenderStreamRefresh"
-    />
+    <div
+      v-if="showStream && renderStreamEndpoint && renderStreamCore"
+      class="mirror-stream-shell"
+      :class="{ 'mirror-stream-pending': holdMirrorForStream }"
+      :inert="holdMirrorForStream"
+      :aria-hidden="holdMirrorForStream || undefined"
+      data-testid="mirror-stream-shell"
+    >
+      <RenderStreamStage
+        :endpoint="renderStreamEndpoint"
+        :core="renderStreamCore"
+        :send-input="viewControls.sendInput"
+        :input-enabled="!holdMirrorForStream"
+        :access-generation="hostAccess?.generation"
+        @failed="onRenderStreamFailed"
+        @first-frame="onStreamFirstFrame"
+        @refresh-endpoint="onRenderStreamRefresh"
+      />
+    </div>
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP
          character-select. The stack (not the picker itself) is the centered grid item of `.game-surface`, so
          the WS4 browser advisory can sit directly ABOVE the seat list without the two competing for the same
          grid cell — and, being 100% wide, it leaves the panel's own `min(46rem, 76%)` resolving against exactly
          the same containing block as before. -->
-    <div v-else class="mirror-join-stack">
+    <div v-if="!showScene && !showStream" class="mirror-join-stack">
       <!-- Sized by the wrapper, not by a class on the component: a child's root carries both scope ids at equal
            specificity, so styling it from here would be a stylesheet-order coin toss. The wrapper contributes
            exactly zero height on every browser we have no report against (no gap on the stack, no margin here —
@@ -1882,6 +1926,17 @@ onBeforeUnmount(() => {
 <style scoped>
 .mirror-surface {
   position: relative;
+}
+
+/* CouchCoop's handover shell keeps the hidden stage laid out at its final size for the first frame. */
+.mirror-stream-shell {
+  position: absolute;
+  inset: 0;
+}
+
+.mirror-stream-pending {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* The pre-join column: the WS4 advisory stacked directly above the picker panel, the pair centered as ONE grid

@@ -122,6 +122,8 @@ public sealed class CouchCoopWebSocketConnection
     private readonly HeadlessClientManager? _headlessManager;
     private readonly bool _isHeadlessClient;
     private string? _requestOrigin;
+    private readonly IHotRendererSwapHost? _rendererSwapHost;
+    private BrowserRendererStateDto _fallbackRendererState = new("mirror");
     private readonly IHostBrowserAccess? _hostAccess;
     private volatile bool _watchRequested;
     private bool _watchCounted;
@@ -176,7 +178,8 @@ public sealed class CouchCoopWebSocketConnection
         Action? onSceneAck,
         IHostBrowserAccess? hostAccess,
         Func<int, IPAddress, CancellationToken, Task<int?>>? prepareDirectIpSeat,
-        Action<bool>? onHostWatchChanged)
+        Action<bool>? onHostWatchChanged,
+        IHotRendererSwapHost? rendererSwapHost)
     {
         _envelopeFactory = envelopeFactory ?? throw new ArgumentNullException(nameof(envelopeFactory));
         _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -188,6 +191,7 @@ public sealed class CouchCoopWebSocketConnection
         _headlessManager = headlessManager;
         _isHeadlessClient = isHeadlessClient;
         _hostAccess = hostAccess;
+        _rendererSwapHost = rendererSwapHost;
         _onHostWatchChanged = onHostWatchChanged;
         _watchRequested = sceneStreaming;
         _wantsStaticBg = wantsStaticBg;
@@ -248,7 +252,8 @@ public sealed class CouchCoopWebSocketConnection
         CancellationToken cancellationToken = default,
         IHostBrowserAccess? hostAccess = null,
         Func<int, IPAddress, CancellationToken, Task<int?>>? prepareDirectIpSeat = null,
-        Action<bool>? onHostWatchChanged = null)
+        Action<bool>? onHostWatchChanged = null,
+        IHotRendererSwapHost? rendererSwapHost = null)
     {
         if (request.QueryValues.ContainsKey("view"))
         {
@@ -293,7 +298,8 @@ public sealed class CouchCoopWebSocketConnection
                 onSceneAck,
                 hostAccess,
                 prepareDirectIpSeat,
-                onHostWatchChanged)
+                onHostWatchChanged,
+                rendererSwapHost)
             .AcceptCoreAsync(stream, request, cancellationToken)
             .ConfigureAwait(false);
     }
@@ -379,6 +385,7 @@ public sealed class CouchCoopWebSocketConnection
         finally
         {
             _closing = true;
+            if (_isHeadlessClient) _rendererSwapHost?.ReleaseRenderer(_id.ToString("N"));
             SetWatchRequested(false);
             await _joinOperation.CancelAndWaitAsync().ConfigureAwait(false);
             _joinOperation.Dispose();
@@ -678,11 +685,7 @@ public sealed class CouchCoopWebSocketConnection
                         // Bind the instance to the PICKED seat's netId rather than letting the allocator
                         // choose by name. Null for a free-text name submit (no seat yet).
                         targetNetId: targetNetId,
-                        hostFacts: joinRead.Seats,
-                        // The new renderer: this viewer's seat, if launched now, may become the streaming seat.
-                        wantsStreamingSeat: string.Equals(join.Renderer, "stream", StringComparison.Ordinal),
-                        // ...at the aspect of the page's stream box, when its Widescreen stretch is on (PRES-A).
-                        streamingAspect: BrowserAspect.Read(join.Aspect)).ConfigureAwait(false);
+                        hostFacts: joinRead.Seats).ConfigureAwait(false);
                     if (headlessPort is int readyPort)
                     {
                         headlessPath = _headlessManager.SharedMirrorPathForPort(readyPort);
@@ -996,6 +999,25 @@ public sealed class CouchCoopWebSocketConnection
                     // when the hub refused its token (the seat restarted with a new one), to learn the current
                     // descriptor. Read-only and cheap: one roster read, no game state.
                     await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (string.Equals(type, "renderer", StringComparison.Ordinal))
+                {
+                    if (_isHeadlessClient
+                        && document.RootElement.TryGetProperty("renderer", out var renderer)
+                        && renderer.ValueKind == JsonValueKind.String
+                        && renderer.GetString() is "stream" or "mirror")
+                    {
+                        var wantsStream = renderer.GetString() == "stream";
+                        var aspect = document.RootElement.TryGetProperty("aspect", out var value) ? BrowserAspect.Read(value) : null;
+                        if (_rendererSwapHost is { } swap) swap.RequestRenderer(_id.ToString("N"), wantsStream, aspect);
+                        else
+                        {
+                            _fallbackRendererState = wantsStream ? new("failed", "no-capture") : new("mirror");
+                            await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
+                        }
+                    }
                     continue;
                 }
 
@@ -1869,14 +1891,22 @@ public sealed class CouchCoopWebSocketConnection
     private Task SendEnvelopeAsync(BrowserEnvelope envelope)
         => SendBytesAsync([], CancellationToken.None, sessionEnvelope: WithRenderStream(envelope));
 
-    // Every `session` this connection sends carries the streaming seat's descriptor when this process IS that seat
-    // and the page's Origin is one its hub allows; null (omitted) everywhere else. One place, so no send path can
-    // forget it.
+    // Every page gets the seat state; only wanting pages get credentials, subject to the hub's origin gate.
     private BrowserEnvelope WithRenderStream(BrowserEnvelope envelope)
-        => string.Equals(envelope.Type, "session", StringComparison.Ordinal)
-            && StreamingSeatDescriptor.ForOrigin(_requestOrigin) is { } descriptor
-                ? envelope with { RenderStream = descriptor }
-                : WithRenderStreamLan(envelope);
+    {
+        if (!string.Equals(envelope.Type, "session", StringComparison.Ordinal)) return envelope;
+        if (!_isHeadlessClient) return WithRenderStreamLan(envelope);
+        if (_rendererSwapHost is not { } swap) return envelope with { RendererState = _fallbackRendererState };
+        var status = swap.RendererStatus;
+        return envelope with
+        {
+            RenderStream = swap.WantsRenderStream(_id.ToString("N"))
+                ? StreamingSeatDescriptor.Build(status.Snapshot, _requestOrigin,
+                    Environment.GetEnvironmentVariable, StreamingSeatDescriptor.CertificateCovers)
+                : null,
+            RendererState = new(status.State, status.Reason),
+        };
+    }
 
     // On the HOST, every session carries the LAN streaming offer while a capture is configured (CAR7b): before a join
     // it decides whether the page can choose the new renderer and whether its join asks for the stream.

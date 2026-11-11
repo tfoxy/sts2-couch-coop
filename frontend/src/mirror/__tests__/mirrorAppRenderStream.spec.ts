@@ -121,7 +121,7 @@ function streamAvailable(): void {
 }
 
 /** Mount, pick Alice's seat, follow the redirect, and let the seat's own instance report. Returns the seat socket. */
-async function joinSeat(): Promise<MockWebSocket> {
+async function joinSeat(over: Record<string, unknown> = {}): Promise<MockWebSocket> {
   app = mount(MirrorApp);
   await settle();
   latest().emit(sessionMessage());
@@ -132,9 +132,10 @@ async function joinSeat(): Promise<MockWebSocket> {
   await settle();
   const seat = latest();
   expect(seat.url).toContain("14000");
+  expect(seat.ofType("renderer")).toEqual([]);
   seat.emit(sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
-    ...HEADLESS_FREEZES
+    ...HEADLESS_FREEZES, rendererState: { state: "mirror" }, ...over
   }));
   await settle();
   return seat;
@@ -162,8 +163,8 @@ afterEach(() => {
   app?.unmount();
   app = null;
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
-    stretchEnabled: true });
-  Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
+    stretchEnabled: true, panelOpen: false });
+  Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false, coreLoadFailed: false, stopped: null,
     coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false,
     lanOffer: null, page: undefined });
   globalThis.localStorage?.clear();
@@ -210,6 +211,7 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     const kinds = new Set(allSent().map((m) => m.type));
     expect(kinds.has("input")).toBe(false);
     expect(kinds.has("action")).toBe(false);
+    expect(kinds.has("renderer")).toBe(false);
   });
 
   it("opens the seat socket gated when the stream is already on, and connects the stage once joined", async () => {
@@ -267,8 +269,7 @@ describe("MirrorApp — the new renderer's stream branch", () => {
   });
 });
 
-// MIR-3: the host launches and pairs the streaming seat. The join asks for it; the seat's own `session` carries the
-// descriptor; the stage's `unauthorized` ask is a `session-refresh` on the seat socket; a descriptor that goes away
+// The page requests streaming on its seat socket; the seat's own `session` carries the descriptor; the stage's `unauthorized` ask is a `session-refresh` on the seat socket; a descriptor that goes away
 // while drawing stops the stream with a reason.
 describe("MirrorApp — pairing with the host's streaming seat", () => {
   const SEAT_TOKEN = "c".repeat(64);
@@ -276,7 +277,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     token: SEAT_TOKEN, protocol: 13, presentation: [1920, 1080] };
   const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
-    ...HEADLESS_FREEZES, ...over
+    ...HEADLESS_FREEZES, rendererState: { state: over.renderStream ? "armed" : "mirror" }, ...over
   });
 
   function canStream(): void {
@@ -330,21 +331,90 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(seat.ofType("client-frame-presented")).toEqual([]);
   });
 
-  it("asks the host for a streaming seat in the join, only when the viewer chose it and this page can draw it", async () => {
+  it("applies the saved choice once after the seat's first session, never on the host socket", async () => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat();
+    const host = MockWebSocket.instances[0];
+    expect(host.ofType("join")[0]).toMatchObject({ name: "Alice", playerId: "p:1003" });
+    expect(host.ofType("join")[0]).not.toHaveProperty("renderer");
+    expect(host.ofType("join")[0]).not.toHaveProperty("aspect");
+    expect(host.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+
+    seat.emit(seatSession());
+    seat.emit(seatSession({ rendererState: { state: "arming" } }));
+    seat.emit(seatSession());
+    await settle();
+    expect(seat.ofType("renderer")).toHaveLength(1);
+  });
+
+  it.each(["arming", "armed"])("requests this page's descriptor once when the shared seat is already %s", async (state) => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat({ rendererState: { state } });
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    seat.emit(seatSession({ rendererState: { state } }));
+    await settle();
+    expect(seat.ofType("renderer")).toHaveLength(1);
+  });
+
+  it("does not request a descriptor already supplied on the first session", async () => {
+    const seat = await joinStreamingSeat();
+    expect(seat.ofType("renderer")).toEqual([]);
+  });
+
+  it.each(["failed", undefined])("does not auto-apply when the first seat state is %s", async (state) => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat({ rendererState: state ? { state } : undefined });
+    seat.emit(seatSession());
+    await settle();
+    expect(seat.ofType("renderer")).toEqual([]);
+  });
+
+  it.each(["webgl2", "core", "carrier"])("does not request streaming when this page cannot draw it (%s)", async (missing) => {
+    canStream();
+    if (missing === "webgl2") renderStreamContext.webgl2 = false;
+    if (missing === "core") renderStreamContext.coreProblem = "missing";
+    if (missing === "carrier") {
+      renderStreamContext.pageLoopback = false;
+      renderStreamContext.page = { https: true, secureContext: true, webTransport: false };
+    }
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat();
+    expect(seat.ofType("renderer")).toEqual([]);
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(seat.ofType("renderer").filter((message) => message.renderer === "stream")).toEqual([]);
+    seat.emit(seatSession({ rendererState: { state: "failed", reason: "capture stopped" } }));
+    await settle();
+    retryRenderStream();
+    await settle();
+    expect(seat.ofType("renderer").filter((message) => message.renderer === "stream")).toEqual([]);
+  });
+
+  it("does not request a renderer for a direct host view", async () => {
     canStream();
     mirrorSettings.renderer = "stream";
     app = mount(MirrorApp);
     await settle();
     const host = latest();
-    host.emit(sessionMessage());
+    host.emit(sessionMessage({ rendererState: { state: "mirror" } }));
     await settle();
-    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await app.findAll('[data-testid="player-picker"] button')[0].trigger("click");
     await settle();
-    expect(host.ofType("join")[0]).toMatchObject({ name: "Alice", playerId: "p:1003", renderer: "stream" });
+    host.emit(sessionMessage({ directView: true, rendererState: { state: "mirror" } }));
+    await settle();
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    mirrorSettings.renderer = "stream";
+    await settle();
+    expect(host.ofType("renderer")).toEqual([]);
   });
 
-  // PRES-A: the request for a streaming seat carries the page's aspect while Widescreen stretch is on, so the host
-  // launches the seat that wide; off, it carries none (1920x1080).
   describe("the seat's aspect", () => {
     const sizes = { innerWidth: Object.getOwnPropertyDescriptor(window, "innerWidth"),
       innerHeight: Object.getOwnPropertyDescriptor(window, "innerHeight") };
@@ -359,33 +429,20 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
       }
     });
 
-    async function pickAlice(): Promise<MockWebSocket> {
+    it("rides the renderer request with Widescreen stretch on", async () => {
       canStream();
       mirrorSettings.renderer = "stream";
-      app = mount(MirrorApp);
-      await settle();
-      const host = latest();
-      host.emit(sessionMessage());
-      await settle();
-      await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
-      await settle();
-      return host;
-    }
-
-    it("rides the join with Widescreen stretch on", async () => {
       mirrorSettings.stretchEnabled = true;
-      const host = await pickAlice();
-      const join = host.ofType("join")[0];
-      expect(join).toMatchObject({ renderer: "stream" });
-      expect(join.aspect).toBeCloseTo(2340 / 1080, 10);
+      const seat = await joinSeat();
+      expect(seat.ofType("renderer")[0].aspect).toBeCloseTo(2340 / 1080, 10);
     });
 
-    it("is absent from the join with Widescreen stretch off", async () => {
-      const host = await pickAlice();
-      expect(host.ofType("join")[0]).toMatchObject({ renderer: "stream" });
-      expect(host.ofType("join")[0]).not.toHaveProperty("aspect");
+    it("is absent with Widescreen stretch off", async () => {
+      canStream();
+      mirrorSettings.renderer = "stream";
+      const seat = await joinSeat();
+      expect(seat.ofType("renderer")[0]).toEqual({ type: "renderer", renderer: "stream" });
     });
-
   });
 
   it("joins exactly as before with the old renderer", async () => {
@@ -421,7 +478,6 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(renderStreamContext.stopped).toBeNull();
   });
 
-  // The choice rides the join: once the seat runs, the page follows that seat's renderer and asks for nothing.
   async function joinNormalSeat(): Promise<{ host: MockWebSocket; seat: MockWebSocket }> {
     canStream();
     app = mount(MirrorApp);
@@ -439,19 +495,26 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     return { host, seat };
   }
 
-  it("keeps a seat started without the stream on the old renderer, and asks the host for nothing", async () => {
+  it("requests each saved-choice change on the joined seat socket", async () => {
     const { host, seat } = await joinNormalSeat();
     expect(renderStreamContext.seatJoined).toBe(true);
+    expect(seat.ofType("renderer")).toEqual([]);
     mirrorSettings.renderer = "stream";
     await settle();
-    expect(allSent().filter((m) => m.type === "set-renderer")).toHaveLength(0);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
     expect(host.ofType("join")).toHaveLength(1);
     expect(seat.ofType("join")).toHaveLength(0);
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
     expect(renderStreamAvailability.value.reason).toBe("not-streaming");
+    expect(host.ofType("renderer")).toEqual([]);
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    expect(seat.ofType("renderer")).toEqual([
+      { type: "renderer", renderer: "stream" }, { type: "renderer", renderer: "mirror" }
+    ]);
   });
 
-  it("draws a streaming seat even when the saved choice is off", async () => {
+  it("ignores a shared seat descriptor when the saved choice is off", async () => {
     canStream();
     app = mount(MirrorApp);
     await settle();
@@ -464,11 +527,13 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     latest().emit(seatSession({ renderStream: descriptor }));
     await settle();
     expect(mirrorSettings.renderer).toBe("mirror");
-    expect(mirrorSettings.runtimeRenderer).toBe("stream");
-    expect(fake.clients).toHaveLength(1);
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(fake.clients).toHaveLength(0);
+    expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
+    expect(latest().ofType("watch")).not.toContainEqual({ type: "watch", on: false });
   });
 
-  // CAR7b/CAR9: a LAN page reads the host's offer from its pre-join sessions, and the join asks for the stream only
+  // A LAN page reads the host's offer from its pre-join sessions, and asks its seat for the stream only
   // when one of the offered carriers works on this page.
   async function joinFromLanPage(page: { https: boolean; secureContext: boolean; webTransport: boolean },
     offer: Record<string, boolean> | null): Promise<MockWebSocket> {
@@ -482,55 +547,108 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     await settle();
     await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
     await settle();
-    return host;
+    expect(host.ofType("renderer")).toEqual([]);
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, ...(offer ? { renderStreamLan: offer } : {}) }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession());
+    await settle();
+    return seat;
   }
 
-  it("on an https LAN page, reads the host's offer before the join and asks for the stream in it (CAR7b)", async () => {
-    const host = await joinFromLanPage({ https: true, secureContext: true, webTransport: true },
+  it("on an https LAN page, reads the host's offer before the join and asks its seat for the stream", async () => {
+    const seat = await joinFromLanPage({ https: true, secureContext: true, webTransport: true },
       { webTransport: true, tls: true, ws: true });
     expect(renderStreamContext.lanOffer).toEqual({ webTransport: true, tls: true, ws: true });
-    expect(host.ofType("join")[0]).toMatchObject({ renderer: "stream" });
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
   });
 
   it("on a LAN page of a host with no capture (no offer), asks for no streaming seat", async () => {
-    const host = await joinFromLanPage({ https: true, secureContext: true, webTransport: true }, null);
+    const seat = await joinFromLanPage({ https: true, secureContext: true, webTransport: true }, null);
     expect(renderStreamContext.lanOffer).toBeNull();
-    expect(host.ofType("join")[0]).not.toHaveProperty("renderer");
+    expect(seat.ofType("renderer")).toEqual([]);
   });
 
   it("on a plain-http LAN page, asks for the stream over the seat's plain ws (CAR9)", async () => {
-    const host = await joinFromLanPage({ https: false, secureContext: false, webTransport: false },
+    const seat = await joinFromLanPage({ https: false, secureContext: false, webTransport: false },
       { webTransport: true, tls: false, ws: true });
-    expect(host.ofType("join")[0]).toMatchObject({ renderer: "stream" });
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
   });
 
   it("on an https LAN page with no carrier it can open, says needs-proxy and asks for nothing", async () => {
-    const host = await joinFromLanPage({ https: true, secureContext: true, webTransport: false },
+    const seat = await joinFromLanPage({ https: true, secureContext: true, webTransport: false },
       { webTransport: true, tls: false, ws: true });
     expect(renderStreamAvailability.value.reason).toBe("needs-proxy");
-    expect(host.ofType("join")[0]).not.toHaveProperty("renderer");
+    expect(seat.ofType("renderer")).toEqual([]);
   });
 
-  it("stops with \"descriptor gone\" when the seat's session drops the descriptor while drawing", async () => {
+  it("returns normally to the mirror when the seat withdraws the descriptor with state mirror", async () => {
     const seat = await joinStreamingSeat();
     seat.emit(seatSession());
     await settle();
-    expect(renderStreamContext.stopped).toBe("descriptor gone");
+    expect(renderStreamContext.stopped).toBeNull();
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
     expect(mirrorSettings.renderer).toBe("stream");
     expect(fake.clients[0].disposed).toBe(true);
+    expect(seat.ofType("watch").at(-1)).toEqual({ type: "watch", on: true });
   });
+
+  it("still reports an unexplained withdrawal", async () => {
+    const seat = await joinStreamingSeat();
+    seat.emit(seatSession({ rendererState: undefined }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe("descriptor gone");
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+  });
+
+  it("ignores a shared seat's failure and retry when this page chose mirror", async () => {
+    canStream();
+    const seat = await joinSeat({ renderStream: descriptor, rendererState: { state: "armed" } });
+    expect(fake.clients).toHaveLength(0);
+    seat.emit(seatSession({ rendererState: { state: "failed", reason: "capture stopped" } }));
+    mirrorSettings.panelOpen = true;
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(app!.find('[data-testid="mirror-renderer-stopped"]').exists()).toBe(false);
+    retryRenderStream();
+    await settle();
+    expect(mirrorSettings.renderer).toBe("mirror");
+    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("watch")).not.toContainEqual({ type: "watch", on: false });
+  });
+
+  it.each(["capture unavailable", undefined])("reports a failed arm (%s) and Try again re-sends the request", async (reason) => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat();
+    seat.emit(seatSession({ rendererState: { state: "arming" } }));
+    await settle();
+    expect(renderStreamContext.rendererState?.state).toBe("arming");
+    seat.emit(seatSession({ rendererState: { state: "failed", ...(reason ? { reason } : {}) } }));
+    await settle();
+    mirrorSettings.panelOpen = true;
+    await settle();
+    expect(renderStreamContext.stopped).toBe(reason ?? "Could not start the new renderer.");
+    expect(app!.get('[data-testid="mirror-renderer-stopped"]').text()).toContain(reason ?? "Could not start the new renderer.");
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    await app!.get('[data-testid="mirror-renderer-stopped"] button').trigger("click");
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer")).toEqual([
+      { type: "renderer", renderer: "stream" }, { type: "renderer", renderer: "stream" }
+    ]);
+    mirrorSettings.panelOpen = false;
+  });
+
 });
 
-// THE RENDERER AFTER A RE-JOIN (the field report "after a re-join with a desktop tab already present under the
-// same name, the phone's renderer checkbox sent no set-renderer"). There is no mid-session request any more: a re-join
-// reuses the live seat, which keeps the renderer it started with, and the page follows it either way.
+// A reconnected seat socket applies the saved choice again, independently of the retired connection.
 describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
     token: "e".repeat(64), protocol: 13, presentation: [1920, 1080] };
   const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
-    ...HEADLESS_FREEZES, ...over
+    ...HEADLESS_FREEZES, rendererState: { state: over.renderStream ? "armed" : "mirror" }, ...over
   });
 
   async function pickAlice(): Promise<MockWebSocket> {
@@ -546,7 +664,8 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     return host;
   }
 
-  it("follows the reused seat after a re-join, and asks the host for nothing", async () => {
+  it.each(["mirror", "arming", "armed"])("applies the saved choice again after reconnecting to a reused %s seat", async (state) => {
+    mirrorSettings.renderer = "stream";
     const host = await pickAlice();
     host.emit(sessionMessage({ headlessMirrorPort: 14000 }));
     await settle();
@@ -554,6 +673,8 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     seat.emit(seatSession());
     await settle();
     expect(renderStreamContext.seatJoined).toBe(true);
+
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
 
     // The re-join: the seat socket drops, the page falls back to a fresh host socket and re-joins by the seat it was
     // granted. The host reuses that seat (a second device with the same name gets the same instance, not a new one),
@@ -569,13 +690,15 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     expect(rejoined.ofType("join")[0]).toMatchObject({ playerId: "p:1003" });
     rejoined.emit(sessionMessage({ headlessMirrorPort: 14000 }));
     await settle();
-    latest().emit(seatSession());
+    latest().emit(seatSession({ rendererState: { state } }));
     await settle();
     expect(renderStreamContext.seatJoined).toBe(true);
 
-    mirrorSettings.renderer = "stream";
+    expect(latest().ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    latest().emit(seatSession());
     await settle();
-    expect(allSent().filter((m) => m.type === "set-renderer")).toHaveLength(0);
+    expect(latest().ofType("renderer")).toHaveLength(1);
+    expect(rejoined.ofType("renderer")).toEqual([]);
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
   });
 
@@ -591,9 +714,199 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     mirrorSettings.renderer = "stream";
     await settle();
     // This viewer's seat is the streaming seat, so the page connects to it.
-    expect(allSent().filter((m) => m.type === "set-renderer")).toHaveLength(0);
+    expect(latest().ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(fake.clients).toHaveLength(1);
+  });
+});
+
+describe("MirrorApp — switching renderers with a mirror on screen", () => {
+  const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
+    token: "a".repeat(64), protocol: 13, presentation: [1920, 1080] };
+  const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
+    session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
+    ...HEADLESS_FREEZES, rendererState: { state: "armed" }, renderStream: descriptor, ...over
+  });
+  const sceneDelta = {
+    type: "scene-delta", full: true, screenType: "run", screenInstanceId: "run:1",
+    upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+    removedIds: [], orderedIds: ["root"]
+  };
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function showMirror(): Promise<MockWebSocket> {
+    Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true, stopped: null,
+      coreLoadFailed: false });
+    const seat = await joinSeat();
+    seat.emit(sceneDelta);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(new URL(seat.url).searchParams.get("watch")).not.toBe("0");
+    mirrorSettings.panelOpen = true;
+    await settle();
+    seat.sent.length = 0;
+    return seat;
+  }
+
+  async function startStream(seat: MockWebSocket): Promise<void> {
+    await app!.get('[data-testid="mirror-renderer"]').setValue(true);
+    await settle();
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "arming" } }));
+    await settle();
+    expect(app!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    seat.emit(seatSession());
+    await settle();
+  }
+
+  it.each(["arming", "armed", "failed"] as const)("keeps a saved-mirror page mounted and watching while a shared seat is %s", async (state) => {
+    const seat = await showMirror();
+    const mirror = app!.getComponent(MirrorView).element;
+    seat.emit(seatSession({ rendererState: { state, ...(state === "failed" ? { reason: "capture stopped" } : {}) } }));
+    await settle();
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
+    expect(fake.clients).toHaveLength(0);
+    expect(seat.ofType("watch")).not.toContainEqual({ type: "watch", on: false });
+    expect(seat.ofType("renderer")).toEqual([]);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+    expect(app!.find('[data-testid="mirror-renderer-stopped"]').exists()).toBe(false);
+  });
+
+  it("shows the stage loading overlay when a streaming join has not mounted a mirror yet", async () => {
+    Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true, coreLoadFailed: false });
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat();
+    // Both messages arrive before Vue's next render. Having scene data is not the same as having a view on screen.
+    seat.emit(seatSession());
+    seat.emit(sceneDelta);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.get('[data-testid="mirror-stream-shell"]').classes()).not.toContain("mirror-stream-pending");
+    expect(app!.get('[data-testid="render-stream-status"]').text()).toBe("Connecting…");
+  });
+
+  it("keeps the same mirror visible and watching until the hidden stage draws its first frame", async () => {
+    const seat = await showMirror();
+    const mirror = app!.getComponent(MirrorView).element;
+    await startStream(seat);
+    const shell = () => app!.get('[data-testid="mirror-stream-shell"]');
+    expect(shell().classes()).toContain("mirror-stream-pending");
+    expect(shell().attributes("aria-hidden")).toBe("true");
+    expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(true);
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(seat.ofType("watch")).toEqual([]);
+    expect(fake.clients).toHaveLength(1);
+    fail({ kind: "streaming", firstFrame: false });
+    await settle();
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(shell().classes()).toContain("mirror-stream-pending");
+    expect(seat.ofType("watch")).toEqual([]);
+
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(shell().classes()).not.toContain("mirror-stream-pending");
+    expect(shell().attributes("aria-hidden")).toBeUndefined();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }]);
+    expect(fake.clients).toHaveLength(1); // enabling input must keep the drawn client
+    expect(fake.clients[0].disposed).toBe(false);
+    expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+    seat.emit(seatSession({ renderStream: { ...descriptor, token: "b".repeat(64) } }));
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+  });
+
+  it.each(["failed", "ended"])("drops a stage that %s before its first frame and keeps the same mirror watching", async (kind) => {
+    const seat = await showMirror();
+    const mirror = app!.getComponent(MirrorView).element;
+    await startStream(seat);
+    fail(kind === "ended" ? { kind: "ended" } : { kind: "failed", reason: "host-error", detail: "capture stopped" });
+    await settle();
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
+    expect(seat.ofType("watch")).toEqual([]);
+    expect(renderStreamContext.stopped).toBe(kind === "ended" ? "ended" : "host-error: capture stopped");
+    expect(app!.get('[data-testid="mirror-renderer-stopped"]').text()).toContain(renderStreamContext.stopped);
+    expect(fake.clients[0].disposed).toBe(true);
+  });
+
+  it.each(["withdrawal", "checkbox"])("returns to the mirror in the same tick as %s", async (cause) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    seat.sent.length = 0;
+    if (cause === "checkbox") {
+      await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    } else {
+      seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror" } }));
+      await nextTick();
+    }
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(fake.clients[0].disposed).toBe(true);
+    if (cause === "checkbox") {
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "mirror" }]);
+      // An in-flight session with the old descriptor cannot reverse the explicit switch off.
+      seat.emit(seatSession());
+      await settle();
+      expect(app!.findComponent(MirrorView).exists()).toBe(true);
+      expect(renderStreamContext.rendererState?.state).toBe("armed");
+      expect(renderStreamContext.sessionEndpoint).not.toBeNull();
+      expect(renderStreamContext.firstFrame).toBe(false);
+      expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+      expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
+      seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror" } }));
+      await settle();
+      expect(renderStreamContext.returningToMirror).toBe(false);
+      await app!.get('[data-testid="mirror-renderer"]').setValue(true);
+      seat.emit(seatSession({ renderStream: { ...descriptor, token: "b".repeat(64) } }));
+      await settle();
+      expect(fake.clients).toHaveLength(2);
+      expect(fake.clients[1].options.endpoint.token).toBe("b".repeat(64));
+      expect(app!.get('[data-testid="mirror-stream-shell"]').classes()).toContain("mirror-stream-pending");
+      expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    }
+  });
+
+  it("keeps the mirror when the stage chunk fails before its first frame", async () => {
+    const seat = await showMirror();
+    const mirror = app!.getComponent(MirrorView).element;
+    fake.stageImport = () => Promise.reject(new Error("chunk unavailable"));
+    await startStream(seat);
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(seat.ofType("watch")).toEqual([]);
+    expect(renderStreamContext.stopped).toBe("stage-load-failed: chunk unavailable");
+  });
+
+  it("ignores a late stage chunk rejection after the checkbox is unticked", async () => {
+    const seat = await showMirror();
+    let reject!: (reason: Error) => void;
+    fake.stageImport = () => new Promise((_resolve, fail) => { reject = fail; });
+    await startStream(seat);
+    await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    await settle();
+    reject(new Error("obsolete chunk"));
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
   });
 });
 

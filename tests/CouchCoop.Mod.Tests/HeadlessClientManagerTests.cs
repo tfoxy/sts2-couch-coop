@@ -1144,6 +1144,8 @@ internal static class HeadlessClientManagerTests
 
         Assert(tuning["MALLOC_ARENA_MAX"] == "2",
             "seats cap glibc thread arenas (a measured seat spread 283MB over 42 arenas, 62MB of it free slack)");
+        Assert(tuning["MALLOC_MMAP_THRESHOLD_"] == "131072",
+            "large native allocations can be released independently of thread arenas");
         Assert(tuning["DOTNET_GCConserveMemory"] == "5",
             "seats ask the CLR GC to favour a tighter heap over collection throughput");
 
@@ -1167,7 +1169,6 @@ internal static class HeadlessClientManagerTests
     private static void SeatMemoryTuningFillsOnlyUnsetKeys()
     {
         var tuning = HeadlessClientManager.SeatMemoryTuningEnvironment();
-        var (firstKey, firstDefault) = (tuning.Keys.First(), tuning.Values.First());
 
         // 1. Every key absent — the case that used to throw.
         var fresh = new ProcessStartInfo();
@@ -1185,10 +1186,10 @@ internal static class HeadlessClientManagerTests
 
         // 2. An inherited value wins — that export is how the tuning is A/B'd.
         var inherited = new ProcessStartInfo();
-        inherited.EnvironmentVariables[firstKey] = "99";
+        foreach (var key in tuning.Keys) inherited.EnvironmentVariables[key] = "99";
         HeadlessClientManager.ApplyMemoryTuning(inherited);
-        Assert(inherited.EnvironmentVariables[firstKey] == "99",
-            $"an inherited {firstKey} is never overwritten by the seat default ({firstDefault})");
+        foreach (var key in tuning.Keys)
+            Assert(inherited.EnvironmentVariables[key] == "99", $"an inherited {key} is never overwritten by the seat default");
     }
 
     private static async Task BeginHostExitSignalsEverySeatOnceAndKillsNone()

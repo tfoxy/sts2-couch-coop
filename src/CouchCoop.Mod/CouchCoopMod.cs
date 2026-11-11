@@ -212,7 +212,7 @@ public static class CouchCoopMod
             // The streaming seat (COUCHCOOP_STREAMING_SEAT=1) loads godot-scene-web's render-capture GDExtension
             // here, and refuses to start when it cannot: below the seat's cloud guard, above the override that lets
             // a seat join. Unflagged, it loads nothing and logs nothing (one warning if the extension is named
-            // anyway). See StreamingSeatRole for the role, including the two savers below that it skips.
+            // anyway). See StreamingSeatRole for the standby capture and saver gates below.
             StreamingSeatRole.StartCaptureOrExit();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
@@ -311,7 +311,7 @@ public static class CouchCoopMod
             // against 227MB in the drawing host. Releases the VRAM-compressed tier, which nothing in a process
             // that never draws can consume. Headless CLIENT only — a `--headless` dev HOST still serves asset
             // extraction from those very images (see the /res guard in CouchCoopBrowserServer). Not on the streaming
-            // seat: the render capture adopts textures from exactly those images.
+            // seat: the capture owns texture release and reload for each arm.
             if (StreamingSeatRole.InstallsTextureEvictor(StreamingSeatRole.IsStreamingSeat, IsHeadlessClient))
             {
                 HeadlessTextureImageEvictor.Install();
@@ -322,8 +322,8 @@ public static class CouchCoopMod
             // while idle — all CPU the mirror never consumes (the browser reproduces the motion on its own rAF
             // clock). Runs for a spawned headless CLIENT and for a `--headless` dev/server HOST alike: both are
             // windowless (no human watching their own screen) and both serve the browser mirror, which is the sole
-            // consumer. A WINDOWED display host is excluded — its own on-screen animators must keep running. So is
-            // the streaming seat, whose consumer is the render capture: a suspended scene draws nothing to stream.
+            // consumer. A WINDOWED display host is excluded — its own on-screen animators must keep running. Capture
+            // seats suspend in standby too; arming disables the suspender until capture teardown finishes.
             if (StreamingSeatRole.InstallsVisualSuspender(
                     StreamingSeatRole.IsStreamingSeat, IsHeadlessClient || IsHeadlessDisplay()))
             {

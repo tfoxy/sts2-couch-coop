@@ -178,6 +178,10 @@ internal static class RenderStreamCaptureQuitTests
         internal int? LingerMs;
         internal Dictionary<string, Action> Callbacks { get; } = new();
 
+        public int Clients => throw new InvalidOperationException("Quit must not read client counts.");
+        public int Arm(IReadOnlyDictionary<string, string> options) => throw new InvalidOperationException("Quit must not arm.");
+        public IDisposable Subscribe(RenderStreamCaptureSignals signals) => throw new InvalidOperationException("Quit uses one-shot signals.");
+
         public string State()
         {
             StateReads++;

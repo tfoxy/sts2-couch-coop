@@ -7,7 +7,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
-public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IAsyncDisposable
+public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IHotRendererSwapHost, IAsyncDisposable
 {
     private readonly CouchCoopRuntimeHost _runtime;
     private readonly IPAddress _bindAddress;
@@ -66,6 +66,69 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         });
         if (!IsHeadlessClient) _connectionHosting = new(_headlessManager);
         _generation = new BuiltInBrowserServerGeneration(this);
+    }
+
+    private sealed record RendererPublication(string State, string? Reason, RenderStreamSnapshot? Snapshot, string[] WantingPages);
+    private RendererPublication _rendererPublication = new("mirror", null, null, []);
+    private RenderStreamSwap? _rendererSwap;
+    private volatile bool _rendererDisposed;
+    private event Action? RendererChanged;
+    internal Func<Action, RenderStreamSwap> CreateRendererSwap { get; set; } = RenderStreamSwap.CreateForSeat;
+
+    public (string State, string? Reason,
+        (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
+    {
+        get
+        {
+            var published = Volatile.Read(ref _rendererPublication);
+            var snapshot = published.Snapshot;
+            return (published.State, published.Reason, snapshot is null ? null
+                : (snapshot.Listen, snapshot.Token, snapshot.CertificateHash, snapshot.RootSize, snapshot.StreamVersion));
+        }
+    }
+
+    public bool WantsRenderStream(string pageId)
+        => Array.IndexOf(Volatile.Read(ref _rendererPublication).WantingPages, pageId) >= 0;
+
+    public void RequestRenderer(string pageId, bool wantsStream, double? aspect)
+    {
+        if (!IsHeadlessClient || _rendererDisposed) return;
+        GameMainThread.Invoke(() =>
+        {
+            if (_rendererDisposed) return false;
+            _rendererSwap ??= CreateRendererSwap(PublishRenderer);
+            _rendererSwap.Request(pageId, wantsStream, aspect);
+            return true;
+        });
+    }
+
+    public void ReleaseRenderer(string pageId)
+    {
+        if (!IsHeadlessClient || _rendererDisposed) return;
+        GameMainThread.Invoke(() => { _rendererSwap?.Release(pageId); return true; });
+    }
+
+    private void PublishRenderer()
+    {
+        var swap = _rendererSwap!;
+        Volatile.Write(ref _rendererPublication, new(swap.State, swap.Reason, swap.Snapshot, swap.WantingPages));
+        RendererChanged?.Invoke();
+    }
+
+    public IDisposable SubscribeRendererChanged(Action handler)
+    {
+        RendererChanged += handler;
+        return new RendererSubscription(this, handler);
+    }
+
+    private sealed class RendererSubscription(HotReloadableBrowserServerHost owner, Action handler) : IDisposable
+    {
+        private HotReloadableBrowserServerHost? _owner = owner;
+        public void Dispose()
+        {
+            var host = Interlocked.Exchange(ref _owner, null);
+            if (host is not null) host.RendererChanged -= handler;
+        }
     }
 
     public Action<int, long> CreateBrowserDemandReporter() => _browserDemand.CreateReporter();
@@ -377,6 +440,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public async ValueTask DisposeAsync()
     {
+        if (IsHeadlessClient)
+            GameMainThread.Invoke(() => { _rendererDisposed = true; _rendererSwap?.Dispose(); return true; });
         _inputGuardDemand(0, long.MaxValue);
         _zeroClientSeatDemand(0, long.MaxValue);
         _connectionHosting?.Dispose();
@@ -563,7 +628,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             log: host.Log,
             admission: host.Admission,
             onBrowserDemandChanged: host.CreateBrowserDemandReporter(),
-            requestSecureOrigin: host._requestSecureOrigin)
+            requestSecureOrigin: host._requestSecureOrigin,
+            rendererSwapHost: host)
         {
             PrepareDirectIpSeatAsync = (port, address, token) => host.PrepareDirectIpSeatAsync?.Invoke(port, address, token) ?? Task.FromResult<int?>(null),
             RefreshDirectIpSeatMaterialAsync = (request, token) => host.RefreshDirectIpSeatMaterialAsync?.Invoke(request, token) ?? Task.FromResult(false),

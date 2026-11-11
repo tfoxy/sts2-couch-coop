@@ -3,44 +3,19 @@ using CouchCoop.Mod.Diagnostics;
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// The streaming seat: one instance, flagged with <c>COUCHCOOP_STREAMING_SEAT=1</c>, whose rendering is captured
-/// by godot-scene-web's render-stream GDExtension instead of being made cheap.
+/// A seat with the render-stream capture loaded in standby, flagged with <c>COUCHCOOP_STREAMING_SEAT=1</c>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// WHAT THE ROLE CHANGES. A windowless instance normally installs two savers that discard exactly what the capture
-/// reads: <see cref="CouchCoopHeadlessVisualSuspender"/> freezes spine, particles and decorative animators and drops
-/// the idle frame rate, so the scene stops drawing; <see cref="HeadlessTextureImageEvictor"/> replaces the CPU copy
-/// of every VRAM-compressed texture with 1x1 data, and the capture's late-join adoption reads those copies, so an
-/// evicted texture would stream as 1x1 with nothing on either side noticing. The streaming seat installs neither,
-/// and loads the capture through <see cref="RenderCaptureExtensionLoader"/>. Nothing else about the instance
-/// changes: a seat still joins, plays and serves its browser exactly as before.
-/// </para>
-/// <para>
-/// THE CAPTURE IS REQUIRED, AND ONLY HERE. A streaming seat without the capture is a seat with its savers off for
-/// nothing, streaming nothing — so a flagged instance whose <c>COUCHCOOP_RENDER_CAPTURE_EXTENSION</c> is unset,
-/// malformed or fails to load refuses to start, with the reason in its log, before it can join. The other way round,
-/// the extension variable alone loads nothing: a capture running under the savers would stream a frozen scene with
-/// 1x1 textures. That also keeps a seat that inherits the host's capture environment from loading it.
-/// </para>
-/// <para>
-/// THE ROLE IS NOT INHERITED. Spawned seats copy the host's environment, so a flag set on a host would turn every
-/// seat it spawns into a streaming seat, all arming one capture listener. <see cref="ClearInheritedRole"/> removes
-/// it from every seat launch: the flag marks the one process it is set on. Choosing a spawned seat to stream is
-/// the host's explicit decision (<see cref="StreamingSeatLaunch"/>, MIR-3): it sets the flag on exactly one launch.
-/// </para>
-/// <para>
-/// The capture loads at mod init, below the seat's cloud-save guard and above the command-line override that lets
-/// a seat join — the capture's "modder route". It arms there, before the game's first scene exists; the capture's
-/// own adoption (<c>GRC_ADOPT=arm</c>) is what covers anything created before it armed. Its <c>GRC_*</c>
-/// environment is the capture's contract, documented in godot-scene-web, not read here.
-/// </para>
+/// Capture seats keep the visual suspender while using the mirror; arming disables it until capture teardown
+/// finishes. They never install the texture evictor: the capture releases compressed texture pixels itself and
+/// reloads them for each arm. A flagged seat must load its capture before joining or refuse to start.
+/// The host clears inherited capture settings and applies this role to each configured seat launch.
 /// </remarks>
 internal static class StreamingSeatRole
 {
-    internal const string EnvironmentVariable = Protocol.StreamingSeatDescriptor.RoleEnvironmentVariable;
+    internal const string EnvironmentVariable = "COUCHCOOP_STREAMING_SEAT";
 
-    /// <summary>This process is the streaming seat. Read once; the role cannot change while the process runs.</summary>
+    /// <summary>This process has the capture loaded. Read once; the loaded role lasts for the process lifetime.</summary>
     public static bool IsStreamingSeat { get; } = IsRequested(Environment.GetEnvironmentVariable(EnvironmentVariable));
 
     /// <summary>Exactly <c>1</c>, like every other opt-in <c>COUCHCOOP_*</c> flag.</summary>
@@ -50,9 +25,9 @@ internal static class StreamingSeatRole
     internal static bool InstallsTextureEvictor(bool streamingSeat, bool isHeadlessClient)
         => isHeadlessClient && !streamingSeat;
 
-    /// <summary>A windowless instance installs the visual suspender unless it is the streaming seat.</summary>
+    /// <summary>Every windowless instance installs the visual suspender, including a capture seat in standby.</summary>
     internal static bool InstallsVisualSuspender(bool streamingSeat, bool isWindowless)
-        => isWindowless && !streamingSeat;
+        => isWindowless;
 
     internal enum CaptureOutcomeKind
     {
@@ -108,7 +83,7 @@ internal static class StreamingSeatRole
             ? new CaptureOutcome(
                 CaptureOutcomeKind.Loaded,
                 $"streaming seat: render-capture extension load status={result.Status} path={request.Path}; "
-                + "visual suspender and texture evictor are not installed")
+                + "capture in standby; texture evictor is not installed")
             : new CaptureOutcome(
                 CaptureOutcomeKind.Refused,
                 $"streaming seat refused: render-capture extension load status={result.Status} path={request.Path}");
@@ -140,7 +115,7 @@ internal static class StreamingSeatRole
                 CouchCoopLog.Error(outcome.Message!);
                 CouchCoopLog.Stderr(outcome.Message!);
                 // Same exit as a seat that fails its build check: nothing has started, and the outcome that must
-                // be impossible is this instance going on to join with its savers off and no capture.
+                // be impossible is this instance going on to join with its texture evictor off and no capture.
                 HeadlessForceExit.Now();
                 return;
         }

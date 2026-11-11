@@ -110,6 +110,21 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
       .toBeNull();
   });
 
+  it.each(["mirror", "arming", "armed", "failed"])("parses the seat's %s renderer state", (state) => {
+    const parsed = parseBrowserEnvelopeValue({ ...SESSION, rendererState: { state } });
+    expect(parsed).toMatchObject({ rendererState: { state } });
+    const withReason = parseBrowserEnvelope(JSON.stringify({ ...SESSION, rendererState: { state, reason: "no-capture" } }));
+    expect(withReason).toMatchObject({ rendererState: { state, reason: "no-capture" } });
+  });
+
+  it.each([
+    undefined, null, "mirror", 1, [], {}, { state: "future-state" }, { state: 1 },
+    { state: "failed", reason: 42 }, { state: "mirror", reason: null }
+  ])("treats an unknown or malformed renderer state as absent (%j)", (rendererState) => {
+    const parsed = parseBrowserEnvelopeValue({ ...SESSION, rendererState });
+    expect((parsed as Extract<typeof parsed, { type: "session" }>).rendererState).toBeUndefined();
+  });
+
   // The atlas manifest tells the idle prefetch which pages this host's build actually ships, so a half-formed one
   // must read as "unknown" (walk the compiled-in list) and never as "this build ships no atlases", which would
   // silently turn the prefetch off. Absent is the older-host case and has to stay clean.

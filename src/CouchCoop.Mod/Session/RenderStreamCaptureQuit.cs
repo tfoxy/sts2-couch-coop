@@ -2,14 +2,6 @@ using Godot;
 
 namespace CouchCoop.Mod.Session;
 
-internal interface IRenderStreamCapture
-{
-    bool HasSingleton { get; }
-    string State();
-    int Disarm(string reason, int lingerMs);
-    void ConnectOneShot(string signal, Action callback);
-}
-
 /// <summary>
 /// Disarms arming, armed or ended captures and waits for disarming captures to finish before the seat exits.
 /// The exit sequence awaits this disarm so capture evidence is written before the immediate process exit.
@@ -90,28 +82,5 @@ internal sealed class RenderStreamCaptureQuit
             }
         }).CallDeferred();
         return completion.Task;
-    }
-
-    private sealed class GodotRenderStreamCapture : IRenderStreamCapture
-    {
-        private const string SingletonName = "RenderStreamCapture";
-
-        public bool HasSingleton => Engine.HasSingleton(SingletonName);
-
-        public string State() => Engine.GetSingleton(SingletonName).Call("state").AsGodotDictionary()["state"].AsString();
-
-        public int Disarm(string reason, int lingerMs) => Engine.GetSingleton(SingletonName).Call(
-            "disarm", new Godot.Collections.Dictionary { ["reason"] = reason, ["linger_ms"] = lingerMs }).AsInt32();
-
-        public void ConnectOneShot(string signal, Action callback)
-        {
-            // The disarmed signal carries one info dictionary argument.
-            var result = Engine.GetSingleton(SingletonName).Connect(
-                signal, Callable.From<Variant>(_ => callback()), (uint)GodotObject.ConnectFlags.OneShot);
-            if (result != Error.Ok)
-            {
-                throw new InvalidOperationException($"Cannot connect render-stream {signal}: {result}.");
-            }
-        }
     }
 }

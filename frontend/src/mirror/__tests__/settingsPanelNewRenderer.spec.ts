@@ -73,7 +73,8 @@ beforeEach(() => {
     stage: "dom", runtimeStage: "dom", panelOpen: true
   });
   Object.assign(renderStreamContext, {
-    directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
+    directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false,
+    coreLoadFailed: false, stopped: null,
     coreProblem: null, webgl2: true, pageLoopback: true
   });
 });
@@ -85,7 +86,7 @@ afterEach(() => {
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     renderStreamProtocol: 12, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
   Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null,
-    seatJoined: false, sessionEndpoint: null, lanOffer: null, page: undefined });
+    seatJoined: false, returningToMirror: false, sessionEndpoint: null, lanOffer: null, page: undefined });
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
@@ -263,33 +264,69 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(mirrorSettings.renderer).toBe("stream");
   });
 
-  it("is locked to a joined seat started without the stream, whatever was saved", async () => {
+  it("keeps a joined seat switchable and reflects the saved choice", async () => {
     renderStreamContext.seatJoined = true;
     mirrorSettings.renderer = "stream";
     mountPanel();
-    await nextTick();
-    expect(el("mirror-renderer").checked).toBe(false);
-    expect(el("mirror-renderer").disabled).toBe(true);
-    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
-      .toBe("Your player's game started with the old renderer and keeps it while it runs.");
+    expect(el("mirror-renderer").checked).toBe(true);
+    expect(el("mirror-renderer").disabled).toBe(false);
+    expect(wrapper!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(mirrorSettings.renderer).toBe("mirror");
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
-    // The saved choice is untouched, for the next join.
     expect(mirrorSettings.renderer).toBe("stream");
   });
 
-  it("is locked on for a joined streaming seat, whatever was saved", async () => {
+  it("shows the saved choice even when the seat already streams, and can switch it off", async () => {
     renderStreamContext.seatJoined = true;
     renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
       resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
     mountPanel();
-    await nextTick();
-    expect(el("mirror-renderer").checked).toBe(true);
-    expect(el("mirror-renderer").disabled).toBe(true);
-    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
-      .toBe("Your player's game started with the new renderer and keeps it while it runs.");
+    expect(el("mirror-renderer").checked).toBe(false);
+    expect(el("mirror-renderer").disabled).toBe(false);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
     expect(mirrorSettings.renderer).toBe("mirror");
-    expect(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}")).toEqual({ renderer: "mirror" });
+  });
+
+  it("reports Switching until the stream draws its first frame", async () => {
+    renderStreamContext.seatJoined = true;
+    renderStreamContext.rendererState = { state: "arming" };
+    mirrorSettings.renderer = "stream";
+    mountPanel();
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
+    renderStreamContext.rendererState = { state: "armed" };
+    renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+    await nextTick();
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
+    renderStreamContext.firstFrame = true;
+    await nextTick();
+    expect(wrapper!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+  });
+
+  it.each(["arming", "armed"] as const)("does not report Switching after returning to mirror while the seat stays %s", (state) => {
+    renderStreamContext.seatJoined = true;
+    renderStreamContext.rendererState = { state };
+    renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+    renderStreamContext.returningToMirror = true;
+    mountPanel();
+    expect(el("mirror-renderer").checked).toBe(false);
+    expect(wrapper!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+  });
+
+  it.each(["arming", "armed", "failed"] as const)("hides shared-seat %s status and retry when the saved choice is mirror", (state) => {
+    renderStreamContext.seatJoined = true;
+    renderStreamContext.rendererState = { state, reason: "capture stopped" };
+    renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+    renderStreamContext.stopped = "capture stopped";
+    mountPanel();
+    expect(el("mirror-renderer").checked).toBe(false);
+    expect(wrapper!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+    expect(wrapper!.find('[data-testid="mirror-renderer-stopped"]').exists()).toBe(false);
   });
 
   it("says the stream stopped, falls back, and Try again resumes it", async () => {

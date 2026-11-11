@@ -15,9 +15,8 @@ import {
 import {
   computeRenderStreamAvailability,
   isLoopbackHttpPage,
-  joinRendererRequest,
+  seatRendererRequest,
   qaRenderStreamEndpoint,
-  rendererLockedToSeat,
   renderStreamAvailability,
   renderStreamChoosable,
   renderStreamContext,
@@ -197,17 +196,7 @@ describe("renderStreamAvailability", () => {
     expect(reason({})).toBeNull();
   });
 
-  it("locks the checkbox to a joined seat, unless a QA endpoint brings its own hub", () => {
-    const at = (over: Partial<RenderStreamAvailabilityInputs>) => computeRenderStreamAvailability({ ...base, ...over });
-    const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
-      token: "a".repeat(64), protocol: 12 });
-    expect(rendererLockedToSeat(at({}), true)).toBe(true);
-    expect(rendererLockedToSeat(at({ sessionEndpoint: seat }), true)).toBe(true);
-    expect(rendererLockedToSeat(at({}), false)).toBe(false);
-    expect(rendererLockedToSeat(at({ qaEndpoint: qa }), true)).toBe(false);
-  });
-
-  it("can be chosen before a join exactly when the join would ask for the stream", () => {
+  it("can be chosen exactly when the seat request would ask for the stream", () => {
     const saved = mirrorSettings.renderer;
     try {
       Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: false,
@@ -216,7 +205,7 @@ describe("renderStreamAvailability", () => {
       // A plain-http LAN page, before the host's offer arrives (or on a host with no capture): nothing to ask for.
       expect(renderStreamChoosable.value).toBe(false);
       renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
-      // The saved choice is off, and still the checkbox can be switched on: the question is what the join would do.
+      // The saved choice is off; the checkbox asks whether this page could request the stream.
       expect(renderStreamChoosable.value).toBe(true);
       renderStreamContext.directView = true;
       expect(renderStreamChoosable.value).toBe(false);
@@ -301,7 +290,7 @@ describe("renderStreamAvailability", () => {
       expect(lanCarrierUsable(offers[offer], pages[page])).toBe(usable);
       const at = computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: offers[offer], page: pages[page] });
       expect(at.reason).toBe(usable ? "not-streaming" : "needs-proxy");
-      expect(joinRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
+      expect(seatRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
         pageLoopback: false, qaEndpoint: null, lanOffer: offers[offer], page: pages[page] })).toBe(usable ? "stream" : undefined);
     });
 
@@ -326,7 +315,7 @@ describe("renderStreamAvailability", () => {
     it("says not-streaming, not needs-proxy, on a host with no capture (no offer), and asks for no streaming seat", () => {
       for (const page of Object.values(pages)) {
         expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: null, page }).reason).toBe("not-streaming");
-        expect(joinRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
+        expect(seatRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
           pageLoopback: false, qaEndpoint: null, lanOffer: null, page })).toBeUndefined();
       }
     });
@@ -369,18 +358,18 @@ describe("renderStreamAvailability", () => {
     });
   });
 
-  it("asks the host for a streaming seat only when the viewer chose it and this page can draw it", () => {
+  it("asks the seat to stream only when the viewer chose it and this page can draw it", () => {
     const ask = { renderer: "stream" as const, coreProblem: null, coreLoadFailed: false, webgl2: true, pageLoopback: true,
       qaEndpoint: null };
-    expect(joinRendererRequest(ask)).toBe("stream");
-    expect(joinRendererRequest({ ...ask, renderer: "mirror" })).toBeUndefined();
-    expect(joinRendererRequest({ ...ask, coreProblem: "missing" })).toBeUndefined();
-    expect(joinRendererRequest({ ...ask, coreLoadFailed: true })).toBeUndefined();
-    expect(joinRendererRequest({ ...ask, webgl2: false })).toBeUndefined();
+    expect(seatRendererRequest(ask)).toBe("stream");
+    expect(seatRendererRequest({ ...ask, renderer: "mirror" })).toBeUndefined();
+    expect(seatRendererRequest({ ...ask, coreProblem: "missing" })).toBeUndefined();
+    expect(seatRendererRequest({ ...ask, coreLoadFailed: true })).toBeUndefined();
+    expect(seatRendererRequest({ ...ask, webgl2: false })).toBeUndefined();
     // A LAN or HTTPS page cannot reach a loopback hub: the seat would stream for nobody.
-    expect(joinRendererRequest({ ...ask, pageLoopback: false })).toBeUndefined();
+    expect(seatRendererRequest({ ...ask, pageLoopback: false })).toBeUndefined();
     // A QA endpoint brings its own hub.
-    expect(joinRendererRequest({ ...ask, qaEndpoint: qa })).toBeUndefined();
+    expect(seatRendererRequest({ ...ask, qaEndpoint: qa })).toBeUndefined();
   });
 
   it("knows a loopback http page", () => {
@@ -399,11 +388,11 @@ describe("renderStreamAvailability", () => {
     expect(resolveRuntimeRenderer("stream", yes, "host-error: bye")).toBe("mirror");
   });
 
-  it("follows the viewer's own streaming seat whatever the saved choice, until it stops", () => {
+  it("runs a seat stream only when this page chose it, until it stops", () => {
     const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
       token: "a".repeat(64), protocol: 12 });
     const streaming = computeRenderStreamAvailability({ ...base, sessionEndpoint: seat });
-    expect(resolveRuntimeRenderer("mirror", streaming, null)).toBe("stream");
+    expect(resolveRuntimeRenderer("mirror", streaming, null)).toBe("mirror");
     expect(resolveRuntimeRenderer("stream", streaming, null)).toBe("stream");
     expect(resolveRuntimeRenderer("mirror", streaming, "live-connect-failed: never opened")).toBe("mirror");
     // A seat started without the stream: the old renderer, whatever was saved.

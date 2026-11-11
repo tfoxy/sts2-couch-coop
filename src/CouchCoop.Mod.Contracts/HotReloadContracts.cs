@@ -32,6 +32,18 @@ public interface IHotBrowserDemandHost
     Action<int, long> CreateBrowserDemandReporter();
 }
 
+// Optional capability. State and arm credentials are read together, using only BCL types.
+public interface IHotRendererSwapHost
+{
+    (string State, string? Reason,
+        (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus { get; }
+
+    bool WantsRenderStream(string pageId);
+    void RequestRenderer(string pageId, bool wantsStream, double? aspect);
+    void ReleaseRenderer(string pageId);
+    IDisposable SubscribeRendererChanged(Action handler);
+}
+
 // Optional capability; all arguments are shared BCL types across reload assembly boundaries.
 public interface IHotDirectIpHttpsHost
 {

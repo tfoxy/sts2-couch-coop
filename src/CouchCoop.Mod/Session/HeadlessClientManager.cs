@@ -256,13 +256,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     private EventHandler? _processExitHandler;
     private PosixSignalRegistration? _termSignal;
 
-    // "Use new renderer (Beta)" (StreamingSeatLaunch): what the operator configured for a streaming seat (null: no
-    // seat on this host ever streams), the ONE slot whose current process was launched as the streaming seat, and
-    // the slot of the launch in progress that is to become it (read by LaunchReal, which may drop it). All under
-    // _lock.
+    // Every seat gets a standby capture when configured; each launch prepares its own port and evidence directory.
     private readonly StreamingSeatLaunch.Config? _streamingConfig;
-    private int? _streamingSlot;
-    private int? _streamingLaunchSlot;
 
     public static int SlotToPort(int slot) => HostPort + slot * PortStep;
     public static ulong SlotToNetId(int slot) => BaseNetId + (ulong)slot;
@@ -659,9 +654,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         bool allowNewSlot = true,
         Action<ulong, string?>? onSlotBound = null,
         SeatBrowserRouteMode routeMode = SeatBrowserRouteMode.Direct,
-        ulong? targetNetId = null,
-        bool wantsStreamingSeat = false,
-        double? streamingAspect = null)
+        ulong? targetNetId = null)
     {
         var name = NormalizeName(displayName);
         int slot;
@@ -681,8 +674,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             // Already assigned to this session (e.g. caller re-entered). A netId-BOUND request short-circuits only
             // when the session is already on THAT seat — otherwise the viewer picked a different seat on the same
             // connection and must actually be re-bound, not silently handed their previous instance.
-            // A RELAUNCH (the streaming-seat restart) has just stopped this session's own seat and must launch it
-            // again, so it goes on to the netId-bound path below instead.
             if (_sessionToSlot.TryGetValue(sessionId, out slot)
                 && (targetNetId is null || SlotToNetId(slot) == targetNetId.Value))
             {
@@ -742,9 +733,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 reusingClaim = seatAlreadyClaimed;
                 if (name is not null)
                 {
-                    // Another player taking this seat does not inherit its holder's stream aspect.
-                    if (ClaimedNameForSlotLocked(slot) is { } holder && !string.Equals(holder, name, StringComparison.OrdinalIgnoreCase))
-                        _streamingAspect.Remove(slot);
                     // Re-point the claim: drop any OTHER slot this name held, and any OTHER name holding this slot,
                     // so the name↔slot map stays a bijection (RemoveNameForSlotLocked / the dictionary do one each).
                     _nameToSlot.Remove(name);
@@ -837,8 +825,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 }
                 _sessionToSlot[sessionId] = slot;
                 if (name is not null) _nameToSlot[name] = slot;
-                // A new player on this slot does not inherit an earlier holder's stream aspect.
-                _streamingAspect.Remove(slot);
             }
 
             // THE MID-RUN LAUNCH GATE. Every branch above that could hand back a LIVE process has already
@@ -935,13 +921,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             // exercises both failure shapes — a null return and a throw — which is where the interesting
             // behaviour is.
             IHeadlessProcess? proc;
-            // The streaming seat is decided per LAUNCH: this viewer asked for it in the join, the host is configured
-            // for it, and no other live seat already streams. A running seat keeps the role it started with, so a
-            // re-join to it keeps its renderer too.
-            _streamingLaunchSlot = wantsStreamingSeat && _streamingConfig is not null && !StreamingSeatTakenLocked(slot)
-                ? slot : null;
-            // A join that asks for the streaming seat brings its page's aspect (PRES-A).
-            if (wantsStreamingSeat) RecordStreamingAspectLocked(slot, streamingAspect);
             try
             {
                 PrepareConnectionLocked(slot, sessionId, routeMode);
@@ -949,7 +928,6 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
             catch (Exception launchError)
             {
-                _streamingLaunchSlot = null;
                 CouchCoop.Mod.Connections.ConnectionRegistry.Shared.Fail(sessionId, "launch-exception",
                     "The game process could not be launched.", "Check the game installation and retry. Copy this report if it fails again.", launchError.ToString());
                 ForgetConnectionLocked(slot);
@@ -966,7 +944,6 @@ public sealed partial class HeadlessClientManager : IDisposable
 
             if (proc is null)
             {
-                _streamingLaunchSlot = null;
                 // A null launcher result is not always a mystery. When LaunchReal refused for a missing
                 // listener, CouchSeatAvailability names either the known bind failure or a host start that
                 // CouchCoop never observed. A genuine Process.Start null keeps the generic sentence.
@@ -990,18 +967,6 @@ public sealed partial class HeadlessClientManager : IDisposable
                 return null;
             }
             _processBySlot[slot] = proc;
-            // LaunchReal may have dropped the role (the hub port was taken); what is left is the truth.
-            if (_streamingLaunchSlot == slot)
-            {
-                _streamingSlot = slot;
-                ConnectionRegistry.Shared.RecordDiagnostic(sessionId, "renderer",
-                    $"streaming seat (render-stream hub 0.0.0.0:{StreamingSeatLaunch.HubPortForSlot(slot).ToString(CultureInfo.InvariantCulture)})");
-            }
-            else if (_streamingSlot == slot)
-            {
-                _streamingSlot = null;
-            }
-            _streamingLaunchSlot = null;
             QueueOwnedSeatCountChangedLocked();
             if (_ownedConnections.TryGetValue(slot, out var owned))
             {
@@ -1035,36 +1000,6 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// abort a join.
     /// </para>
     /// </summary>
-    /// <summary>
-    /// The slot whose live process is this host's streaming seat, or null. At most one, ever (StreamingSeatLaunch).
-    /// </summary>
-    internal int? StreamingSlot
-    {
-        get
-        {
-            lock (_lock) return StreamingSeatTakenLocked(exceptSlot: null) ? _streamingSlot : null;
-        }
-    }
-
-    /// <summary>
-    /// Whether the launch of <paramref name="slot"/> now in progress is the streaming seat's. Asked from inside the
-    /// launcher (under <c>_lock</c>, which it already holds): what <c>LaunchReal</c> decides on, and what a test's fake
-    /// launcher records.
-    /// </summary>
-    internal bool IsStreamingLaunch(int slot)
-    {
-        lock (_lock) return _streamingLaunchSlot == slot;
-    }
-
-    /// <summary>Whether a live process OTHER than <paramref name="exceptSlot"/>'s already streams.</summary>
-    /// <remarks>
-    /// The launch about to replace <paramref name="exceptSlot"/>'s process (a respawn) frees that slot's role, so a
-    /// returning viewer gets it back. A streaming seat that exited frees it for the next viewer who asks.
-    /// </remarks>
-    private bool StreamingSeatTakenLocked(int? exceptSlot)
-        => _streamingSlot is int streaming && streaming != exceptSlot
-            && _processBySlot.TryGetValue(streaming, out var process) && !ProcessExited(process);
-
     private static void ReportSlotBound(Action<ulong, string?>? onSlotBound, int slot, string? name)
     {
         if (onSlotBound is null) return;
@@ -2071,12 +2006,8 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// these are TUNING, not contract: the seat joins and plays identically without them, and a profiling run
     /// overrides any of them by exporting its own value on the host (see the apply rule in <c>LaunchReal</c>).
     ///
-    /// <para><b>Why these two.</b> A live seat observed at ~1.4GB RSS had spread its native heap across 42 glibc
-    /// thread arenas holding 283MB, of which 62MB was free-but-retained slack — arenas are per-thread and the
-    /// game runs 32 threads, so the default cap (8 * ncores) buys throughput we do not need in a process whose
-    /// hot path is one main thread plus a few IO threads. Capping arenas collapses that slack. The CLR side was
-    /// 182MB committed; GCConserveMemory trades a little collection throughput for a tighter heap, which is the
-    /// right side of the trade for a seat that exists to mirror state, not to render.</para>
+    /// Limit retained allocator arenas, let large native allocations be released independently, and ask the CLR
+    /// to favour a tighter heap over collection throughput.
     ///
     /// Pure, so the launch contract stays unit-testable.
     /// </summary>
@@ -2084,6 +2015,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         => new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["MALLOC_ARENA_MAX"] = "2",
+            ["MALLOC_MMAP_THRESHOLD_"] = "131072",
             ["DOTNET_GCConserveMemory"] = "5",
         };
 
@@ -2286,11 +2218,10 @@ public sealed partial class HeadlessClientManager : IDisposable
         // Prevent the headless child from inheriting the host's port so if it tried to spawn
         // sub-headless instances (it won't, but defensive) they'd start at the right base.
         psi.EnvironmentVariables.Remove("COUCHCOOP_HEADLESS_WRAPPER");
-        // The streaming-seat flag marks the one process it is set on; a seat never inherits it from its host, nor
-        // the capture's variables. The one seat chosen to stream gets its role and GRC_* table back explicitly.
+        // A seat never inherits the host's capture role or variables. Every configured seat gets its own standby table.
         StreamingSeatRole.ClearInheritedRole(psi);
         StreamingSeatLaunch.ClearInherited(psi);
-        if (_streamingLaunchSlot == slot)
+        if (_streamingConfig is not null)
         {
             ApplyStreamingSeatLocked(slot, psi, preparedUserDir?.HostUserDir ?? HeadlessUserDirSeeder.ResolveHostUserDir());
         }
@@ -2314,12 +2245,12 @@ public sealed partial class HeadlessClientManager : IDisposable
     }
 
     /// <summary>
-    /// Make this launch the streaming seat: its private evidence directory (with any previous process's token and
+    /// Load a standby capture on this launch: its private evidence directory (with any previous process's token and
     /// certificate hash removed, so a stale one can never be handed out), and <see cref="StreamingSeatLaunch.Environment"/>. Drops
     /// the role instead — the seat then launches as a normal one, and the viewer sees "not streaming" — when the
     /// hub's port is taken or the evidence directory cannot be prepared.
     /// </summary>
-    private void ApplyStreamingSeatLocked(int slot, ProcessStartInfo psi, string? hostUserDir)
+    internal void ApplyStreamingSeatLocked(int slot, ProcessStartInfo psi, string? hostUserDir)
     {
         var hubPort = StreamingSeatLaunch.HubPortForSlot(slot);
         string? refusal = null;
@@ -2337,9 +2268,9 @@ public sealed partial class HeadlessClientManager : IDisposable
             {
                 evidence = StreamingSeatLaunch.EvidenceDirectory(hostUserDir, slot);
                 Directory.CreateDirectory(evidence);
-                File.Delete(Path.Combine(evidence, Protocol.StreamingSeatDescriptor.TokenFileName));
+                File.Delete(Path.Combine(evidence, StreamingSeatLaunch.TokenFileName));
                 // And its WebTransport certificate hash: a stale one would pin a certificate this seat never serves.
-                File.Delete(Path.Combine(evidence, Protocol.StreamingSeatDescriptor.CertificateHashFileName));
+                File.Delete(Path.Combine(evidence, StreamingSeatLaunch.CertificateHashFileName));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -2349,7 +2280,6 @@ public sealed partial class HeadlessClientManager : IDisposable
 
         if (refusal is not null || evidence is null)
         {
-            _streamingLaunchSlot = null;
             CouchCoopLog.Stderr($"streaming seat not launched slot={slot}: {refusal}; launching a normal seat");
             return;
         }
@@ -2358,45 +2288,13 @@ public sealed partial class HeadlessClientManager : IDisposable
         var origins = StreamingSeatLaunch.AllowedOrigins(
             hostPort, Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable));
         var (lan, lanTls) = PrepareStreamingSeatLanLocked(evidence, hostPort, ref origins);
-        var aspect = _streamingAspect.TryGetValue(slot, out var requested) ? requested : (double?)null;
-        var width = StreamingSeatPresentationWidthLocked(slot);
-        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, width, lan));
+        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, lan));
         CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=0.0.0.0:{hubPort.ToString(CultureInfo.InvariantCulture)} "
             + $"tls={lanTls} "
-            + $"presentation={width.ToString(CultureInfo.InvariantCulture)}x{StreamingSeatLaunch.PresentationHeight.ToString(CultureInfo.InvariantCulture)} aspect={(aspect is double a ? a.ToString("0.####", CultureInfo.InvariantCulture) : "none")} "
+            + $"mode=standby root_size={StreamingSeatLaunch.RootSize(StreamingSeatLaunch.PresentationBaseWidth)} "
             + $"cap={_streamingConfig!.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
             + $"carriers={(_streamingConfig.NetModule is null ? "ws" : "ws,wt")} "
             + $"origins={string.Join(',', origins)} evidence={evidence}");
-    }
-
-    // The aspect (width / height of the viewer's stream box) the slot's viewer last joined with when asking for the
-    // streaming seat (PRES-A). Read when a streaming launch of the slot builds its environment; absent means the 16:9
-    // base. Per slot, because the slot is what launches. Under _lock.
-    private readonly Dictionary<int, double> _streamingAspect = [];
-
-    /// <summary>The presentation width a streaming launch of <paramref name="slot"/> gets now.</summary>
-    internal int StreamingSeatPresentationWidth(int slot)
-    {
-        lock (_lock) return StreamingSeatPresentationWidthLocked(slot);
-    }
-
-    private int StreamingSeatPresentationWidthLocked(int slot)
-        => StreamingSeatLaunch.PresentationWidth(
-            _streamingAspect.TryGetValue(slot, out var aspect) ? aspect : null,
-            _streamingConfig?.MaxPresentationWidth ?? StreamingSeatLaunch.DefaultMaxPresentationWidth);
-
-    // Only a usable aspect is kept; anything else (none, not finite, out of range) is the base width, so it is dropped.
-    private void RecordStreamingAspectLocked(int slot, double? aspect)
-    {
-        if (aspect is double value && double.IsFinite(value)
-            && value >= StreamingSeatLaunch.MinAspect && value <= StreamingSeatLaunch.MaxAspect)
-        {
-            _streamingAspect[slot] = value;
-        }
-        else
-        {
-            _streamingAspect.Remove(slot);
-        }
     }
 
     private sealed record LanOfferCache(long At, StreamingSeatLan.Context Context);

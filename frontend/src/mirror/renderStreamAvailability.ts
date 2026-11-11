@@ -11,26 +11,25 @@
 //                  an https page cannot use plain ws, and WebTransport needs a secure context and the API. A
 //                  plain-http LAN page runs the client (CAR9: godot-scene-web's loader hashes the core without
 //                  `crypto.subtle` there) and streams over plain ws, which the seat always serves to LAN pages.
-//   not-streaming  no seat descriptor: before a join (the choice then rides the join), or a joined seat that was
-//                  started without the stream
+//   not-streaming  no seat descriptor: before a join, or while a joined seat is not streaming
 //
 // The ENDPOINT comes from the `session` envelope of this viewer's own seat (MIR-3: the host's streaming seat sends
 // it to a page origin its hub allows) or, for QA, from `?renderStream=` (source `qa-override`, info only).
 //
-// THE CHOICE RIDES THE JOIN. The join asks for a streaming seat (`renderer: "stream"`, `joinRendererRequest`) when
-// the viewer chose the new renderer and this page could run it; the host launches at most one per host, and only at
-// a seat's start. So the checkbox can be switched on before a join exactly when that join would ask
-// (`renderStreamChoosable`). Once this viewer's seat runs, the page follows THAT seat's renderer: the checkbox shows
-// it and is locked (`renderStreamLockedToSeat`), and a reused seat keeps its role, so it holds until the seat ends.
+// The saved choice is requested on this viewer's seat socket after its first session, and again when changed.
+// Requests use the same device and carrier checks as the checkbox (`renderStreamChoosable`). A QA endpoint
+// brings its own hub and never asks the seat to stream.
 //
-// The live renderer (`runtimeRenderer`) is derived, never chosen: `stream` exactly while this viewer's own seat
-// streams (or, for a QA endpoint, while the viewer's choice is `stream`), the feature is available, and the stream
+// The live renderer (`runtimeRenderer`) is derived, never chosen: `stream` exactly while this page chooses it,
+// the seat streams (or a QA endpoint is provided), the feature is available, and the stream
 // has not stopped this session. A stopped stream falls back to the old renderer with a status line, and the saved
 // choice stays — the canvas stage's `stage` / `runtimeStage` / `stageFailure` contract.
 
 import { computed, reactive } from "vue";
 
 import { validateEndpoint, type RenderStreamEndpoint } from "@godot-scene-web/render-stream-client";
+
+import type { BrowserRendererState } from "@/protocol/browserEnvelope";
 
 import { mirrorSettings, type MirrorSettings } from "@/mirror/mirrorSettings";
 import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/renderStreamCore";
@@ -143,14 +142,6 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
 }
 
 /**
- * Whether the checkbox is locked to this viewer's seat: it holds a seat of its own (joined, not the host's view), so
- * the page follows that seat's renderer. A QA endpoint brings its own hub and stays switchable.
- */
-export function rendererLockedToSeat(availability: RenderStreamAvailability, seatJoined: boolean): boolean {
-  return seatJoined && availability.source !== "qa-override";
-}
-
-/**
  * The `?renderStream=` descriptor: the hub's origin serves the resource GETs, no token (the QA hub runs
  * `GRC_LIVE_AUTH=none` on loopback), the protocol from `?rsProtocol=`, presentation 1920×1080.
  */
@@ -215,6 +206,11 @@ export function isLoopbackHttpPage(location: Pick<Location, "protocol" | "hostna
 export const renderStreamContext = reactive({
   directView: false,
   sessionEndpoint: null as RenderStreamEndpoint | null,
+  rendererState: null as BrowserRendererState | null,
+  firstFrame: false,
+  /** An explicit switch off takes effect while the seat withdraws its descriptor. */
+  returningToMirror: false,
+  retryRequest: 0,
   coreLoadFailed: false,
   /** Why the stream stopped this session ("New renderer stopped: {reason}"), or null. */
   stopped: null as string | null,
@@ -254,17 +250,13 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
   page: renderStreamContext.page ?? probePageFacts()
 }));
 
-/** `rendererLockedToSeat` for this page, now. */
-export const renderStreamLockedToSeat = computed(() =>
-  rendererLockedToSeat(renderStreamAvailability.value, renderStreamContext.seatJoined));
-
 /**
- * What a join asks the host for: `"stream"` (launch this viewer's seat as the streaming seat) when the viewer chose
- * the new renderer and THIS page could draw it — the core is here, WebGL2 works, and the page is the host's loopback
- * http page or a LAN page with a usable carrier in the host's LAN offer (CAR7b). Otherwise nothing, so a seat never
+ * What this page asks its seat for: `"stream"` when the viewer chose the new renderer and THIS page could draw it —
+ * the core is here, WebGL2 works, and the page is the host's loopback http page or a LAN page with a usable carrier
+ * in the host's LAN offer. Otherwise nothing, so a seat never
  * pays for a stream nobody can watch. A QA endpoint brings its own hub and asks for nothing either.
  */
-export function joinRendererRequest(
+export function seatRendererRequest(
   inputs: Pick<RenderStreamAvailabilityInputs, "coreProblem" | "coreLoadFailed" | "webgl2" | "pageLoopback" | "qaEndpoint"
     | "lanOffer" | "page">
     & { renderer: MirrorSettings["renderer"] }
@@ -276,14 +268,15 @@ export function joinRendererRequest(
     && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
 }
 
-/** `joinRendererRequest` for this page, now. */
-export function currentJoinRendererRequest(settings: MirrorSettings = mirrorSettings): "stream" | undefined {
-  return currentJoinRendererRequestFor(settings.renderer, settings);
+/** `seatRendererRequest` for this page, now. */
+export function currentSeatRendererRequest(settings: MirrorSettings = mirrorSettings): "stream" | undefined {
+  return currentSeatRendererRequestFor(settings.renderer, settings);
 }
 
-function currentJoinRendererRequestFor(renderer: MirrorSettings["renderer"],
+/** Check an explicit renderer request against this page's capabilities, independently of its saved choice. */
+export function currentSeatRendererRequestFor(renderer: MirrorSettings["renderer"],
   settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): "stream" | undefined {
-  return joinRendererRequest({
+  return seatRendererRequest({
     renderer,
     coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
     coreLoadFailed: renderStreamContext.coreLoadFailed,
@@ -296,12 +289,12 @@ function currentJoinRendererRequestFor(renderer: MirrorSettings["renderer"],
 }
 
 /**
- * Whether the checkbox can be switched ON for this page before a join: the join would then ask for the stream
- * (`joinRendererRequest` with the choice on), or a QA endpoint brings its own. Not on the host's own view.
+ * Whether the checkbox can be switched ON for this page: the seat request would then ask for the stream
+ * (`seatRendererRequest` with the choice on), or a QA endpoint brings its own. Not on the host's own view.
  */
 export const renderStreamChoosable = computed(() => !renderStreamContext.directView
   && (renderStreamAvailability.value.source === "qa-override"
-    || currentJoinRendererRequestFor("stream", mirrorSettings) === "stream"));
+    || currentSeatRendererRequestFor("stream", mirrorSettings) === "stream"));
 
 /** The box whose aspect `streamSeatAspect` reports: width and height in CSS pixels. */
 export interface StreamBoxSize { width: number; height: number }
@@ -318,13 +311,10 @@ export function measureStreamBox(): StreamBoxSize {
 }
 
 /**
- * The `aspect` (width / height of the stream box) that rides this page's request for a streaming seat — the join's
- * `renderer: "stream"` and `set-renderer` — so the host launches the seat at that width (PRES-A: the game lays itself
- * out at `presentation:<W>x1080`, W = clamp(round(1080 * aspect), 1920, the host's cap)). Only with Widescreen stretch
- * on; off (or an unmeasurable box) sends none, which is 1920x1080.
- *
- * READ ONCE, when the seat is asked for. A later rotation or resize does NOT restart the seat: the stage letterboxes
- * the stream into the new box until the seat's next start (re-launching on a changed aspect is PRES-R).
+ * The `aspect` (width / height of the stream box) that rides this page's `renderer: "stream"` request so the seat
+ * arms its stream at that width. Only with Widescreen stretch on; off (or an unmeasurable box) sends none, which is
+ * 1920x1080. Read when the stream is requested: a later rotation or resize letterboxes into the new box until the
+ * stream's next start.
  */
 export function streamSeatAspect(
   settings: Pick<MirrorSettings, "stretchEnabled"> = mirrorSettings,
@@ -336,19 +326,19 @@ export function streamSeatAspect(
   return Number.isFinite(aspect) && aspect > 0 ? aspect : undefined;
 }
 
-/** The rule for the live renderer (see the header): this viewer's own seat decides; a QA endpoint, the choice. */
+/** A shared seat's descriptor supplies an endpoint; this page's saved choice decides whether to use it. */
 export function resolveRuntimeRenderer(
   renderer: MirrorSettings["renderer"], availability: RenderStreamAvailability, stopped: string | null
 ): MirrorSettings["runtimeRenderer"] {
-  const wanted = availability.source === "session" || renderer === "stream";
-  return wanted && availability.available && stopped === null ? "stream" : "mirror";
+  return renderer === "stream" && availability.available && stopped === null ? "stream" : "mirror";
 }
 
 /** Re-derive `runtimeRenderer` (and the stream's protocol) after any input changed. */
 export function syncRuntimeRenderer(settings: MirrorSettings = mirrorSettings): void {
   const availability = renderStreamAvailability.value;
   if (availability.available) settings.renderStreamProtocol = availability.endpoint.protocol;
-  const next = resolveRuntimeRenderer(settings.renderer, availability, renderStreamContext.stopped);
+  const next = renderStreamContext.returningToMirror ? "mirror"
+    : resolveRuntimeRenderer(settings.renderer, availability, renderStreamContext.stopped);
   if (settings.runtimeRenderer !== next) settings.runtimeRenderer = next;
 }
 
@@ -362,8 +352,11 @@ export function stopRenderStream(reason: string, settings: MirrorSettings = mirr
   syncRuntimeRenderer(settings);
 }
 
-/** The panel's "Try again": forget this session's stop and re-derive. */
+/** The panel's "Try again": clear the stop, request the seat again, and re-derive. */
 export function retryRenderStream(settings: MirrorSettings = mirrorSettings): void {
+  if (settings.renderer !== "stream") return;
   renderStreamContext.stopped = null;
+  if (renderStreamContext.rendererState?.state === "failed") renderStreamContext.rendererState = null;
+  renderStreamContext.retryRequest += 1;
   syncRuntimeRenderer(settings);
 }

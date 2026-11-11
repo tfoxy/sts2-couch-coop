@@ -75,7 +75,8 @@ public sealed class CouchCoopHotServerGeneration : ICouchCoopHotGeneration, ICou
             isHeadlessClient: host.IsHeadlessClient,
             log: host.Log,
             admission: (host as HotReloadableBrowserServerHost)?.Admission,
-            onBrowserDemandChanged: (host as IHotBrowserDemandHost)?.CreateBrowserDemandReporter());
+            onBrowserDemandChanged: (host as IHotBrowserDemandHost)?.CreateBrowserDemandReporter(),
+            rendererSwapHost: host as IHotRendererSwapHost);
         if (host is IHotDirectIpHttpsHost directIp)
         {
             _server.PrepareDirectIpSeatAsync = (port, address, token) => directIp.PrepareDirectIpSeatAsync(port, address.ToString(), token);

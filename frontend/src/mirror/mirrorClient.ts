@@ -232,6 +232,8 @@ export interface MirrorClient {
   // keyframe. The INITIAL value rides the connect URL (`?watch=0`) because only that can suppress the host's
   // connect-time keyframe. Idempotent; a change made before the socket opens is flushed on open.
   sendWatch(on: boolean): void;
+  // Ask this seat to switch renderer. `aspect` sets the stream's width when starting it; no-op when not open.
+  sendRenderer(renderer: "stream" | "mirror", aspect?: number): void;
   // Whether this client currently wants the scene stream (the gate's live value).
   watching: boolean;
   // Send a co-op join request (name-choosing form). The host replies with a `session` message; if the server
@@ -239,11 +241,7 @@ export interface MirrorClient {
   // `options.onHeadlessRedirect` fires so the app can reconnect to the player's own game view.
   // `playerId` (the picked seat's "p:{netId}") is sent only when the join came from a roster BUTTON; it lets the
   // host resolve the exact seat instead of matching the label, which is what makes a rejoin land on the right netId.
-  // `renderer: "stream"` asks the host to launch this viewer's seat as its streaming seat ("Use new renderer
-  // (Beta)", renderStreamAvailability's `joinRendererRequest`); omitted otherwise, so the bytes are as before.
-  // `aspect` (only with `renderer`, and only a finite number) is the stream box's width / height, which sets the
-  // seat's presentation width (PRES-A, renderStreamAvailability's `streamSeatAspect`).
-  sendJoin(name: string, playerId?: string, renderer?: "stream", aspect?: number): void;
+  sendJoin(name: string, playerId?: string): void;
   // Ask the connected instance to send its `session` envelope again (`{type:"session-refresh"}`). The new renderer
   // asks once when its hub refused the token, to learn the seat's current descriptor. No-op when not open.
   requestSession(): void;
@@ -372,6 +370,7 @@ export function connectMirrorClient(options: {
     cancelPendingJoin,
     sendSettings,
     sendWatch,
+    sendRenderer,
     setPingInterval,
     close
   };
@@ -720,7 +719,17 @@ export function connectMirrorClient(options: {
     }
   }
 
-  function sendJoin(name: string, playerId?: string, renderer?: "stream", aspect?: number): void {
+  function sendRenderer(renderer: "stream" | "mirror", aspect?: number): void {
+    if (socket.readyState !== WebSocketCtor.OPEN) return;
+    try {
+      socket.send(JSON.stringify({ type: "renderer", renderer,
+        ...(renderer === "stream" && finiteAspect(aspect) ? { aspect } : {}) }));
+    } catch {
+      // Racing close — drop it; a reconnect applies the saved choice after its first session.
+    }
+  }
+
+  function sendJoin(name: string, playerId?: string): void {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
@@ -736,9 +745,7 @@ export function connectMirrorClient(options: {
         name: name.trim(),
         // Omitted (not null) when there is no picked seat, so a free-text join's bytes are exactly as before.
         ...(playerId ? { playerId } : {}),
-        ...(visit ? { visit } : {}),
-        ...(renderer ? { renderer } : {}),
-        ...(renderer && finiteAspect(aspect) ? { aspect } : {})
+        ...(visit ? { visit } : {})
       }));
       joinPending = true;
       joinRequestId = requestId;

@@ -254,3 +254,26 @@ public static class BrowserServerReloadReasons
 public sealed record BrowserHostAccess(bool Allowed, string Reason, long Generation, long SceneResetGeneration = 0);
 
 public sealed record BrowserHostAccessEnvelope(string Type, BrowserHostAccess HostAccess);
+
+// The `renderStream` wire shape, @godot-scene-web/render-stream-client's endpoint descriptor:
+// { "url": "ws://127.0.0.1:13366/render-stream", "resourceBase": "http://127.0.0.1:13366", "token": "<64 hex>",
+//   "protocol": 12, "presentation": [1920, 1080],
+//   "webTransport": { "url": "https://127.0.0.1:13366/render-stream", "certificateHashes": ["<64 hex>"] } }
+// (camelCased by BrowserJson, whose null-omission matters here: the client's validator refuses an explicit null).
+public sealed record BrowserRenderStreamDto(
+    string Url,
+    string ResourceBase,
+    string? Token,
+    int Protocol,
+    IReadOnlyList<int>? Presentation = null,
+    BrowserRenderStreamWebTransportDto? WebTransport = null);
+
+// The descriptor's `webTransport` member describes the hub's WebTransport carrier.
+// `certificateHashes` pins its self-signed certificate (SHA-256 of the DER, lowercase hex), as
+// `serverCertificateHashes`; omitted when the browser validates the certificate itself.
+public sealed record BrowserRenderStreamWebTransportDto(
+    string Url,
+    IReadOnlyList<string>? CertificateHashes = null);
+
+// A headless seat's renderer state; a failure may also explain why streaming is unavailable.
+public sealed record BrowserRendererStateDto(string State, string? Reason = null);

@@ -513,6 +513,38 @@ describe("RenderStreamStage", () => {
       expect(() => key("keydown", "KeyE")).not.toThrow();
     });
 
+    it("draws with input disabled, then enables input without replacing the client", async () => {
+      vi.useFakeTimers();
+      const sent: MirrorInputMessage[] = [];
+      pads = [padWith()];
+      mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m), inputEnabled: false });
+      key("keydown", "KeyE");
+      key("keyup", "KeyE");
+      pads = [padWith([0])];
+      await vi.advanceTimersByTimeAsync(50);
+      expect(sent).toEqual([]);
+      clients[0].emit({ kind: "streaming", firstFrame: true });
+      expect(wrapper!.emitted("first-frame")).toHaveLength(1);
+      await wrapper!.setProps({ inputEnabled: true });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(sent).toEqual([]); // a pad held during the handover is neutralized
+      key("keydown", "KeyE");
+      key("keyup", "KeyE");
+      expect(keys(sent)).toEqual(["KeyE:down", "KeyE:up"]);
+      pads = [padWith()];
+      await vi.advanceTimersByTimeAsync(50);
+      pads = [padWith([0])];
+      await vi.advanceTimersByTimeAsync(50);
+      expect(padEdges(sent)).toEqual(["faceSouth:down"]);
+      expect(clients).toHaveLength(1);
+      expect(clients[0].disposed).toBe(false);
+      await wrapper!.setProps({ inputEnabled: false });
+      const count = sent.length;
+      key("keydown", "KeyA");
+      expect(sent).toHaveLength(count);
+      expect(padEdges(sent)).toEqual(["faceSouth:down", "faceSouth:up"]);
+    });
+
     it("releases a held key on unmount, on the hidden tab, and on an extension remount", async () => {
       vi.useFakeTimers();
       const sent: MirrorInputMessage[] = [];

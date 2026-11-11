@@ -461,15 +461,19 @@ is not truncated.
 
 ## Streaming the new renderer over the LAN
 
-"Use new renderer (Beta)" streams a player's game from that player's streaming seat (a hidden game instance the host
-launches) to their browser, on the host computer and on phones and computers on the host's network alike. There is
-nothing to turn on: the stream listens on the LAN as the browser page and the player sockets already do. The host
-launches its streaming seat with:
+"Use new renderer (Beta)" streams a player's game from that player's seat (a hidden game instance the host
+launches) to their browser, on the host computer and on phones and computers on the host's network alike. A player
+can turn it on or off at any time in the settings panel, without the seat restarting: the seat starts streaming when
+one of its pages asks, and stops when the last one switches back or 90 seconds after the last stream connection
+closes. Each seat has its own stream, and any number of seats may stream at once. There is nothing to turn on for
+the network: while a seat streams, its stream listens on the LAN as the browser page and the player sockets already
+do. The host launches each seat with:
 
 - the stream listening on every interface (`0.0.0.0`, as the browser server does) at the seat's hub port (the seat's
   port band + 9: 13366 for the first seat), TCP for WebSocket and UDP for WebTransport, so a firewall must allow
   both, as it already allows the browser port;
-- the token it always uses, which godot-scene-web's LAN exposure also requires;
+- the token it always uses (a new one each time the seat starts streaming), which godot-scene-web's LAN exposure
+  also requires;
 - an origin allow-list of the host's own pages: its loopback page, `http://` and `https://` on each LAN address and on
   the `<machine>.local` name, and `https://` on each secure-origin host name (`192-168-0-5.my.local-ip.co`), all on
   the host's browser port;

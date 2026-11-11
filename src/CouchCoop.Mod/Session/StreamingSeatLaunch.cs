@@ -5,49 +5,18 @@ using CouchCoop.Mod.Diagnostics;
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// The host's half of the streaming seat: which seat launch becomes the
-/// streaming seat, and the environment it is launched with.
+/// Configures each headless seat's capture in standby, ready to arm for a browser page at runtime.
 /// </summary>
 /// <remarks>
-/// <para>
-/// WHO STREAMS. At most one seat per host: the seat of the first viewer whose join asks for the new renderer
-/// (<c>renderer: "stream"</c>). <see cref="HeadlessClientManager"/> makes that decision when it launches a seat
-/// process; a seat that is already running keeps the role it started with, because the texture evictor a normal
-/// seat installs cannot be undone. So the choice applies at the seat's next start.
-/// </para>
-/// <para>
-/// THE CAPTURE COMES FROM THE OPERATOR, OR FROM THE PAYLOAD. An operator's
-/// <see cref="RenderCaptureExtensionLoader.EnvironmentVariable"/> (an absolute <c>.gdextension</c> path) and, optionally,
-/// <see cref="CalibrationEnvironmentVariable"/> always win. Without them a released payload's own
-/// <c>render-capture/</c> is used (scripts/package-release.sh builds it); there the calibration record is the extensionless
-/// <see cref="PackagedCalibrationFileName"/>. Without a calibration variable a hand-staged capture uses the file
-/// <see cref="DefaultCalibrationFileName"/> next to the extension. A host with neither launches every seat exactly as before.
-/// </para>
-/// <para>
-/// THE ENVIRONMENT IS THE HOST'S. <see cref="Environment"/> is the whole <c>GRC_*</c> table, taken from the live
-/// acceptance setup (godot-scene-web <c>results/p3/w11z.md</c>, C3's <c>a12</c> mode): render-stream/12, a
-/// loopback listener on a per-slot port, token auth, the host's own page origins, live coding, inline records up
-/// to 4096 bytes and NO hook log (on a real seat it grows by ~38 GB in 22 minutes). Every inherited
-/// <c>GRC_*</c> is dropped first, from every seat, so a value on the host can never leak into a seat.
-/// </para>
-/// <para>
-/// TWO CARRIERS WHEN THE NET MODULE IS THERE (CAR7). With godot-scene-web's net module
-/// (<see cref="NetModuleFileName"/>) beside the capture, the hub serves WebSocket and WebTransport
-/// (<c>GRC_LIVE_CARRIERS=ws,wt</c>), the latter on the same port number over UDP with a self-signed certificate the
-/// page pins by hash (the capture writes it to <c>$GRC_EVIDENCE_DIR/live-cert-sha256</c>). Without the module the
-/// seat lists <c>ws</c> alone: listing <c>wt</c> with no loadable module refuses the whole listener
-/// (<c>net-module-missing</c>), so a hand-staged capture without it still streams.
-/// </para>
-/// <para>
-/// THE SEAT RUNS AT ITS VIEWER'S ASPECT (PRES-A). STS2 stretches its 1920x1080 base with aspect <c>expand</c>, so a
-/// seat launched at <c>GRC_ROOT_SIZE=presentation:&lt;W&gt;x1080</c> lays the game itself out W wide.
-/// <see cref="PresentationWidth"/> turns the aspect the page sent (only with its Widescreen stretch on) into W, up to
-/// the operator's <see cref="MaxPresentationWidthEnvironmentVariable"/>. W is fixed at the seat's launch: a later
-/// rotation or resize letterboxes until the seat's next start (re-launching on it is PRES-R).
-/// </para>
+/// The operator's capture and calibration settings take precedence over a packaged capture. Every configured
+/// seat gets its own listener port and evidence directory. Inherited capture variables are cleared before the
+/// standby environment is applied, so the host cannot accidentally arm a seat or override its capture settings.
 /// </remarks>
 internal static class StreamingSeatLaunch
 {
+    internal const string TokenFileName = "live-token";
+    internal const string CertificateHashFileName = "live-cert-sha256";
+
     /// <summary>Optional absolute path of the capture's calibration record (see the remarks for the default).</summary>
     internal const string CalibrationEnvironmentVariable = "COUCHCOOP_RENDER_CAPTURE_CALIBRATION";
 
@@ -58,13 +27,13 @@ internal static class StreamingSeatLaunch
     internal const string ExtraOriginsEnvironmentVariable = "COUCHCOOP_RENDER_STREAM_EXTRA_ORIGINS";
 
     /// <summary>
-    /// Optional: the widest presentation the streaming seat is launched at (an integer, at least
+    /// Optional: the widest presentation a capture seat may arm at (an integer, at least
     /// <see cref="PresentationBaseWidth"/>; default <see cref="DefaultMaxPresentationWidth"/>). A seat's width costs
     /// host GPU and stream bytes in proportion, so the operator bounds it.
     /// </summary>
     internal const string MaxPresentationWidthEnvironmentVariable = "COUCHCOOP_RENDER_STREAM_MAX_WIDTH";
 
-    /// <summary>The game's design size, and the presentation every seat had before PRES-A.</summary>
+    /// <summary>The game's design size and every seat's initial presentation.</summary>
     internal const int PresentationBaseWidth = 1920;
     internal const int PresentationHeight = 1080;
 
@@ -129,7 +98,7 @@ internal static class StreamingSeatLaunch
 
     /// <summary>
     /// What the operator configured: the capture to load, its calibration record, and the widest presentation a seat
-    /// is launched at (<see cref="MaxPresentationWidthEnvironmentVariable"/>).
+    /// may arm at (<see cref="MaxPresentationWidthEnvironmentVariable"/>).
     /// </summary>
     /// <param name="NetModule">The net module beside the capture (<see cref="NetModuleFileName"/>), or null: the seat then
     /// serves WebSocket only.</param>
@@ -163,7 +132,7 @@ internal static class StreamingSeatLaunch
     }
 
     /// <summary>
-    /// The width the streaming seat is launched at for a page that sent <paramref name="aspect"/> (width / height of
+    /// The width the capture arms at for a page that sent <paramref name="aspect"/> (width / height of
     /// the box it shows the stream in): <c>clamp(round(1080 * aspect), 1920, cap)</c>, made even, then stepped down
     /// past any width Godot's float32 viewport arithmetic would not reproduce exactly
     /// (<see cref="SurvivesExpandStretch"/>). No aspect, or one that is not finite or outside
@@ -303,10 +272,6 @@ internal static class StreamingSeatLaunch
     /// The streaming seat's launch environment: the role, the capture, and the capture's <c>GRC_*</c> table.
     /// Pure; <see cref="Apply"/> puts it on a launch.
     /// </summary>
-    /// <param name="presentationWidth">
-    /// The seat's presentation width (<see cref="PresentationWidth"/>); the height is always
-    /// <see cref="PresentationHeight"/>.
-    /// </param>
     /// <param name="lan">
     /// Set (what the host always launches): the hub listens on every interface under <c>GRC_LIVE_EXPOSE=lan</c> (token
     /// auth and the origin list are already there), with wss through the pair when one is given, beside plain ws for
@@ -315,17 +280,18 @@ internal static class StreamingSeatLaunch
     /// </param>
     internal static IReadOnlyDictionary<string, string> Environment(
         Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins,
-        int presentationWidth = PresentationBaseWidth, LanLaunch? lan = null)
+        LanLaunch? lan = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(allowedOrigins);
-        ArgumentOutOfRangeException.ThrowIfLessThan(presentationWidth, PresentationBaseWidth);
         var hub = $"{(lan is null ? "127.0.0.1" : "0.0.0.0")}:{hubPort.ToString(CultureInfo.InvariantCulture)}";
         var environment = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [StreamingSeatRole.EnvironmentVariable] = "1",
             [RenderCaptureExtensionLoader.EnvironmentVariable] = config.Extension,
-            ["GRC_MODE"] = "arm",
+            ["GRC_MODE"] = "standby",
+            ["GRC_HEADLESS_TEXTURE_RELEASE"] = "always",
+            [MaxPresentationWidthEnvironmentVariable] = config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture),
             ["GRC_CALIBRATION"] = config.Calibration,
             ["GRC_LIVE_LISTEN"] = hub,
             // The carriers the hub serves (see the remarks): WebSocket always, WebTransport with the net module.
@@ -343,8 +309,8 @@ internal static class StreamingSeatLaunch
             ["GRC_UNKNOWN_ITEM"] = "skip",
             ["GRC_TEXTURE_DECODE"] = "engine",
             ["GRC_TEXTURE_WORKERS"] = "2",
-            // The game re-lays itself out at this width (aspect `expand`); the client sizes its canvas from it.
-            ["GRC_ROOT_SIZE"] = RootSize(presentationWidth),
+            // Each arm may override this base presentation with the requesting page's aspect.
+            ["GRC_ROOT_SIZE"] = RootSize(PresentationBaseWidth),
             // The game has ~2,400 live items; C3's raised caps.
             ["GRC_MIRROR_MAX_ITEMS"] = "32768",
             ["GRC_MIRROR_MAX_COMMANDS"] = "16384",
@@ -392,7 +358,7 @@ internal static class StreamingSeatLaunch
 
     /// <summary>
     /// Drop everything streaming-related a seat could inherit from its host: the role, the capture variables this
-    /// file reads and every <c>GRC_*</c>. Every seat launch calls it; only the streaming seat then gets
+    /// file reads and every <c>GRC_*</c>. Every seat launch calls it; configured capture seats then get
     /// <see cref="Environment"/> back through <see cref="Apply"/>.
     /// </summary>
     internal static void ClearInherited(ProcessStartInfo psi)
