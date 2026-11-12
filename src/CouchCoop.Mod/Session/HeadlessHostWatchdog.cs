@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.ComponentModel;
+using Microsoft.Win32.SafeHandles;
 using CouchCoop.Mod.Patches;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -11,15 +13,16 @@ namespace CouchCoop.Mod.Session;
 /// those paths runs HOST code — so a host CRASH (a segfault bypasses Dispose) leaves the headless orphaned:
 /// reparented to init/systemd, invisibly running with no display, with the user unaware a game instance is
 /// still alive. The host stamps its own PID into <c>COUCHCOOP_HOST_PID</c> when it launches a headless;
-/// this watchdog polls that PID and starts the seat's bounded exit when the host is gone; SIGKILL is the fallback.
+/// this watchdog watches that PID and starts the seat's bounded exit when the host is gone; SIGKILL is the fallback.
 /// <para>
 /// No-op when the env var is absent (e.g. a manually launched headless for testing) or on a platform with
-/// neither probe below. The poll is wrapper-agnostic (it watches the host PID directly, not our immediate
+/// no supported watch below. The watch is wrapper-agnostic (it watches the host PID directly, not our immediate
 /// parent, so a gamescope/headless wrapper in the chain doesn't matter) and PID-reuse-safe (it pins an
 /// identity for the host process and re-checks it).
 /// </para>
 /// <para>
-/// TWO IMPLEMENTATIONS, on purpose. <b>Linux</b> reads <c>/proc</c> for both liveness and identity and is
+/// Windows waits on a pinned kernel process handle without polling, covering failed job assignments.
+/// The existing Unix implementations remain unchanged. <b>Linux</b> reads <c>/proc</c> for both liveness and identity and is
 /// untouched — it is the path that ships and is proven, and its identity (field 22 of <c>/proc/&lt;pid&gt;/stat</c>,
 /// boot-relative jiffies) is the only one that is reliable there: .NET's <see cref="Process.StartTime"/> is
 /// reconstructed from boot time on Linux and is not stable enough to compare across processes.
@@ -35,6 +38,7 @@ internal static class HeadlessHostWatchdog
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan HardKillDelay = HeadlessDisconnectExitSequence.ForceExitDelay + TimeSpan.FromSeconds(2);
     private static int _started;
+    private static IDisposable? _windowsWatch;
 
     /// <summary>"No such process" — the ONLY <c>kill</c> error that means the pid is dead.</summary>
     private const int ESRCH = 3;
@@ -51,7 +55,7 @@ internal static class HeadlessHostWatchdog
     {
         var onLinux = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
         var onMacOs = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
-        if (!onLinux && !onMacOs)
+        if (!onLinux && !onMacOs && !OperatingSystem.IsWindows())
         {
             return;
         }
@@ -67,6 +71,16 @@ internal static class HeadlessHostWatchdog
             return; // Init() can run more than once; arm the watchdog exactly once.
         }
 
+        if (OperatingSystem.IsWindows())
+        {
+            _windowsWatch = ArmWindowsHostWatch(hostPid, RegisterWindowsHostWait,
+                () => OnHostGone(hostPid, HeadlessDisconnectExitPatch.RequestExit,
+                    ScheduleOnBackgroundThread, HeadlessForceExit.Now, HeadlessLog.Write), HeadlessLog.Write);
+            if (_windowsWatch is not null)
+                CouchCoopLog.Stderr($"headless host-watchdog armed for host pid={hostPid} (Windows process wait).");
+            return;
+        }
+
         // Pin the host's start time so a recycled PID — the host died and the kernel handed its number to an
         // unrelated new process — reads as "host gone" rather than falsely "host alive".
         var hostStartTime = onLinux ? TryReadProcStartTime(hostPid) : TryReadKernelStartTime(hostPid);
@@ -79,6 +93,66 @@ internal static class HeadlessHostWatchdog
         thread.Start();
         CouchCoopLog.Stderr($"headless host-watchdog armed for host pid={hostPid}.");
     }
+
+    internal static IDisposable? ArmWindowsHostWatch(int hostPid,
+        Func<int, Action, IDisposable> register, Action hostGone, Action<string> log)
+    {
+        var fired = 0;
+        void Gone()
+        {
+            if (Interlocked.Exchange(ref fired, 1) == 0) hostGone();
+        }
+        try { return register(hostPid, Gone); }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 87)
+        {
+            // OpenProcess reports ERROR_INVALID_PARAMETER when the host has already disappeared.
+            Gone();
+        }
+        catch (Exception exception)
+        {
+            // Access denied does not establish death. The host's job still covers assigned seats.
+            log("headless Windows host-watch unavailable: " + exception.Message);
+        }
+        return null;
+    }
+
+    private static IDisposable RegisterWindowsHostWait(int hostPid, Action hostGone)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        var handle = OpenProcess(0x00100000, false, hostPid); // SYNCHRONIZE only
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastPInvokeError();
+            handle.Dispose();
+            throw new Win32Exception(error);
+        }
+        var wait = new HostProcessWait(handle);
+        try
+        {
+            var registration = ThreadPool.RegisterWaitForSingleObject(wait, (_, _) => hostGone(), null,
+                Timeout.Infinite, executeOnlyOnce: true);
+            return new WindowsHostRegistration(wait, registration);
+        }
+        catch { wait.Dispose(); throw; }
+    }
+
+    private sealed class HostProcessWait : WaitHandle
+    {
+        internal HostProcessWait(SafeWaitHandle handle) => SafeWaitHandle = handle;
+    }
+
+    private sealed class WindowsHostRegistration(WaitHandle wait, RegisteredWaitHandle registration) : IDisposable
+    {
+        public void Dispose()
+        {
+            registration.Unregister(null);
+            wait.Dispose();
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeWaitHandle OpenProcess(uint access,
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
 
     private static void Watch(int hostPid, string? hostStartTime, bool onLinux)
     {

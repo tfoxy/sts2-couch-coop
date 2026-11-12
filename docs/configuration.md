@@ -504,6 +504,25 @@ carrier can serve says so in the settings panel.
 
 The exposure this adds is described in [security.md](security.md) ("New renderer over the LAN").
 
+## Seat lifetime when the host exits
+
+Closing the host stops new seat launches and reconnects before asking all live seats to stop.
+Streaming seats finish their capture disarm through the existing stop signal (SIGTERM on Linux/macOS,
+a named event on Windows). Seats share a three-second exit deadline; survivors are then terminated.
+
+On Windows the host lazily creates one Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and assigns
+seats immediately after `Process.Start`. The host retains that handle until seat shutdown finishes;
+a crash or forced host termination closes it through the OS and terminates assigned seats too.
+If job creation or assignment fails, spawning continues and the host logs one warning. Every Windows
+seat also watches `COUCHCOOP_HOST_PID` through a `SYNCHRONIZE` process handle and a one-shot registered
+wait, using the existing bounded exit sequence when that handle signals. There is no Windows poll.
+
+`Process.Start` and job assignment are separate calls, so a host killed between them can leave an
+unassigned seat. The seat-side watch covers that interval once the mod initializes, including a host
+already gone when `OpenProcess` runs. It cannot cover a seat that stalls before loading the mod, or a
+host handle that Windows refuses to open; those exceptional cases need manual process cleanup. Linux
+and macOS retain their existing host-watchdog behavior.
+
 ## Artifact Policy
 
 Do not commit `.sts2/`, `sts2.local.yaml`, official STS2 assets, copied game DLLs, generated `__sts2_assets__`, screenshots, visual baselines, build output, frontend `dist/`, or `node_modules/`.

@@ -30,7 +30,7 @@ public sealed partial class HeadlessClientManager
     {
         lock (_lock)
         {
-            if (_disposed || !_sessionToSlot.TryGetValue(sessionId, out var slot)
+            if (_disposed || _hostExiting || !_sessionToSlot.TryGetValue(sessionId, out var slot)
                 || !_processBySlot.TryGetValue(slot, out var process)) return false;
             try { if (process.HasExited) return false; }
             catch { return false; }
@@ -61,7 +61,7 @@ public sealed partial class HeadlessClientManager
             if (!_browserReconnectPending.TryGetValue(slot, out var current)
                 || !ReferenceEquals(current, pending)) return;
             pending.Timer?.Dispose();
-            if (_disposed || !_sessionToSlot.TryGetValue(pending.SessionId, out var currentSlot)
+            if (_disposed || _hostExiting || !_sessionToSlot.TryGetValue(pending.SessionId, out var currentSlot)
                 || currentSlot != slot || !_processBySlot.TryGetValue(slot, out var process)
                 || !ReferenceEquals(process, pending.Process))
             {

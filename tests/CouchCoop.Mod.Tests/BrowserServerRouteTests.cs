@@ -284,8 +284,22 @@ if (args is ["renderer-availability", ..])
 // instant readiness probe stand in for a real game process and a real HTTP poll — and registered here because
 // it is the focused way to verify a change to the seat cap without a full run. (It was once the ONLY way: the
 // sequence used to die partway through — see the note above HeadlessAudioMuteTargetsTests — and now does not.)
+if (args is [WindowsSeatLifetimeTests.Verb, ..])
+{
+    WindowsSeatLifetimeTests.Run();
+    return;
+}
+
+if (args is [HostSeatExitTests.Verb, ..])
+{
+    await HostSeatExitTests.RunAsync();
+    return;
+}
+
 if (args is ["seats", ..])
 {
+    await HostSeatExitTests.RunAsync();
+    WindowsSeatLifetimeTests.Run();
     HeadlessProcessExitTests.Run();
     await HeadlessClientManagerTests.RunAsync();
     // Run presence for a browser disconnect and a seat launch: the typed read, its failure semantics, and that a
@@ -778,6 +792,7 @@ if (args is ["beta-targets", ..])
     // reshaped target would surface only as a host pad driving every seat again after a game update.
     Leg(nameof(SeatSteamControllerIsolationTargetsTests), SeatSteamControllerIsolationTargetsTests.Run);
     Leg(nameof(HeadlessDisconnectExitTests), () => HeadlessDisconnectExitTests.RunAsync().GetAwaiter().GetResult());
+    Leg("HostSeatExitTests.HostQuitTarget", HostSeatExitTests.PatchTargetResolves);
     Leg("IdleHostCostTests.MountTargets", IdleHostCostTests.MountTargetsResolve);
     // …and the pause menu's mount point, which is the mid-run QR row's only seam.
     Leg("IdleHostCostTests.PauseMenuMountTargets", IdleHostCostTests.PauseMenuMountTargetsResolve);
@@ -937,6 +952,8 @@ HeadlessParticleFinishNudgeTests.Run();
 // Headless clean-exit on a permanent host disconnect — Harmony target resolution (incl. the NErrorPopup.Create
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
+await HostSeatExitTests.RunAsync();
+WindowsSeatLifetimeTests.Run();
 HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
 RenderStreamSwapTests.Run();

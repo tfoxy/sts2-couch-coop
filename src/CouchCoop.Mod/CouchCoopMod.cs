@@ -5,6 +5,8 @@ using CouchCoop.Mod.Patches;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
+using HarmonyLib;
+using MegaCrit.Sts2.Core.Nodes;
 using Spirectl.Sts2;
 using Spirectl.Sts2.Embedding;
 
@@ -519,6 +521,9 @@ public static class CouchCoopMod
     {
         lock (Gate)
         {
+            if ((_hostUi?.HotServerHost as IHotServerHost)?.HeadlessManager is HeadlessClientManager manager)
+                manager.Dispose();
+            HostQuitPatch.Bind(null);
             if (IsHeadlessClient) Session.HeadlessConnectionReporter.Stop();
             // Cancel WITHOUT joining the prerender task on purpose: Shutdown holds the Gate lock on the Godot
             // main thread, and each clip render blocks on main-thread marshaling, so awaiting the task here
@@ -864,6 +869,20 @@ public static class CouchCoopMod
             _hostUi.StartAsync().GetAwaiter().GetResult();
             if (!IsHeadlessClient)
             {
+                if ((_hostUi.HotServerHost as IHotServerHost)?.HeadlessManager is HeadlessClientManager manager)
+                {
+                    // Latch quit before native session teardown; window/tree signals finish the bounded wait.
+                    HostQuitPatch.Apply(manager);
+                    GameMainThread.Invoke(() =>
+                    {
+                        if (Godot.Engine.GetMainLoop() is Godot.SceneTree tree)
+                        {
+                            tree.Root.CloseRequested += manager.Dispose;
+                            tree.Root.TreeExiting += manager.Dispose;
+                        }
+                        return true;
+                    });
+                }
                 ArmDiscoveryOnFirstHostLobby();
             }
         }
@@ -1092,4 +1111,42 @@ public static class CouchCoopMod
                 $"pause menu mount retry failed: {exception.GetType().Name}: {exception.Message}");
         }
     }
+}
+
+internal static class HostQuitPatch
+{
+    private static readonly object Sync = new();
+    private static bool _applied;
+    private static HeadlessClientManager? _manager;
+
+    internal static System.Reflection.MethodInfo? ResolveTarget()
+        => AccessTools.Method(typeof(NGame), nameof(NGame.Quit), Type.EmptyTypes);
+
+    internal static void Bind(HeadlessClientManager? manager) => Volatile.Write(ref _manager, manager);
+
+    internal static void Apply(HeadlessClientManager manager)
+    {
+        Bind(manager);
+        lock (Sync)
+        {
+            if (_applied) return;
+            _applied = true;
+            try
+            {
+                var target = ResolveTarget()
+                    ?? throw new MissingMethodException(nameof(NGame), nameof(NGame.Quit));
+                var prefix = AccessTools.Method(typeof(HostQuitPatch), nameof(BeforeQuit));
+                new Harmony("com.couchcoop.host-quit").Patch(target, prefix: new HarmonyMethod(prefix));
+            }
+            catch (Exception exception)
+            {
+                CouchCoopPatchDiagnostics.PatchFailed(nameof(HostQuitPatch),
+                    $"host quit hook unavailable ({exception.GetType().Name}: {exception.Message}).",
+                    costsCoop: false);
+            }
+        }
+    }
+
+    // Non-blocking: teardown callbacks and ProcessExit share the manager's one deadline and wait.
+    internal static void BeforeQuit() => Volatile.Read(ref _manager)?.BeginHostExit();
 }

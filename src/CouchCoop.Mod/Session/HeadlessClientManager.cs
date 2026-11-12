@@ -39,6 +39,7 @@ public interface IHeadlessProcess
 internal interface IHeadlessProcessExitSignal
 {
     Task WaitForExitAsync(CancellationToken cancellationToken);
+    void KillForHostExit() => ((IHeadlessProcess)this).Kill();
 }
 
 /// <summary>
@@ -253,6 +254,9 @@ public sealed partial class HeadlessClientManager : IDisposable
     private readonly Lazy<string?> _hostForceSteam = new(HostForceSteamValue);
     private bool _disposed;
     private bool _hostExiting;
+    private long _hostExitStarted;
+    private Task? _hostExitTask;
+    private readonly WindowsSeatJob _windowsSeatJob = new();
     private EventHandler? _processExitHandler;
     private PosixSignalRegistration? _termSignal;
 
@@ -929,6 +933,8 @@ public sealed partial class HeadlessClientManager : IDisposable
             IHeadlessProcess? proc;
             try
             {
+                // A binding callback can initiate teardown reentrantly while this lock is held.
+                if (_disposed || _hostExiting) return null;
                 PrepareConnectionLocked(slot, sessionId, routeMode);
                 proc = _launcher(slot);
             }
@@ -1391,7 +1397,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     private void RegisterHostExit()
     {
         if (CouchCoopMod.IsHeadlessClient) return;
-        _processExitHandler = (_, _) => BeginHostExit();
+        _processExitHandler = (_, _) => Dispose();
         AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
         if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
         {
@@ -1408,6 +1414,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             if (_hostExiting) return;
             _hostExiting = true;
+            _hostExitStarted = Stopwatch.GetTimestamp();
+            foreach (var slot in _browserReconnectPending.Keys.ToArray()) CancelBrowserReconnectGraceLocked(slot);
             foreach (var process in _processBySlot.Values)
             {
                 try
@@ -1423,29 +1431,73 @@ public sealed partial class HeadlessClientManager : IDisposable
             }
         }
 
-        CouchCoopLog.Stderr($"headless host exit: asked {signalled} seat(s) to stop (SIGTERM).");
+        CouchCoopLog.Stderr($"headless host exit: asked {signalled} seat(s) to stop.");
     }
 
     public void Dispose()
     {
-        // Dispose signal registration before taking _lock: its callback can itself be waiting for that lock.
+        BeginHostExit();
+        Task stop;
+        lock (_lock) stop = _hostExitTask ??= Task.Run(FinishHostExitAsync);
+        // Never hold _lock while waiting: ProcessExit, browser teardown and seat status callbacks also take it.
+        stop.GetAwaiter().GetResult();
         _termSignal?.Dispose();
         if (_processExitHandler is not null) AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
-        CouchCoop.Mod.Connections.HeadlessConnectionControl.Shared.StatusChanged -= OnChildStatus;
+        HeadlessConnectionControl.Shared.StatusChanged -= OnChildStatus;
+    }
+
+    private async Task FinishHostExitAsync()
+    {
+        IHeadlessProcess[] seats;
+        lock (_lock) seats = _processBySlot.Values.ToArray();
+        var remaining = GracefulStopTimeout - Stopwatch.GetElapsedTime(_hostExitStarted);
+        if (remaining > TimeSpan.Zero && seats.Length > 0)
+        {
+            using var deadline = new CancellationTokenSource(remaining);
+            try
+            {
+                await Task.WhenAll(seats.Select(process => WaitForHostSeatExitAsync(process, deadline.Token)))
+                    .WaitAsync(deadline.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+        }
+        // All seats were signalled before any kill. Do not spend another per-seat wait confirming a kill here.
+        foreach (var process in seats)
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    if (process is IHeadlessProcessExitSignal signal) signal.KillForHostExit();
+                    else process.Kill();
+                }
+            }
+            catch (Exception exception) { CouchCoopLog.Stderr("headless host exit kill failed: " + exception.Message); }
+            finally { try { process.Dispose(); } catch { } }
+        }
+        _windowsSeatJob.Dispose();
         lock (_lock)
         {
-            if (_disposed) return;
             _disposed = true;
-
+            _processBySlot.Clear();
             _nameToSlot.Clear();
             _sessionToSlot.Clear();
             _detachedSlots.Clear();
             _pendingPeerCleanup.Clear();
-            foreach (var slot in _browserReconnectPending.Keys.ToList()) CancelBrowserReconnectGraceLocked(slot);
-            // Host is going away: hard-kill is fine (and faster than waiting on each graceful stop).
-            foreach (var slot in _processBySlot.Keys.ToList())
-                ShutdownSlotLocked(slot, graceful: false);
+            foreach (var slot in _ownedConnections.Keys.ToArray()) ForgetConnectionLocked(slot);
+            QueueOwnedSeatCountChangedLocked();
         }
+    }
+
+    private static async Task WaitForHostSeatExitAsync(IHeadlessProcess process, CancellationToken token)
+    {
+        try
+        {
+            if (!process.HasExited && process is IHeadlessProcessExitSignal signal)
+                await signal.WaitForExitAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { /* An unusable exit notification still reaches the hard-kill fallback. */ }
     }
 
     /// <summary>
@@ -1708,6 +1760,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// </summary>
     private bool ShutdownSlotLocked(int slot, bool graceful)
     {
+        if (_hostExiting) return false; // Host exit owns the common deadline and process handles now.
         CancelBrowserReconnectGraceLocked(slot);
         if (!_processBySlot.TryGetValue(slot, out var proc)) return false;
         if (_ownedConnections.TryGetValue(slot, out var owned) && owned.Quarantined)
@@ -2241,6 +2294,7 @@ public sealed partial class HeadlessClientManager : IDisposable
             var proc = Process.Start(psi);
             if (proc != null)
             {
+                _windowsSeatJob.Assign(() => proc.Handle);
                 CouchCoopLog.Stderr($"headless spawned slot={slot} pid={proc.Id}");
                 var owned = new OsHeadlessProcess(proc, stopEvent);
                 stopEvent = null;
@@ -2813,6 +2867,11 @@ internal sealed class OsHeadlessProcess(Process process, ISeatStopEvent? stopEve
         {
             return false;
         }
+    }
+
+    public void KillForHostExit()
+    {
+        if (!process.HasExited) process.Kill(entireProcessTree: true);
     }
 
     public void Kill()

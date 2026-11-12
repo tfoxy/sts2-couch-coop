@@ -125,7 +125,11 @@ public sealed partial class HeadlessClientManager
         JoinSeatFacts? hostFacts = null)
     {
         Task[] cleanup;
-        lock (_lock) cleanup = _connectionCleanup.Values.ToArray();
+        lock (_lock)
+        {
+            if (_disposed || _hostExiting) return null;
+            cleanup = _connectionCleanup.Values.ToArray();
+        }
         await Task.WhenAll(cleanup).WaitAsync(ct).ConfigureAwait(false);
         await CleanupExitedConnectionsAsync(ct).ConfigureAwait(false);
         ConnectionRegistry.Shared.ConfigureView(sessionId, requiresChild: true, reused: true);
@@ -653,7 +657,7 @@ public sealed partial class HeadlessClientManager
 
     private bool IsCurrent(OwnedConnection owned)
     {
-        lock (_lock) return !_disposed && _ownedConnections.GetValueOrDefault(owned.Slot) == owned
+        lock (_lock) return !_disposed && !_hostExiting && _ownedConnections.GetValueOrDefault(owned.Slot) == owned
             && _processBySlot.GetValueOrDefault(owned.Slot) == owned.Process;
     }
 

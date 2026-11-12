@@ -1335,12 +1335,9 @@ public sealed class CouchCoopBrowserServer(
     /// <inheritdoc cref="StartAsync"/>
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
+        if (_ownsHeadlessManager) _headlessManager?.Dispose();
         await StopGenerationAsync("server-stop", cancellationToken).ConfigureAwait(false);
         lock (_audioGate) { _audioService?.Dispose(); _audioService = null; }
-        if (_ownsHeadlessManager)
-        {
-            _headlessManager?.Dispose();
-        }
 
         SecureOriginEndpoint.Publish(0);
         SecureOriginEndpoint.PublishDirectIp(0);
