@@ -119,8 +119,18 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   for file in rs_gsw_wasm_client.js rs_gsw_wasm_bg.wasm core-build; do
     printf 'fixture\n' > "$root/frontend/app/render-stream/$file"
   done
-  for file in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
-    printf 'fixture\n' > "$root/render-capture/$file"
+  mkdir -p "$root/render-capture/linux" "$root/render-capture/windows" "$root/licenses/render-capture/windows"
+  for file in librender_stream_capture.so librender_stream_net.so; do
+    printf '\177ELFfixture\n' > "$root/render-capture/linux/$file"
+  done
+  printf 'fixture\n' > "$root/render-capture/linux/calibration"
+  for file in render_stream_capture.dll render_stream_net.dll; do
+    printf 'MZfixture\n' > "$root/render-capture/windows/$file"
+  done
+  printf '[libraries]\nlinux.x86_64 = "librender_stream_capture.so"\n' > "$root/render-capture/linux/render_stream_capture.gdextension"
+  printf '[libraries]\nwindows.x86_64 = "render_stream_capture.dll"\n' > "$root/render-capture/windows/render_stream_capture.gdextension"
+  for file in llvm-mingw-LICENSE.txt mingw-w64-runtime-COPYING.txt rust-std-MIT.txt; do
+    printf 'fixture license\n' > "$root/licenses/render-capture/windows/$file"
   done
   mkdir -p "$root/licenses/render-capture/net"
   printf 'fixture notice\n' > "$root/licenses/render-capture/net/THIRD_PARTY_NOTICES.md"
@@ -239,8 +249,8 @@ expect_reject_saying unlisted-msdf-license 'license files disagree with manifest
 
 # The net module (WebTransport and wss for the streaming seat) and its crate licences ship together.
 missing_net_module="$(clone_payload missing-net-module)"
-rm "$missing_net_module/render-capture/librender_stream_net.so"
-expect_reject_saying missing-net-module 'release payload is missing: render-capture/librender_stream_net.so' \
+rm "$missing_net_module/render-capture/linux/librender_stream_net.so"
+expect_reject_saying missing-net-module 'release payload is missing: render-capture/linux/librender_stream_net.so' \
   "$verifier" --payload "$missing_net_module" --version 1.2.3 "${all_lane_args[@]}"
 
 missing_net_license="$(clone_payload missing-net-license)"
@@ -551,4 +561,26 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
 PY
 expect_reject traversal "$verifier" --archive "$traversal_archive"
 
+for path in render-capture/librender_stream_capture.so render-capture/windows/calibration.nightly \
+  render-capture/windows/calibration.stable.json render-capture/windows/toolchain.json render-capture/windows/source-stamp; do
+  bad="$(clone_payload "capture-$(basename "$path")")"
+  printf 'fixture\n' > "$bad/$path"
+  expect_reject "forbidden-${path//\//-}" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+done
+bad="$(clone_payload missing-windows-net)"
+rm "$bad/render-capture/windows/render_stream_net.dll"
+expect_reject missing-windows-net "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+for os in linux windows; do
+  bad="$(clone_payload "wrong-$os-descriptor")"
+  printf 'macos.x86_64 = "other"\n' >> "$bad/render-capture/$os/render_stream_capture.gdextension"
+  expect_reject "wrong-$os-descriptor" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+done
+for lib in linux/librender_stream_capture.so linux/librender_stream_net.so windows/render_stream_capture.dll windows/render_stream_net.dll; do
+  bad="$(clone_payload "magic-$(basename "$lib")")"
+  printf 'invalid\n' > "$bad/render-capture/$lib"
+  expect_reject "wrong-magic-${lib//\//-}" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+done
+valid_record="$(clone_payload valid-windows-record)"
+printf 'fixture\n' > "$valid_record/render-capture/windows/calibration.stable"
+"$verifier" --payload "$valid_record" --version 1.2.3 "${all_lane_args[@]}"
 echo "test-verify-release-archive: ok"

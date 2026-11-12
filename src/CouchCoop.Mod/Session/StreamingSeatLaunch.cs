@@ -65,10 +65,10 @@ internal static class StreamingSeatLaunch
     /// <c>render-capture/</c>, scripts/build-render-capture.sh's staging, godot-scene-web's <c>capture/build/</c>), and
     /// names the file it found in <c>GRC_LIVE_NET_MODULE</c> so the capture loads exactly that one.
     /// </summary>
-    internal const string NetModuleFileName = "librender_stream_net.so";
+    internal static string NetModuleFileName => OperatingSystem.IsWindows() ? "render_stream_net.dll" : "librender_stream_net.so";
 
     /// <summary>Where a released payload carries the capture, under the payload root (scripts/package-release.sh).</summary>
-    internal static readonly string[] PackagedExtensionRelativePath = ["render-capture", "render_stream_capture.gdextension"];
+    private static string[] PackagedExtensionRelativePath(string os) => ["render-capture", os, "render_stream_capture.gdextension"];
 
     /// <summary>
     /// The longest the capture's <c>perf-timeline.jsonl</c> may grow (godot-scene-web
@@ -174,38 +174,29 @@ internal static class StreamingSeatLaunch
 
     internal static ConfigResult ResolveConfig(string? extension, string? calibration, Func<string, bool> fileExists)
     {
-        ArgumentNullException.ThrowIfNull(fileExists);
-        var request = RenderCaptureExtensionLoader.Resolve(extension, fileExists);
-        if (request.Path is null) return new ConfigResult(null, request.Refusal);
+        return ResolveConfig(extension, calibration, fileExists, null,
+            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity);
+    }
 
-        string calibrationPath;
-        if (string.IsNullOrWhiteSpace(calibration))
-        {
-            // `calibration.json` beside a hand-staged capture; the extensionless name a packaged one ships under.
-            var directory = Path.GetDirectoryName(request.Path)!;
-            calibrationPath = Path.Combine(directory, DefaultCalibrationFileName);
-            if (!fileExists(calibrationPath) && fileExists(Path.Combine(directory, PackagedCalibrationFileName)))
-            {
-                calibrationPath = Path.Combine(directory, PackagedCalibrationFileName);
-            }
-        }
-        else
-        {
-            calibrationPath = calibration.Trim();
-            if (!Path.IsPathFullyQualified(calibrationPath))
-            {
-                return new ConfigResult(null,
-                    $"{CalibrationEnvironmentVariable} must be an absolute path, got '{calibrationPath}'");
-            }
-        }
+    internal static string HostOs => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux";
+    internal static string HostArch => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
+    {
+        System.Runtime.InteropServices.Architecture.X64 => "x86_64",
+        System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+        _ => "unsupported",
+    };
 
-        if (!fileExists(calibrationPath))
+    private static RenderCaptureAvailability.PeIdentity? ReadHostIdentity()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
         {
-            return new ConfigResult(null, $"the capture's calibration record does not exist: '{calibrationPath}'");
+            var exe = System.Environment.ProcessPath;
+            if (exe is null) return null;
+            using var stream = File.Open(exe, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return RenderCaptureAvailability.ReadPeIdentity(stream);
         }
-
-        var netModule = Path.Combine(Path.GetDirectoryName(request.Path)!, NetModuleFileName);
-        return new ConfigResult(new Config(request.Path, calibrationPath, NetModule: fileExists(netModule) ? netModule : null), null);
+        catch { return null; }
     }
 
     /// <summary>Read the host's own configuration once (the variables cannot change while it runs).</summary>
@@ -232,15 +223,25 @@ internal static class StreamingSeatLaunch
     internal static ConfigResult ResolveConfig(
         string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory)
     {
+        return ResolveConfig(extension, calibration, fileExists, assemblyDirectory,
+            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity);
+    }
+
+    internal static ConfigResult ResolveConfig(
+        string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory,
+        Func<string, string> readFile, string os, string arch,
+        Func<string, IEnumerable<string>> listFiles, Func<RenderCaptureAvailability.PeIdentity?> readIdentity)
+    {
         ArgumentNullException.ThrowIfNull(fileExists);
         if (string.IsNullOrWhiteSpace(extension) && assemblyDirectory is not null)
         {
             var packaged = Path.Combine(
-                [CouchCoop.Mod.HostUi.CouchCoopHostUiServices.ResolvePayloadRoot(assemblyDirectory), .. PackagedExtensionRelativePath]);
+                [CouchCoop.Mod.HostUi.CouchCoopHostUiServices.ResolvePayloadRoot(assemblyDirectory), .. PackagedExtensionRelativePath(os)]);
             if (fileExists(packaged)) extension = packaged;
         }
 
-        return ResolveConfig(extension, calibration, fileExists);
+        return RenderCaptureAvailability.Resolve(extension, calibration, os, arch,
+            readFile, fileExists, listFiles, readIdentity);
     }
 
     /// <summary>

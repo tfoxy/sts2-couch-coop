@@ -484,6 +484,17 @@ do. The host launches each seat with:
   private evidence directory;
 - plain WebSocket for the host's plain-http LAN pages, with or without a certificate (beside wss on the same port).
 
+On Windows, allow inbound TCP **and** UDP for `SlayTheSpire2.exe` to stream over the LAN. A program-scoped rule
+covers every seat's hub port (13366, 13376, …); answering a firewall prompt for TCP need not cover UDP. From an
+elevated prompt, using your game's executable path:
+
+```
+netsh advfirewall firewall add rule name="STS2 Couch Co-op stream TCP" dir=in action=allow protocol=TCP program="C:\Path\To\SlayTheSpire2.exe"
+netsh advfirewall firewall add rule name="STS2 Couch Co-op stream UDP" dir=in action=allow protocol=UDP program="C:\Path\To\SlayTheSpire2.exe"
+```
+
+Loopback-only streaming needs no firewall rule. The mod cannot add these rules itself because that requires admin.
+
 Which page streams how: the host's https link (Direct address (HTTPS) or the secure origin) over WebTransport, or over
 wss when the host's certificate names that link's host; the host's plain-http link over plain WebSocket (unencrypted,
 like that page's own connection to the host; WebTransport needs a secure page, so never there). The public website

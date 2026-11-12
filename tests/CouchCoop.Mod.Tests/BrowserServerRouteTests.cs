@@ -218,6 +218,12 @@ if (args is [PointerTargetPlacementTests.Verb, ..])
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- render-stream-pairing` runs the new renderer's host half ALONE:
 // every capture seat's standby launch environment and the seat's descriptor (pure), then the
 // descriptor over a real seat socket relayed through the seat pipe (a child process that IS the streaming seat).
+if (args is [RenderCaptureAvailabilityTests.Verb, ..])
+{
+    RenderCaptureAvailabilityTests.Run();
+    return;
+}
+
 if (args is [RenderStreamPairingTests.Verb, ..])
 {
     await RenderStreamPairingTests.RunAsync();
@@ -576,6 +582,12 @@ if (args is ["renderer-swap", ..])
     return;
 }
 
+if (args is [SeatStopEventTests.Verb, ..])
+{
+    SeatStopEventTests.Run();
+    return;
+}
+
 if (args is ["capture-quit", ..])
 {
     RenderStreamCaptureQuitTests.Run();
@@ -883,6 +895,7 @@ CommandLineOverrideTests.Run();
 // Also reachable alone as `-- streaming-seat`.
 RenderCaptureExtensionLoaderTests.Run();
 StreamingSeatRoleTests.Run();
+RenderCaptureAvailabilityTests.Run();
 await RenderStreamPairingTests.RunAsync();
 await BrowserServerRouteTests.RunRenderStreamDescriptorRoutesAsync();
 // The composite Steam+ENet host — its shape (a missed override silently makes a message type Steam-only)
@@ -922,6 +935,7 @@ HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
 RenderStreamSwapTests.Run();
 HeadlessTermSignalTests.Run();
+SeatStopEventTests.Run();
 ConnectionRegistryTests.Run();
 ConnectionDeviceLabelTests.Run();
 ClientVitalsReceiptTests.Run();

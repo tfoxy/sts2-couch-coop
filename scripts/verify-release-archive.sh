@@ -66,10 +66,14 @@ is_allowed_payload_file() {
     frontend/manifest.webmanifest|frontend/manifest.*.webmanifest) return 0 ;;
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
     licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
-    # The streaming seat's capture (scripts/build-render-capture.sh). Linux-only, and the calibration record
-    # has no extension on purpose: STS2 scans every *.json under a mod folder as a mod manifest.
-    # librender_stream_net.so is godot-scene-web's net module (WebTransport and wss), loaded from beside the capture.
-    render-capture/librender_stream_capture.so|render-capture/render_stream_capture.gdextension|render-capture/calibration|render-capture/librender_stream_net.so) return 0 ;;
+    # Capture records are extensionless: STS2 scans every *.json as a mod manifest.
+    render-capture/linux/librender_stream_capture.so|render-capture/linux/render_stream_capture.gdextension|render-capture/linux/calibration|render-capture/linux/librender_stream_net.so|render-capture/windows/render_stream_capture.dll|render-capture/windows/render_stream_capture.gdextension|render-capture/windows/render_stream_net.dll) return 0 ;;
+    render-capture/windows/calibration.*)
+      leaf="${path#render-capture/windows/calibration.}"
+      release_lane_is_known "$leaf"
+      return
+      ;;
+    licenses/render-capture/windows/llvm-mingw-LICENSE.txt|licenses/render-capture/windows/mingw-w64-runtime-COPYING.txt|licenses/render-capture/windows/rust-std-MIT.txt) return 0 ;;
     licenses/render-capture/Godot-gdextension-LICENSE.txt|licenses/render-capture/zlib-LICENSE|licenses/render-capture/zstd-LICENSE|licenses/render-capture/basis_universal-LICENSE) return 0 ;;
     # The new renderer's client core, emitted by the frontend build (renderStreamClientAssets). build.json is
     # served and shipped as the extensionless `core-build` for the same manifest reason.
@@ -139,10 +143,16 @@ required_files=(
   frontend/app/render-stream/rs_gsw_wasm_client.js
   frontend/app/render-stream/rs_gsw_wasm_bg.wasm
   frontend/app/render-stream/core-build
-  render-capture/librender_stream_capture.so
-  render-capture/render_stream_capture.gdextension
-  render-capture/calibration
-  render-capture/librender_stream_net.so
+  render-capture/linux/librender_stream_capture.so
+  render-capture/linux/render_stream_capture.gdextension
+  render-capture/linux/calibration
+  render-capture/linux/librender_stream_net.so
+  render-capture/windows/render_stream_capture.dll
+  render-capture/windows/render_stream_capture.gdextension
+  render-capture/windows/render_stream_net.dll
+  licenses/render-capture/windows/llvm-mingw-LICENSE.txt
+  licenses/render-capture/windows/mingw-w64-runtime-COPYING.txt
+  licenses/render-capture/windows/rust-std-MIT.txt
   licenses/render-capture/net/THIRD_PARTY_NOTICES.md
   licenses/render-capture/net/manifest.tsv
   licenses/render-capture/Godot-gdextension-LICENSE.txt
@@ -215,7 +225,35 @@ verify_crate_license_bundle() {
   }
 }
 
+verify_capture_binaries() {
+  python3 -I - "$1" <<'PYCAPTURE'
+from pathlib import Path
+import re, sys
+root = Path(sys.argv[1]) / 'render-capture'
+for os, names, magic in (
+    ('linux', ('librender_stream_capture.so', 'librender_stream_net.so'), b'\x7fELF'),
+    ('windows', ('render_stream_capture.dll', 'render_stream_net.dll'), b'MZ'),
+):
+    descriptor = (root / os / 'render_stream_capture.gdextension').read_text()
+    section = None
+    libraries = []
+    for raw in descriptor.splitlines():
+        line = raw.split(';', 1)[0].strip()
+        if line.startswith('['):
+            section = line
+        elif section == '[libraries]' and line:
+            libraries.append(line)
+    if libraries != [f'{os}.x86_64 = "{names[0]}"']:
+        sys.exit(f'render capture: invalid {os} descriptor libraries')
+    for name in names:
+        with (root / os / name).open('rb') as f:
+            if f.read(len(magic)) != magic:
+                sys.exit(f'render capture: wrong binary magic: {os}/{name}')
+PYCAPTURE
+}
+
 verify_license_bundles() {
+  verify_capture_binaries "$1"
   verify_crate_license_bundle "$1/licenses/msdf-generator" "MSDF generator"
   verify_crate_license_bundle "$1/licenses/render-capture/net" "Render-stream net module"
 }

@@ -21,26 +21,38 @@ render_capture_gsw_paths=(
 # render_capture_stamp <gsw_root> <couch_repo_root> <calibration_file>: prints `render-capture-stamp/1 <sha256>`,
 # or fails when the GSW checkout's git state cannot be read (the caller then rebuilds).
 render_capture_stamp() {
-  local gsw_root="$1" repo_root="$2" calibration="$3" digest
-  digest="$(set -o pipefail; render_capture_stamp_inputs "$gsw_root" "$repo_root" "$calibration" | sha256sum)" || return 1
+  local gsw_root="$1" repo_root="$2" calibration="$3" target="${4:-linux}" digest
+  digest="$(set -o pipefail; render_capture_stamp_inputs "$gsw_root" "$repo_root" "$calibration" "$target" | sha256sum)" || return 1
   printf 'render-capture-stamp/1 %s\n' "${digest%% *}"
 }
 
 # The stamp's input lines (see the header), for render_capture_stamp and for a reader asking why it changed.
 render_capture_stamp_inputs() {
-  local gsw_root="$1" repo_root="$2" calibration="$3" path id untracked diff_hash
-  for path in "${render_capture_gsw_paths[@]}"; do
+  local gsw_root="$1" repo_root="$2" calibration="$3" target="${4:-linux}" path id untracked diff_hash
+  local paths=("${render_capture_gsw_paths[@]}")
+  if [[ "$target" == windows ]]; then
+    paths+=(experiments/render-stream/scripts/lib/llvm-mingw.sh experiments/render-stream/scripts/w-imports.py)
+  fi
+  printf 'target %s\n' "$target"
+  for path in "${paths[@]}"; do
     id="$(git -C "$gsw_root" rev-parse "HEAD:$path")" || return 1
     printf '%s %s\n' "$id" "$path"
   done
-  diff_hash="$(set -o pipefail; git -C "$gsw_root" diff HEAD --binary -- "${render_capture_gsw_paths[@]}" | sha256sum)" || return 1
+  diff_hash="$(set -o pipefail; git -C "$gsw_root" diff HEAD --binary -- "${paths[@]}" | sha256sum)" || return 1
   printf 'diff %s\n' "${diff_hash%% *}"
   while IFS= read -r -d '' untracked; do
     printf 'untracked %s %s\n' "$(sha256sum < "$gsw_root/$untracked" | cut -d' ' -f1)" "$untracked"
-  done < <(git -C "$gsw_root" ls-files -z --others --exclude-standard -- "${render_capture_gsw_paths[@]}")
+  done < <(git -C "$gsw_root" ls-files -z --others --exclude-standard -- "${paths[@]}")
   printf 'script %s\n' "$(sha256sum < "$repo_root/scripts/build-render-capture.sh" | cut -d' ' -f1)"
-  [[ -s "$calibration" ]] || return 1
-  printf 'calibration %s\n' "$(sha256sum < "$calibration" | cut -d' ' -f1)"
+  if [[ "$target" == windows ]]; then
+    for path in "$repo_root"/eng/render-capture/windows/*.json; do
+      [[ -f "$path" ]] || continue
+      printf 'record %s %s\n' "$(basename "$path")" "$(sha256sum < "$path" | cut -d' ' -f1)"
+    done
+  else
+    [[ -s "$calibration" ]] || return 1
+    printf 'calibration %s\n' "$(sha256sum < "$calibration" | cut -d' ' -f1)"
+  fi
 }
 
 # The calibration record build-render-capture.sh stages: COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE, else the

@@ -213,6 +213,8 @@ for lane in "${lanes[@]}"; do
   [[ -f "$(lane_project "$lane")" && -f "$(lane_lockfile "$lane")" ]] \
     || { echo "unknown STS2 reference lane: $lane" >&2; exit 1; }
 done
+source_parent="$(cd "$repo_root/.." && pwd)"
+COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/check-render-capture-records.sh"
 lane_assemblies=()
 while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
 # The merged manifest declares the LOWEST floor of the lanes actually built, so the one payload
@@ -235,7 +237,6 @@ else
 fi
 
 tag="${COUCHCOOP_RELEASE_TAG:-}"
-source_parent="$(cd "$repo_root/.." && pwd)"
 deps="$repo_root/release-dependencies.json"
 
 if [[ "$snapshot" != "1" ]]; then
@@ -295,7 +296,9 @@ for manifest in experiments/render-stream/web/gsw-rs/Cargo.toml experiments/rend
   cargo fetch --locked --manifest-path "$source_parent/godot-scene-web/$manifest"
 done
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-stream-client.sh"
-COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-capture.sh"
+for target in linux windows; do
+  COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-capture.sh" --target "$target"
+done
 [[ -s "$repo_root/.sts2/render-stream-client-web/build.json" ]] || { echo "render-stream client core was not built" >&2; exit 1; }
 
 COUCHCOOP_RELEASE_BUILD=1 COUCHCOOP_FRONTEND_OUT_DIR="$payload_dir/frontend" \
@@ -402,9 +405,14 @@ done
 cp -a "$publish_root/$first_lane/." "$payload_dir/"
 
 # The streaming seat's capture, beside the shared tree (StreamingSeatLaunch.PackagedConfig looks for it there).
-mkdir -p "$payload_dir/render-capture"
-for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
-  cp "$repo_root/.sts2/render-capture/$name" "$payload_dir/render-capture/$name"
+for target in linux windows; do
+  mkdir -p "$payload_dir/render-capture/$target"
+  for file in "$repo_root/.sts2/render-capture/$target/"*; do
+    case "$(basename "$file")" in
+      source-stamp|toolchain.json|llvm-mingw-LICENSE.txt) continue ;;
+    esac
+    cp "$file" "$payload_dir/render-capture/$target/"
+  done
 done
 
 # The merged payload declares ONE floor for every lane it carries, and it has to be the lowest of
@@ -446,6 +454,10 @@ cp "$capture_license_source/capture/vendor/LICENSE.txt" "$license_dir/render-cap
 cp "$capture_license_source/capture/vendor/zlib/LICENSE" "$license_dir/render-capture/zlib-LICENSE"
 cp "$capture_license_source/capture/vendor/zstd/LICENSE" "$license_dir/render-capture/zstd-LICENSE"
 cp "$capture_license_source/third_party/basis_universal/LICENSE" "$license_dir/render-capture/basis_universal-LICENSE"
+mkdir -p "$license_dir/render-capture/windows"
+cp "$repo_root/.sts2/render-capture/windows/llvm-mingw-LICENSE.txt" "$license_dir/render-capture/windows/"
+cp "$repo_root/licenses/render-capture/mingw-w64-runtime-COPYING.txt" "$license_dir/render-capture/windows/"
+cp "$repo_root/licenses/render-capture/rust-std-MIT.txt" "$license_dir/render-capture/windows/"
 # The net module statically links its crates; their licences, from the same Cargo.lock it was built from.
 python3 "$repo_root/scripts/render-capture-net-licenses.py" "$source_parent/godot-scene-web" "$license_dir/render-capture/net"
 
@@ -512,17 +524,24 @@ done
 sts2_references="$(jq -s 'add' "${reference_files[@]}")"
 
 build_info="$payload_dir/build-info.txt"
+capture_sources=(/dev/null)
+for record_source in "$repo_root"/eng/render-capture/windows/*.source.json; do
+  [[ -f "$record_source" ]] && capture_sources+=("$record_source")
+done
 jq -n \
   --arg schema "couchcoop-release-build-info/v2" \
   --arg sourceCommit "$source_commit" --arg tag "$tag" --arg version "$version" \
   --arg spirectl "$spirectl_commit" \
   --arg godotSceneWeb "$godot_scene_web_commit" \
   --argjson sts2References "$sts2_references" \
+  --argjson captureRecords "$(jq -s 'map({key: .lane, value: {gameBuild, exeSha256, recordSha256}}) | from_entries' "${capture_sources[@]}")" \
+  --argjson llvmMingw "$(cat "$repo_root/.sts2/render-capture/windows/toolchain.json")" \
+  --arg rustc "$(rustc --version)" \
   --arg dotnet "$(dotnet --version)" --arg node "$(node --version)" --arg pnpm "$(corepack pnpm --version)" \
   --arg frontendLock "$(release_sha256 "$repo_root/frontend/package-lock.json")" \
   --arg spirectlLock "$(release_sha256 "$source_parent/spirectl/presentation/web/pnpm-lock.yaml")" \
   --arg godotSceneWebLock "$(release_sha256 "$source_parent/godot-scene-web/pnpm-lock.yaml")" \
-  '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: $sts2References}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, lockfileSha256: {frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
+  '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: $sts2References}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, renderCapture: {windows: {llvmMingw: $llvmMingw, rustc: $rustc, rustTarget: "x86_64-pc-windows-gnullvm", records: $captureRecords}}, lockfileSha256: {frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
 
 # The payload is complete here, build-info.txt included, so the gate sees exactly what ships. The
 # lane expectations are stated, not inferred: every lane built must be present, and a full release

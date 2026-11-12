@@ -1,0 +1,19 @@
+{
+  "schema": "couchcoop-render-capture-record-source/1",
+  "lane": "stable",
+  "platform": "windows-x86_64",
+  "gameBuild": "v0.107.1",
+  "steamBuildId": "23811903",
+  "exeSha256": "59c3e86e43e8388cb2b03e40544cca7309c7d34519498bed91d88595e766bf82",
+  "peIdentity": {
+    "size_of_image": 896749568,
+    "time_date_stamp": 1778568433,
+    "codeview_id": "e6ebf95c8f9ee9844c4c44205044422e:1",
+    "image_sha256": "a9dec4bbd343c27f1d6a1146d563dba8e01d4fadbd3c95e573624f002a270c5c"
+  },
+  "recordSha256": "0ed987c32c43054899555682a20082a08a1dc29a8d5e8e720b2fbf9f830cd5e2",
+  "calibrator": {
+    "version": "9",
+    "gswCommit": "794ae0b1f67156160120959383062407b521b189"
+  }
+}

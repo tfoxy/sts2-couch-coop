@@ -56,24 +56,37 @@ internal static class RenderStreamPairingTests
         ItemTaggerReadsParentFactsOnlyForCreatureNames();
     }
 
+    private const string Library = "/fake/library.so";
+    private const string Descriptor = "[libraries]\nlinux.x86_64 = \"/fake/library.so\"";
+
+    private static RenderCaptureAvailability.PeIdentity? UnexpectedPeIdentity()
+        => throw new Exception("Linux must not read PE identity");
+
     private static void ConfigResolvesTheCalibrationBesideTheCapture()
     {
         var files = new HashSet<string> { Extension, Calibration, "/elsewhere/cal.json" };
-        var beside = StreamingSeatLaunch.ResolveConfig(Extension, null, files.Contains);
+        var beside = StreamingSeatLaunch.ResolveConfig(Extension, null, path => path == Library || files.Contains(path), null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(beside.Config == new StreamingSeatLaunch.Config(Extension, Calibration),
             "no calibration variable: the calibration record next to the capture");
-        var named = StreamingSeatLaunch.ResolveConfig(Extension, " /elsewhere/cal.json ", files.Contains);
+        var named = StreamingSeatLaunch.ResolveConfig(Extension, " /elsewhere/cal.json ", path => path == Library || files.Contains(path), null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(named.Config?.Calibration == "/elsewhere/cal.json", "a calibration variable wins");
 
-        var unset = StreamingSeatLaunch.ResolveConfig(null, null, files.Contains);
+        var unset = StreamingSeatLaunch.ResolveConfig(null, null, path => path == Library || files.Contains(path), null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(unset.Config is null && unset.Refusal is null, "an unconfigured host is simply off, with nothing to say");
-        Assert(StreamingSeatLaunch.ResolveConfig(Extension, "cal.json", files.Contains).Refusal is not null,
+        Assert(StreamingSeatLaunch.ResolveConfig(Extension, "cal.json", path => path == Library || files.Contains(path), null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity).Refusal is not null,
             "a relative calibration path is refused");
-        Assert(StreamingSeatLaunch.ResolveConfig(Extension, "/missing.json", files.Contains).Refusal is not null,
+        Assert(StreamingSeatLaunch.ResolveConfig(Extension, "/missing.json", path => path == Library || files.Contains(path), null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity).Refusal is not null,
             "a missing calibration record is refused");
-        Assert(StreamingSeatLaunch.ResolveConfig(Extension, null, path => path == Extension).Refusal is not null,
+        Assert(StreamingSeatLaunch.ResolveConfig(Extension, null, path => path is Library or Extension, null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity).Refusal is not null,
             "a capture without its calibration record is refused");
-        Assert(StreamingSeatLaunch.ResolveConfig("capture.gdextension", null, _ => true).Refusal is not null,
+        Assert(StreamingSeatLaunch.ResolveConfig("capture.gdextension", null, _ => true, null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity).Refusal is not null,
             "a relative capture path is refused");
     }
 
@@ -81,20 +94,24 @@ internal static class RenderStreamPairingTests
     {
         // A released payload: the lane assembly sits one directory below the shared tree that carries render-capture/.
         var root = Path.Combine(Path.GetTempPath(), "cc-payload");
-        var packaged = Path.Combine(root, "render-capture", "render_stream_capture.gdextension");
-        var packagedCalibration = Path.Combine(root, "render-capture", "calibration");
+        var packaged = Path.Combine(root, "render-capture", "linux", "render_stream_capture.gdextension");
+        var packagedCalibration = Path.Combine(Path.GetDirectoryName(packaged)!, "calibration");
         var files = new HashSet<string> { packaged, packagedCalibration, Extension, Calibration };
         var lane = Path.Combine(root, "lanes", "0.103.0");
 
-        var fromLane = StreamingSeatLaunch.ResolveConfig(null, null, files.Contains, lane);
+        var fromLane = StreamingSeatLaunch.ResolveConfig(null, null, path => path == Library || files.Contains(path), lane,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(fromLane.Config == new StreamingSeatLaunch.Config(packaged, packagedCalibration),
             $"no variable: the payload's own capture and its extensionless calibration: {fromLane.Refusal}");
-        var flat = StreamingSeatLaunch.ResolveConfig(null, null, files.Contains, root);
+        var flat = StreamingSeatLaunch.ResolveConfig(null, null, path => path == Library || files.Contains(path), root,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(flat.Config?.Extension == packaged, "a flat dev deploy resolves the same directory");
-        var operatorWins = StreamingSeatLaunch.ResolveConfig(Extension, null, files.Contains, lane);
+        var operatorWins = StreamingSeatLaunch.ResolveConfig(Extension, null, path => path == Library || files.Contains(path), lane,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(operatorWins.Config == new StreamingSeatLaunch.Config(Extension, Calibration),
             "an operator's capture wins over the packaged one");
-        var none = StreamingSeatLaunch.ResolveConfig(null, null, path => path == Extension, lane);
+        var none = StreamingSeatLaunch.ResolveConfig(null, null, path => path is Library or Extension, lane,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(none.Config is null && none.Refusal is null, "a payload without a capture is simply off");
     }
 
@@ -163,10 +180,12 @@ internal static class RenderStreamPairingTests
     {
         const string net = "/opt/capture/librender_stream_net.so";
         var files = new HashSet<string> { Extension, Calibration, net };
-        var found = StreamingSeatLaunch.ResolveConfig(Extension, null, files.Contains);
+        var found = StreamingSeatLaunch.ResolveConfig(Extension, null, path => path == Library || files.Contains(path), null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(found.Config == new StreamingSeatLaunch.Config(Extension, Calibration, NetModule: net),
             "the net module beside the capture is found");
-        var without = StreamingSeatLaunch.ResolveConfig(Extension, null, new HashSet<string> { Extension, Calibration }.Contains);
+        var without = StreamingSeatLaunch.ResolveConfig(Extension, null, new HashSet<string> { Extension, Calibration, Library }.Contains, null,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity);
         Assert(without.Config is { NetModule: null }, "no net module beside the capture: none");
 
         var env = StreamingSeatLaunch.Environment(found.Config!, StreamingSeatLaunch.HubPortForSlot(2), "/ev",
@@ -183,11 +202,12 @@ internal static class RenderStreamPairingTests
             "without it: WebSocket alone (listing wt with no module would refuse the whole listener)");
 
         var root = Path.Combine(Path.GetTempPath(), "cc-payload");
-        var packaged = Path.Combine(root, "render-capture", "render_stream_capture.gdextension");
-        var payload = new HashSet<string> { packaged, Path.Combine(root, "render-capture", "calibration"),
-            Path.Combine(root, "render-capture", StreamingSeatLaunch.NetModuleFileName) };
-        Assert(StreamingSeatLaunch.ResolveConfig(null, null, payload.Contains, root).Config?.NetModule
-               == Path.Combine(root, "render-capture", StreamingSeatLaunch.NetModuleFileName),
+        var packaged = Path.Combine(root, "render-capture", "linux", "render_stream_capture.gdextension");
+        var payload = new HashSet<string> { packaged, Path.Combine(Path.GetDirectoryName(packaged)!, "calibration"),
+            Path.Combine(Path.GetDirectoryName(packaged)!, "librender_stream_net.so") };
+        Assert(StreamingSeatLaunch.ResolveConfig(null, null, path => path == Library || payload.Contains(path), root,
+            _ => Descriptor, "linux", "x86_64", _ => [], UnexpectedPeIdentity).Config?.NetModule
+               == Path.Combine(Path.GetDirectoryName(packaged)!, "librender_stream_net.so"),
             "a deployed render-capture/ carries the net module beside the capture");
     }
 

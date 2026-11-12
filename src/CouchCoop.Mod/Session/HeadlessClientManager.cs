@@ -2227,13 +2227,18 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
         MultiplayerNameStore.ConfigureSeatLaunch(psi, hasWrapper: _headlessWrapper is not null);
 
+        ISeatStopEvent? stopEvent = null;
         try
         {
+            stopEvent = SeatStopEvent.PrepareLaunch(psi, OperatingSystem.IsWindows(), Environment.ProcessId, slot,
+                SeatStopEvent.Create);
             var proc = Process.Start(psi);
             if (proc != null)
             {
                 CouchCoopLog.Stderr($"headless spawned slot={slot} pid={proc.Id}");
-                return new OsHeadlessProcess(proc);
+                var owned = new OsHeadlessProcess(proc, stopEvent);
+                stopEvent = null;
+                return owned;
             }
             return null;
         }
@@ -2241,6 +2246,10 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             CouchCoopLog.Stderr($"headless launch failed slot={slot}: {ex.GetType().Name}: {ex.Message}");
             throw;
+        }
+        finally
+        {
+            stopEvent?.Dispose();
         }
     }
 
@@ -2755,11 +2764,12 @@ internal readonly record struct SeatListenerProbeResult(
     SeatPortReachability Reachability);
 
 /// <summary>
-/// Real <see cref="IHeadlessProcess"/> over a spawned <see cref="Process"/>. On Linux, graceful stop
-/// sends SIGTERM (lets the headless run ENet leave + teardown so the host drops the peer); the hard
-/// <see cref="Kill"/> sends SIGKILL to the whole tree.
+/// Real <see cref="IHeadlessProcess"/> over a spawned <see cref="Process"/>. Graceful stop sends SIGTERM
+/// on Unix or signals a Windows streaming seat's event; both enter the seat's bounded exit sequence.
+/// The hard <see cref="Kill"/> terminates the whole tree.
 /// </summary>
-internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess, IHeadlessProcessExitSignal
+internal sealed class OsHeadlessProcess(Process process, ISeatStopEvent? stopEvent = null)
+    : IHeadlessProcess, IHeadlessProcessExitSignal, IDisposable
 {
     private const int SIGTERM = 15;
 
@@ -2773,12 +2783,19 @@ internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess, IHe
         => process.WaitForExitAsync(cancellationToken);
 
     public bool RequestGracefulStop()
+        => RequestGracefulStop(OperatingSystem.IsWindows(), OperatingSystem.IsLinux() || OperatingSystem.IsMacOS());
+
+    internal bool RequestGracefulStop(bool isWindows, bool isUnix)
     {
+        if (isWindows)
+        {
+            try { return stopEvent?.Set() ?? false; }
+            catch { return false; }
+        }
         // .NET's Process.Kill() always sends SIGKILL on Unix, which gives the headless no chance to
         // disconnect from ENet → the host keeps a stale peer (the phantom lobby player). Send SIGTERM
         // directly so the seat disarms capture and runs its bounded exit sequence instead.
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-            && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        if (!isUnix)
         {
             return false; // non-Unix: no graceful signal available; caller falls back to Kill().
         }
@@ -2799,5 +2816,9 @@ internal sealed class OsHeadlessProcess(Process process) : IHeadlessProcess, IHe
         process.WaitForExit(1000);
     }
 
-    public void Dispose() => process.Dispose();
+    public void Dispose()
+    {
+        stopEvent?.Dispose();
+        process.Dispose();
+    }
 }

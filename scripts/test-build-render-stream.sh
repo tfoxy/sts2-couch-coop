@@ -33,7 +33,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/lib/render-capture-stamp.sh"
 echo capture >> "$repo_root/runs"
-out="$COUCHCOOP_RENDER_CAPTURE_OUT"; mkdir -p "$out"
+out="$COUCHCOOP_RENDER_CAPTURE_OUT/linux"; mkdir -p "$out"
 calibration="$(render_capture_calibration_source "$repo_root")"
 stamp="$(render_capture_stamp "$COUCHCOOP_GSW_ROOT" "$repo_root" "$calibration")"
 for name in librender_stream_capture.so render_stream_capture.gdextension librender_stream_net.so; do
@@ -76,11 +76,22 @@ expect() {
   fi
 }
 
+mkdir -p "$payload/render-capture"
+for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
+  printf 'old\n' > "$payload/render-capture/$name"
+done
 expect "first run builds both and deploys four files" built built 4
 expect "second run skips both and replaces nothing" skipped skipped 0
 for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
-  [[ -s "$payload/render-capture/$name" ]] || { echo "FAIL payload lacks render-capture/$name" >&2; failures=$((failures + 1)); }
+  [[ -s "$payload/render-capture/linux/$name" ]] || { echo "FAIL payload lacks render-capture/$name" >&2; failures=$((failures + 1)); }
 done
+
+for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
+  [[ ! -e "$payload/render-capture/$name" ]] || { echo "FAIL old flat file remains"; exit 1; }
+done
+mkdir -p "$couch/eng/render-capture/windows"
+printf 'windows\n' > "$couch/eng/render-capture/windows/stable.json"
+expect "Windows records do not invalidate the Linux stamp" skipped skipped 0
 
 printf 'edit\n' >> "$gsw/experiments/render-stream/capture/file.txt"
 # A rebuild from different sources changes the three built files; the calibration is copied unchanged.
@@ -102,19 +113,39 @@ expect "then fresh" skipped skipped 0
 printf '{"calibration":2}\n' > "$couch/eng/render-capture/calibration-0002.json"
 expect "a newer calibration record rebuilds the capture" skipped built 4
 
-rm "$couch/.sts2/render-capture/librender_stream_net.so"
+rm "$couch/.sts2/render-capture/linux/librender_stream_net.so"
 expect "a missing staged file rebuilds the capture (same bytes: nothing to redeploy)" skipped built 0
 
-ino_before="$(stat -c %i "$payload/render-capture/librender_stream_capture.so")"
+ino_before="$(stat -c %i "$payload/render-capture/linux/librender_stream_capture.so")"
 printf 'edit\n' >> "$gsw/experiments/render-stream/third_party/basis_universal/file.txt"
 expect "a basis_universal edit rebuilds and redeploys" skipped built 3
-ino_after="$(stat -c %i "$payload/render-capture/librender_stream_capture.so")"
+ino_after="$(stat -c %i "$payload/render-capture/linux/librender_stream_capture.so")"
 if [[ "$ino_before" == "$ino_after" ]]; then
   echo "FAIL a changed library was rewritten in place (a running seat would read the new bytes)" >&2
   failures=$((failures + 1))
 else
   echo "ok   a changed library is replaced by rename, never rewritten in place"
 fi
+
+mkdir -p "$gsw/experiments/render-stream/scripts/lib"
+printf 'pin\n' > "$gsw/experiments/render-stream/scripts/lib/llvm-mingw.sh"
+printf 'imports\n' > "$gsw/experiments/render-stream/scripts/w-imports.py"
+git -C "$gsw" add -A
+git -C "$gsw" -c user.email=t@t -c user.name=t commit -qm windows
+source "$couch/scripts/lib/render-capture-stamp.sh"
+calibration="$(render_capture_calibration_source "$couch")"
+windows_stamp() { render_capture_stamp "$gsw" "$couch" "$calibration" windows; }
+linux_stamp() { render_capture_stamp "$gsw" "$couch" "$calibration" linux; }
+for input in "$couch/eng/render-capture/windows/stable.json" \
+  "$gsw/experiments/render-stream/scripts/lib/llvm-mingw.sh" \
+  "$gsw/experiments/render-stream/scripts/w-imports.py"; do
+  before_windows="$(windows_stamp)"; before_linux="$(linux_stamp)"
+  printf 'changed\n' >> "$input"
+  [[ "$(windows_stamp)" != "$before_windows" && "$(linux_stamp)" == "$before_linux" ]] || {
+    echo "FAIL target-specific stamp input: $input"; exit 1;
+  }
+  echo "ok   Windows-only stamp input: $(basename "$input")"
+done
 
 : > "$couch/runs"
 skipped="$(COUCHCOOP_SKIP_RENDER_STREAM=1 COUCHCOOP_GSW_ROOT="$gsw" "$couch/scripts/build-render-stream.sh" --payload "$payload" 2>/dev/null)"

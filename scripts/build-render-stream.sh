@@ -29,7 +29,8 @@ gsw_root="${COUCHCOOP_GSW_ROOT:-$repo_root/../godot-scene-web}"
 # units on the path it is handed, so the same crates built via both paths poison one shared target dir.
 gsw_root="$(cd "$gsw_root" 2>/dev/null && pwd -P || printf '%s' "$gsw_root")"
 core_dir="$repo_root/.sts2/render-stream-client-web"
-capture_dir="${COUCHCOOP_RENDER_CAPTURE_OUT:-$repo_root/.sts2/render-capture}"
+capture_root="${COUCHCOOP_RENDER_CAPTURE_OUT:-$repo_root/.sts2/render-capture}"
+capture_dir="$capture_root/linux"
 payload=""
 
 usage() {
@@ -97,14 +98,18 @@ else
   else
     echo "render-stream: capture sources changed; building" >&2
   fi
-  COUCHCOOP_GSW_ROOT="$gsw_root" COUCHCOOP_RENDER_CAPTURE_OUT="$capture_dir" "$repo_root/scripts/build-render-capture.sh" >&2
+  COUCHCOOP_GSW_ROOT="$gsw_root" COUCHCOOP_RENDER_CAPTURE_OUT="$capture_root" "$repo_root/scripts/build-render-capture.sh" >&2
 fi
 capture_ms=$(( $(now_ms) - capture_started ))
 
 # --- deploy -----------------------------------------------------------------------------------------------
 deployed=0
 if [[ -n "$payload" ]]; then
-  target="$payload/render-capture"
+  # Retire the unreleased flat layout.
+  for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
+    rm -f "$payload/render-capture/$name"
+  done
+  target="$payload/render-capture/linux"
   mkdir -p "$target"
   for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
     if ! cmp -s "$capture_dir/$name" "$target/$name"; then

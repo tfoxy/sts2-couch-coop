@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the licence bundle for the render-stream net module (librender_stream_net.so) a release ships.
+"""Write the licence bundle for the Linux and Windows render-stream net modules a release ships.
 
 The module is godot-scene-web's rs-net, a Rust cdylib that statically links its crates.io dependencies
 (wtransport, quinn, rustls, ring, tokio, ...). godot-scene-web commits no licence bundle for it (unlike its MSDF
@@ -10,10 +10,11 @@ format so scripts/verify-release-archive.sh checks both the same way:
   <crate>-<version>.txt  every top-level LICENSE*/COPYING*/NOTICE* file of that crate, concatenated
   THIRD_PARTY_NOTICES.md what this is and how it was made
 
-The crate set is the normal (non-dev, non-build) dependency graph of `render-stream-net` for
-x86_64-unknown-linux-gnu, read offline with `cargo metadata --locked`; procedural macros are included
-conservatively. A crate whose package ships no licence file gets its declared licence's standard text (MIT where
-the expression offers it), with the authors Cargo.toml names as the copyright holders, and the notice lists it.
+The crate set is the union of the normal (non-dev, non-build) dependency graphs of `render-stream-net` for
+x86_64-unknown-linux-gnu and x86_64-pc-windows-gnullvm, read offline with `cargo metadata --locked` and deduplicated
+by name and version; procedural macros are included conservatively. A crate whose package ships no licence file
+gets its declared licence's standard text (MIT where the expression offers it), with the authors Cargo.toml names
+as the copyright holders, and the notice lists it.
 
 usage: scripts/render-capture-net-licenses.py <godot-scene-web root> <output dir>
 """
@@ -25,7 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-TARGET = "x86_64-unknown-linux-gnu"
+TARGETS = ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnullvm")
 LICENSE_FILE = re.compile(r"^(licen[cs]e|copying|notice)", re.IGNORECASE)
 MIT_TEXT = """Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
@@ -54,31 +55,36 @@ def main() -> int:
     gsw = Path(sys.argv[1]).resolve()
     out = Path(sys.argv[2])
     manifest_path = gsw / "experiments/render-stream/rs-net/Cargo.toml"
-    metadata = json.loads(subprocess.run(
-        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", TARGET,
-         "--manifest-path", str(manifest_path)],
-        check=True, capture_output=True, text=True).stdout)
-    packages = {p["id"]: p for p in metadata["packages"]}
-    nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
-    root = metadata["resolve"]["root"]
-    if packages[root]["name"] != "render-stream-net":
-        print(f"unexpected root package {packages[root]['name']}", file=sys.stderr)
-        return 1
+    bundled = {}
+    for target in TARGETS:
+        metadata = json.loads(subprocess.run(
+            ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", target,
+             "--manifest-path", str(manifest_path)],
+            check=True, capture_output=True, text=True).stdout)
+        packages = {p["id"]: p for p in metadata["packages"]}
+        nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
+        root = metadata["resolve"]["root"]
+        if packages[root]["name"] != "render-stream-net":
+            print(f"unexpected root package {packages[root]['name']}", file=sys.stderr)
+            return 1
 
-    reached, stack = set(), [root]
-    while stack:
-        node = stack.pop()
-        if node in reached:
-            continue
-        reached.add(node)
-        for dep in nodes[node]["deps"]:
-            if any(kind["kind"] is None for kind in dep["dep_kinds"]):
-                stack.append(dep["pkg"])
-    reached.discard(root)
+        reached, stack = set(), [root]
+        while stack:
+            node = stack.pop()
+            if node in reached:
+                continue
+            reached.add(node)
+            for dep in nodes[node]["deps"]:
+                if any(kind["kind"] is None for kind in dep["dep_kinds"]):
+                    stack.append(dep["pkg"])
+        reached.discard(root)
+        for identity in reached:
+            pkg = packages[identity]
+            bundled.setdefault((pkg["name"], pkg["version"]), pkg)
 
     out.mkdir(parents=True, exist_ok=True)
     rows, synthesized = [], []
-    for pkg in sorted((packages[i] for i in reached), key=lambda p: (p["name"], p["version"])):
+    for _, pkg in sorted(bundled.items()):
         name, version = pkg["name"], pkg["version"]
         declared = pkg.get("license")
         if not declared:
@@ -111,10 +117,12 @@ def main() -> int:
     notice = [
         "# Render-stream net module third-party notices",
         "",
-        "`render-capture/librender_stream_net.so` is godot-scene-web's `rs-net` (the WebTransport carrier and the",
+        "`render-capture/linux/librender_stream_net.so` and `render-capture/windows/render_stream_net.dll` are",
+        "godot-scene-web's `rs-net` (the WebTransport carrier and the",
         "TLS for wss of the new renderer's streaming seat), built from `experiments/render-stream/rs-net/Cargo.lock`.",
-        f"It statically links the {len(rows)} third-party crates in `manifest.tsv`: the normal dependency graph of",
-        f"`render-stream-net` for `{TARGET}`, procedural macros included conservatively. Each crate's",
+        f"The modules statically link the {len(rows)} third-party crates in `manifest.tsv`: the union of the normal",
+        f"dependency graphs of `render-stream-net` for `{'` and `'.join(TARGETS)}`, deduplicated by name and version,",
+        "procedural macros included conservatively. Each crate's",
         "`chosen_spdx` is the licence expression its Cargo.toml declares, and its `.txt` file carries every licence",
         "file of its package, copied from the crate source the module was built from.",
         "",
