@@ -29,6 +29,7 @@ import {
   parseLanOffer,
   stopRenderStream,
   streamSeatAspect,
+  measureStreamBox,
   syncRuntimeRenderer,
   type RenderStreamAvailabilityInputs
 } from "@/mirror/renderStreamAvailability";
@@ -138,26 +139,66 @@ describe("mirrorSettings — the renderer keys", () => {
     ]);
   });
 
-  it("asks for the seat at the stream box's aspect only with Widescreen stretch on (PRES-A)", () => {
+  it("asks for the mirror design aspect only with Widescreen stretch on", () => {
     const box = (width: number, height: number) => () => ({ width, height });
-    expect(streamSeatAspect({ stretchEnabled: true }, box(2340, 1080))).toBeCloseTo(2340 / 1080, 10);
-    expect(streamSeatAspect({ stretchEnabled: true }, box(1080, 2340))).toBeCloseTo(1080 / 2340, 10);
-    expect(streamSeatAspect({ stretchEnabled: false }, box(2340, 1080))).toBeUndefined();
-    expect(streamSeatAspect({ stretchEnabled: true }, box(0, 0))).toBeUndefined();
-    expect(streamSeatAspect({ stretchEnabled: true }, box(2340, 0))).toBeUndefined();
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false }, box(2340, 1080))).toBeCloseTo(2340 / 1080, 10);
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false }, box(1080, 2340))).toBeCloseTo(1920 / 1080, 10);
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false }, box(4000, 1080))).toBeCloseTo(2520 / 1080, 10);
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false }, box(932, 430))).toBeCloseTo(2341 / 1080, 10);
+    expect(streamSeatAspect({ stretchEnabled: false, safeAreaPaddingEnabled: false }, box(2340, 1080))).toBeUndefined();
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false }, box(0, 0))).toBeUndefined();
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false }, box(2340, 0))).toBeUndefined();
   });
 
-  it("measures the mounted stream stage, else the window", () => {
-    const stage = document.createElement("div");
-    stage.dataset.testid = "render-stream-stage";
-    stage.getBoundingClientRect = () => ({ width: 2520, height: 1080 }) as DOMRect;
+  it("measures the containing surface, else the window", () => {
+    const stage = document.createElement("main");
+    stage.className = "mirror-surface";
+    stage.getBoundingClientRect = () => new DOMRect(0, 0, 2520, 1080);
     document.body.append(stage);
     try {
-      expect(streamSeatAspect({ stretchEnabled: true })).toBeCloseTo(2520 / 1080, 10);
+      expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false })).toBeCloseTo(2520 / 1080, 10);
     } finally {
       stage.remove();
     }
-    expect(streamSeatAspect({ stretchEnabled: true })).toBeCloseTo(window.innerWidth / window.innerHeight, 10);
+    expect(streamSeatAspect({ stretchEnabled: true, safeAreaPaddingEnabled: false })).toBeCloseTo(1920 / 1080, 10);
+  });
+
+  it.each([false, true])("requests the mirror frame with current safe-area padding %s before the stage mounts", (safeAreaPaddingEnabled) => {
+    const surface = document.createElement("main");
+    surface.className = "mirror-surface";
+    surface.style.padding = "0px 60px";
+    surface.getBoundingClientRect = () => new DOMRect(0, 0, 2400, 1080);
+    document.body.append(surface);
+    try {
+      const settings = { stretchEnabled: true, safeAreaPaddingEnabled };
+      expect(streamSeatAspect(settings)).toBeCloseTo((safeAreaPaddingEnabled ? 2280 : 2400) / 1080, 10);
+    } finally {
+      surface.remove();
+    }
+  });
+
+  it("uses current padding and all four insets even when a mounted stream frame has stale geometry", () => {
+    const surface = document.createElement("main");
+    surface.className = "mirror-surface";
+    surface.style.padding = "5px 31px 21px 59px";
+    surface.getBoundingClientRect = () => new DOMRect(0, 0, 2400, 1080);
+    const stage = document.createElement("div");
+    stage.dataset.testid = "render-stream-stage";
+    stage.getBoundingClientRect = () => new DOMRect(0, 0, 2520, 1080);
+    surface.append(stage);
+    document.body.append(surface);
+    try {
+      const settings = { stretchEnabled: true, safeAreaPaddingEnabled: true };
+      expect(measureStreamBox(settings)).toEqual({ width: 2310, height: 1054 });
+      expect(streamSeatAspect(settings)).toBeCloseTo(Math.round(2310 / 1054 * 1080) / 1080, 10);
+      settings.safeAreaPaddingEnabled = false;
+      expect(measureStreamBox(settings)).toEqual({ width: 2400, height: 1080 });
+      expect(streamSeatAspect(settings)).toBeCloseTo(2400 / 1080, 10);
+      settings.stretchEnabled = false;
+      expect(streamSeatAspect(settings)).toBeUndefined();
+    } finally {
+      surface.remove();
+    }
   });
 
   it("forces Particles by protocol: dynamic at /12, off at /11", () => {

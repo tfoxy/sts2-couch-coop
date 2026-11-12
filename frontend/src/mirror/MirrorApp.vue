@@ -1031,6 +1031,8 @@ const inertStage: Component = { render: () => null };
 // Vue caches a loader's result for the life of the wrapper, a failed one included, so every attempt gets a wrapper
 // of its own: "Try again" (`stopped` back to null) bumps this and the next mount imports afresh.
 const stageAttempt = ref(0);
+const streamStageReady = ref(false);
+watch(stageAttempt, () => { streamStageReady.value = false; }, { flush: "sync" });
 const RenderStreamStage = computed(() => {
   const attempt = stageAttempt.value;
   return defineAsyncComponent(() => loadRenderStreamStage(attempt));
@@ -1133,8 +1135,8 @@ const surfaceCovered = computed(() => showScene.value || showStream.value);
 //
 // Two placements for the SAME pair of controls (settings gear + fullscreen):
 //   * FIXED browser-space chrome — 44px, `position: fixed`, top centre. Never moves, never scales.
-//   * IN-STAGE — 80x80 DESIGN px inside the letterboxed, scaled `.mirror-stage`, so it sits in the game's own
-//     TopBar and scales with it.
+//   * IN-PICTURE — 80x80 design/presentation px inside the mirror stage or over the stream canvas, so it sits
+//     in the game's own TopBar and scales with it.
 //
 // In LANDSCAPE the in-stage placement is right: the stage fills the screen, the buttons land beside the game's
 // own top-bar icons and read as part of the UI. In PORTRAIT it is wrong twice over — the stage is letterboxed to
@@ -1145,14 +1147,17 @@ const surfaceCovered = computed(() => showScene.value || showStream.value);
 // So in portrait the pair keeps EXACTLY the pre-game screen's placement — same fixed 44px chrome, same spot —
 // and a player who joins from the picker watches nothing move.
 const { isPortrait: isPortraitViewport } = usePortraitViewport();
-// The fixed pair renders pre-join (as it always has) and, with the game up, whenever the viewport is portrait.
+// Keep the fixed pair until the stream stage can place its own, including while its chunk is loading.
 // The truth table itself is `shouldUseFixedChrome`, so it can be tested without mounting a whole scene.
 const showFixedChrome = computed(() =>
-  shouldUseFixedChrome(showScene.value, isPortraitViewport.value)
+  shouldUseFixedChrome(showScene.value || (showStream.value && streamStageReady.value), isPortraitViewport.value)
 );
-// …and the in-stage pair is exactly the complement, so the two can never both render (two gears, two panels
-// fighting over one `panelAnchorTop`) nor both vanish.
+// The in-picture pair is the complement. During handover the visible mirror owns it; after the swap the stream
+// owns it, so there is only one gear anchoring the panel.
 const showStageChrome = computed(() => showScene.value && !showFixedChrome.value);
+const showStreamChrome = computed(() =>
+  showStream.value && streamStageReady.value && !showScene.value && !showFixedChrome.value
+);
 
 // Push the stream's server settings before the stage connects. The mirror keeps its watch until the first
 // stream frame; returning to it restores its saved settings before the watch gate opens again.
@@ -1806,9 +1811,8 @@ onBeforeUnmount(() => {
     </MirrorView>
     <!-- "Use new renderer (Beta)": the game's own draw calls through the render-stream client. With the INP2 input
          channel, pointer input maps through INP1 and rides the same seat socket as MirrorView's inputCapture, and so do
-         the keyboard and gamepad (keyPadInput.ts, the same pair MirrorView creates). The gear/fullscreen pair still
-         uses the fixed browser-space chrome (no scaled DOM stage hosts it). A stop falls back to MirrorView above for
-         the session. -->
+         the keyboard and gamepad (keyPadInput.ts, the same pair MirrorView creates). Landscape chrome follows the
+         stream canvas once it replaces the mirror. A stop falls back to MirrorView above for the session. -->
     <div
       v-if="showStream && renderStreamEndpoint && renderStreamCore"
       class="mirror-stream-shell"
@@ -1822,10 +1826,13 @@ onBeforeUnmount(() => {
         :core="renderStreamCore"
         :send-input="viewControls.sendInput"
         :input-enabled="!holdMirrorForStream"
+        :show-chrome="showStreamChrome"
         :access-generation="hostAccess?.generation"
         @failed="onRenderStreamFailed"
+        @chrome-ready="streamStageReady = true"
         @first-frame="onStreamFirstFrame"
         @refresh-endpoint="onRenderStreamRefresh"
+        @open-ios-install="iosInstallOpenTick++"
       />
     </div>
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP

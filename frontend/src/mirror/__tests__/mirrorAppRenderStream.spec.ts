@@ -192,7 +192,8 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(fake.clients).toHaveLength(1);
     expect(fake.clients[0].connects).toBe(1);
     expect(fake.clients[0].options.endpoint).toMatchObject({ url: "ws://127.0.0.1:14861/render-stream", token: null });
-    // The gear moves to the fixed browser-space chrome: no scaled DOM stage hosts it.
+    // jsdom has no canvas layout: the fixed pair stays until the stage can measure its controls.
+    expect(app!.find(".render-stream-gear").exists()).toBe(false);
     expect(app!.find(".mirror-chrome-gear").exists()).toBe(true);
   });
 
@@ -829,6 +830,89 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
   });
 
+  it("keeps one pair and the open panel anchored through mirror, pending, stream and portrait", async () => {
+    const portrait = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    vi.stubGlobal("matchMedia", () => portrait);
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
+    const canvasRect = vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 1920, 1080));
+    try {
+      const seat = await showMirror();
+      mirrorSettings.panelOpen = false;
+      await settle();
+      const gear = app!.get('[data-testid="mirror-settings-toggle"]');
+      vi.spyOn(gear.element, "getBoundingClientRect").mockReturnValue(new DOMRect(920, 0, 80, 80));
+      await gear.trigger("click");
+      const panel = () => app!.get('[data-testid="mirror-settings-panel"]');
+      const checkPair = (placement: string, compact = false) => {
+        expect(app!.findAll('[data-testid="mirror-settings-toggle"]')).toHaveLength(1);
+        expect(app!.findAll('[data-testid="fullscreen-button"]')).toHaveLength(1);
+        expect(app!.get(`${placement} [data-testid="mirror-settings-toggle"]`).classes()
+          .includes("settings-gear-button--compact")).toBe(compact);
+      };
+      checkPair(".mirror-topbar-gear");
+      expect(panel().attributes("style")).toContain("top: 86px");
+      await startStream(seat);
+      checkPair(".mirror-topbar-gear");
+      expect(app!.find(".render-stream-gear").exists()).toBe(false);
+      expect(panel().attributes("style")).toContain("top: 86px");
+
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      checkPair(".render-stream-gear");
+      expect(mirrorSettings.panelOpen).toBe(true);
+      expect(panel().attributes("style")).toContain("top: 86px");
+
+      // A smaller letterboxed picture carries both the controls and their open panel anchor with it.
+      canvasRect.mockReturnValue(new DOMRect(60, 27, 1824, 1026));
+      window.dispatchEvent(new Event("resize"));
+      await settle();
+      expect(panel().attributes("style")).toContain("top: 109px");
+      const listener = portrait.addEventListener.mock.calls.find(([event]) => event === "change")![1];
+      listener({ matches: true });
+      await settle();
+      checkPair(".mirror-chrome-gear", true);
+      expect(app!.find(".render-stream-gear").exists()).toBe(false);
+      expect(mirrorSettings.panelOpen).toBe(true);
+    } finally {
+      canvasRect.mockRestore();
+      delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+    }
+  });
+
+  it.each(["mirror", "stream"])("re-anchors the open %s panel under the fixed gear on portrait rotation", async (renderer) => {
+    const portrait = { matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+    vi.stubGlobal("matchMedia", () => portrait);
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("settings-gear-button--compact")) return new DOMRect(500, 8, 44, 44);
+      if (this instanceof HTMLCanvasElement) return new DOMRect(0, 0, 1920, 1080);
+      return originalRect.call(this);
+    });
+    try {
+      const seat = await showMirror();
+      if (renderer === "stream") {
+        await startStream(seat);
+        fail({ kind: "streaming", firstFrame: true });
+        await settle();
+      }
+      mirrorSettings.panelOpen = true;
+      mirrorSettings.panelAnchorTop = 109;
+      await settle();
+      const listener = portrait.addEventListener.mock.calls.find(([event]) => event === "change")![1];
+      listener({ matches: true });
+      await settle();
+      expect(app!.findAll('[data-testid="mirror-settings-toggle"]')).toHaveLength(1);
+      expect(app!.get('.mirror-chrome-gear [data-testid="mirror-settings-toggle"]').classes())
+        .toContain("settings-gear-button--compact");
+      expect(mirrorSettings.panelOpen).toBe(true);
+      expect(app!.get('[data-testid="mirror-settings-panel"]').attributes("style")).toContain("top: 58px");
+    } finally {
+      rect.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each(["failed", "ended"])("drops a stage that %s before its first frame and keeps the same mirror watching", async (kind) => {
     const seat = await showMirror();
     const mirror = app!.getComponent(MirrorView).element;
@@ -959,6 +1043,59 @@ describe("MirrorApp — the stage chunk fails to load", () => {
   }
 
   const stageMounted = () => app!.find('[data-testid="render-stream-stage"]').exists();
+
+  it.each(["measured", "unmeasured"])("keeps one pair and the open panel while the streaming join's stage chunk loads (%s canvas)", async (layout) => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    const originalFullscreen = Object.getOwnPropertyDescriptor(document, "fullscreenEnabled");
+    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
+    const canvasRect = vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 1920, 1080));
+    let resolveImport!: (module: Awaited<ReturnType<typeof realStageImport>>) => void;
+    fake.stageImport = () => new Promise((resolve) => { resolveImport = resolve; });
+    try {
+      await joinStreamingSeat();
+      expect(app!.findComponent(MirrorView).exists()).toBe(false);
+      const checkPair = (placement: string) => {
+        expect(app!.findAll('[data-testid="mirror-settings-toggle"]')).toHaveLength(1);
+        expect(app!.findAll('[data-testid="fullscreen-button"]')).toHaveLength(1);
+        expect(app!.find(`${placement}-gear [data-testid="mirror-settings-toggle"]`).exists()).toBe(true);
+        expect(app!.find(`${placement}-fullscreen [data-testid="fullscreen-button"]`).exists()).toBe(true);
+      };
+      checkPair(".mirror-chrome");
+      expect(stageMounted()).toBe(false);
+      const gear = app!.get('[data-testid="mirror-settings-toggle"]');
+      const gearRect = vi.spyOn(gear.element, "getBoundingClientRect")
+        .mockReturnValue(new DOMRect(938, 8, 44, 44));
+      await gear.trigger("click");
+      const panel = () => app!.get('[data-testid="mirror-settings-panel"]');
+      expect(mirrorSettings.panelOpen).toBe(true);
+      expect(panel().attributes("style")).toContain("top: 58px");
+
+      if (layout === "unmeasured") canvasRect.mockReturnValue(new DOMRect());
+      resolveImport(await realStageImport());
+      await settle();
+      if (layout === "unmeasured") {
+        expect(stageMounted()).toBe(true);
+        checkPair(".mirror-chrome");
+        expect(app!.find(".render-stream-gear").exists()).toBe(false);
+        expect(mirrorSettings.panelOpen).toBe(true);
+        expect(panel().attributes("style")).toContain("top: 58px");
+        canvasRect.mockReturnValue(new DOMRect(0, 0, 1920, 1080));
+        window.dispatchEvent(new Event("resize"));
+        await settle();
+      }
+      checkPair(".render-stream");
+      expect(stageMounted()).toBe(true);
+      expect(mirrorSettings.panelOpen).toBe(true);
+      expect(panel().attributes("style")).toContain("top: 86px");
+      gearRect.mockRestore();
+    } finally {
+      canvasRect.mockRestore();
+      if (originalFullscreen) Object.defineProperty(document, "fullscreenEnabled", originalFullscreen);
+      else delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+      vi.unstubAllGlobals();
+    }
+  });
 
   it("falls back to MirrorView with the stop reason set when the chunk rejects", async () => {
     fake.stageImport = () => Promise.reject(new Error("Failed to fetch dynamically imported module"));

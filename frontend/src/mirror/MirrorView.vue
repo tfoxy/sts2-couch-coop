@@ -61,6 +61,7 @@ import { MIRROR_RENDERER_KEY } from "@/mirror/rendererKey";
 // two things about it and nothing else: the backend GRANT (the canvas arm is never granted), and feeding the live
 // fit measurement in so every px emission downstream can convert.
 import { activateDisplayLayout, displaySpaceLayout, setLayoutScale, stageFitMode } from "@/mirror/stageFit";
+import { mirrorDesignSize } from "@/mirror/mirrorDesign";
 import { effectiveRaiseHandCards, setHandRaiseLayer } from "@/mirror/handRaiseUi";
 import { effectiveMirrorRenderSettings, mirrorSettings, type EffectMode } from "@/mirror/mirrorSettings";
 import { sceneAblation } from "@/mirror/sceneAblation";
@@ -80,7 +81,6 @@ import { createFirstScenePresentation } from "@/mirror/firstScenePresentation";
 import {
   MIRROR_DESIGN_HEIGHT,
   MIRROR_DESIGN_WIDTH,
-  MIRROR_MAX_DESIGN_WIDTH,
   type MirrorState
 } from "@/mirror/sceneTree";
 
@@ -239,14 +239,7 @@ let detachReproStage: (() => void) | null = null;
 // 1920 — flipping the toggle cascades live through the existing design/spreadFactor watchers (scale re-fit,
 // renderer.setStretch + forced structural reconcile, input designWidth). Anything a screen parks OUTSIDE the box
 // is clipped by `.mirror-stage`'s overflow, exactly as the game's own viewport clips it.
-const design = computed<{ w: number; h: number }>(() => {
-  if (!mirrorSettings.stretchEnabled || frameWidth.value <= 0 || frameHeight.value <= 0) {
-    return { w: MIRROR_DESIGN_WIDTH, h: MIRROR_DESIGN_HEIGHT };
-  }
-  const wanted = Math.round((frameWidth.value / frameHeight.value) * MIRROR_DESIGN_HEIGHT);
-  const w = Math.min(MIRROR_MAX_DESIGN_WIDTH, Math.max(MIRROR_DESIGN_WIDTH, wanted));
-  return { w, h: MIRROR_DESIGN_HEIGHT };
-});
+const design = computed(() => mirrorDesignSize(frameWidth.value, frameHeight.value, mirrorSettings.stretchEnabled));
 
 // The horizontal spread factor the renderer applies (stageWidth / game-width). 1.0 on 16:9 → a no-op.
 const spreadFactor = computed<number>(() => design.value.w / MIRROR_DESIGN_WIDTH);

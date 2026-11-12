@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref, watchPostEffect } from "vue";
+
 import { translate as t } from "@/i18n";
 
 import { mirrorSettings } from "@/mirror/mirrorSettings";
@@ -19,24 +21,34 @@ const props = defineProps<{
 }>();
 
 const settings = mirrorSettings;
+const button = ref<HTMLButtonElement | null>(null);
 
 /** Gap between the button's bottom edge and the dropdown's top edge. */
 const PANEL_GAP_PX = 6;
 
-function toggle(event: MouseEvent): void {
-  const button = event.currentTarget as HTMLElement | null;
-  const bottom = button?.getBoundingClientRect().bottom ?? 0;
+function anchorPanel(element: HTMLElement | null): void {
+  const bottom = element?.getBoundingClientRect().bottom ?? 0;
   // A 0 rect (jsdom, or a button that isn't laid out) falls back to the store's seeded default rather than
   // pinning the panel to the very top of the viewport.
   if (bottom > 0) {
     settings.panelAnchorTop = Math.round(bottom + PANEL_GAP_PX);
   }
+}
+
+// Rotation mounts the fixed gear for either renderer. Move an open panel under that visible button once laid out.
+watchPostEffect(() => {
+  if (props.compact && settings.panelOpen) anchorPanel(button.value);
+});
+
+function toggle(event: MouseEvent): void {
+  anchorPanel(event.currentTarget as HTMLElement | null);
   settings.panelOpen = !settings.panelOpen;
 }
 </script>
 
 <template>
   <button
+    ref="button"
     type="button"
     class="settings-gear-button"
     :class="{ 'settings-gear-button--compact': props.compact }"

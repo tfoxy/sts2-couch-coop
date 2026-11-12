@@ -40,8 +40,12 @@ import {
 } from "@godot-scene-web/render-stream-client";
 
 import { translate as t } from "@/i18n";
+import FullscreenButton from "@/components/FullscreenButton.vue";
+import IosInstallButton from "@/components/IosInstallButton.vue";
+import SettingsGearButton from "@/components/SettingsGearButton.vue";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
+import { streamChromeGeometry } from "@/mirror/streamChrome";
 import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
 import { createKeyPadInput, type KeyPadInput } from "@/mirror/keyPadInput";
 import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
@@ -59,6 +63,8 @@ const props = withDefaults(defineProps<{
   sendInput?: (message: MirrorInputMessage) => void;
   /** A hidden stage can draw its first frame while the visible mirror still owns input. */
   inputEnabled?: boolean;
+  /** Landscape chrome belongs to the visible picture; the pending stream must not duplicate the mirror's pair. */
+  showChrome?: boolean;
   /**
    * The host-access generation the input belongs to (MirrorApp's `hostAccess.generation`). A new one retires the
    * pointer, keyboard and gamepad captures silently and starts fresh ones that ignore a button, finger or pad
@@ -72,6 +78,7 @@ const props = withDefaults(defineProps<{
   createClient: undefined,
   sendInput: undefined,
   inputEnabled: true,
+  showChrome: false,
   accessGeneration: undefined,
   hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
   refreshTimeoutMs: 10_000
@@ -81,10 +88,13 @@ const emit = defineEmits<{
   /** The stream stopped for good this session (`<reason>: <detail>`, or `ended`). */
   failed: [reason: string];
   status: [status: RenderStreamStatus];
+  /** The canvas has a measured box, so the app can hand over the landscape controls. */
+  "chrome-ready": [];
   /** The stream drew its first frame: the join's "the browser displays the game" step. Once per mount. */
   "first-frame": [];
   /** The hub refused our token: send the seat's current descriptor (a new `endpoint` prop), once. */
   "refresh-endpoint": [];
+  "open-ios-install": [];
 }>();
 
 type Phase = "connecting" | "loading" | "streaming" | "reconnecting" | "suspended" | "failed";
@@ -139,6 +149,34 @@ const UNAUTHORIZED = "live-connect-failed: unauthorized";
 // client sizes it from the same value, and the aspect the canvas is letterboxed at.
 const presentation = computed<[number, number]>(() => props.endpoint.presentation ?? [1920, 1080]);
 const boxStyle = computed(() => ({ "--render-stream-aspect": String(presentation.value[0] / presentation.value[1]) }));
+
+const chromeGeometry = computed(() => {
+  void layoutTick.value;
+  const canvas = canvasEl.value;
+  return canvas ? streamChromeGeometry(canvas.getBoundingClientRect(), presentation.value[0]) : null;
+});
+let chromeReadyReported = false;
+watch(chromeGeometry, (geometry) => {
+  if (geometry && !chromeReadyReported) {
+    chromeReadyReported = true;
+    emit("chrome-ready");
+  }
+}, { flush: "post" });
+const chromeStyle = computed(() => {
+  const geometry = chromeGeometry.value;
+  if (!geometry) return null;
+  const style = (rect: typeof geometry.gear) => ({
+    left: `${rect.left}px`, top: `${rect.top}px`, transform: `scale(${geometry.scale})`
+  });
+  return { gear: style(geometry.gear), fullscreen: style(geometry.fullscreen) };
+});
+
+// Keep an already-open panel under the visible gear across the handover and later picture resizes.
+watch([() => props.showChrome, () => mirrorSettings.panelOpen, chromeGeometry], ([shown, open, geometry]) => {
+  if (shown && open && geometry) {
+    mirrorSettings.panelAnchorTop = Math.round(geometry.gear.top + geometry.gear.height + 6);
+  }
+}, { flush: "post" });
 
 function sameDescriptor(a: RenderStreamEndpoint, b: RenderStreamEndpoint): boolean {
   return a.url === b.url && a.resourceBase === b.resourceBase && a.token === b.token && a.protocol === b.protocol;
@@ -479,6 +517,12 @@ function bumpLayout(): void {
   layoutTick.value += 1;
 }
 
+watch(() => [presentation.value, mirrorSettings.safeAreaPaddingEnabled], bumpLayout, { flush: "post" });
+watch(canvasEl, (canvas, previous) => {
+  if (previous) layoutObserver?.unobserve(previous);
+  if (canvas) layoutObserver?.observe(canvas);
+}, { flush: "post" });
+
 // QA seam (CAR9): `window.__renderStreamStats()` reads the mounted stage's client counters (applies/s, carrier, …) on
 // a real page, where the component's own `stats()` is out of reach. Installed while mounted; removed only if it is
 // still this stage's.
@@ -493,7 +537,9 @@ onMounted(() => {
   if (typeof ResizeObserver !== "undefined" && frameEl.value !== null) {
     layoutObserver = new ResizeObserver(bumpLayout);
     layoutObserver.observe(frameEl.value);
+    if (canvasEl.value) layoutObserver.observe(canvasEl.value);
   }
+  bumpLayout();
   if (document.visibilityState === "hidden") {
     // Mounted in a background tab: wait to be seen rather than pay for a full join nobody watches.
     phase.value = "suspended";
@@ -547,6 +593,31 @@ defineExpose({
         data-testid="render-stream-canvas"
       />
     </div>
+    <template v-if="showChrome">
+      <div
+        class="render-stream-chrome render-stream-gear"
+        :style="chromeStyle?.gear ?? { visibility: 'hidden' }"
+        @pointermove.stop
+        @pointerdown.stop
+        @pointerup.stop
+        @pointercancel.stop
+        @click.stop
+      >
+        <SettingsGearButton />
+      </div>
+      <div
+        class="render-stream-chrome render-stream-fullscreen"
+        :style="chromeStyle?.fullscreen ?? { visibility: 'hidden' }"
+        @pointermove.stop
+        @pointerdown.stop
+        @pointerup.stop
+        @pointercancel.stop
+        @click.stop
+      >
+        <FullscreenButton />
+        <IosInstallButton @open="emit('open-ios-install')" />
+      </div>
+    </template>
     <p v-if="overlayText" class="render-stream-status" role="status" data-testid="render-stream-status">{{ overlayText }}</p>
     <button
       v-if="confirmAnchor"
@@ -614,6 +685,14 @@ defineExpose({
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
   pointer-events: none;
+}
+
+/* The same 80px controls as the mirror's top bar, scaled from the measured canvas rather than the viewport. */
+.render-stream-chrome {
+  position: fixed;
+  display: flex;
+  z-index: 10;
+  transform-origin: top left;
 }
 
 /* CONFIRM TAP: the client confirm button, anchored over the confirm-eligible widget the tap focused. The stage maps

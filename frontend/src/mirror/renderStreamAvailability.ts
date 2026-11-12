@@ -31,6 +31,7 @@ import { validateEndpoint, type RenderStreamEndpoint } from "@godot-scene-web/re
 
 import type { BrowserRendererState } from "@/protocol/browserEnvelope";
 
+import { mirrorDesignSize } from "@/mirror/mirrorDesign";
 import { mirrorSettings, type MirrorSettings } from "@/mirror/mirrorSettings";
 import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/renderStreamCore";
 
@@ -296,34 +297,44 @@ export const renderStreamChoosable = computed(() => !renderStreamContext.directV
   && (renderStreamAvailability.value.source === "qa-override"
     || currentSeatRendererRequestFor("stream", mirrorSettings) === "stream"));
 
-/** The box whose aspect `streamSeatAspect` reports: width and height in CSS pixels. */
+/** The mirror frame's width and height in CSS pixels. */
 export interface StreamBoxSize { width: number; height: number }
 
-/** The box the stream stage is shown in: the mounted stage's frame, else the window (the stage mounts only once the
- * seat streams, so a request to start streaming usually measures the window). */
-export function measureStreamBox(): StreamBoxSize {
-  const stage = typeof document === "undefined" ? null : document.querySelector('[data-testid="render-stream-stage"]');
-  if (stage) {
-    const rect = stage.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height };
+/** Measure the mirror's containing surface even before either renderer mounts. Its padding resolves the same
+ * safe-area variables used as the mirror frame's insets, independently of the current padding preference. */
+export function measureStreamBox(
+  settings: Pick<MirrorSettings, "safeAreaPaddingEnabled"> = mirrorSettings
+): StreamBoxSize {
+  const surface = typeof document === "undefined" ? null : document.querySelector(".mirror-surface");
+  if (surface) {
+    const { width, height } = surface.getBoundingClientRect();
+    if (width > 0 && height > 0) {
+      if (!settings.safeAreaPaddingEnabled) return { width, height };
+      const style = window.getComputedStyle(surface);
+      const px = (value: string) => Number.parseFloat(value) || 0;
+      return {
+        width: width - px(style.paddingLeft) - px(style.paddingRight),
+        height: height - px(style.paddingTop) - px(style.paddingBottom)
+      };
+    }
   }
   return { width: window.innerWidth, height: window.innerHeight };
 }
 
 /**
- * The `aspect` (width / height of the stream box) that rides this page's `renderer: "stream"` request so the seat
- * arms its stream at that width. Only with Widescreen stretch on; off (or an unmeasurable box) sends none, which is
- * 1920x1080. Read when the stream is requested: a later rotation or resize letterboxes into the new box until the
- * stream's next start.
+ * Ask for the mirror's design aspect, using its current frame and stretch rule. Stretch off (or an unmeasurable
+ * frame) sends none, which is 1920x1080. A later rotation or resize letterboxes the seat's fixed presentation
+ * into the new frame until the stream's next start.
  */
 export function streamSeatAspect(
-  settings: Pick<MirrorSettings, "stretchEnabled"> = mirrorSettings,
-  measure: () => StreamBoxSize = measureStreamBox
+  settings: Pick<MirrorSettings, "stretchEnabled" | "safeAreaPaddingEnabled"> = mirrorSettings,
+  measure: () => StreamBoxSize = () => measureStreamBox(settings)
 ): number | undefined {
   if (!settings.stretchEnabled) return undefined;
   const { width, height } = measure();
-  const aspect = width / height;
-  return Number.isFinite(aspect) && aspect > 0 ? aspect : undefined;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return undefined;
+  const design = mirrorDesignSize(width, height, settings.stretchEnabled);
+  return design.w / design.h;
 }
 
 /** A shared seat's descriptor supplies an endpoint; this page's saved choice decides whether to use it. */

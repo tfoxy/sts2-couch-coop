@@ -82,6 +82,116 @@ const mountStage = (props: Record<string, unknown> = {}) =>
 const status = () => wrapper!.find('[data-testid="render-stream-status"]');
 
 describe("RenderStreamStage", () => {
+  describe("landscape chrome", () => {
+    let resize: () => void;
+    let canvasRect: DOMRect;
+    const observed = new Set<Element>();
+    const originalFullscreen = Object.getOwnPropertyDescriptor(document, "fullscreenEnabled");
+
+    beforeEach(() => {
+      canvasRect = new DOMRect(60, 27, 2280, 1026);
+      observed.clear();
+      vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockImplementation(() => canvasRect);
+      vi.stubGlobal("ResizeObserver", class {
+        constructor(callback: () => void) { resize = callback; }
+        observe(element: Element): void { observed.add(element); }
+        unobserve(element: Element): void { observed.delete(element); }
+        disconnect(): void { observed.clear(); }
+      });
+      Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
+    });
+
+    afterEach(() => {
+      mirrorSettings.panelOpen = false;
+      if (originalFullscreen) Object.defineProperty(document, "fullscreenEnabled", originalFullscreen);
+      else delete (document as unknown as Record<string, unknown>).fullscreenEnabled;
+      vi.unstubAllGlobals();
+    });
+
+    it("reports chrome readiness once the canvas has measurable geometry, even before chrome is enabled", async () => {
+      canvasRect = new DOMRect();
+      mountStage();
+      await nextTick();
+      expect(wrapper!.emitted("chrome-ready")).toBeUndefined();
+
+      canvasRect = new DOMRect(0, 0, 1920, 1080);
+      resize();
+      await nextTick();
+      expect(wrapper!.emitted("chrome-ready")).toEqual([[]]);
+      expect(wrapper!.find(".render-stream-gear").exists()).toBe(false);
+
+      resize();
+      await nextTick();
+      expect(wrapper!.emitted("chrome-ready")).toEqual([[]]);
+    });
+
+    it("uses the measured canvas for size/position and re-anchors an open panel on resize", async () => {
+      mountStage({ endpoint: { ...endpoint, presentation: [2400, 1080] }, showChrome: true });
+      await nextTick();
+      const gear = () => wrapper!.get(".render-stream-gear").element as HTMLElement;
+      const fullscreen = () => wrapper!.get(".render-stream-fullscreen").element as HTMLElement;
+      expect(gear().style.left).toBe("1162px");
+      expect(gear().style.top).toBe("27px");
+      expect(gear().style.transform).toBe("scale(0.95)");
+      expect(fullscreen().style.left).toBe("1249.4px");
+      expect(fullscreen().style.transform).toBe("scale(0.95)");
+      expect(wrapper!.get('[data-testid="mirror-settings-toggle"]').classes())
+        .not.toContain("settings-gear-button--compact");
+      expect(wrapper!.get('[data-testid="fullscreen-button"]').classes()).not.toContain("fullscreen-button--compact");
+      const canvas = wrapper!.get("canvas").element;
+      expect(observed.has(canvas)).toBe(true);
+
+      mirrorSettings.panelOpen = true;
+      await nextTick();
+      expect(mirrorSettings.panelAnchorTop).toBe(109);
+      canvasRect = new DOMRect(70, 35, 1200, 540);
+      resize();
+      await nextTick();
+      expect(gear().style.left).toBe("650px");
+      expect(gear().style.top).toBe("35px");
+      expect(gear().style.transform).toBe("scale(0.5)");
+      expect(mirrorSettings.panelAnchorTop).toBe(81);
+      expect(mirrorSettings.panelOpen).toBe(true);
+
+      // Extension changes replace the canvas; layout observation must follow the replacement too.
+      mirrorSettings.raiseHandCards = true;
+      await nextTick();
+      await nextTick();
+      expect(observed.has(canvas)).toBe(false);
+      expect(observed.has(wrapper!.get("canvas").element)).toBe(true);
+    });
+
+    it("blocks chrome presses from stream input while canvas presses still reach it", async () => {
+      const sent: MirrorInputMessage[] = [];
+      mountStage({ showChrome: true, sendInput: (m: MirrorInputMessage) => sent.push(m) });
+      clients[0].clientToGame = vi.fn((x: number, y: number) => ({ point: { x, y }, item: null, drawn: { x, y } }));
+      const bubbled = vi.fn();
+      const frame = wrapper!.get('[data-testid="render-stream-stage"]').element;
+      for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) frame.addEventListener(type, bubbled);
+      const mouse = (element: Element, type: string, buttons: number) => {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 10, clientY: 20, buttons });
+        Object.defineProperty(event, "pointerType", { value: "mouse" });
+        Object.defineProperty(event, "pointerId", { value: 1 });
+        element.dispatchEvent(event);
+      };
+      for (const testId of ["mirror-settings-toggle", "fullscreen-button"]) {
+        const button = wrapper!.get(`[data-testid="${testId}"]`).element;
+        mouse(button, "pointerdown", 1);
+        mouse(button, "pointermove", 1);
+        mouse(button, "pointerup", 0);
+        mouse(button, "pointercancel", 0);
+      }
+      expect(bubbled).not.toHaveBeenCalled();
+      expect(sent).toEqual([]);
+      await wrapper!.get('[data-testid="mirror-settings-toggle"]').trigger("click");
+      expect(mirrorSettings.panelOpen).toBe(true);
+      expect(sent).toEqual([]);
+      mouse(wrapper!.get("canvas").element, "pointerdown", 1);
+      mouse(wrapper!.get("canvas").element, "pointerup", 0);
+      expect(sent).toHaveLength(2);
+    });
+  });
+
   it("mounts one view-only client on its 1920x1080 canvas and connects it", () => {
     mountStage();
     expect(clients).toHaveLength(1);
