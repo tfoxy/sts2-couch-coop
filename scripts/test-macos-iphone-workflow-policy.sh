@@ -50,6 +50,48 @@ cp "$workflow" "$tmp/serial-mac.yml"
 printf '\n# %s\n' 'needs: [policy, iphone_webkit]' >> "$tmp/serial-mac.yml"
 expect_reject serial-mac "$tmp/serial-mac.yml" "Mac jobs must not wait for the independent WebKit job"
 
+for job in macos_arm macos_intel; do
+  awk -v job="$job" '
+    /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
+    selected && /needs: \[policy, snapshot\]/ { sub(/\[policy, snapshot\]/, "policy") }
+    { print }
+  ' "$workflow" > "$tmp/$job-no-snapshot.yml"
+  expect_reject "$job-no-snapshot" "$tmp/$job-no-snapshot.yml" \
+    "$job must depend on policy and snapshot"
+
+  awk -v job="$job" '
+    /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
+    { print }
+    selected && /steps:/ {
+      print "      - name: Build forbidden Mac package"
+      print "        timeout-minutes: 55"
+      print "        run: scripts/package-release.sh --snapshot"
+    }
+  ' "$workflow" > "$tmp/$job-package.yml"
+  expect_reject "$job-package" "$tmp/$job-package.yml" "$job must not run package-release.sh"
+
+  awk -v job="$job" '
+    /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
+    selected && /path: sources\/sts2-couch-coop\/dist\// { sub(/dist\//, "removed/") }
+    { print }
+  ' "$workflow" > "$tmp/$job-download.yml"
+  expect_reject "$job-download" "$tmp/$job-download.yml" "$job must download the Linux snapshot"
+done
+
+sed 's/ || inputs.run_intel == true//' "$workflow" > "$tmp/snapshot-toggle.yml"
+expect_reject snapshot-toggle "$tmp/snapshot-toggle.yml" \
+  "Linux snapshot job must include: if:"
+
+sed 's/wasm32-unknown-unknown x86_64-pc-windows-gnullvm/wasm32-unknown-unknown/' \
+  "$workflow" > "$tmp/snapshot-target.yml"
+expect_reject snapshot-target "$tmp/snapshot-target.yml" \
+  "Linux snapshot job must include: rustup target add"
+
+sed 's#path: sources/sts2-couch-coop/dist/couchcoop-snapshot-\*.zip#path: sources/sts2-couch-coop/dist/*#' \
+  "$workflow" > "$tmp/snapshot-upload.yml"
+expect_reject snapshot-upload "$tmp/snapshot-upload.yml" \
+  "Linux snapshot job must include: path: sources/sts2-couch-coop/dist/couchcoop-snapshot-*.zip"
+
 cp "$workflow" "$tmp/real.yml"
 printf '\n# %s\n' "COUCHCOOP_E2E_"'REAL_URL' >> "$tmp/real.yml"
 expect_reject real-mode "$tmp/real.yml" "real-server URL must never enter Actions"

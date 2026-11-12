@@ -48,16 +48,59 @@ require_fixed "default: false" "Intel must remain opt-in"
 require_fixed "- 'ci/macos'" "ci/macos branch trigger is missing"
 require_fixed "contents: read" "workflow permissions must remain contents: read"
 
-for job in policy iphone_webkit macos_arm macos_intel; do
+for job in policy snapshot iphone_webkit macos_arm macos_intel; do
   require_fixed "  $job:" "required job is missing: $job"
 done
 
-require_count "needs: policy" 3 \
-  "WebKit and both Mac jobs must depend only on the policy gate"
+require_count "needs: policy" 2 \
+  "WebKit and the Linux snapshot must depend only on the policy gate"
 reject_fixed "needs: [policy, iphone_webkit]" \
   "Mac jobs must not wait for the independent WebKit job"
 require_fixed "inputs.run_webkit == true" \
   "the WebKit dispatch toggle must control the WebKit job"
+
+# Scope package policy to each job so one correct Mac cannot mask a regression in the other.
+job_source() {
+  awk -v job="$1" '
+    /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
+    selected { print }
+  ' "$workflow"
+}
+
+snapshot_source="$(job_source snapshot)"
+for required in \
+  'needs: policy' \
+  'runs-on: ubuntu-24.04' \
+  "if: \${{ github.event_name == 'push' || inputs.run_arm == true || inputs.run_intel == true }}" \
+  'rustup target add wasm32-unknown-unknown x86_64-pc-windows-gnullvm' \
+  'cargo install wasm-bindgen-cli --version 0.2.129 --locked' \
+  'run: scripts/package-release.sh --snapshot' \
+  'name: couchcoop-snapshot-${{ github.run_id }}' \
+  'path: sources/sts2-couch-coop/dist/couchcoop-snapshot-*.zip' \
+  'if-no-files-found: error' \
+  'retention-days: 1'; do
+  if ! grep -Fq -- "$required" <<< "$snapshot_source"; then
+    fail "Linux snapshot job must include: $required"
+  fi
+done
+require_count 'run: scripts/package-release.sh --snapshot' 1 "only the Linux snapshot job may package a release"
+for job in macos_arm macos_intel; do
+  mac_source="$(job_source "$job")"
+  if ! grep -Fq 'needs: [policy, snapshot]' <<< "$mac_source"; then
+    fail "$job must depend on policy and snapshot"
+  fi
+  if grep -Fq 'package-release.sh' <<< "$mac_source"; then
+    fail "$job must not run package-release.sh"
+  fi
+  for required in \
+    'uses: actions/download-artifact@' \
+    'name: couchcoop-snapshot-${{ github.run_id }}' \
+    'path: sources/sts2-couch-coop/dist/'; do
+    if ! grep -Fq -- "$required" <<< "$mac_source"; then
+      fail "$job must download the Linux snapshot: $required"
+    fi
+  done
+done
 
 require_fixed "runs-on: ubuntu-24.04" "Ubuntu policy/WebKit runner is not pinned"
 require_fixed "runs-on: macos-15" "Apple Silicon runner must be macos-15"
@@ -168,8 +211,8 @@ for forbidden in "$fixture_tag" "$fixture_name" "$real_job" "$private_fixture" "
 done
 
 upload_count="$(grep -Fc 'uses: actions/upload-artifact@' "$workflow" || true)"
-if [ "$upload_count" -ne 2 ]; then
-  fail "workflow must have exactly two explicitly staged artifact uploads"
+if [ "$upload_count" -ne 3 ]; then
+  fail "workflow must have exactly two synthetic uploads and one Linux snapshot upload"
 fi
 require_fixed "path: sources/sts2-couch-coop/.ci-artifacts/iphone-webkit" \
   "artifact upload path must be the reviewed repository-internal staging directory"

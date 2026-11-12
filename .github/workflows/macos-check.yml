@@ -63,6 +63,75 @@ jobs:
               scripts/verify-sts2-reference-sdk.sh
           fi
 
+  snapshot:
+    needs: policy
+    if: ${{ github.event_name == 'push' || inputs.run_arm == true || inputs.run_intel == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out source without credentials
+        timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: sources/sts2-couch-coop
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Clone pinned public release sources
+        timeout-minutes: 8
+        working-directory: sources
+        run: |
+          set -euo pipefail
+          pins=sts2-couch-coop/release-dependencies.json
+          for name in spirectl godot-scene-web; do
+            url="$(jq -er --arg name "$name" '.dependencies[$name].repository' "$pins")"
+            commit="$(jq -er --arg name "$name" '.dependencies[$name].commit' "$pins")"
+            git clone --quiet "$url" "$name"
+            git -C "$name" checkout --quiet --detach "$commit"
+            test "$(git -C "$name" rev-parse HEAD)" = "$commit"
+          done
+
+      - name: Set up .NET
+        timeout-minutes: 4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Set up Node
+        timeout-minutes: 4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.x'
+
+      - name: Verify release inputs and policy fixtures
+        timeout-minutes: 15
+        working-directory: sources/sts2-couch-coop
+        run: |
+          scripts/verify-sts2-reference-sdk.sh
+          scripts/test-verify-release-archive.sh
+          scripts/test-check-render-capture-records.sh
+
+      - name: Set up Rust WASM tooling
+        timeout-minutes: 15
+        run: |
+          corepack enable
+          rustup target add wasm32-unknown-unknown x86_64-pc-windows-gnullvm
+          cargo install wasm-bindgen-cli --version 0.2.129 --locked
+
+      - name: Build and validate the production snapshot package
+        timeout-minutes: 55
+        working-directory: sources/sts2-couch-coop
+        run: scripts/package-release.sh --snapshot
+
+      - name: Upload the production snapshot package
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: couchcoop-snapshot-${{ github.run_id }}
+          path: sources/sts2-couch-coop/dist/couchcoop-snapshot-*.zip
+          if-no-files-found: error
+          retention-days: 1
+
   iphone_webkit:
     needs: policy
     if: ${{ github.event_name == 'push' || inputs.run_webkit == true }}
@@ -147,7 +216,7 @@ jobs:
           retention-days: 3
 
   macos_arm:
-    needs: policy
+    needs: [policy, snapshot]
     if: ${{ github.event_name == 'push' || inputs.run_arm == true }}
     runs-on: macos-15
     timeout-minutes: 150
@@ -322,10 +391,12 @@ jobs:
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE"
 
-      - name: Build and validate the production snapshot package
-        timeout-minutes: 55
-        working-directory: sources/sts2-couch-coop
-        run: scripts/package-release.sh --snapshot
+      - name: Download the Linux-built production snapshot package
+        timeout-minutes: 5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: couchcoop-snapshot-${{ github.run_id }}
+          path: sources/sts2-couch-coop/dist/
 
       - name: Recheck the snapshot beneath a path containing spaces
         timeout-minutes: 6
@@ -411,7 +482,7 @@ jobs:
           retention-days: 3
 
   macos_intel:
-    needs: policy
+    needs: [policy, snapshot]
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_intel == true }}
     runs-on: macos-15-intel
     timeout-minutes: 150
@@ -586,10 +657,12 @@ jobs:
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE"
 
-      - name: Build and validate the production snapshot package
-        timeout-minutes: 55
-        working-directory: sources/sts2-couch-coop
-        run: scripts/package-release.sh --snapshot
+      - name: Download the Linux-built production snapshot package
+        timeout-minutes: 5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: couchcoop-snapshot-${{ github.run_id }}
+          path: sources/sts2-couch-coop/dist/
 
       - name: Recheck the snapshot beneath a path containing spaces
         timeout-minutes: 6
