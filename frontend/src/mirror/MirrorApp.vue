@@ -1077,7 +1077,11 @@ watch(
 // too: it decides whether the checkbox can be switched on and whether the seat is asked for the stream.
 watch(
   hostSession,
-  (session) => { if (session !== null) renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan); },
+  (session) => {
+    if (session === null) return;
+    renderStreamContext.lanOffer = parseLanOffer(session.renderStreamLan);
+    renderStreamContext.hostUnavailableReason = session.renderStreamUnavailableReason ?? null;
+  },
   { immediate: true }
 );
 // The stage's one ask after `unauthorized`: this seat's current descriptor, in a fresh `session`.

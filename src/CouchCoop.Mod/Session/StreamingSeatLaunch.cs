@@ -167,10 +167,11 @@ internal static class StreamingSeatLaunch
     }
 
     /// <summary>
-    /// The configuration, or why there is none. Both null means the host is simply not configured. A
+    /// The configuration, or a typed reason and host-only diagnostic when unavailable. A
     /// <paramref name="Warning"/> is a setting that was ignored (the caller logs it; this file logs nothing).
     /// </summary>
-    internal readonly record struct ConfigResult(Config? Config, string? Refusal, string? Warning = null);
+    internal readonly record struct ConfigResult(Config? Config, string? Refusal, string? Warning = null,
+        RenderCaptureAvailability.UnavailableReason? Reason = null);
 
     internal static ConfigResult ResolveConfig(string? extension, string? calibration, Func<string, bool> fileExists)
     {

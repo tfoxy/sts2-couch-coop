@@ -271,6 +271,12 @@ if (args is ["host-guards", ..])
     return;
 }
 
+if (args is ["renderer-availability", ..])
+{
+    await BrowserServerRouteTests.RunRendererAvailabilityRoutesAsync();
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- seats` runs the seat allocator ALONE: slot/netId
 // allocation and reuse, the lobby-cap-driven slot range (which is what decides whether a fifth-to-eighth player
 // gets a seat at all), the reap/detach bookkeeping, the seat launch contract, and the lock-ordering pins that

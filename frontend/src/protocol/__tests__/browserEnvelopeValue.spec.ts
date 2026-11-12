@@ -52,6 +52,13 @@ const SESSION = {
 };
 
 describe("parseBrowserEnvelopeValue — the string and object entry points agree", () => {
+  it("carries host capture reason codes without treating them as renderer descriptors", () => {
+    expect(parseBrowserEnvelopeValue({ ...SESSION, renderStreamUnavailableReason: "no-matching-record" }))
+      .toMatchObject({ renderStreamUnavailableReason: "no-matching-record" });
+    expect(parseBrowserEnvelopeValue({ ...SESSION, renderStreamUnavailableReason: { detail: "private" } }))
+      .toMatchObject({ renderStreamUnavailableReason: null });
+  });
+
   it.each([
     ["session", SESSION],
     ["server-reload", { type: "server-reload", reason: "headless-host-disconnected" }],

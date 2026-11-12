@@ -7,6 +7,7 @@
 //                  is `renderStreamCoreCause` (a release always carries a verified core, so there only the load fails)
 //   no-webgl2      this browser gives no WebGL2 context
 //   host-view      watching the host's own game (`directView`), which never streams
+//   host-unavailable the host refused capture configuration; settings maps its code to a player-facing hint
 //   needs-proxy    no carrier the seat offers can work on this page (`lanCarrierUsable` / `endpointCarrierUsable`):
 //                  an https page cannot use plain ws, and WebTransport needs a secure context and the API. A
 //                  plain-http LAN page runs the client (CAR9: godot-scene-web's loader hashes the core without
@@ -45,7 +46,7 @@ export const RENDER_STREAM_HIDDEN_DISPOSE_MS = 60_000;
 export const RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS = 15_000;
 
 export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "needs-proxy"
-  | "not-streaming";
+  | "host-unavailable" | "not-streaming";
 
 export type RenderStreamEndpointSource = "qa-override" | "session";
 
@@ -99,6 +100,7 @@ export function endpointCarrierUsable(endpoint: RenderStreamEndpoint, page: Rend
 }
 
 export interface RenderStreamAvailabilityInputs {
+  hostUnavailableReason?: string | null;
   coreProblem: RenderStreamCoreProblem | null;
   /** The core was found but failed to load this session (a runtime `core-load-failed`, except a timeout). */
   coreLoadFailed: boolean;
@@ -131,6 +133,7 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
   if (!inputs.webgl2) return unavailable("no-webgl2");
   if (inputs.directView) return unavailable("host-view");
   if (inputs.qaEndpoint) return { available: true, reason: null, endpoint: inputs.qaEndpoint, source: "qa-override" };
+  if (inputs.hostUnavailableReason) return unavailable("host-unavailable");
   // A loopback http page is a secure context by definition, whatever a probe (or jsdom) reports.
   const page = inputs.pageLoopback ? { ...(inputs.page ?? LOOPBACK_PAGE), secureContext: true } : inputs.page ?? LOOPBACK_PAGE;
   if (inputs.sessionEndpoint) {
@@ -206,6 +209,7 @@ export function isLoopbackHttpPage(location: Pick<Location, "protocol" | "hostna
  */
 export const renderStreamContext = reactive({
   directView: false,
+  hostUnavailableReason: null as string | null,
   sessionEndpoint: null as RenderStreamEndpoint | null,
   rendererState: null as BrowserRendererState | null,
   firstFrame: false,
@@ -240,6 +244,7 @@ export const renderStreamCoreCause = computed<RenderStreamCoreCause | null>(() =
   renderStreamContext.coreLoadFailed));
 
 export const renderStreamAvailability = computed<RenderStreamAvailability>(() => computeRenderStreamAvailability({
+  hostUnavailableReason: renderStreamContext.hostUnavailableReason,
   coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
   coreLoadFailed: renderStreamContext.coreLoadFailed,
   webgl2: renderStreamContext.webgl2 ?? probeWebgl2(),
@@ -259,14 +264,14 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
  */
 export function seatRendererRequest(
   inputs: Pick<RenderStreamAvailabilityInputs, "coreProblem" | "coreLoadFailed" | "webgl2" | "pageLoopback" | "qaEndpoint"
-    | "lanOffer" | "page">
+    | "lanOffer" | "page" | "hostUnavailableReason">
     & { renderer: MirrorSettings["renderer"] }
 ): "stream" | undefined {
   const page = inputs.page ?? LOOPBACK_PAGE;
   const reachable = inputs.pageLoopback
     || (inputs.lanOffer != null && lanCarrierUsable(inputs.lanOffer, page));
-  return inputs.renderer === "stream" && inputs.coreProblem === null && !inputs.coreLoadFailed && inputs.webgl2
-    && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
+  return !inputs.hostUnavailableReason && inputs.renderer === "stream" && inputs.coreProblem === null
+    && !inputs.coreLoadFailed && inputs.webgl2 && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
 }
 
 /** `seatRendererRequest` for this page, now. */
@@ -279,6 +284,7 @@ export function currentSeatRendererRequestFor(renderer: MirrorSettings["renderer
   settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): "stream" | undefined {
   return seatRendererRequest({
     renderer,
+    hostUnavailableReason: renderStreamContext.hostUnavailableReason,
     coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
     coreLoadFailed: renderStreamContext.coreLoadFailed,
     webgl2: renderStreamContext.webgl2 ?? probeWebgl2(),

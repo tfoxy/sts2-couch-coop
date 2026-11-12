@@ -1911,10 +1911,15 @@ public sealed class CouchCoopWebSocketConnection
     // On the HOST, every session carries the LAN streaming offer while a capture is configured (CAR7b): before a join
     // it decides whether the page can choose the new renderer and whether its join asks for the stream.
     private BrowserEnvelope WithRenderStreamLan(BrowserEnvelope envelope)
-        => string.Equals(envelope.Type, "session", StringComparison.Ordinal) && _headlessManager is { } manager
-            && manager.RenderStreamLanOffer(_requestOrigin) is { } offer
-                ? envelope with { RenderStreamLan = new BrowserRenderStreamLanDto(offer.WebTransport, offer.Tls, offer.Ws) }
-                : envelope;
+    {
+        if (_headlessManager is not { } manager) return envelope;
+        var offer = manager.RenderStreamLanOffer(_requestOrigin);
+        return envelope with
+        {
+            RenderStreamLan = offer is { } lan ? new BrowserRenderStreamLanDto(lan.WebTransport, lan.Tls, lan.Ws) : null,
+            RenderStreamUnavailableReason = manager.RenderStreamUnavailableReason,
+        };
+    }
 
     private Task SendResultAsync(BrowserActionResultEnvelope envelope)
         => SendBytesAsync(Encoding.UTF8.GetBytes(BrowserJson.Serialize(envelope)));

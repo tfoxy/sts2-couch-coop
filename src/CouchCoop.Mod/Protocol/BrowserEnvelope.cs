@@ -87,7 +87,10 @@ public sealed record BrowserEnvelope(
     // streaming seat would offer this page, so the page can tell whether it could use the stream before it joins.
     // Null (omitted) with no capture.
     BrowserRenderStreamLanDto? RenderStreamLan = null,
-    BrowserRendererStateDto? RendererState = null);
+    BrowserRendererStateDto? RendererState = null,
+    // Host capture availability, independent of whether a seat is currently streaming. A reason code only;
+    // executable identity and operator paths stay in the host log. Omitted when configured or on older hosts.
+    string? RenderStreamUnavailableReason = null);
 
 // The `renderStreamLan` wire shape: { "webTransport": true, "tls": true, "ws": false } (camelCased by BrowserJson).
 // `webTransport`: the seat serves WebTransport (any secure-context page can use it). `tls`: the seat serves wss with a

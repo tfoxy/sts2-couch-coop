@@ -30,11 +30,50 @@ internal sealed partial class BrowserServerRouteTests
     internal static async Task RunSessionEnvelopeReadRoutesAsync()
     {
         using var root = new TempStaticRoot();
+        await RunRendererAvailabilityRoutesAsync();
         await AssertEachEnvelopeIsOneRosterReadAndNoSnapshotAsync(root.Path);
         await AssertFanOutsShareOneReadAsync(root.Path);
         await AssertAJoinReplyReadsNoSnapshotAsync(root.Path);
         await AssertAnUnreadableRosterIsUnavailableNotEmptyAsync(root.Path);
         Console.WriteLine("session envelope reads: ok");
+    }
+
+    internal static async Task RunRendererAvailabilityRoutesAsync()
+    {
+        using var root = new TempStaticRoot();
+        var reasons = new (RenderCaptureAvailability.UnavailableReason Reason, string Code)[]
+        {
+            (RenderCaptureAvailability.UnavailableReason.NoCapture, "no-capture"),
+            (RenderCaptureAvailability.UnavailableReason.CaptureInvalid, "capture-invalid"),
+            (RenderCaptureAvailability.UnavailableReason.OsUnsupported, "os-unsupported"),
+            (RenderCaptureAvailability.UnavailableReason.LibraryMissing, "library-missing"),
+            (RenderCaptureAvailability.UnavailableReason.CalibrationInvalid, "calibration-invalid"),
+            (RenderCaptureAvailability.UnavailableReason.CalibrationMissing, "calibration-missing"),
+            (RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "no-matching-record"),
+            (RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch, "operator-record-mismatch"),
+            (RenderCaptureAvailability.UnavailableReason.IdentityUnreadable, "identity-unreadable"),
+            (RenderCaptureAvailability.UnavailableReason.Unknown, "unknown"),
+        };
+        foreach (var (reason, code) in reasons)
+        {
+            await using var rig = await SessionReadRig.StartAsync(root.Path, streamingReason: reason);
+            using var socket = await rig.ConnectAsync(GatedQuery, readSession: false);
+            using var session = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(socket, "session"));
+            Expect(session.RootElement.GetProperty("renderStreamUnavailableReason").GetString() == code,
+                $"{reason} reaches the player as {code}");
+            Expect(!session.RootElement.TryGetProperty("renderStreamLan", out _), "unavailable capture offers no carrier");
+            await CloseWebSocketSilentlyAsync(socket);
+        }
+        await using (var rig = await SessionReadRig.StartAsync(root.Path, captureConfigured: true))
+        {
+            rig.Manager!.StreamingSeatLanContext = () => new StreamingSeatLan.Context([], null, null, null);
+            using var socket = await rig.ConnectAsync(GatedQuery, readSession: false);
+            using var session = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(socket, "session"));
+            Expect(!session.RootElement.TryGetProperty("renderStreamUnavailableReason", out _), "available capture omits refusal");
+            Expect(session.RootElement.GetProperty("renderStreamLan").GetProperty("ws").GetBoolean(), "available capture still offers streaming");
+            await CloseWebSocketSilentlyAsync(socket);
+        }
+        Console.WriteLine("renderer availability routes: 11 cases, 22 assertions passed.");
     }
 
     private const string GatedQuery = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0";
@@ -108,7 +147,8 @@ internal sealed partial class BrowserServerRouteTests
         private readonly IGameFacts _previousFacts;
         private int _capProbes;
 
-        private SessionReadRig(string rootPath, bool headlessClient)
+        private SessionReadRig(string rootPath, bool headlessClient,
+            RenderCaptureAvailability.UnavailableReason? streamingReason = null, bool captureConfigured = false)
         {
             Runtime = new RecordingSpirectlRuntime();
             Host = new CouchCoopRuntimeHost(new CouchCoopRuntimeDependencies(Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime, Runtime));
@@ -127,7 +167,8 @@ internal sealed partial class BrowserServerRouteTests
                     {
                         Interlocked.Increment(ref _capProbes);
                         return 3;
-                    }, registerProcessExit: false);
+                    }, registerProcessExit: false, streamingUnavailableReason: streamingReason,
+                    streamingConfig: captureConfigured ? new StreamingSeatLaunch.Config("capture", "calibration") : null);
             Server = new CouchCoopBrowserServer(
                 new StaticSpaFileProvider(rootPath),
                 new CapturingAssetAdapter(),
@@ -157,9 +198,10 @@ internal sealed partial class BrowserServerRouteTests
         /// <summary>How many times the seat manager was asked the live lobby's cap through its own probe.</summary>
         public int CapProbes => Volatile.Read(ref _capProbes);
 
-        public static async Task<SessionReadRig> StartAsync(string rootPath, bool headlessClient = false)
+        public static async Task<SessionReadRig> StartAsync(string rootPath, bool headlessClient = false,
+            RenderCaptureAvailability.UnavailableReason? streamingReason = null, bool captureConfigured = false)
         {
-            var rig = new SessionReadRig(rootPath, headlessClient);
+            var rig = new SessionReadRig(rootPath, headlessClient, streamingReason, captureConfigured);
             rig.BaseUri = await rig.Server.StartAsync();
             return rig;
         }

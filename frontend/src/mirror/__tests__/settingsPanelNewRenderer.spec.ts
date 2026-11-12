@@ -74,7 +74,7 @@ beforeEach(() => {
   });
   Object.assign(renderStreamContext, {
     directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false,
-    coreLoadFailed: false, stopped: null,
+    coreLoadFailed: false, stopped: null, hostUnavailableReason: null,
     coreProblem: null, webgl2: true, pageLoopback: true
   });
 });
@@ -86,7 +86,7 @@ afterEach(() => {
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     renderStreamProtocol: 12, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
   Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null,
-    seatJoined: false, returningToMirror: false, sessionEndpoint: null, lanOffer: null, page: undefined });
+    seatJoined: false, hostUnavailableReason: null, returningToMirror: false, sessionEndpoint: null, lanOffer: null, page: undefined });
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
@@ -231,6 +231,50 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
     expect(mirrorSettings.renderer).toBe("mirror");
     expect(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each([
+    ["no-matching-record", "The new renderer doesn't support this game version yet."],
+    ["operator-record-mismatch", "The new renderer doesn't support this game version yet."],
+    ["no-capture", "The new renderer isn't available on this computer."],
+    ["os-unsupported", "The new renderer isn't available on this computer."],
+    ["library-missing", "The new renderer isn't available on this computer."],
+    ["capture-invalid", "The new renderer is unavailable on this host."],
+    ["calibration-invalid", "The new renderer is unavailable on this host."],
+    ["calibration-missing", "The new renderer is unavailable on this host."],
+    ["identity-unreadable", "The new renderer is unavailable on this host."],
+    ["unknown", "The new renderer is unavailable on this host."],
+    ["future-reason", "The new renderer is unavailable on this host."]
+  ])("disables a loopback page's toggle and explains host refusal %s", async (reason, text) => {
+    renderStreamContext.hostUnavailableReason = reason;
+    mountPanel();
+    expect(el("mirror-renderer").disabled).toBe(true);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe(text);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(mirrorSettings.renderer).toBe("mirror");
+    expect(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY)).toBeNull();
+  });
+
+  it("explains the host refusal with a saved stream choice and a previous failed attempt", () => {
+    mirrorSettings.renderer = "stream";
+    renderStreamContext.hostUnavailableReason = "no-matching-record";
+    renderStreamContext.stopped = "no-capture";
+    mountPanel();
+    expect(el("mirror-renderer").checked).toBe(true);
+    expect(el("mirror-renderer").disabled).toBe(true);
+    expect(wrapper!.find('[data-testid="mirror-renderer-stopped"]').exists()).toBe(false);
+    expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text())
+      .toBe("The new renderer doesn't support this game version yet.");
+  });
+
+  it("keeps a QA override usable when the host cannot stream", async () => {
+    available();
+    renderStreamContext.hostUnavailableReason = "no-capture";
+    mountPanel();
+    expect(el("mirror-renderer").disabled).toBe(false);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(wrapper!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
   });
 
   // The choice rides the join: before one, the checkbox can be switched on whenever the join would ask for the stream.

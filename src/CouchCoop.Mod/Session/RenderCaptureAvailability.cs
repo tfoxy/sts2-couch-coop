@@ -7,6 +7,26 @@ namespace CouchCoop.Mod.Session;
 /// <summary>Checks capture compatibility before a seat is assigned the streaming role.</summary>
 internal static class RenderCaptureAvailability
 {
+    internal enum UnavailableReason
+    {
+        NoCapture, CaptureInvalid, OsUnsupported, LibraryMissing, CalibrationInvalid, CalibrationMissing,
+        NoMatchingRecord, OperatorRecordMismatch, IdentityUnreadable, Unknown,
+    }
+
+    internal static string ReasonCode(UnavailableReason reason) => reason switch
+    {
+        UnavailableReason.NoCapture => "no-capture",
+        UnavailableReason.CaptureInvalid => "capture-invalid",
+        UnavailableReason.OsUnsupported => "os-unsupported",
+        UnavailableReason.LibraryMissing => "library-missing",
+        UnavailableReason.CalibrationInvalid => "calibration-invalid",
+        UnavailableReason.CalibrationMissing => "calibration-missing",
+        UnavailableReason.NoMatchingRecord => "no-matching-record",
+        UnavailableReason.OperatorRecordMismatch => "operator-record-mismatch",
+        UnavailableReason.IdentityUnreadable => "identity-unreadable",
+        _ => "unknown",
+    };
+
     internal readonly record struct PeIdentity(uint SizeOfImage, uint TimeDateStamp, string? CodeViewId)
     {
         public override string ToString() => $"size_of_image={SizeOfImage}, time_date_stamp={TimeDateStamp}, codeview_id={CodeViewId ?? "null"}";
@@ -20,7 +40,8 @@ internal static class RenderCaptureAvailability
         try
         {
             var request = RenderCaptureExtensionLoader.Resolve(extension, fileExists);
-            if (request.Path is null) return new(null, request.Refusal);
+            if (request.Path is null) return new(null, request.Refusal, Reason: string.IsNullOrWhiteSpace(extension)
+                ? UnavailableReason.NoCapture : UnavailableReason.CaptureInvalid);
             var directory = Path.GetDirectoryName(request.Path)!;
             var key = os + "." + arch;
             string? library = null;
@@ -34,26 +55,26 @@ internal static class RenderCaptureAvailability
                 if (equals < 0 || line[..equals].Trim() != key) continue;
                 var value = line[(equals + 1)..].Trim();
                 if (library is not null || value.Length < 2 || value[0] != '"' || value[^1] != '"')
-                    return new(null, $"the capture descriptor has an invalid {key} library");
+                    return new(null, $"the capture descriptor has an invalid {key} library", Reason: UnavailableReason.CaptureInvalid);
                 library = value[1..^1];
             }
-            if (string.IsNullOrWhiteSpace(library)) return new(null, $"the capture descriptor has no {key} library");
+            if (string.IsNullOrWhiteSpace(library)) return new(null, $"the capture descriptor has no {key} library", Reason: UnavailableReason.OsUnsupported);
             var libraryPath = Path.IsPathFullyQualified(library) ? library : Path.Combine(directory, library);
-            if (!fileExists(libraryPath)) return new(null, $"the capture library does not exist: '{libraryPath}'");
+            if (!fileExists(libraryPath)) return new(null, $"the capture library does not exist: '{libraryPath}'", Reason: UnavailableReason.LibraryMissing);
 
             string calibrationPath;
             if (!string.IsNullOrWhiteSpace(calibration))
             {
                 calibrationPath = calibration.Trim();
                 if (!Path.IsPathFullyQualified(calibrationPath))
-                    return new(null, $"{StreamingSeatLaunch.CalibrationEnvironmentVariable} must be an absolute path, got '{calibrationPath}'");
+                    return new(null, $"{StreamingSeatLaunch.CalibrationEnvironmentVariable} must be an absolute path, got '{calibrationPath}'", Reason: UnavailableReason.CalibrationInvalid);
             }
             else calibrationPath = Path.Combine(directory, StreamingSeatLaunch.DefaultCalibrationFileName);
 
             if (os == "windows")
             {
                 var identity = readIdentity();
-                if (identity is null) return new(null, "the host executable has no readable Windows x86_64 PE identity");
+                if (identity is null) return new(null, "the host executable has no readable Windows x86_64 PE identity", Reason: UnavailableReason.IdentityUnreadable);
                 var candidates = !string.IsNullOrWhiteSpace(calibration) ? [calibrationPath] : listFiles(directory)
                     .Where(path => Path.GetFileName(path) == "calibration.json" || Path.GetFileName(path).StartsWith("calibration.", StringComparison.Ordinal))
                     .OrderBy(Path.GetFileName, StringComparer.Ordinal).ToArray();
@@ -75,20 +96,21 @@ internal static class RenderCaptureAvailability
                     }
                     catch (Exception) { /* An invalid record cannot identify an engine. */ }
                 }
-                if (matching is null) return new(null, $"no capture calibration matches the host executable ({identity.Value})");
+                if (matching is null) return new(null, $"no capture calibration matches the host executable ({identity.Value})",
+                    Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
                 calibrationPath = matching;
             }
             else if (string.IsNullOrWhiteSpace(calibration) && !fileExists(calibrationPath))
             {
                 calibrationPath = Path.Combine(directory, StreamingSeatLaunch.PackagedCalibrationFileName);
             }
-            if (!fileExists(calibrationPath)) return new(null, $"the capture's calibration record does not exist: '{calibrationPath}'");
+            if (!fileExists(calibrationPath)) return new(null, $"the capture's calibration record does not exist: '{calibrationPath}'", Reason: UnavailableReason.CalibrationMissing);
             var net = Path.Combine(directory, os == "windows" ? "render_stream_net.dll" : "librender_stream_net.so");
             return new(new StreamingSeatLaunch.Config(request.Path, calibrationPath, NetModule: fileExists(net) ? net : null), null);
         }
         catch (Exception exception)
         {
-            return new(null, $"capture availability could not be read: {exception.GetType().Name}");
+            return new(null, $"capture availability could not be read: {exception.GetType().Name}", Reason: UnavailableReason.Unknown);
         }
     }
 

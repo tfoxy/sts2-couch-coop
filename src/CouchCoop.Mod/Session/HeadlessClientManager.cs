@@ -258,6 +258,9 @@ public sealed partial class HeadlessClientManager : IDisposable
 
     // Every seat gets a standby capture when configured; each launch prepares its own port and evidence directory.
     private readonly StreamingSeatLaunch.Config? _streamingConfig;
+    private readonly RenderCaptureAvailability.UnavailableReason? _streamingUnavailableReason;
+    public string? RenderStreamUnavailableReason => _streamingConfig is not null ? null
+        : RenderCaptureAvailability.ReasonCode(_streamingUnavailableReason ?? RenderCaptureAvailability.UnavailableReason.Unknown);
 
     public static int SlotToPort(int slot) => HostPort + slot * PortStep;
     public static ulong SlotToNetId(int slot) => BaseNetId + (ulong)slot;
@@ -488,10 +491,12 @@ public sealed partial class HeadlessClientManager : IDisposable
         TimeProvider? browserReconnectTime = null,
         StreamingSeatLaunch.Config? streamingConfig = null,
         TimeSpan? seatShutdownGrace = null,
-        bool registerProcessExit = true)
+        bool registerProcessExit = true,
+        RenderCaptureAvailability.UnavailableReason? streamingUnavailableReason = null)
     {
         SeatShutdownGrace = seatShutdownGrace ?? DefaultSeatShutdownGrace;
         _streamingConfig = streamingConfig;
+        _streamingUnavailableReason = streamingUnavailableReason;
         _seatNoticeTime = seatNoticeTime;
         _browserReconnectTime = browserReconnectTime ?? TimeProvider.System;
         _launcher = launcher ?? throw new ArgumentNullException(nameof(launcher));
@@ -538,6 +543,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         _ownedSeatCountChanged = ownedSeatCountChanged;
         var streaming = StreamingSeatLaunch.ResolveConfigFromEnvironment();
         _streamingConfig = streaming.Config;
+        _streamingUnavailableReason = streaming.Reason;
         if (streaming.Warning is { } warning) CouchCoopLog.Warn($"streaming seat: {warning}");
         if (streaming.Config is { } config)
         {

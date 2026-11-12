@@ -166,7 +166,7 @@ afterEach(() => {
     stretchEnabled: true, panelOpen: false });
   Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false, coreLoadFailed: false, stopped: null,
     coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false,
-    lanOffer: null, page: undefined });
+    lanOffer: null, hostUnavailableReason: null, page: undefined });
   globalThis.localStorage?.clear();
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = realWebSocket;
 });
@@ -532,6 +532,32 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(fake.clients).toHaveLength(0);
     expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
     expect(latest().ofType("watch")).not.toContainEqual({ type: "watch", on: false });
+  });
+
+  it.each([true, false])("carries a host refusal into settings and suppresses saved stream requests (loopback=%s)", async (loopback) => {
+    canStream();
+    renderStreamContext.pageLoopback = loopback;
+    mirrorSettings.renderer = "stream";
+    mirrorSettings.panelOpen = true;
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    const refusal = { renderStreamUnavailableReason: "no-matching-record" };
+    host.emit(sessionMessage(refusal));
+    await settle();
+    expect(app!.get('[data-testid="mirror-renderer"]').attributes("disabled")).toBeDefined();
+    expect(app!.get('[data-testid="mirror-renderer-reason"]').text())
+      .toBe("The new renderer doesn't support this game version yet.");
+    await app!.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    await settle();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, ...refusal }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession());
+    await settle();
+    expect(renderStreamContext.hostUnavailableReason).toBe("no-matching-record");
+    expect(seat.ofType("renderer")).not.toContainEqual({ type: "renderer", renderer: "stream" });
+    expect(fake.clients).toHaveLength(0);
   });
 
   // A LAN page reads the host's offer from its pre-join sessions, and asks its seat for the stream only

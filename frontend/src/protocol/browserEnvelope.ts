@@ -217,6 +217,8 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // streaming seat offers this page ({ webTransport, tls, ws }). Absent with no capture. Parsed where it is used
   // (renderStreamAvailability's parseLanOffer).
   renderStreamLan?: unknown;
+  // Couch-only host capture refusal code. Absent when configured or on an older host.
+  renderStreamUnavailableReason?: string | null;
   // Current hosts always accept an absolute scroll offset (`set-scroll-offset`).
   scrollAction: true;
 }
@@ -607,6 +609,8 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
         ? value.renderStream as BrowserRenderStreamDescriptor : null,
       rendererState: normalizeRendererState(value.rendererState),
       renderStreamLan: value.renderStreamLan !== null && typeof value.renderStreamLan === "object" ? value.renderStreamLan : null,
+      renderStreamUnavailableReason: typeof value.renderStreamUnavailableReason === "string"
+        ? value.renderStreamUnavailableReason : null,
       scrollAction: requiredTrue(value.scrollAction, "scrollAction")
     };
   }

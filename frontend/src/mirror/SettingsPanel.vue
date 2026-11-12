@@ -105,12 +105,13 @@ const audioUsesHttp = computed(() => hostBase().startsWith("http://"));
 const audioHelpText = computed(() => `${t("settings.help.audio")}${audioUsesHttp.value ? t("settings.help.audioHttp") : ""}`);
 
 // The checkbox always reflects the saved choice. MirrorApp requests it on the joined seat socket;
-// a saved choice can always be switched off, even if this device can no longer draw the stream.
+// a saved choice can be switched off if this device can no longer draw. A host refusal disables the control.
 const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/i18n").MessageKey> = {
   // Refined by its cause below (CORE_CAUSE_KEYS); this is the load-failure sentence.
   "core-build": "settings.newRendererCoreLoadFailed",
   "no-webgl2": "settings.newRendererNoWebgl2",
   "host-view": "settings.newRendererHostView",
+  "host-unavailable": "settings.newRendererHostUnavailable",
   "needs-proxy": "settings.newRendererNeedsProxy",
   // Refined below for a choosable stream before a join.
   "not-streaming": "settings.newRendererNoCapture"
@@ -134,9 +135,20 @@ const newRenderer = computed<boolean>({
     syncRuntimeRenderer(settings);
   }
 });
-const newRendererDisabled = computed(() => !renderStreamChoosable.value && settings.renderer !== "stream");
+const newRendererDisabled = computed(() => renderStreamAvailability.value.reason === "host-unavailable"
+  || (!renderStreamChoosable.value && settings.renderer !== "stream"));
 const newRendererReason = computed(() => {
   const reason = renderStreamAvailability.value.reason;
+  if (reason === "host-unavailable") {
+    switch (renderStreamContext.hostUnavailableReason) {
+      case "no-matching-record":
+      case "operator-record-mismatch": return t("settings.newRendererGameUnsupported");
+      case "no-capture":
+      case "os-unsupported":
+      case "library-missing": return t("settings.newRendererComputerUnavailable");
+      default: return t("settings.newRendererHostUnavailable");
+    }
+  }
   if (renderStreamContext.stopped) return null;
   if (settings.renderer === "stream" && !renderStreamContext.returningToMirror
     && (renderStreamContext.rendererState?.state === "arming"
@@ -152,7 +164,8 @@ const newRendererReason = computed(() => {
   }
   return t(NEW_RENDERER_REASON_KEYS[reason]);
 });
-const newRendererStopped = computed(() => settings.renderer === "stream" ? renderStreamContext.stopped : null);
+const newRendererStopped = computed(() => settings.renderer === "stream"
+  && renderStreamAvailability.value.reason !== "host-unavailable" ? renderStreamContext.stopped : null);
 
 function selectStage(value: "dom" | "canvas"): void {
   if (streamActive.value) return;

@@ -67,8 +67,42 @@ internal static class RenderCaptureAvailabilityTests
         Check(unset.Config is null && unset.Refusal is null, "unset configuration is simply off");
         var mac = RenderCaptureAvailability.Resolve(null, null, "macos", "arm64", _ => throw new Exception(), _ => false, _ => [], () => throw new Exception());
         Check(mac.Config is null && mac.Refusal is null, "macOS without a packaged directory is not configured");
+        TypedOutcomes();
         CrossCheck();
         Console.WriteLine($"render-capture availability: {_assertions} passed.");
+    }
+
+    private static void TypedOutcomes()
+    {
+        var files = new Dictionary<string, string>
+        {
+            [Extension] = "[libraries]\nwindows.x86_64 = \"capture.dll\"",
+            ["/capture/capture.dll"] = "MZ",
+            ["/capture/calibration.a"] = Record(Identity),
+        };
+        StreamingSeatLaunch.ConfigResult Resolve(string? extension = Extension, string? calibration = null,
+            string os = "windows", bool unreadable = false, bool throws = false) => RenderCaptureAvailability.Resolve(
+                extension, calibration, os, "x86_64", path => throws ? throw new IOException() : files[path],
+                files.ContainsKey, _ => files.Keys, () => unreadable ? null : Identity);
+        void Refused(StreamingSeatLaunch.ConfigResult result, RenderCaptureAvailability.UnavailableReason reason)
+            => Check(result.Config is null && result.Reason == reason, $"typed refusal: {reason}");
+
+        var available = Resolve();
+        Check(available.Config is not null && available.Reason is null && available.Refusal is null, "available outcome");
+        Refused(Resolve(extension: null), RenderCaptureAvailability.UnavailableReason.NoCapture);
+        Refused(Resolve(extension: "relative.gdextension"), RenderCaptureAvailability.UnavailableReason.CaptureInvalid);
+        Refused(Resolve(os: "macos"), RenderCaptureAvailability.UnavailableReason.OsUnsupported);
+        files.Remove("/capture/capture.dll");
+        Refused(Resolve(), RenderCaptureAvailability.UnavailableReason.LibraryMissing);
+        files["/capture/capture.dll"] = "MZ";
+        Refused(Resolve(calibration: "relative.json"), RenderCaptureAvailability.UnavailableReason.CalibrationInvalid);
+        Refused(Resolve(unreadable: true), RenderCaptureAvailability.UnavailableReason.IdentityUnreadable);
+        Refused(Resolve(throws: true), RenderCaptureAvailability.UnavailableReason.Unknown);
+        files["/capture/calibration.a"] = Record(Identity with { SizeOfImage = 1 });
+        Refused(Resolve(), RenderCaptureAvailability.UnavailableReason.NoMatchingRecord);
+        Refused(Resolve(calibration: "/capture/calibration.a"), RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch);
+        files[Extension] = "[libraries]\nlinux.x86_64 = \"capture.dll\"";
+        Refused(Resolve(os: "linux"), RenderCaptureAvailability.UnavailableReason.CalibrationMissing);
     }
 
     private static string Record(RenderCaptureAvailability.PeIdentity identity, string platform = "windows-x86_64")
