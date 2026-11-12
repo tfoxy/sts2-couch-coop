@@ -48,7 +48,13 @@ internal static class MacOsReleaseArchiveTests
             "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "couchcoop.json", "build-info.txt",
             "couchcoop.dll", "CouchCoop.Mod.Contracts.dll", "CouchCoop.MirrorProtocol.dll", "QRCoder.dll",
             "DeviceDetector.NET.dll", "LiteDB.dll", "Microsoft.Extensions.DependencyInjection.Abstractions.dll",
-            "Microsoft.Extensions.Logging.Abstractions.dll", "System.Diagnostics.DiagnosticSource.dll", "YamlDotNet.dll"
+            "Microsoft.Extensions.Logging.Abstractions.dll", "System.Diagnostics.DiagnosticSource.dll", "YamlDotNet.dll",
+            // The streaming seat's render capture, per OS (scripts/verify-release-archive.sh holds the full rules).
+            "render-capture/linux/librender_stream_capture.so", "render-capture/linux/render_stream_capture.gdextension",
+            "render-capture/linux/calibration", "render-capture/linux/librender_stream_net.so",
+            "render-capture/windows/render_stream_capture.dll", "render-capture/windows/render_stream_capture.gdextension",
+            "render-capture/windows/render_stream_net.dll", "render-capture/windows/calibration.stable",
+            "render-capture/windows/calibration.public-beta"
         };
         foreach (var assembly in SharedAssemblies) Assert(File.Exists(Path.Combine(payload, assembly)), $"shared file {assembly}");
 
