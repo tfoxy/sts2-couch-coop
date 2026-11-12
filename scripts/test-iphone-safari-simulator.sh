@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 bash -n "$repo_root/scripts/run-iphone-safari-simulator.sh"
 node "$repo_root/scripts/test-iphone-safari-simulator.mjs"
+node --test "$repo_root/scripts/test-iphone-safari-diagnostics.mjs"
 
 preflight_line=$(grep -n 'iphone-harness-preflight.mjs' "$repo_root/scripts/run-iphone-safari-simulator.sh" | cut -d: -f1)
 inventory_line=$(grep -n 'simctl list runtimes' "$repo_root/scripts/run-iphone-safari-simulator.sh" | cut -d: -f1)
@@ -47,7 +48,11 @@ if [ "$(uname -s)" != "Darwin" ]; then
     const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     if (result.ok !== false || result.category !== "capability" || result.reason !== "macos-required") process.exit(1);
   ' "$artifact_dir/iphone-safari-result.json"
-  [ "$(cat "$artifact_dir/iphone-safari-timeline.json")" = "[]" ]
+  node -e '
+    const fs = require("node:fs");
+    const timeline = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (timeline.length !== 1 || timeline[0].kind !== "provenance") process.exit(1);
+  ' "$artifact_dir/iphone-safari-timeline.json"
 fi
 
 printf '%s\n' 'iphone-safari shell runner: ok'

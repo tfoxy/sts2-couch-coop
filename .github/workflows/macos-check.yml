@@ -422,8 +422,9 @@ jobs:
           set -euo pipefail
           artifact_dir="$PWD/.ci-artifacts/iphone-safari-arm/field-repro"
           harness_out="$RUNNER_TEMP/couchcoop-iphone-harness.out"
-          harness_err="$RUNNER_TEMP/couchcoop-iphone-harness.err"
+          harness_err="$artifact_dir/iphone-safari-host.log"
           mkdir -p "$artifact_dir"
+          : >"$artifact_dir/browser-lifecycle.jsonl"
           dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
             -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
             -p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false -- \
@@ -431,7 +432,17 @@ jobs:
             --port 23339 --mode iphone-burst --iphone-profile field-repro --artifact-dir "$artifact_dir" \
             >"$harness_out" 2>"$harness_err" &
           harness_pid=$!
-          trap 'kill "$harness_pid" >/dev/null 2>&1 || true' EXIT HUP INT TERM
+          cleanup_harness() {
+            kill "$harness_pid" >/dev/null 2>&1 || true
+            wait "$harness_pid" >/dev/null 2>&1 || true
+            sed -E 's/visit=[0-9a-f]{32}/visit=<redacted>/g; s#https?://[^[:space:]"<>]+#<redacted-url>#g' "$harness_err" >"$harness_err.redacted"
+            mv "$harness_err.redacted" "$harness_err"
+            if [ ! -f "$artifact_dir/iphone-safari-result.json" ]; then
+              node scripts/run-iphone-safari-simulator.mjs --recordFailure true \
+                --artifactDir "$artifact_dir" --category host-socket-close --reason harness-startup-failed
+            fi
+          }
+          trap cleanup_harness EXIT HUP INT TERM
           poll=0
           while [ "$poll" -lt 120 ] && ! grep -q '"baseUrl"' "$harness_out"; do
             if ! kill -0 "$harness_pid" >/dev/null 2>&1; then

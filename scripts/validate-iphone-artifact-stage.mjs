@@ -12,6 +12,7 @@ const allowedByKind = {
     "iphone-safari-timeline.json",
     "iphone-safari-crash-metadata.json",
     "iphone-safari-failure.png",
+    "iphone-safari-host.log",
   ]),
 };
 const requiredByKind = {
@@ -57,9 +58,13 @@ for (const entry of entries) {
   const info = await lstat(path);
   if (info.isSymbolicLink() || await realpath(path) !== path) throw new Error(`symlinked iPhone artifact: ${entry.name}`);
   const maximum = entry.name === "browser-lifecycle.jsonl" ? 1024 * 1024
-    : entry.name.endsWith(".png") ? 10 * 1024 * 1024
+    : entry.name.endsWith(".png") || entry.name === "iphone-safari-host.log" ? 10 * 1024 * 1024
       : 64 * 1024;
   if (info.size > maximum) throw new Error(`oversized iPhone artifact: ${entry.name}`);
+  if (entry.name === "iphone-safari-host.log") {
+    const content = await readFile(path, "utf8");
+    if (/https?:\/\/|\b[0-9a-f]{32}\b/i.test(content)) throw new Error("unredacted iPhone host log");
+  }
   if (entry.name.endsWith(".png")) {
     const bytes = await readFile(path);
     if (bytes.length < 8 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) throw new Error(`invalid PNG artifact: ${entry.name}`);
@@ -85,9 +90,14 @@ function validateJson(name, value) {
       }
     } else {
       for (const row of value) {
-        exact(row, ["t", "kind"]);
+        if (row.kind === "provenance") {
+          exactKeys(row, ["t", "kind", "provenance"]);
+          validateProvenance(row.provenance);
+        } else {
+          exact(row, ["t", "kind"]);
+        }
         if (!boundedInt(row.t, 30 * 60 * 1000)
-          || !["session-open", "control-loaded", "seat-selected", "final-ack-observed", "survival-complete", "assertion-failed", "passed", "failed", "session-closed"].includes(row.kind)) {
+          || !["provenance", "session-open", "control-loaded", "seat-selected", "final-ack-observed", "survival-complete", "assertion-failed", "passed", "failed", "session-closed"].includes(row.kind)) {
           throw new Error("invalid Safari timeline schema");
         }
       }
@@ -117,7 +127,10 @@ function validateJson(name, value) {
     return;
   }
   if (name.includes("safari-result")) {
-    exact(value, ["category", "phase", "failureClass", "ok", "reason", "presentations", "acks", "hostSocketOpen", "seatSocketOpen", "viewError", "crash", "animationFrames", "responsive", "requiredMessages", "failures", "profile"]);
+    if (value.provenance !== undefined) validateProvenance(value.provenance);
+    if (value.commands !== undefined) validateCommands(value.commands);
+    if (value.lastSafeResult !== undefined) validateSafeResult(value.lastSafeResult);
+    exact(value, ["category", "phase", "failureClass", "ok", "reason", "presentations", "acks", "hostSocketOpen", "seatSocketOpen", "viewError", "crash", "animationFrames", "responsive", "requiredMessages", "failures", "profile", "provenance", "commands", "lastSafeResult"]);
     if (typeof value.ok !== "boolean"
       || !["renderer-page-crash", "unexpected-reload-navigation", "seat-socket-close", "host-socket-close", "client-view-error", "missing-acknowledgement", "render-stall", "script-unresponsive", "simulator-safaridriver-failure", "success", "capability"].includes(value.category)
       || !["pre-first-frame", "post-first-frame", "post-final-delta"].includes(value.phase)
@@ -205,4 +218,45 @@ function validateLifecycle(value) {
 function exactKeys(value, fields) {
   exact(value, fields);
   if (Object.keys(value).length !== fields.length || fields.some(field => !(field in value))) throw new Error("invalid iPhone artifact schema");
+}
+
+function validateProvenance(value) {
+  exactKeys(value, ["run_id", "run_attempt", "head_sha"]);
+  for (const [field, pattern] of [["run_id", /^\d{1,20}$/], ["run_attempt", /^\d{1,10}$/], ["head_sha", /^[0-9a-f]{40}$/]]) {
+    if (value[field] !== null && (typeof value[field] !== "string" || !pattern.test(value[field]))) {
+      throw new Error("invalid Safari provenance");
+    }
+  }
+}
+
+function validateCommands(value) {
+  if (!Array.isArray(value) || value.length > 512) throw new Error("invalid Safari commands");
+  for (const row of value) {
+    exactKeys(row, ["command", "elapsedMs", "outcome"]);
+    if (!["create-session", "navigate-blank", "check-arithmetic", "navigate-harness", "read-current-url",
+      "read-window-handles", "inspect-page", "read-diagnostic-visit", "find-seat-selector", "select-seat",
+      "check-responsiveness", "count-animation-frames", "failure-screenshot", "delete-session"].includes(row.command)
+      || !boundedInt(row.elapsedMs, 30 * 60 * 1000) || !["success", "error"].includes(row.outcome)) {
+      throw new Error("invalid Safari command");
+    }
+  }
+}
+
+function validateSafeResult(value) {
+  exactKeys(value, ["navigation", "page"]);
+  if (value.navigation !== null) {
+    exactKeys(value.navigation, ["originEqualsHarness", "pathIsRoot", "aboutBlank", "handleCount"]);
+    if (![value.navigation.originEqualsHarness, value.navigation.pathIsRoot, value.navigation.aboutBlank]
+      .every(item => typeof item === "boolean") || !boundedInt(value.navigation.handleCount, 1024)) {
+      throw new Error("invalid Safari navigation facts");
+    }
+  }
+  if (value.page !== null) {
+    exactKeys(value.page, ["readyState", "lifecycleMetaPresent", "lifecycleNonceValid", "seatSelectorPresent"]);
+    if (!["loading", "interactive", "complete", "unknown"].includes(value.page.readyState)
+      || ![value.page.lifecycleMetaPresent, value.page.lifecycleNonceValid, value.page.seatSelectorPresent]
+        .every(item => typeof item === "boolean")) {
+      throw new Error("invalid Safari page facts");
+    }
+  }
 }

@@ -153,4 +153,17 @@ cp "$workflow" "$tmp/timeout.yml"
 sed '/name: Check workflow policy/{n;/timeout-minutes:/d;}' "$workflow" > "$tmp/timeout.yml"
 expect_reject timeout "$tmp/timeout.yml" "named workflow steps without"
 
+sed 's#harness_err="$artifact_dir/iphone-safari-host.log"#harness_err="$RUNNER_TEMP/host.err"#' \
+  "$workflow" > "$tmp/host-log.yml"
+expect_reject host-log "$tmp/host-log.yml" "ARM Simulator must stage the full synthetic host stderr log"
+
+sed '/sed -E.*visit=.*redacted/d' "$workflow" > "$tmp/unredacted-host-log.yml"
+expect_reject unredacted-host-log "$tmp/unredacted-host-log.yml" \
+  "ARM Simulator must redact visit identifiers after stopping the host"
+
+sed "s/always() && steps.validate_arm_artifacts.outcome/success() \&\& steps.validate_arm_artifacts.outcome/" \
+  "$workflow" > "$tmp/upload-on-success.yml"
+expect_reject upload-on-success "$tmp/upload-on-success.yml" \
+  "ARM Simulator upload must run after a failed contract when artifact validation succeeds"
+
 echo "macOS/iPhone workflow policy tests passed"

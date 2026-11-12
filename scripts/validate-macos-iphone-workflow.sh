@@ -149,6 +149,21 @@ require_fixed "steps.iphone_safari_contract.outcome != 'skipped'" \
 require_fixed "-p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false --" \
   "the ARM Simulator harness must preserve its verified stable API lane"
 require_fixed "--iphone-profile field-repro" "ARM Simulator must run the field-reproduction profile"
+require_fixed 'harness_err="$artifact_dir/iphone-safari-host.log"' \
+  "ARM Simulator must stage the full synthetic host stderr log"
+arm_cleanup="$(job_source macos_arm | sed -n '/^          cleanup_harness() {$/,/^          }$/p' \
+  | sed -n '/wait "\$harness_pid"/,$p')"
+for required in \
+  "sed -E 's/visit=[0-9a-f]{32}/visit=<redacted>/g; s#https?://[^[:space:]\"<>]+#<redacted-url>#g' \"\$harness_err\" >\"\$harness_err.redacted\"" \
+  'mv "$harness_err.redacted" "$harness_err"'; do
+  if ! grep -Fq -- "$required" <<< "$arm_cleanup"; then
+    fail "ARM Simulator must redact visit identifiers after stopping the host"
+  fi
+done
+arm_upload="$(job_source macos_arm | sed -n '/name: Upload staged ARM Simulator diagnostics/,$p')"
+if ! grep -Fq "if: \${{ always() && steps.validate_arm_artifacts.outcome == 'success' }}" <<< "$arm_upload"; then
+  fail "ARM Simulator upload must run after a failed contract when artifact validation succeeds"
+fi
 reject_fixed "iphone-safari-intel" "Intel must not stage or upload iPhone Simulator artifacts"
 
 # Every named step puts its timeout immediately after its name. Keeping this mechanically checkable prevents a

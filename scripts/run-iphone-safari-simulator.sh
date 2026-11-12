@@ -5,6 +5,7 @@ set -euo pipefail
 artifact_dir=""
 harness_url=""
 iphone_profile="field-repro"
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 for ((argument_index=1; argument_index<=$#; argument_index++)); do
   if [ "${!argument_index}" = "--artifact-dir" ]; then
     value_index=$((argument_index + 1))
@@ -13,18 +14,27 @@ for ((argument_index=1; argument_index<=$#; argument_index++)); do
 done
 
 persist_failure() {
-  [ -n "$artifact_dir" ] || return 0
+  [ -n "$artifact_dir" ] || { printf '%s: %s\n' "$1" "$2" >&2; return 0; }
   mkdir -p "$artifact_dir"
-  phase="${3:-pre-first-frame}"
-  failure_class=null
-  if [ "$1" = "renderer-page-crash" ]; then failure_class='"post-first-frame-browser-disappearance"'; fi
-  printf '{"category":"%s","phase":"%s","failureClass":%s,"ok":false,"reason":"%s","profile":"field-repro"}\n' \
-    "$1" "$phase" "$failure_class" "$2" >"$artifact_dir/iphone-safari-result.json"
-  [ -f "$artifact_dir/iphone-safari-timeline.json" ] || printf '[]\n' >"$artifact_dir/iphone-safari-timeline.json"
+  if command -v node >/dev/null 2>&1; then
+    node "$script_dir/run-iphone-safari-simulator.mjs" --recordFailure true \
+      --artifactDir "$artifact_dir" --category "$1" --reason "$2" --phase "${3:-pre-first-frame}"
+  else
+    # Keep capability evidence available even when Node itself is missing.
+    run_id=null; run_attempt=null; head_sha=null
+    if [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]{1,20}$ ]]; then run_id="\"$GITHUB_RUN_ID\""; fi
+    if [[ "${GITHUB_RUN_ATTEMPT:-}" =~ ^[0-9]{1,10}$ ]]; then run_attempt="\"$GITHUB_RUN_ATTEMPT\""; fi
+    if [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then head_sha="\"$GITHUB_SHA\""; fi
+    provenance="{\"run_id\":$run_id,\"run_attempt\":$run_attempt,\"head_sha\":$head_sha}"
+    printf '{"category":"%s","phase":"pre-first-frame","failureClass":null,"ok":false,"reason":"%s","profile":"field-repro","provenance":%s,"commands":[],"lastSafeResult":{"navigation":null,"page":null}}\n' \
+      "$1" "$2" "$provenance" >"$artifact_dir/iphone-safari-result.json"
+    printf '[{"t":0,"kind":"provenance","provenance":%s}]\n' "$provenance" >"$artifact_dir/iphone-safari-timeline.json"
+    printf 'iphone-safari provenance: %s\n' "$provenance"
+    printf '%s: %s\n' "$1" "$2" >&2
+  fi
 }
 fail() {
   persist_failure "$1" "$2" pre-first-frame
-  printf '{"category":"%s","ok":false,"reason":"%s"}\n' "$1" "$2" >&2
   exit "${3:-1}"
 }
 
@@ -40,15 +50,14 @@ done
 if [ -z "$artifact_dir" ] || [ -z "$harness_url" ]; then fail capability missing-required-argument 64; fi
 if [ "$iphone_profile" != "field-repro" ]; then fail capability field-repro-required 64; fi
 mkdir -p "$artifact_dir"
-rm -f "$artifact_dir/iphone-safari-failure.png"
+rm -f "$artifact_dir/iphone-safari-failure.png" \
+  "$artifact_dir/iphone-safari-result.json" "$artifact_dir/iphone-safari-timeline.json"
 
 [ "$(uname -s)" = "Darwin" ] || fail capability macos-required 78
 command -v xcrun >/dev/null 2>&1 || fail capability xcrun-unavailable 78
 command -v safaridriver >/dev/null 2>&1 || fail capability safaridriver-unavailable 78
 command -v node >/dev/null 2>&1 || fail capability node-unavailable 78
 command -v curl >/dev/null 2>&1 || fail capability curl-unavailable 78
-
-script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
 # Warm and verify the host before CoreSimulator startup competes for the runner. This request deliberately loads
 # the real shell, so Safari's later first navigation does not pay the host's cold visit-diagnostics cost.
@@ -138,6 +147,7 @@ set +e
 node "$script_dir/run-iphone-safari-simulator.mjs" \
   --url "$harness_url" \
   --profile "$iphone_profile" \
+  --deferFailureLog true \
   --artifactDir "$artifact_dir" \
   --webdriver http://127.0.0.1:4444 \
   --udid "$device"
@@ -156,4 +166,5 @@ if [ "$crash_status" -eq 10 ]; then
 fi
 [ "$crash_status" -eq 0 ] || fail simulator-safaridriver-failure crash-report-inspection-failed
 rm -f "$artifact_dir/iphone-safari-crash-metadata.json"
+node "$script_dir/run-iphone-safari-simulator.mjs" --reportResult true --artifactDir "$artifact_dir"
 exit "$runner_status"
