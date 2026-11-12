@@ -7,7 +7,7 @@
     },
     "godot-scene-web": {
       "repository": "https://github.com/tfoxy/godot-scene-web.git",
-      "commit": "7da26aa41ac37d7ffdbac37f814be63758a79098"
+      "commit": "794ae0b1f67156160120959383062407b521b189"
     }
   }
 }
