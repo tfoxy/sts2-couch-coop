@@ -59,7 +59,7 @@ public sealed class CouchCoopBrowserServer(
     private readonly Action<int, long>? _onBrowserDemandChanged = onBrowserDemandChanged;
     private readonly Action? _requestSecureOrigin = requestSecureOrigin;
     private readonly Action<int, long> _onSceneStreamingDemandChanged =
-        onSceneStreamingDemandChanged ?? CouchCoopHeadlessVisualSuspender.CreateStreamingDemandReporter();
+        onSceneStreamingDemandChanged ?? StreamingViewerDemandState.CreateStreamingDemandReporter();
     private readonly bool _isHeadlessClient = isHeadlessClient ?? CouchCoopMod.IsHeadlessClient;
     private readonly Lazy<IHostBrowserAccess> _hostBrowserAccess = new(() => hostBrowserAccess
         ?? new HostBrowserAccessMonitor(() => envelopeFactory?.RuntimeHost.CancelInjectedInput()));

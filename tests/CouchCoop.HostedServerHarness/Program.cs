@@ -21,6 +21,7 @@ static CouchCoopRuntimeDependencies Dependencies(FakeSpirectlRuntime runtime)
     => new(runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime, runtime);
 if (options.Mode == HarnessMode.IphoneBurstSelfTest)
 {
+    await HostedServerConstructionTests.RunAsync();
     FakeSpirectlRuntime.AssertIphoneBurstShape(IphoneBurstProfile.Baseline);
     FakeSpirectlRuntime.AssertIphoneBurstShape(IphoneBurstProfile.FieldRepro);
     await FakeSpirectlRuntime.AssertIphoneBurstFlowAsync(IphoneBurstProfile.Baseline);

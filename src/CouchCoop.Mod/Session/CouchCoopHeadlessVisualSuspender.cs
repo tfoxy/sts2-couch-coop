@@ -102,14 +102,6 @@ public static class CouchCoopHeadlessVisualSuspender
     private const long IdleThresholdMs = 1000;
     private const long RescanIntervalMs = 1000;
 
-    // A browser-server generation reports its balanced scene-stream count through a process-wide ledger.
-    // A windowed host parks its rescan-only Timer at zero viewers once every owed finish nudge has fired.
-    // Headless seats retain their continuous FPS/input supervision.
-    private static readonly StreamingViewerDemand StreamingViewers = new(QueueTimerDemandReconcile);
-    // BCL-only boundary: BrowserServer.cs is linked into the hot-reload assembly, but the ledger and Timer
-    // live in the process-owned mod assembly so every generation updates the SAME demand state.
-    public static Action<int, long> CreateStreamingDemandReporter() => StreamingViewers.CreateReporter();
-
     // Idle frame-rate throttle: while idle we ALSO drop Engine.MaxFps to a low value, which linearly cuts every
     // per-frame cost at once (FMOD's native update callback, decorative _Process animations, the engine's tick
     // over the whole tree) — far more than freezing individual nodes. 24fps is just a copied player setting
@@ -396,7 +388,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
     private static void ReconcileEnabledStateOnMainThread()
     {
-        var actions = ComputeEnableActions(_enabled, StreamingViewers.HasViewers,
+        var actions = ComputeEnableActions(_enabled, StreamingViewerDemandState.HasViewers,
             new FreezeStates(_freezeParticles, _freezeSpine, _freezeDecor));
         // Stop first on disable, before restoring nodes or clearing owed particle work.
         ReconcileTimerDemandOnMainThread();
@@ -509,7 +501,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
     // Browser demand arrives from a worker. Only the deferred main-thread callback touches the Godot Timer.
     // It reads current demand, so an older queued callback cannot undo a newer viewer transition.
-    private static void QueueTimerDemandReconcile()
+    internal static void QueueTimerDemandReconcile()
     {
         if (_started && _enabled && _rescanOnly)
         {
@@ -534,7 +526,7 @@ public static class CouchCoopHeadlessVisualSuspender
             hasPendingFinishNudges = _pendingFinishNudges.Count > 0;
         }
 
-        if (ShouldRunTimer(_enabled, _rescanOnly, StreamingViewers.HasViewers, hasPendingFinishNudges))
+        if (ShouldRunTimer(_enabled, _rescanOnly, StreamingViewerDemandState.HasViewers, hasPendingFinishNudges))
         {
             // An overdue repeating Timer can report IsStopped=true while still processing internally.
             if (!timer.IsProcessingInternal()) timer.Start();
@@ -572,7 +564,7 @@ public static class CouchCoopHeadlessVisualSuspender
         // scan throttled to once per RescanIntervalMs; each is individually kill-switched and a cheap no-op once the combat
         // scene's nodes are all frozen.
         var nowDeco = System.Environment.TickCount64;
-        if (StreamingViewers.HasViewers && nowDeco - _lastDecorativeScanMs >= RescanIntervalMs)
+        if (StreamingViewerDemandState.HasViewers && nowDeco - _lastDecorativeScanMs >= RescanIntervalMs)
         {
             _lastDecorativeScanMs = nowDeco;
             if (_freezeDecor) FreezeDecorativeAnimators(root);

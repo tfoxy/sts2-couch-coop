@@ -184,7 +184,7 @@ internal static class HeadlessSuspenderEnableTests
                 && !(bool)Field("_freezeDecor").GetValue(null)!, "disable preserves category configuration");
             Invoke("Tick", (object?)null);
             Assert(!(bool)Field("_suspended").GetValue(null)!, "a stray timeout remains inert");
-            var report = Suspender.CreateStreamingDemandReporter();
+            var report = StreamingViewerDemandState.CreateStreamingDemandReporter();
             report(1, 1);
             report(0, 2);
             Assert(!Suspender.IsEnabled, "viewer transitions while disabled do not queue a native timer wake");
