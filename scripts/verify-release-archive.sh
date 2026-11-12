@@ -216,7 +216,8 @@ verify_crate_license_bundle() {
     echo "$label license bundle is empty" >&2
     return 1
   }
-  find "$bundle" -maxdepth 1 -type f -printf '%f\n' \
+  # Basenames without GNU find's -printf: the macOS check runs this with BSD find.
+  find "$bundle" -maxdepth 1 -type f -exec basename {} \; \
     | sed '/^manifest\.tsv$/d; /^THIRD_PARTY_NOTICES\.md$/d' \
     | LC_ALL=C sort > "$shipped"
   diff <(LC_ALL=C sort -u "$referenced") "$shipped" >/dev/null || {
