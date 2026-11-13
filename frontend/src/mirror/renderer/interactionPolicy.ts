@@ -28,7 +28,10 @@ export const TOUCH_TARGET_TYPES = new Set([
   // inputCapture's `if (!top)` guard fired BEFORE the tapToFocus check — so the setting was never consulted and one
   // tap was one full click. Exactly the shape NTreasureRoomRelicHolder had before it was listed. Confirmed off the
   // streamed leaf. Native twin: TouchTargetScan.TouchTargetTypes.
-  "NMerchantCardRemoval"
+  "NMerchantCardRemoval",
+  // Blitz mode's shop offers (game v0.113.0+): one slot widget for every offer, same `Hitbox` shape as the classic
+  // merchant slots. Native twin: TouchTargetScan.TouchTargetTypes.
+  "NBlitzMerchantSlot"
 ]);
 
 // The end-of-event "Proceed" option is displayed through the SAME reusable NEventOptionButton wrapper as a
@@ -174,6 +177,7 @@ const CONFIRM_TAP_TARGET_KINDS = new Map<string, ConfirmTapKind>([
   ["NMerchantPotion", "shop"],
   ["NMerchantCard", "shop"],
   ["NMerchantCardRemoval", "shop"],
+  ["NBlitzMerchantSlot", "shop"], // gated: only while the offer can still be bought, see confirmTapEligible
   ["NTreasureRoomRelicHolder", "relic"] // gated: multiplayer holders only, see confirmTapEligible
 ]);
 
@@ -194,6 +198,12 @@ const SINGLEPLAYER_RELIC_HOLDER_NAME = "SingleplayerRelicHolder";
 // widget byte-identical). Name-matched on the slot's own direct child.
 const MERCHANT_COST_CHILD_NAME = "Cost";
 
+// A Blitz shop offer also stays on the carpet once it is used or can no longer be bought. Its signal is the slot's
+// `Hitbox` child switching to mouse-filter Ignore: the game stops accepting clicks on it, so there is no choice left
+// to confirm. Name-matched on the slot's own direct child.
+const BLITZ_MERCHANT_SLOT_TYPE = "NBlitzMerchantSlot";
+const MERCHANT_HITBOX_CHILD_NAME = "Hitbox";
+
 /**
  * Which irreversible-choice kind a touch-target widget is, or null when its tap is not one. Pure (the two ancestor
  * questions are injected) so the table above is unit-testable without a renderer. See CONFIRM_TAP_TARGET_KINDS for
@@ -203,7 +213,8 @@ export function confirmTapEligible(
   node: Pick<MirrorNode, "id" | "name" | "nodeType"> | null | undefined,
   isHandCard: (id: string) => boolean,
   hasAncestorSceneFile: (id: string, suffix: string) => boolean,
-  hasVisibleChild: (id: string, name: string) => boolean = () => true
+  hasVisibleChild: (id: string, name: string) => boolean = () => true,
+  childIgnoresMouse: (id: string, name: string) => boolean = () => false
 ): ConfirmTapKind | null {
   if (!node) {
     return null;
@@ -221,6 +232,9 @@ export function confirmTapEligible(
   }
   if (leaf === "NMerchantCardRemoval") {
     return hasVisibleChild(node.id, MERCHANT_COST_CHILD_NAME) ? kind : null;
+  }
+  if (leaf === BLITZ_MERCHANT_SLOT_TYPE) {
+    return childIgnoresMouse(node.id, MERCHANT_HITBOX_CHILD_NAME) ? null : kind;
   }
   return kind;
 }

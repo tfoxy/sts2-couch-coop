@@ -26,7 +26,15 @@ import {
 
   type MirrorRenderer
 } from "@/mirror/mirrorRenderer";
-import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
+import { TOUCH_TARGET_TYPES } from "@/mirror/renderer/interactionPolicy";
+import { directChildIgnoresMouse } from "@/mirror/renderer/treeQueries";
+import {
+  applySceneDelta,
+  createMirrorState,
+  parseSceneDelta,
+  type MirrorNode,
+  type MirrorState
+} from "@/mirror/sceneTree";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 
@@ -84,6 +92,31 @@ describe("confirm tap — eligibility", () => {
     expect(confirmTapEligible(coin, notHand, noScene, () => false)).toBeNull();
     // Every OTHER shop slot is unaffected by that signal (they have no such spent state).
     expect(confirmTapEligible(nodeOf("p", "Godot.NMerchantPotion"), notHand, noScene, () => false)).toBe("shop");
+  });
+
+  it("confirms a Blitz shop offer only while its Hitbox still takes clicks", () => {
+    // A Blitz offer stays on the carpet once used or unavailable; the game switches its `Hitbox` to mouse-filter
+    // Ignore, which is the spent signal (the removal coin's `Cost` rule does not apply to it).
+    const slot = nodeOf("blitz", "Godot.NBlitzMerchantSlot");
+    expect(TOUCH_TARGET_TYPES.has("NBlitzMerchantSlot")).toBe(true);
+    expect(confirmTapEligible(slot, notHand, noScene)).toBe("shop");
+    expect(confirmTapEligible(slot, notHand, noScene, () => false, () => false)).toBe("shop");
+    expect(confirmTapEligible(slot, notHand, noScene, () => true, (_, name) => name === "Hitbox")).toBeNull();
+    // Classic shop slots never read that signal.
+    expect(confirmTapEligible(nodeOf("p", "Godot.NMerchantPotion"), notHand, noScene, () => true, () => true))
+      .toBe("shop");
+  });
+
+  it("reads a direct child's Ignore mouse filter off the retained node map", () => {
+    const nodes = new Map([
+      ["slot", { id: "slot", parentId: null, name: "Slot", mouseFilter: 0 }],
+      ["hit", { id: "hit", parentId: "slot", name: "Hitbox", mouseFilter: 2 }],
+      ["live", { id: "live", parentId: null, name: "Live", mouseFilter: 0 }],
+      ["liveHit", { id: "liveHit", parentId: "live", name: "Hitbox", mouseFilter: 0 }]
+    ]) as unknown as ReadonlyMap<string, MirrorNode>;
+    expect(directChildIgnoresMouse(nodes, "slot", "Hitbox")).toBe(true);
+    expect(directChildIgnoresMouse(nodes, "live", "Hitbox")).toBe(false);
+    expect(directChildIgnoresMouse(nodes, "slot", "Missing")).toBe(false);
   });
 
   it("takes MULTIPLAYER treasure relics only — the singleplayer holder shares its corner with Skip", () => {

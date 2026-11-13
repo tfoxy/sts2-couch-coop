@@ -37,6 +37,9 @@ public static class TouchTargetScan
         // NTreasureRoomRelicHolder had before it was listed here. NOT added to CardTouchTargetTypes below: that set
         // drives the non-hand long-press right-click, which opens an item's DETAIL dialog, and a service has none.
         "NMerchantCardRemoval",
+        // Blitz mode's shop offers (game v0.113.0+): one slot widget for every offer, same "Hitbox" shape as the
+        // classic merchant slots. Like the removal coin it is a service, so it stays out of CardTouchTargetTypes.
+        "NBlitzMerchantSlot",
     };
 
     // The end-of-event "Proceed" option is displayed through the SAME reusable NEventOptionButton wrapper as a

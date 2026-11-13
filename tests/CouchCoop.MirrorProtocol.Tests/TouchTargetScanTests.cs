@@ -432,7 +432,10 @@ internal static class TouchTargetScanTests
             // NClickableControl "Hitbox" child every other shop slot also has. Neither leaf ends in "Button", so
             // before it was listed BOTH classified as None and one tap was one full click.
             Node("removal", "shop", "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantCardRemoval", 400, 0, 100, 100, texture: true),
-            Node("removalHitbox", "removal", "MegaCrit.Sts2.Core.Nodes.GodotExtensions.NClickableControl", 400, 0, 100, 100));
+            Node("removalHitbox", "removal", "MegaCrit.Sts2.Core.Nodes.GodotExtensions.NClickableControl", 400, 0, 100, 100),
+            // A Blitz shop offer (game v0.113.0+): the same slot + "Hitbox" shape.
+            Node("blitz", "shop", "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NBlitzMerchantSlot", 600, 0, 100, 100, texture: true),
+            Node("blitzHitbox", "blitz", "MegaCrit.Sts2.Core.Nodes.GodotExtensions.NClickableControl", 600, 0, 100, 100));
 
         var cardInfo = TouchTargetScan.ComputeTouchInfo(state, "card");
         Check.Equal(cardInfo.Kind, TouchInfoKind.Target, "NMerchantCard → Target (arm-first)");
@@ -448,6 +451,11 @@ internal static class TouchTargetScanTests
         var hitboxInfo = TouchTargetScan.ComputeTouchInfo(state, "removalHitbox");
         Check.Equal(hitboxInfo.Kind, TouchInfoKind.Target, "its NClickableControl hitbox is not a Block either");
         Check.Equal(hitboxInfo.Id, "removal", "the hitbox resolves to the owning coin");
+
+        var blitzInfo = TouchTargetScan.ComputeTouchInfo(state, "blitzHitbox");
+        Check.Equal(blitzInfo.Kind, TouchInfoKind.Target, "NBlitzMerchantSlot → Target (arm-first, like every other shop slot)");
+        Check.Equal(blitzInfo.Id, "blitz", "a Blitz offer's hitbox resolves to the owning slot");
+        Check.That(!TouchTargetScan.IsCard(state, "blitz"), "NBlitzMerchantSlot → IsCard FALSE (a service has no detail dialog)");
 
         Check.SequenceEqual(TouchTargetScan.TargetsAt(state, index, 50, 50), new[] { "card" }, "shop card is a hit-testable target");
         Check.SequenceEqual(TouchTargetScan.TargetsAt(state, index, 250, 50), new[] { "relicHolder" }, "treasure relic is a hit-testable target");

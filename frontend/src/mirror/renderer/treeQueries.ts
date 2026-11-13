@@ -30,6 +30,17 @@ export function hasVisibleDirectChild(nodes: ReadonlyMap<string, MirrorNode>, id
   return false;
 }
 
+/** Godot's Control.MouseFilter.Ignore, as the mirror wire reports it. */
+const MOUSE_FILTER_IGNORE = 2;
+
+/** Whether the named direct child exists and ignores the mouse, i.e. the game has switched that hit surface off. */
+export function directChildIgnoresMouse(nodes: ReadonlyMap<string, MirrorNode>, id: string, name: string): boolean {
+  for (const node of nodes.values()) {
+    if (node.parentId === id && node.name === name) return node.mouseFilter === MOUSE_FILTER_IGNORE;
+  }
+  return false;
+}
+
 /** Echoes are visual copies; start at the parent so the node itself stays independently classifiable. */
 export function hasEchoAncestor(nodes: ReadonlyMap<string, MirrorNode>, node: MirrorNode): boolean {
   for (let parent = node.parentId != null ? nodes.get(node.parentId) : undefined; parent; ) {

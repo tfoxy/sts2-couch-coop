@@ -47,6 +47,7 @@ import {
   hasAncestorSceneFile,
   hasEchoAncestor,
   hasVisibleDirectChild,
+  directChildIgnoresMouse,
   isHandCard as isSharedHandCard,
 } from "@/mirror/renderer/treeQueries";
 import type {
@@ -935,6 +936,7 @@ export function createCanvasInteractionRuntime(ports: CanvasInteractionRuntimePo
       (candidate) => isSharedHandCard(nodes, candidate),
       (candidate, suffix) => hasAncestorSceneFile(nodes, candidate, suffix),
       (candidate, name) => hasVisibleDirectChild(nodes, candidate, name),
+      (candidate, name) => directChildIgnoresMouse(nodes, candidate, name),
     );
   }
 
