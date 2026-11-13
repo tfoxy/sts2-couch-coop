@@ -37,6 +37,7 @@ import {
   hasEchoAncestor as hasSharedEchoAncestor,
   hasVisibleDirectChild,
   directChildIgnoresMouse,
+  hasHiddenDescendant,
   isHandCard as isSharedHandCard
 } from "@/mirror/renderer/treeQueries";
 import { HAND_CHOICE_NAMES, HAND_CHOICE_TYPES } from "@/mirror/raise/constants";
@@ -466,6 +467,7 @@ export function createInteractionController(
       hasAncestorSceneFile,
       hasVisibleChild,
       childIgnoresMouse,
+      hiddenDescendant,
     );
   }
 
@@ -489,6 +491,7 @@ export function createInteractionController(
         hasAncestorSceneFile,
         hasVisibleChild,
         childIgnoresMouse,
+        hiddenDescendant,
       );
       if (kind === null || !node.visible || ancestorChainHidden(node)) continue;
       if (kind === "event") {
@@ -528,6 +531,10 @@ export function createInteractionController(
 
   function childIgnoresMouse(id: string, name: string): boolean {
     return directChildIgnoresMouse(ports.nodes(), id, name);
+  }
+
+  function hiddenDescendant(id: string, name: string): boolean {
+    return hasHiddenDescendant(ports.nodes(), id, name);
   }
 
   function hasAncestorSceneFile(id: string, suffix: string): boolean {

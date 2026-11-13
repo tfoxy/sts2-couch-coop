@@ -41,6 +41,24 @@ export function directChildIgnoresMouse(nodes: ReadonlyMap<string, MirrorNode>, 
   return false;
 }
 
+/** Whether a node named `name` within `maxDepth` levels below `id` is hidden (its own `visible` flag is off). */
+export function hasHiddenDescendant(
+  nodes: ReadonlyMap<string, MirrorNode>,
+  id: string,
+  name: string,
+  maxDepth = 4
+): boolean {
+  for (const node of nodes.values()) {
+    if (node.name !== name || node.visible) continue;
+    let parentId = node.parentId;
+    for (let depth = 0; depth < maxDepth && parentId != null; depth++) {
+      if (parentId === id) return true;
+      parentId = nodes.get(parentId)?.parentId ?? null;
+    }
+  }
+  return false;
+}
+
 /** Echoes are visual copies; start at the parent so the node itself stays independently classifiable. */
 export function hasEchoAncestor(nodes: ReadonlyMap<string, MirrorNode>, node: MirrorNode): boolean {
   for (let parent = node.parentId != null ? nodes.get(node.parentId) : undefined; parent; ) {

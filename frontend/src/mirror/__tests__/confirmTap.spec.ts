@@ -27,7 +27,7 @@ import {
   type MirrorRenderer
 } from "@/mirror/mirrorRenderer";
 import { TOUCH_TARGET_TYPES } from "@/mirror/renderer/interactionPolicy";
-import { directChildIgnoresMouse } from "@/mirror/renderer/treeQueries";
+import { directChildIgnoresMouse, hasHiddenDescendant } from "@/mirror/renderer/treeQueries";
 import {
   applySceneDelta,
   createMirrorState,
@@ -117,6 +117,21 @@ describe("confirm tap — eligibility", () => {
     expect(directChildIgnoresMouse(nodes, "slot", "Hitbox")).toBe(true);
     expect(directChildIgnoresMouse(nodes, "live", "Hitbox")).toBe(false);
     expect(directChildIgnoresMouse(nodes, "slot", "Missing")).toBe(false);
+  });
+
+  it("treats a hidden Icon under a Blitz offer as spent, within a bounded depth", () => {
+    const slot = nodeOf("blitz", "Godot.NBlitzMerchantSlot");
+    expect(confirmTapEligible(slot, notHand, noScene, () => true, () => false, (_, name) => name === "Icon")).toBeNull();
+    const nodes = new Map([
+      ["slot", { id: "slot", parentId: null, name: "Slot", visible: true }],
+      ["visual", { id: "visual", parentId: "slot", name: "Visual", visible: true }],
+      ["icon", { id: "icon", parentId: "visual", name: "Icon", visible: false }],
+      ["other", { id: "other", parentId: null, name: "Other", visible: true }],
+      ["otherIcon", { id: "otherIcon", parentId: "other", name: "Icon", visible: true }]
+    ]) as unknown as ReadonlyMap<string, MirrorNode>;
+    expect(hasHiddenDescendant(nodes, "slot", "Icon")).toBe(true);
+    expect(hasHiddenDescendant(nodes, "other", "Icon")).toBe(false);
+    expect(hasHiddenDescendant(nodes, "slot", "Icon", 1)).toBe(false);
   });
 
   it("takes MULTIPLAYER treasure relics only — the singleplayer holder shares its corner with Skip", () => {
@@ -1151,6 +1166,39 @@ describe("confirm tap — the true game-space box", () => {
 
     expect(renderer.confirmTapAt(45, 15)).toEqual({ id: "slot", kind: "shop" });
     expect(renderer.confirmTapAt(300, 300)).toBeNull();
+  });
+
+  it("drops a Blitz offer once a live delta hides its Icon, with no mouse-filter update on the wire", () => {
+    // Regression: mouse filter is a STATIC wire field, so a bought Blitz offer's Hitbox still read as clickable until
+    // a full refresh and kept raising Confirm. The live signal is the Icon going invisible.
+    const { renderer } = harness();
+    const state = createMirrorState();
+    localFull(
+      state,
+      [
+        shopNode("root", null, 0, 0),
+        shopNode("slot", "root", 440, 260, { nodeType: "Godot.NBlitzMerchantSlot" }),
+        shopNode("Hitbox", "slot", 0, 0, { nodeType: "Godot.NClickableControl", mouseFilter: 0 }),
+        shopNode("Visual", "slot", 0, 0),
+        shopNode("Icon", "Visual", 0, 0, { nodeType: "Godot.TextureRect" })
+      ],
+      ["root", "slot", "Hitbox", "Visual", "Icon"]
+    );
+    renderer.reconcile(state);
+    expect(renderer.confirmTapTarget("slot")).toBe("shop");
+
+    applySceneDelta(
+      state,
+      parseSceneDelta({ type: "scene-delta", full: false, screenType: "run", upserts: [
+        // A live update carries the node's volatile fields (parent, transform, rect, visibility), never its static
+        // mouse filter.
+        shopNode("Icon", "Visual", 0, 0, { visible: false })
+      ] })!
+    );
+    renderer.reconcile(state);
+    expect(state.nodes.get("Hitbox")?.mouseFilter).toBe(0);
+    expect(renderer.confirmTapTarget("slot")).toBeNull();
+    expect(renderer.confirmTapAt(450, 270)).toBeNull();
   });
 
   it("composes a root child's matrix into its game-space box", () => {

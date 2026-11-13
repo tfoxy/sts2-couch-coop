@@ -198,11 +198,13 @@ const SINGLEPLAYER_RELIC_HOLDER_NAME = "SingleplayerRelicHolder";
 // widget byte-identical). Name-matched on the slot's own direct child.
 const MERCHANT_COST_CHILD_NAME = "Cost";
 
-// A Blitz shop offer also stays on the carpet once it is used or can no longer be bought. Its signal is the slot's
-// `Hitbox` child switching to mouse-filter Ignore: the game stops accepting clicks on it, so there is no choice left
-// to confirm. Name-matched on the slot's own direct child.
+// A Blitz shop offer also stays on the carpet once it is used or can no longer be bought. Two signals, because the wire
+// carries them differently: the slot's direct `Hitbox` child switches to mouse-filter Ignore (the game stops accepting
+// clicks), but mouse filter is a STATIC wire field, so a viewer only sees that change after a full refresh; a USED
+// offer also hides its `Icon`, and visibility streams live. Either one means there is no choice left to confirm.
 const BLITZ_MERCHANT_SLOT_TYPE = "NBlitzMerchantSlot";
 const MERCHANT_HITBOX_CHILD_NAME = "Hitbox";
+const BLITZ_OFFER_ICON_NAME = "Icon";
 
 /**
  * Which irreversible-choice kind a touch-target widget is, or null when its tap is not one. Pure (the two ancestor
@@ -214,7 +216,8 @@ export function confirmTapEligible(
   isHandCard: (id: string) => boolean,
   hasAncestorSceneFile: (id: string, suffix: string) => boolean,
   hasVisibleChild: (id: string, name: string) => boolean = () => true,
-  childIgnoresMouse: (id: string, name: string) => boolean = () => false
+  childIgnoresMouse: (id: string, name: string) => boolean = () => false,
+  hasHiddenDescendant: (id: string, name: string) => boolean = () => false
 ): ConfirmTapKind | null {
   if (!node) {
     return null;
@@ -234,7 +237,9 @@ export function confirmTapEligible(
     return hasVisibleChild(node.id, MERCHANT_COST_CHILD_NAME) ? kind : null;
   }
   if (leaf === BLITZ_MERCHANT_SLOT_TYPE) {
-    return childIgnoresMouse(node.id, MERCHANT_HITBOX_CHILD_NAME) ? null : kind;
+    return childIgnoresMouse(node.id, MERCHANT_HITBOX_CHILD_NAME) || hasHiddenDescendant(node.id, BLITZ_OFFER_ICON_NAME)
+      ? null
+      : kind;
   }
   return kind;
 }
