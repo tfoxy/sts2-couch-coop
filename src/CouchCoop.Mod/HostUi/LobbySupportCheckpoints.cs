@@ -7,6 +7,8 @@ public enum LobbyCheckpointScreenKind
     LoadGame,
     DailyRun,
     CustomRun,
+    Blitz,
+    Dread,
 }
 
 public enum LobbyCheckpointEvaluation
@@ -77,7 +79,11 @@ public enum LiveHostRuntimeReason
 /// </remarks>
 public sealed class LobbySupportCheckpoints
 {
+#if STS2_API_V113
+    public const int PatchTargetCount = 6;
+#else
     public const int PatchTargetCount = 4;
+#endif
 
     // The three reason strings spirectl publishes on the `live-sts2-host` capability. spirectl DOES export
     // them — Spirectl.Sts2.Embedding.LiveSts2HostUnsupportedReasons — and these are still local copies on
@@ -258,6 +264,8 @@ public sealed class LobbySupportCheckpoints
         LobbyCheckpointScreenKind.LoadGame => "load-game",
         LobbyCheckpointScreenKind.DailyRun => "daily-run",
         LobbyCheckpointScreenKind.CustomRun => "custom-run",
+        LobbyCheckpointScreenKind.Blitz => "blitz",
+        LobbyCheckpointScreenKind.Dread => "dread",
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 

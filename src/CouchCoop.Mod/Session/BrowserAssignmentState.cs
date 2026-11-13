@@ -376,6 +376,8 @@ public static class BrowserAssignmentClassifier
             "screens/character_select_screen" => "Character Select",
             RosterRootScenes.DailyRun => "Daily Challenge",
             RosterRootScenes.CustomRun => "Custom Mode",
+            RosterRootScenes.BlitzRun => "Blitz",
+            RosterRootScenes.DreadRun => "Dread",
             "main-menu" => "Main Menu",
             "run" => "Run",
             null => null,

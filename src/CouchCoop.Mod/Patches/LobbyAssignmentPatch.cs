@@ -6,6 +6,10 @@ using CouchCoop.Mod.Session;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
+#if STS2_API_V113
+using MegaCrit.Sts2.Core.Nodes.Screens.Blitz;
+using MegaCrit.Sts2.Core.Nodes.Screens.Dread;
+#endif
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
@@ -43,7 +47,7 @@ internal static class LobbyAssignmentPatch
     /// <summary>
     /// The typed binding for each entry of <see cref="LobbyAssignmentTargets.Targets"/>, in the same order:
     /// <c>nameof</c> members and <c>typeof</c> parameter types, so a rename or reshape in a game update is a compile
-    /// error rather than a silently missing hook. Signatures are identical on both API lanes.
+    /// error rather than a silently missing hook. Blitz and Dread are available only on v113.
     /// </summary>
     internal static IReadOnlyList<LobbyAssignmentBinding> Bindings { get; } =
     [
@@ -63,6 +67,20 @@ internal static class LobbyAssignmentPatch
             [typeof(INetGameService), typeof(ClientLobbyJoinResponseMessage)], Role: null, nameof(PostfixWake)),
         new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.InitializeSingleplayer),
             [], Role: null, nameof(PostfixWake)),
+#if STS2_API_V113
+        new(typeof(NBlitzScreen), nameof(NBlitzScreen.InitializeMultiplayerAsHost),
+            [typeof(INetGameService), typeof(int)], Role: null, nameof(PostfixNewRunAsHost)),
+        new(typeof(NBlitzScreen), nameof(NBlitzScreen.InitializeMultiplayerAsClient),
+            [typeof(INetGameService), typeof(ClientLobbyJoinResponseMessage)], Role: null, nameof(PostfixWake)),
+        new(typeof(NBlitzScreen), nameof(NBlitzScreen.InitializeSingleplayer),
+            [], Role: null, nameof(PostfixWake)),
+        new(typeof(NDreadScreen), nameof(NDreadScreen.InitializeMultiplayerAsHost),
+            [typeof(INetGameService), typeof(int)], Role: null, nameof(PostfixNewRunAsHost)),
+        new(typeof(NDreadScreen), nameof(NDreadScreen.InitializeMultiplayerAsClient),
+            [typeof(INetGameService), typeof(ClientLobbyJoinResponseMessage)], Role: null, nameof(PostfixWake)),
+        new(typeof(NDreadScreen), nameof(NDreadScreen.InitializeSingleplayer),
+            [], Role: null, nameof(PostfixWake)),
+#endif
         new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.InitializeMultiplayerAsHost),
             [typeof(INetGameService)], Role: null, nameof(PostfixNewRunAsHost), ClearLobbyBefore: true),
         new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.InitializeMultiplayerAsClient),

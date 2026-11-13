@@ -1,8 +1,8 @@
 namespace CouchCoop.Mod.Contracts;
 
 /// <summary>
-/// The root screen names the roster reports. Existing names retain their wire spelling; daily and custom setup
-/// have distinct names while sharing the existing multiplayer-lobby mirror mode.
+/// The root screen names the roster reports. Existing names retain their wire spelling; each run setup
+/// has a distinct name while sharing the existing multiplayer-lobby mirror mode.
 /// </summary>
 public static class RosterRootScenes
 {
@@ -20,6 +20,8 @@ public static class RosterRootScenes
 
     public const string DailyRun = "screens/daily_run/daily_run_screen";
     public const string CustomRun = "screens/custom_run/custom_run_screen";
+    public const string BlitzRun = "screens/blitz/blitz_screen";
+    public const string DreadRun = "screens/dread/dread_screen";
 }
 
 /// <summary>

@@ -5,6 +5,10 @@ using CouchCoop.Mod.Runtime;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+#if STS2_API_V113
+using MegaCrit.Sts2.Core.Nodes.Screens.Blitz;
+using MegaCrit.Sts2.Core.Nodes.Screens.Dread;
+#endif
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
@@ -77,6 +81,20 @@ internal static class RosterSignalPatch
 #endif
         new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.RemotePlayerDisconnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+#if STS2_API_V113
+        new(typeof(NBlitzScreen), nameof(NBlitzScreen.PlayerConnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NBlitzScreen), nameof(NBlitzScreen.PlayerChanged),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NBlitzScreen), nameof(NBlitzScreen.RemotePlayerDisconnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDreadScreen), nameof(NDreadScreen.PlayerConnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDreadScreen), nameof(NDreadScreen.PlayerChanged),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+        new(typeof(NDreadScreen), nameof(NDreadScreen.RemotePlayerDisconnected),
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+#endif
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.PlayerConnected),
             [typeof(LoadRunLobbyPlayer)], nameof(PostfixWake)),
 #else

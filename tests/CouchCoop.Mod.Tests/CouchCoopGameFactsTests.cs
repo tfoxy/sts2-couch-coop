@@ -331,7 +331,12 @@ internal static class CouchCoopGameFactsTests
     {
         var data = LobbyAssignmentTargets.Targets;
         var bindings = LobbyAssignmentPatch.Bindings;
-        Expect(data.Count == 12 && bindings.Count == data.Count, "all lobby assignment and daily-close methods are hooked");
+#if STS2_API_V113
+        const int ExpectedTargets = 18;
+#else
+        const int ExpectedTargets = 12;
+#endif
+        Expect(data.Count == ExpectedTargets && bindings.Count == data.Count, "all lobby assignment and daily-close methods are hooked");
 
         for (var index = 0; index < data.Count; index++)
         {

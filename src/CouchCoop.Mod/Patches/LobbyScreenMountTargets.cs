@@ -20,6 +20,10 @@ internal static class LobbyScreenMountTargets
         new("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen", ReadyMethodName),
         new(LobbyAssignmentTargets.DailyRunScreen, ReadyMethodName),
         new(LobbyAssignmentTargets.CustomRunScreen, ReadyMethodName),
+#if STS2_API_V113
+        new(LobbyAssignmentTargets.BlitzScreen, ReadyMethodName),
+        new(LobbyAssignmentTargets.DreadScreen, ReadyMethodName),
+#endif
     ];
 
     internal static IReadOnlyList<string> TypeNames { get; } = Targets.Select(target => target.TypeName).ToArray();

@@ -60,6 +60,14 @@ internal static class RosterSignalTargets
         new(LobbyAssignmentTargets.CustomRunScreen, "PlayerConnected", 1),
         new(LobbyAssignmentTargets.CustomRunScreen, "PlayerChanged", PlayerChangedParameters),
         new(LobbyAssignmentTargets.CustomRunScreen, "RemotePlayerDisconnected", 1),
+#if STS2_API_V113
+        new(LobbyAssignmentTargets.BlitzScreen, "PlayerConnected", 1),
+        new(LobbyAssignmentTargets.BlitzScreen, "PlayerChanged", PlayerChangedParameters),
+        new(LobbyAssignmentTargets.BlitzScreen, "RemotePlayerDisconnected", 1),
+        new(LobbyAssignmentTargets.DreadScreen, "PlayerConnected", 1),
+        new(LobbyAssignmentTargets.DreadScreen, "PlayerChanged", PlayerChangedParameters),
+        new(LobbyAssignmentTargets.DreadScreen, "RemotePlayerDisconnected", 1),
+#endif
         new(LoadRunScreen, "PlayerConnected", 1),
         new(LoadRunScreen, "RemotePlayerDisconnected", 1),
         new(StartRunLobby, Constructor, StartRunLobbyParameters),

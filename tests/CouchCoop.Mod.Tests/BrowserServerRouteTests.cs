@@ -271,6 +271,12 @@ if (args is ["host-guards", ..])
     return;
 }
 
+if (args is ["blitz-dread-lobby", ..])
+{
+    BlitzDreadLobbyTests.Run();
+    return;
+}
+
 if (args is ["renderer-availability", ..])
 {
     await BrowserServerRouteTests.RunRendererAvailabilityRoutesAsync();
@@ -1099,6 +1105,7 @@ MdnsResponderTests.Run();
 // only proven by the macOS suite and by an argument nobody passes by default.
 LobbySupportCheckpointsTests.Run();
 DailyCustomLobbyTests.Run();
+BlitzDreadLobbyTests.Run();
 // QR dialog: when the "Couch Co-Op QR Code" button exists (and, just as importantly, when it does not).
 CouchCoopLobbyHostGateTests.Run();
 // …and its mid-run twin, which decides the same thing for the pause menu's row. Beside the lobby gate on

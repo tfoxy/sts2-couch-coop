@@ -6,6 +6,10 @@ using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+#if STS2_API_V113
+using MegaCrit.Sts2.Core.Nodes.Screens.Blitz;
+using MegaCrit.Sts2.Core.Nodes.Screens.Dread;
+#endif
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
@@ -50,8 +54,7 @@ internal sealed partial class GameFactsReader
             _ => null,
         };
 
-        // The root scene is the same four strings the old snapshot named: a run wins, then whichever lobby screen is
-        // on top (even one the game has not assigned a lobby to yet), then the menu.
+        // A run wins, then whichever lobby screen is on top (even before lobby assignment), then the menu.
         var rootScene = run is not null
             ? RosterRootScenes.Run
             : screen switch
@@ -60,6 +63,10 @@ internal sealed partial class GameFactsReader
                 NMultiplayerLoadGameScreen => RosterRootScenes.LoadGame,
                 NDailyRunScreen => RosterRootScenes.DailyRun,
                 NCustomRunScreen => RosterRootScenes.CustomRun,
+#if STS2_API_V113
+                NBlitzScreen => RosterRootScenes.BlitzRun,
+                NDreadScreen => RosterRootScenes.DreadRun,
+#endif
                 _ => RosterRootScenes.MainMenu,
             };
         return new RosterFacts(rootScene, lobby, run);

@@ -616,7 +616,12 @@ internal static class CouchCoopRosterObserverTests
     {
         var data = RosterSignalTargets.Targets;
         var bindings = RosterSignalPatch.Bindings;
-        Expect(data.Count == 14 && bindings.Count == data.Count, "all lobby roster callbacks are hooked");
+#if STS2_API_V113
+        const int ExpectedTargets = 20;
+#else
+        const int ExpectedTargets = 14;
+#endif
+        Expect(data.Count == ExpectedTargets && bindings.Count == data.Count, "all lobby roster callbacks are hooked");
 
         for (var index = 0; index < data.Count; index++)
         {

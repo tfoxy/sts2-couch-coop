@@ -1,3 +1,5 @@
+using CouchCoop.Mod.Patches;
+
 if (args is not ["beta-targets", var assemblyPath])
 {
     Console.Error.WriteLine(
@@ -9,5 +11,7 @@ if (args is not ["beta-targets", var assemblyPath])
 MetadataOnlyLobbyScreenMountTests.RunFixtureCases();
 MetadataOnlyLobbyScreenMountTests.AssertMetadataOnlyDependencyPolicy();
 MetadataOnlyLobbyScreenMountTests.RunProductionTargets(assemblyPath);
-Console.WriteLine("beta-targets metadata: both lobby _Ready declarations, the pause menu's, the five lobby-assignment methods, the lobby's player cap member and the seven roster-signal methods resolve");
+Console.WriteLine($"beta-targets metadata: {LobbyScreenMountTargets.Targets.Count} lobby mounts, "
+    + $"{LobbyAssignmentTargets.Targets.Count} lobby assignments and {RosterSignalTargets.Targets.Count} roster signals "
+    + "resolve; pause-menu, player-cap and host-access targets resolve");
 return 0;

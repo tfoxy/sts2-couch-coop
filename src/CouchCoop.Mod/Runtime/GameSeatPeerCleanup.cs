@@ -2,6 +2,10 @@ using System.Runtime.CompilerServices;
 using CouchCoop.Mod.HostUi;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+#if STS2_API_V113
+using MegaCrit.Sts2.Core.Nodes.Screens.Blitz;
+using MegaCrit.Sts2.Core.Nodes.Screens.Dread;
+#endif
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
@@ -45,7 +49,12 @@ internal static class GameSeatPeerCleanup
         if (screenType is null) return Context.None;
         if (typeof(NCharacterSelectScreen).IsAssignableFrom(screenType)
             || typeof(NDailyRunScreen).IsAssignableFrom(screenType)
-            || typeof(NCustomRunScreen).IsAssignableFrom(screenType))
+            || typeof(NCustomRunScreen).IsAssignableFrom(screenType)
+#if STS2_API_V113
+            || typeof(NBlitzScreen).IsAssignableFrom(screenType)
+            || typeof(NDreadScreen).IsAssignableFrom(screenType)
+#endif
+            )
             return Context.NewRunLobby;
         return typeof(NMultiplayerLoadGameScreen).IsAssignableFrom(screenType)
             ? Context.SavedRunLobby : Context.None;

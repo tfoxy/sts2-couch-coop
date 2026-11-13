@@ -298,7 +298,12 @@ internal static class IdleHostCostTests
     // game build, and it must run THIS leg rather than a second copy of it.
     internal static void MountTargetsResolve()
     {
-        Expect(LobbyScreenMountPatch.ScreenTypeNames.Count == 4, "all four lobby screens are patch targets");
+#if STS2_API_V113
+        const int ExpectedTargets = 6;
+#else
+        const int ExpectedTargets = 4;
+#endif
+        Expect(LobbyScreenMountPatch.ScreenTypeNames.Count == ExpectedTargets, "all supported lobby screens are patch targets");
 
         foreach (var typeName in LobbyScreenMountPatch.ScreenTypeNames)
         {

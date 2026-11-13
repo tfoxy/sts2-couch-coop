@@ -23,9 +23,9 @@ internal static class LobbySupportCheckpointsTests
         var error = new List<string>();
         var checkpoints = new LobbySupportCheckpoints(stderr.Add, info.Add, error.Add);
 
-        checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Initial, 4);
+        checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Initial, LobbySupportCheckpoints.PatchTargetCount);
         checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Retry, 0);
-        checkpoints.LobbyPatchComplete(4);
+        checkpoints.LobbyPatchComplete(LobbySupportCheckpoints.PatchTargetCount);
         checkpoints.LobbyPatchIncomplete(1, LobbyPatchRetryState.Pending);
         checkpoints.LobbyPatchIncomplete(0, LobbyPatchRetryState.Exhausted);
         checkpoints.HostBrowserListener(true);
@@ -42,10 +42,10 @@ internal static class LobbySupportCheckpointsTests
 
         var routine = new[]
         {
-            "lobby-patch-attempt phase=initial pending=4 total=4",
-            "lobby-patch-attempt phase=retry pending=0 total=4",
-            "lobby-patch-complete targets=4 total=4",
-            "lobby-patch-incomplete targets=1 total=4 retry=pending",
+            $"lobby-patch-attempt phase=initial pending={LobbySupportCheckpoints.PatchTargetCount} total={LobbySupportCheckpoints.PatchTargetCount}",
+            $"lobby-patch-attempt phase=retry pending=0 total={LobbySupportCheckpoints.PatchTargetCount}",
+            $"lobby-patch-complete targets={LobbySupportCheckpoints.PatchTargetCount} total={LobbySupportCheckpoints.PatchTargetCount}",
+            $"lobby-patch-incomplete targets=1 total={LobbySupportCheckpoints.PatchTargetCount} retry=pending",
             "host-browser-listener result=available",
             "lobby-controller-armed",
             "lobby-screen-mounted kind=character-select",
@@ -58,7 +58,7 @@ internal static class LobbySupportCheckpointsTests
         };
         var failures = new[]
         {
-            "lobby-patch-incomplete targets=0 total=4 retry=exhausted",
+            $"lobby-patch-incomplete targets=0 total={LobbySupportCheckpoints.PatchTargetCount} retry=exhausted",
             "host-browser-listener result=unavailable",
             "qr-panel-install-failed kind=load-game category=attach",
         };
@@ -206,11 +206,11 @@ internal static class LobbySupportCheckpointsTests
         ExpectThrows(() => checkpoints.LiveHostRuntimeUnsupported((LiveHostRuntimeReason)99),
             "a reason outside the bounded enum is refused rather than written");
         ExpectThrows(() => checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Initial, 1),
-            "initial patch attempts always begin with exactly four pending targets");
-        ExpectThrows(() => checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Retry, 5),
-            "retry pending count is bounded by the four target contract");
+            "initial patch attempts always begin with all pending targets");
+        ExpectThrows(() => checkpoints.LobbyPatchAttempt(LobbyPatchAttemptPhase.Retry, LobbySupportCheckpoints.PatchTargetCount + 1),
+            "retry pending count is bounded by the target contract");
         ExpectThrows(() => checkpoints.LobbyPatchComplete(1), "patch completion always names all targets");
-        ExpectThrows(() => checkpoints.LobbyPatchIncomplete(4, LobbyPatchRetryState.Pending),
+        ExpectThrows(() => checkpoints.LobbyPatchIncomplete(LobbySupportCheckpoints.PatchTargetCount, LobbyPatchRetryState.Pending),
             "an incomplete patch never claims all targets");
     }
 

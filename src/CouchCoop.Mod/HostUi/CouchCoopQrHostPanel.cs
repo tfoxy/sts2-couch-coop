@@ -6,6 +6,17 @@ using MegaCrit.Sts2.Core.Nodes.CommonUi;
 
 namespace CouchCoop.Mod.HostUi;
 
+/// <summary>Game-free layout and hotkey choices for the lobby QR panel.</summary>
+internal static class CouchCoopQrHostPanelOptions
+{
+    internal static bool UsesCompactLayout(LobbyCheckpointScreenKind? screenKind)
+        => screenKind is LobbyCheckpointScreenKind.DailyRun or LobbyCheckpointScreenKind.CustomRun;
+
+    // Custom mode reserves the standard shortcut for its modifiers. Keep that control reachable.
+    internal static bool UsesCustomHotkey(LobbyCheckpointScreenKind? screenKind)
+        => screenKind == LobbyCheckpointScreenKind.CustomRun;
+}
+
 /// <summary>
 /// The single node the mod injects into a lobby screen: a transparent full-rect host for the
 /// "Couch Co-Op QR Code" button, the dialog it opens, and the host-transport alert.
@@ -79,9 +90,9 @@ internal sealed partial class CouchCoopQrHostPanel : Control
 
     public CouchCoopQrHostPanel(LobbyCheckpointScreenKind? screenKind = null)
     {
-        _compactLobby = screenKind is LobbyCheckpointScreenKind.DailyRun or LobbyCheckpointScreenKind.CustomRun;
-        // Custom mode reserves the standard shortcut for its modifiers. Keep that control reachable.
-        _hotkeyAction = screenKind == LobbyCheckpointScreenKind.CustomRun ? MegaInput.viewDrawPile : HotkeyAction;
+        _compactLobby = CouchCoopQrHostPanelOptions.UsesCompactLayout(screenKind);
+        _hotkeyAction = CouchCoopQrHostPanelOptions.UsesCustomHotkey(screenKind)
+            ? MegaInput.viewDrawPile : HotkeyAction;
         _hint = new CouchCoopQrHotkeyHint(_hotkeyAction);
         Name = NodeName;
         SetAnchorsPreset(LayoutPreset.FullRect);

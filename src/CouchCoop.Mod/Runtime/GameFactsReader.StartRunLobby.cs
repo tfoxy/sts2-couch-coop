@@ -1,5 +1,9 @@
 using CouchCoop.Mod.HostUi;
 using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
+#if STS2_API_V113
+using MegaCrit.Sts2.Core.Nodes.Screens.Blitz;
+using MegaCrit.Sts2.Core.Nodes.Screens.Dread;
+#endif
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Nodes.Screens.CustomRun;
 using MegaCrit.Sts2.Core.Nodes.Screens.DailyRun;
@@ -14,6 +18,10 @@ internal sealed partial class GameFactsReader
     {
         NCharacterSelectScreen standard => standard.Lobby,
         NCustomRunScreen custom => custom.Lobby,
+#if STS2_API_V113
+        NBlitzScreen blitz => blitz.Lobby,
+        NDreadScreen dread => dread.Lobby,
+#endif
         NDailyRunScreen daily => LobbyAssignmentRecord.TryGetLobby(daily, out var lobby)
             ? lobby as StartRunLobby : null,
         _ => null,

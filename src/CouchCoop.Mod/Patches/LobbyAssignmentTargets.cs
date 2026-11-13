@@ -30,6 +30,9 @@ internal static class LobbyAssignmentTargets
     internal const string DailyRunScreen = "MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunScreen";
     internal const string CustomRunScreen = "MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunScreen";
 
+    internal const string BlitzScreen = "MegaCrit.Sts2.Core.Nodes.Screens.Blitz.NBlitzScreen";
+    internal const string DreadScreen = "MegaCrit.Sts2.Core.Nodes.Screens.Dread.NDreadScreen";
+
     internal static IReadOnlyList<LobbyAssignmentTarget> Targets { get; } =
     [
         new(CharacterSelectScreen, "InitializeMultiplayerAsHost", 2, Role: null),
@@ -40,6 +43,14 @@ internal static class LobbyAssignmentTargets
         new(CustomRunScreen, "InitializeMultiplayerAsHost", 2, Role: null),
         new(CustomRunScreen, "InitializeMultiplayerAsClient", 2, Role: null),
         new(CustomRunScreen, "InitializeSingleplayer", 0, Role: null),
+#if STS2_API_V113
+        new(BlitzScreen, "InitializeMultiplayerAsHost", 2, Role: null),
+        new(BlitzScreen, "InitializeMultiplayerAsClient", 2, Role: null),
+        new(BlitzScreen, "InitializeSingleplayer", 0, Role: null),
+        new(DreadScreen, "InitializeMultiplayerAsHost", 2, Role: null),
+        new(DreadScreen, "InitializeMultiplayerAsClient", 2, Role: null),
+        new(DreadScreen, "InitializeSingleplayer", 0, Role: null),
+#endif
         new(DailyRunScreen, "InitializeMultiplayerAsHost", 1, Role: null),
         new(DailyRunScreen, "InitializeMultiplayerAsClient", 2, Role: null),
         new(DailyRunScreen, "InitializeSingleplayer", 0, Role: null),

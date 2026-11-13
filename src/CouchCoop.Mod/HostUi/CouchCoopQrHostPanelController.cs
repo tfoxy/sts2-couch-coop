@@ -1173,6 +1173,10 @@ public static class CouchCoopQrHostPanelController
             "NMultiplayerLoadGameScreen" => LobbyCheckpointScreenKind.LoadGame,
             "NDailyRunScreen" => LobbyCheckpointScreenKind.DailyRun,
             "NCustomRunScreen" => LobbyCheckpointScreenKind.CustomRun,
+#if STS2_API_V113
+            "NBlitzScreen" => LobbyCheckpointScreenKind.Blitz,
+            "NDreadScreen" => LobbyCheckpointScreenKind.Dread,
+#endif
             _ => null,
         };
 
@@ -1237,12 +1241,14 @@ public static class CouchCoopQrHostPanelController
     }
 
     // Matched by name as well as full name because the mod must not hard-bind to a game type it only
-    // reaches reflectively at runtime. Both screens are lobbies the host can be joined from: the
-    // character-select screen for a new run, and the multiplayer load screen for resuming a saved one.
+    // reaches reflectively at runtime. Supported new-run and saved-run lobbies can host browser seats.
     private static bool IsLobbyScreen(Node node)
     {
         var type = node.GetType();
         return type.Name is "NCharacterSelectScreen" or "NMultiplayerLoadGameScreen" or "NDailyRunScreen" or "NCustomRunScreen"
+#if STS2_API_V113
+            || type.Name is "NBlitzScreen" or "NDreadScreen"
+#endif
             || type.FullName is "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen"
                 or "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen";
     }

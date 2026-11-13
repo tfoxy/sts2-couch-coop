@@ -127,6 +127,42 @@ reason=placeholder
 [couchcoop] live-host-runtime result=supported suffix=leak
 EOF
 ! grep -F "$fixture" <<< "$output" >/dev/null || { echo "support output leaked a fixture path" >&2; exit 1; }
+# Keep the beta vocabulary in a separate log so the 50-checkpoint support tail retains every fixture.
+beta_log="$fixture/beta.log"
+cat > "$beta_log" <<'EOF'
+[couchcoop] lobby-patch-attempt phase=initial pending=6 total=6
+[couchcoop] lobby-patch-attempt phase=retry pending=0 total=6
+[couchcoop] lobby-patch-attempt phase=retry pending=6 total=6
+[couchcoop] lobby-patch-complete targets=6 total=6
+[couchcoop] lobby-patch-incomplete targets=0 total=6 retry=pending
+[ERROR] [couchcoop] lobby-patch-incomplete targets=5 total=6 retry=exhausted
+EOF
+for kind in blitz dread; do
+  cat >> "$beta_log" <<EOF
+[couchcoop] lobby-screen-mounted kind=$kind
+[couchcoop] host-lobby-evaluated kind=$kind result=host
+[couchcoop] qr-panel-install-enter kind=$kind
+[couchcoop] qr-panel-install-complete kind=$kind
+[ERROR] [couchcoop] qr-panel-install-failed kind=$kind category=attach
+EOF
+done
+approved_beta="$(cat "$beta_log")"
+cat >> "$beta_log" <<'EOF'
+[couchcoop] lobby-patch-attempt phase=initial pending=5 total=6
+[couchcoop] lobby-patch-attempt phase=retry pending=7 total=6
+[couchcoop] lobby-patch-complete targets=5 total=6
+[couchcoop] lobby-patch-incomplete targets=6 total=6 retry=pending
+[couchcoop] lobby-patch-complete targets=6 total=4
+[couchcoop] lobby-screen-mounted kind=blitz path=/Users/secret
+[couchcoop] qr-panel-install-complete kind=dread suffix=leak
+EOF
+before="$(snapshot)"
+beta_output="$("$repo_root/scripts/macos-support-diagnostics.sh" --app "$app" --mod "$mod" --log "$beta_log")"
+after="$(snapshot)"
+[[ "$before" == "$after" ]] || { echo "support diagnostics changed the beta fixture" >&2; exit 1; }
+beta_checkpoints="$(grep -E '^(\[ERROR\] )?\[couchcoop\]' <<< "$beta_output" || true)"
+[[ "$beta_checkpoints" == "$approved_beta" ]] || { echo "beta checkpoint allowlist mismatch" >&2; exit 1; }
+! grep -F "$fixture" <<< "$beta_output" >/dev/null || { echo "support output leaked a beta fixture path" >&2; exit 1; }
 rm "$mod/lanes/0.113.0/CouchCoop.Spirectl.dll"
 missing_output="$("$repo_root/scripts/macos-support-diagnostics.sh" --app "$app" --mod "$mod" --log "$log")"
 grep -F 'missing-or-wrong-case:lanes/0.113.0/CouchCoop.Spirectl.dll' <<< "$missing_output" >/dev/null
