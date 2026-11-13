@@ -39,7 +39,7 @@ internal sealed record SeatModListRow(string Id, string Source, bool IsEnabled)
     public SeatModRowKey Key => new(Id, Source);
 }
 
-/// <summary>What <see cref="SeatModList.Disable"/> did to one <c>settings.save</c>.</summary>
+/// <summary>What <see cref="SeatModList.Apply"/> did to one <c>settings.save</c>.</summary>
 /// <param name="Updated">The rewritten file, or <see langword="null"/> when it must be left byte-identical.</param>
 /// <param name="NotDisabled">
 /// Requested rows the file does NOT end up disabling — only ever rows that were missing from a list this code
@@ -62,8 +62,11 @@ internal sealed record SeatModListEdit(
     string? Refusal,
     bool NothingToPin = false)
 {
-    /// <summary>Every requested row is disabled in the file as it now stands (rewritten or already so).</summary>
-    public bool Applied => Refusal is null && NotDisabled.Count == 0;
+    /// <summary>Enable requests that could not be applied because the file was refused.</summary>
+    public IReadOnlyList<SeatModRowKey> NotEnabled { get; init; } = [];
+
+    /// <summary>Every requested flag is satisfied in the file as it now stands (rewritten or already so).</summary>
+    public bool Applied => Refusal is null && NotDisabled.Count == 0 && NotEnabled.Count == 0;
 }
 
 /// <summary>
@@ -182,20 +185,37 @@ internal static class SeatModList
     /// </remarks>
     /// <exception cref="JsonException">The file is not JSON at all.</exception>
     internal static SeatModListEdit Disable(string settingsJson, IEnumerable<SeatModRowKey> rowsToDisable)
+        => Apply(settingsJson, rowsToDisable, []);
+
+    /// <summary>
+    /// Disable requested rows and enable existing requested rows in place. Missing enable rows are never added:
+    /// their absence already permits the copy to load, and adding them could change load order.
+    /// </summary>
+    /// <remarks>
+    /// Disable wins when a key occurs in both sets. The same refusals and disable-row placement as
+    /// <see cref="Disable"/> apply. A file already satisfying both sets is left byte-identical.
+    /// </remarks>
+    internal static SeatModListEdit Apply(
+        string settingsJson,
+        IEnumerable<SeatModRowKey> rowsToDisable,
+        IEnumerable<SeatModRowKey> rowsToEnable)
     {
         ArgumentNullException.ThrowIfNull(rowsToDisable);
+        ArgumentNullException.ThrowIfNull(rowsToEnable);
         var requested = DistinctUsable(rowsToDisable);
+        var wanted = new HashSet<SeatModRowKey>(requested);
+        var enable = DistinctUsable(rowsToEnable).Where(key => !wanted.Contains(key)).ToList();
+        var wantedEnabled = new HashSet<SeatModRowKey>(enable);
 
         using var document = JsonDocument.Parse(settingsJson);
         var root = document.RootElement;
         if (!TryGetModList(root, out var modList, out var refusal, out var nothingToPin))
         {
-            return new SeatModListEdit(null, requested, refusal, nothingToPin);
+            return new SeatModListEdit(null, requested, refusal, nothingToPin) { NotEnabled = enable };
         }
 
-        if (requested.Count == 0) return new SeatModListEdit(null, [], null);
+        if (requested.Count == 0 && enable.Count == 0) return new SeatModListEdit(null, [], null);
 
-        var wanted = new HashSet<SeatModRowKey>(requested);
         var present = new HashSet<SeatModRowKey>();
         // The index of each id's LAST row: where the game places that mod in its load order (see the remarks).
         var lastRowOfId = new Dictionary<string, int>(SeatModSelectionPlan.IdComparer);
@@ -213,9 +233,17 @@ internal static class SeatModList
             }
 
             if (TryId(entry, out var id)) lastRowOfId[id] = index;
-            if (!TryKey(entry, out var key) || !wanted.Contains(key)) continue;
-            present.Add(key);
-            if (!IsDisabled(entry)) needsFlip = true;
+            if (!TryKey(entry, out var key)) continue;
+            if (wanted.Contains(key))
+            {
+                present.Add(key);
+                if (!IsDisabled(entry)) needsFlip = true;
+            }
+            else if (wantedEnabled.Contains(key)
+                && (!entry.TryGetProperty("is_enabled", out var flag) || flag.ValueKind != JsonValueKind.True))
+            {
+                needsFlip = true;
+            }
         }
 
         var missing = requested.Where(key => !present.Contains(key)).ToList();
@@ -245,7 +273,7 @@ internal static class SeatModList
                 if (property.NameEquals("mod_settings"))
                 {
                     writer.WritePropertyName(property.Name);
-                    WriteModSettings(writer, property.Value, wanted, addAfterRow, addAtEnd);
+                    WriteModSettings(writer, property.Value, wanted, wantedEnabled, addAfterRow, addAtEnd);
                 }
                 else
                 {
@@ -373,6 +401,7 @@ internal static class SeatModList
         Utf8JsonWriter writer,
         JsonElement modSettings,
         HashSet<SeatModRowKey> wanted,
+        HashSet<SeatModRowKey> wantedEnabled,
         ILookup<int, SeatModRowKey> addAfterRow,
         IReadOnlyList<SeatModRowKey> addAtEnd)
     {
@@ -382,7 +411,7 @@ internal static class SeatModList
             if (property.NameEquals("mod_list") && property.Value.ValueKind == JsonValueKind.Array)
             {
                 writer.WritePropertyName(property.Name);
-                WriteModList(writer, property.Value, wanted, addAfterRow, addAtEnd);
+                WriteModList(writer, property.Value, wanted, wantedEnabled, addAfterRow, addAtEnd);
             }
             else
             {
@@ -397,6 +426,7 @@ internal static class SeatModList
         Utf8JsonWriter writer,
         JsonElement modList,
         HashSet<SeatModRowKey> wanted,
+        HashSet<SeatModRowKey> wantedEnabled,
         ILookup<int, SeatModRowKey> addAfterRow,
         IReadOnlyList<SeatModRowKey> addAtEnd)
     {
@@ -407,7 +437,11 @@ internal static class SeatModList
             index++;
             if (TryKey(entry, out var key) && wanted.Contains(key))
             {
-                WriteDisabledCopy(writer, entry);
+                WriteFlagCopy(writer, entry, false);
+            }
+            else if (TryKey(entry, out key) && wantedEnabled.Contains(key))
+            {
+                WriteFlagCopy(writer, entry, true);
             }
             else
             {
@@ -425,14 +459,14 @@ internal static class SeatModList
     // Copy the row, forcing only `is_enabled`. `id` and `source` identify WHICH copy the row is and are never
     // rewritten — not even to the caller's spelling of the id; anything else the game may have added to a row is
     // carried through.
-    private static void WriteDisabledCopy(Utf8JsonWriter writer, JsonElement entry)
+    private static void WriteFlagCopy(Utf8JsonWriter writer, JsonElement entry, bool enabled)
     {
         writer.WriteStartObject();
         foreach (var property in entry.EnumerateObject())
         {
             if (property.NameEquals("is_enabled"))
             {
-                writer.WriteBoolean(property.Name, false);
+                writer.WriteBoolean(property.Name, enabled);
             }
             else
             {
@@ -440,7 +474,7 @@ internal static class SeatModList
             }
         }
 
-        if (!entry.TryGetProperty("is_enabled", out _)) writer.WriteBoolean("is_enabled", false);
+        if (!entry.TryGetProperty("is_enabled", out _)) writer.WriteBoolean("is_enabled", enabled);
         writer.WriteEndObject();
     }
 

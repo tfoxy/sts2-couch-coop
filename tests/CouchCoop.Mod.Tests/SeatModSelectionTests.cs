@@ -65,6 +65,14 @@ internal static class SeatModSelectionTests
         RewritePlacesSeveralRowsEachBesideItsOwnId();
         RewriteNeverMovesARowItOnlyFlips();
         RewriteRefusesWhatThePinAlwaysRefused();
+        RewriteEnablesTheHostCopyWithoutMovingRows();
+        RewriteEnablesOnlyExistingRowsAndDisableWins();
+        RewriteEnablesEveryMatchingRowAndCarriesItsFields();
+        RewriteWithEnableRequestsKeepsTheSameRefusals();
+        SeedingKeepsTheHostsDisabledCopyOnInBothProfileRoots();
+        ADisabledCopyThatCannotBePinnedIsAlwaysEscalated();
+        ADisabledCopyWithAnUnrecognizedStringSourceDoesNotEscalate();
+        AnUnknownCopySourceChangesNeitherCopy();
         SeedingAppliesHostChoicesBesideTheCopyPinInBothProfileRoots();
         SeedingWithNothingChosenStillPinsAndStaysOffTheErrorChannel();
         AProfileWithNoModListIsNothingToPinAndStaysOffTheErrorChannel();
@@ -953,6 +961,195 @@ internal static class SeatModSelectionTests
         }
     }
 
+    private static readonly string RewrittenHostSettings = Settings("""
+        [
+          {"id": "intentgraph2", "is_enabled": true, "source": "steam_workshop"},
+          {"id": "couchcoop", "is_enabled": false, "source": "steam_workshop"},
+          {"id": "couchcoop", "is_enabled": false, "source": "mods_directory"},
+          {"id": "spirectlbridge", "is_enabled": false, "source": "mods_directory"}
+        ]
+        """);
+
+    private static void RewriteEnablesTheHostCopyWithoutMovingRows()
+    {
+        // Normalize indentation first so untouched row text can also be compared byte-for-byte.
+        using var document = JsonDocument.Parse(RewrittenHostSettings);
+        var original = JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions { WriteIndented = true });
+        foreach (var (keep, disable) in new[] { (Workshop, Local), (Local, Workshop) })
+        {
+            SeatModRowKey[] off = [new("couchcoop", disable)];
+            SeatModRowKey[] on = [new("couchcoop", keep)];
+            var edit = SeatModList.Apply(original, off, on);
+            Assert(edit.Applied && edit.Updated is not null && edit.NotEnabled.Count == 0,
+                $"the host's {keep} copy is enabled");
+            var before = ModList(original);
+            var after = ModList(edit.Updated!);
+            Assert(Enabled(after, "couchcoop", keep) == true && Enabled(after, "couchcoop", disable) == false,
+                "only the host's copy is on");
+            Assert(after.Count == before.Count && after.Select(r => (r.GetProperty("id").GetString(), r.GetProperty("source").GetString()))
+                .SequenceEqual(before.Select(r => (r.GetProperty("id").GetString(), r.GetProperty("source").GetString()))),
+                "every row remains in its original position");
+            Assert(before[0].GetRawText() == after[0].GetRawText() && before[3].GetRawText() == after[3].GetRawText(),
+                "unrelated rows are byte-preserved");
+            var again = SeatModList.Apply(edit.Updated!, off, on);
+            Assert(again.Updated is null && again.Applied, "a second apply leaves the file byte-identical");
+        }
+    }
+
+    private static void RewriteEnablesOnlyExistingRowsAndDisableWins()
+    {
+        var original = Settings(Rows(Row("intentgraph2", Workshop, true)));
+        var missing = SeatModList.Apply(original, [], [new SeatModRowKey("couchcoop", Workshop)]);
+        Assert(missing.Updated is null && missing.Applied && missing.NotEnabled.Count == 0,
+            "a missing enable row is already permitted and is never added");
+
+        SeatModRowKey[] both = [new("couchcoop", Workshop)];
+        var conflict = SeatModList.Apply(original, both, both);
+        Assert(conflict.Applied && conflict.Updated == SeatModList.Disable(original, both).Updated,
+            "disable wins even when a requested row must be added");
+        var existing = Settings(Rows(Row("couchcoop", Workshop, true)));
+        conflict = SeatModList.Apply(existing, both, both);
+        Assert(conflict.Applied && Enabled(ModList(conflict.Updated!), "couchcoop", Workshop) == false,
+            "disable also wins for an existing enabled row");
+    }
+
+    private static void RewriteEnablesEveryMatchingRowAndCarriesItsFields()
+    {
+        var original = Settings("""
+            [
+              {"id": "CouchCoop", "is_enabled": false, "source": "steam_workshop", "extra": "Zoë"},
+              {"id": "couchcoop", "source": "steam_workshop"},
+              {"id": "couchcoop", "is_enabled": null, "source": "steam_workshop"}
+            ]
+            """);
+        var edit = SeatModList.Apply(original, [], [new SeatModRowKey("couchcoop", Workshop)]);
+        Assert(edit.Applied && edit.Updated is not null, "enable-only requests rewrite existing rows");
+        var rows = ModList(edit.Updated!);
+        Assert(rows.Count == 3 && rows.All(r => r.GetProperty("is_enabled").ValueKind == JsonValueKind.True),
+            "all matching rows become explicitly enabled, including missing or non-boolean flags");
+        Assert(rows[0].GetProperty("id").GetString() == "CouchCoop" && rows[0].GetProperty("extra").GetString() == "Zoë",
+            "the enable rewrite carries through id spelling and extra fields");
+    }
+
+    private static void RewriteWithEnableRequestsKeepsTheSameRefusals()
+    {
+        SeatModRowKey[] off = [new("couchcoop", Local)];
+        SeatModRowKey[] on = [new("couchcoop", Workshop)];
+        foreach (var json in new[]
+                 {
+                     """{"language": "eng"}""",
+                     Settings("[]"),
+                     Settings("""[{"id": "couchcoop", "is_enabled": false, "source": 1}]"""),
+                 })
+        {
+            var previous = SeatModList.Disable(json, off);
+            var edit = SeatModList.Apply(json, off, on);
+            Assert(edit.Updated is null && !edit.Applied && edit.Refusal == previous.Refusal
+                && edit.NothingToPin == previous.NothingToPin && edit.NotDisabled.SequenceEqual(previous.NotDisabled),
+                "enable requests do not change the existing refusal behavior");
+            if (edit.Refusal is not null)
+                Assert(edit.NotEnabled.SequenceEqual(on), "a refused enable request is reported honestly");
+        }
+    }
+
+    private static void SeedingKeepsTheHostsDisabledCopyOnInBothProfileRoots()
+    {
+        using var root = new TempDir();
+        var steam = Path.Combine(root.Path, "steam", "76561198000000000", "settings.save");
+        var offline = Path.Combine(root.Path, "default", "1", "settings.save");
+        foreach (var (keep, disable) in new[] { (Workshop, Local), (Local, Workshop) })
+        {
+            DiskFixture.Write(steam, RewrittenHostSettings);
+            DiskFixture.Write(offline, RewrittenHostSettings);
+            SeatModPinOutcome? outcome = null;
+            var (errorChannel, _) = CaptureSeatLog(() => outcome = HeadlessSeatModSelection.ApplyToSeat(
+                root.Path, disable, [new SeatModRowKey("couchcoop", keep)], 7));
+            Assert(outcome is { Profiles: 2, Applied: 2, Rewritten: 2, Missed: 0 },
+                $"both profiles keep the host's {keep} copy enabled (got {outcome})");
+            Assert(errorChannel.Count == 0, "a successful copy pin stays off the ERROR channel");
+            foreach (var file in new[] { steam, offline })
+            {
+                var rows = ModList(File.ReadAllText(file));
+                Assert(Enabled(rows, "couchcoop", keep) == true && Enabled(rows, "couchcoop", disable) == false,
+                    $"the host's copy is on and the other off in {file}, even with a host-chosen couchcoop row");
+                Assert(rows.Count == 4 && Enabled(rows, "intentgraph2", Workshop) == true
+                    && Enabled(rows, "spirectlbridge", Local) == false,
+                    "the live file's other rows survive");
+            }
+            CaptureSeatLog(() => outcome = HeadlessSeatModSelection.ApplyToSeat(root.Path, disable, [], 7));
+            Assert(outcome is { Profiles: 2, Applied: 2, Rewritten: 0 }, "the seat edit is idempotent too");
+        }
+    }
+
+    private static void ADisabledCopyThatCannotBePinnedIsAlwaysEscalated()
+    {
+        using var root = new TempDir();
+        var steam = Path.Combine(root.Path, "steam", "76561198000000000", "settings.save");
+        var offline = Path.Combine(root.Path, "default", "1", "settings.save");
+        var refused = Settings("""
+            [
+              {"id": "couchcoop", "is_enabled": false, "source": 1},
+              {"id": "couchcoop", "is_enabled": false, "source": 2}
+            ]
+            """);
+        DiskFixture.Write(steam, refused);
+        DiskFixture.Write(offline, refused);
+        foreach (IReadOnlyCollection<SeatModRowKey>? chosen in new IReadOnlyCollection<SeatModRowKey>?[] { null, [] })
+        {
+            SeatModPinOutcome? outcome = null;
+            var (errorChannel, stderr) = CaptureSeatLog(() => outcome = HeadlessSeatModSelection.ApplyToSeat(
+                root.Path, Local, chosen, 8));
+            Assert(outcome is { Profiles: 2, Applied: 0, Missed: 2 }, "the refused profiles are not reported as applied");
+            Assert(errorChannel.Count == 1, "a copy-pin failure produces one ERROR per seat independently of host choices");
+            var line = errorChannel.Single();
+            Assert(line.Contains("slot=8", StringComparison.Ordinal)
+                && line.Contains("will start WITHOUT CouchCoop and cannot join", StringComparison.Ordinal)
+                && line.Contains(steam, StringComparison.Ordinal) && line.Contains(offline, StringComparison.Ordinal),
+                "the ERROR names the seat, consequence and every affected settings file");
+            Assert(stderr.Contains(line, StringComparison.Ordinal), "the escalation also reaches stderr");
+            Assert(File.ReadAllText(steam) == refused && File.ReadAllText(offline) == refused,
+                "the refused settings files are left byte-identical");
+        }
+    }
+
+    private static void ADisabledCopyWithAnUnrecognizedStringSourceDoesNotEscalate()
+    {
+        using var root = new TempDir();
+        var file = Path.Combine(root.Path, "steam", "1", "settings.save");
+        foreach (var (keep, disable) in new[] { (Workshop, Local), (Local, Workshop) })
+        {
+            var settings = Settings(Rows(
+                Row("couchcoop", keep, true),
+                Row("couchcoop", disable, false),
+                Row("couchcoop", "other", false)));
+            DiskFixture.Write(file, settings);
+            SeatModPinOutcome? outcome = null;
+            var (errorChannel, _) = CaptureSeatLog(() => outcome = HeadlessSeatModSelection.ApplyToSeat(
+                root.Path, disable, [], 9));
+            Assert(outcome is { Profiles: 1, Applied: 1, Rewritten: 0, Missed: 0 },
+                "an enabled host copy satisfies the pin despite a disabled row with another string source");
+            Assert(errorChannel.Count == 0, "the unrelated disabled copy does not produce a false ERROR");
+            Assert(File.ReadAllText(file) == settings, "the already-correct profile is left byte-identical");
+        }
+    }
+
+    private static void AnUnknownCopySourceChangesNeitherCopy()
+    {
+        using var root = new TempDir();
+        var file = Path.Combine(root.Path, "steam", "1", "settings.save");
+        DiskFixture.Write(file, RewrittenHostSettings);
+        foreach (var source in new string?[] { null, "unknown", "STEAM_WORKSHOP", "" })
+        {
+            Assert(HeadlessSeatModSelection.Pin(RewrittenHostSettings, source) is null,
+                "an unknown copy source changes neither row in the pure edit");
+            var (errorChannel, _) = CaptureSeatLog(() => HeadlessSeatModSelection.ApplyToSeat(root.Path, source, [], 9));
+            Assert(File.ReadAllText(file) == RewrittenHostSettings && errorChannel.Count == 0,
+                "an unknown copy source neither edits profiles nor escalates a copy pin");
+            Assert(HeadlessSeatModSelection.RowsToDisable(source, null).Count == 0,
+                "and supplies no copy-pin disable row");
+        }
+    }
+
     private static void SeedingAppliesHostChoicesBesideTheCopyPinInBothProfileRoots()
     {
         using var root = new TempDir();
@@ -1009,7 +1206,8 @@ internal static class SeatModSelectionTests
         Assert(line!.Contains("MintySpire2 (steam_workshop)", StringComparison.Ordinal)
             && line.Contains("BaseLib (steam_workshop)", StringComparison.Ordinal),
             "the line names every host-chosen id and the source it was disabled for");
-        Assert(line.Contains("copy pin=couchcoop (steam_workshop)", StringComparison.Ordinal), "and the copy pin");
+        Assert(line.Contains("copy pin=couchcoop (keep mods_directory, disable steam_workshop)", StringComparison.Ordinal),
+            "and both sides of the copy pin");
         Assert(line.EndsWith("applied to 2 of 2 profile(s)", StringComparison.Ordinal), "and that both profiles carry it");
         Assert(!line.Contains("couchcoop (mods_directory)", StringComparison.Ordinal), "the refused couchcoop choice is not claimed");
         Assert(!errorChannel.Any(l => l.Contains("headless seat mods", StringComparison.Ordinal)),

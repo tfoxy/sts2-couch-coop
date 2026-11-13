@@ -22,6 +22,7 @@ internal static class SeatModBuildTests
         ModSourceIsClassifiedByPathShape();
         SeatDisablesTheCopyTheHostIsNotRunning();
         PinDisablesAnEnabledWorkshopRow();
+        PinEnablesTheHostCopyEvenWhenTheOtherIsAlreadyDisabled();
         PinAppendsAMissingRow();
         PinLeavesAnAlreadyDisabledRowAlone();
         PinPreservesEveryOtherSettingAndTheGodotJsonShape();
@@ -151,7 +152,7 @@ internal static class SeatModBuildTests
         var original = Settings("""
             [
               {"id": "spirectlbridge", "is_enabled": true, "source": "mods_directory"},
-              {"id": "couchcoop", "is_enabled": true, "source": "mods_directory"},
+              {"id": "couchcoop", "is_enabled": false, "source": "mods_directory"},
               {"id": "couchcoop", "is_enabled": true, "source": "steam_workshop"}
             ]
             """);
@@ -160,12 +161,30 @@ internal static class SeatModBuildTests
 
         var rows = ModList(updated!);
         Assert(Enabled(rows, "couchcoop", WorkshopSource) == false, "the Workshop couchcoop row is disabled");
-        Assert(Enabled(rows, "couchcoop", LocalSource) == true, "the LOCAL couchcoop row is untouched");
+        Assert(Enabled(rows, "couchcoop", LocalSource) == true, "the host's LOCAL couchcoop row is enabled");
         Assert(Enabled(rows, "spirectlbridge", LocalSource) == true, "an unrelated mod's row is untouched");
         Assert(rows.Count == 3, "no row is added when the row already exists");
         // Order doubles as the player's manual load order.
         Assert(rows[0].GetProperty("id").GetString() == "spirectlbridge"
             && rows[2].GetProperty("source").GetString() == WorkshopSource, "row order is preserved");
+    }
+
+    private static void PinEnablesTheHostCopyEvenWhenTheOtherIsAlreadyDisabled()
+    {
+        var original = Settings("""
+            [
+              {"id": "couchcoop", "is_enabled": false, "source": "steam_workshop"},
+              {"id": "couchcoop", "is_enabled": false, "source": "mods_directory"}
+            ]
+            """);
+        foreach (var (keep, disable) in new[] { (WorkshopSource, LocalSource), (LocalSource, WorkshopSource) })
+        {
+            var updated = HeadlessSeatModSelection.Pin(original, disable);
+            Assert(updated is not null && Enabled(ModList(updated!), "couchcoop", keep) == true
+                && Enabled(ModList(updated!), "couchcoop", disable) == false,
+                "the pin enables the host's copy even when the other copy was already off");
+            Assert(HeadlessSeatModSelection.Pin(updated!, disable) is null, "the paired pin is idempotent");
+        }
     }
 
     private static void PinAppendsAMissingRow()

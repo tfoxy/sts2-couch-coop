@@ -14,24 +14,19 @@ namespace CouchCoop.Mod.Session;
 /// WHY THE COPY IS NOT ENOUGH. The per-mod enable flag does live in the file the seeder copies —
 /// <c>steam/&lt;id&gt;/settings.save</c>, under <c>mod_settings.mod_list</c>, one <c>{id, source,
 /// is_enabled}</c> row per (mod, source) pair. But the file is not a record of what the host LOADED. The
-/// game reads that list while starting up, decides from it, and then rewrites the list from the mods it
-/// actually found; the rewritten rows do not necessarily carry the enable flags the host started with.
-/// A seat is seeded from the host's user dir long after that rewrite, so it inherits the rewritten file,
-/// not the host's decision. On a developer machine with both a local deploy and a Workshop
-/// subscription, the host ran the local build and every seat ran the Workshop one, with one
-/// <c>[WARN]</c> in each seat's log to say so.
+/// host's rewritten list can carry its OWN copy disabled, or the other copy enabled. A seat seeded from
+/// that file needs the host's actual source pinned explicitly to keep the same CouchCoop copy loaded.
 /// </para>
 /// <para>
-/// So the seat is told explicitly: the row for the OTHER copy of <c>couchcoop</c> is written
-/// <c>is_enabled: false</c>. That is not a version comparison and not a subscription check — the game
-/// skips a mod whose (id, source) row is disabled before it ever compares two copies' versions, so the
-/// outcome no longer depends on either.
+/// So the seat is told explicitly: the host's existing <c>couchcoop</c> row is kept enabled, and the row
+/// for the OTHER copy is written <c>is_enabled: false</c>. A missing host row is already permitted and
+/// is not added, so enabling it never changes the list's order.
 /// </para>
 /// <para>
 /// SYMMETRIC, which matters for real players rather than for QA. The row disabled is derived from where
 /// the host's own CouchCoop was loaded from (<see cref="CouchCoopModBuildIdentity.ModSource"/>): a host
-/// running the Workshop build disables the seat's local row, not its Workshop one. Hardcoding "disable
-/// the Workshop row" would have left an ordinary subscriber's seats with no CouchCoop at all.
+/// running the Workshop build keeps its Workshop row on and turns the local row off; a local host keeps
+/// the local row on and turns the Workshop row off. Either host's own row may arrive disabled.
 /// </para>
 /// <para>
 /// THE HOST'S OWN CHOICES ride the same edit. A host can switch mods off for the seats it spawns (a seat runs
@@ -80,7 +75,7 @@ internal static class HeadlessSeatModSelection
     {
         var rows = new List<SeatModRowKey>();
         var seen = new HashSet<SeatModRowKey>();
-        if (!string.IsNullOrWhiteSpace(copyPinSource))
+        if (copyPinSource is not null && SourceToDisable(copyPinSource) is not null)
         {
             var pin = new SeatModRowKey(ModId, copyPinSource);
             seen.Add(pin);
@@ -95,13 +90,18 @@ internal static class HeadlessSeatModSelection
         return rows;
     }
 
+    private static IReadOnlyCollection<SeatModRowKey> RowsToEnable(string? copyPinSource)
+        => SourceToDisable(copyPinSource) is { } keepSource
+            ? [new SeatModRowKey(ModId, keepSource)]
+            : [];
+
     /// <summary>
     /// Apply the copy pin and the host's choices to a freshly seeded seat, and say in one line which mods the
     /// seat was launched with switched off.
     /// </summary>
     /// <param name="hostChosen">
     /// The host's resolved choices, or <see langword="null"/> for a caller that has none to offer (the pure
-    /// seeding tests) — in which case only the copy pin applies and no line is written.
+    /// seeding tests) — in which case only the copy pin applies and no routine summary is written.
     /// </param>
     /// <remarks>
     /// <para>
@@ -118,6 +118,10 @@ internal static class HeadlessSeatModSelection
     /// never-modded profile has no mod list to pin: that is how an ordinary modded host's seats are seeded, and
     /// an ERROR per seat would put an alarming line in every report such a host sends.
     /// </para>
+    /// <para>
+    /// Independently of host choices, a disabled host copy left in a seeded mod list is always escalated:
+    /// that seat will start without CouchCoop and cannot join. The error names the affected settings file(s).
+    /// </para>
     /// </remarks>
     internal static SeatModPinOutcome ApplyToSeat(
         string slotUserDir,
@@ -127,7 +131,9 @@ internal static class HeadlessSeatModSelection
     {
         var chosen = HostChosenRows(hostChosen).ToList();
         var rows = RowsToDisable(copyPinSource, chosen);
-        var outcome = rows.Count == 0 ? SeatModPinOutcome.None : PinSeatProfiles(slotUserDir, rows, slot);
+        var outcome = rows.Count == 0
+            ? SeatModPinOutcome.None
+            : PinSeatProfiles(slotUserDir, rows, RowsToEnable(copyPinSource), slot);
         if (hostChosen is null) return outcome;
 
         var line = DescribeSeat(slot, copyPinSource, chosen, outcome);
@@ -160,7 +166,9 @@ internal static class HeadlessSeatModSelection
             : string.Join(", ", hostChosen
                 .GroupBy(row => row.Id, SeatModSelectionPlan.IdComparer)
                 .Select(group => $"{group.Key} ({string.Join(", ", group.Select(row => row.Source))})"));
-        var pin = string.IsNullOrWhiteSpace(copyPinSource) ? "none" : $"{ModId} ({copyPinSource})";
+        var pin = SourceToDisable(copyPinSource) is { } keepSource
+            ? $"{ModId} (keep {keepSource}, disable {copyPinSource})"
+            : "none";
         var applied = outcome switch
         {
             { Profiles: 0 } => "no seeded profile carried a settings.save, so nothing was disabled",
@@ -178,24 +186,27 @@ internal static class HeadlessSeatModSelection
     }
 
     /// <summary>
-    /// Disable <paramref name="rowsToDisable"/> in every profile <c>settings.save</c> under
-    /// <paramref name="slotUserDir"/>.
+    /// Apply both flag sets to every profile <c>settings.save</c> under <paramref name="slotUserDir"/>.
     /// </summary>
     internal static SeatModPinOutcome PinSeatProfiles(
         string slotUserDir,
         IReadOnlyCollection<SeatModRowKey> rowsToDisable,
+        IReadOnlyCollection<SeatModRowKey> rowsToEnable,
         int slot)
     {
         var profiles = 0;
         var applied = 0;
         var rewritten = 0;
         var nothingToPin = 0;
+        var disabledCopyFiles = new List<string>();
         try
         {
             foreach (var settings in SeatModList.ProfileSettingsFiles(slotUserDir))
             {
                 profiles++;
-                switch (PinFile(settings, rowsToDisable, slot))
+                var result = PinFile(settings, rowsToDisable, rowsToEnable, slot, out var copyDisabled);
+                if (copyDisabled) disabledCopyFiles.Add(settings);
+                switch (result)
                 {
                     case PinFileResult.Rewritten:
                         rewritten++;
@@ -218,6 +229,13 @@ internal static class HeadlessSeatModSelection
                 $"headless seat mod selection walk stopped slot={slot} dir={slotUserDir}: {ex.GetType().Name}: {ex.Message}");
         }
 
+        if (disabledCopyFiles.Count > 0)
+        {
+            HeadlessUserDirSeeder.Log(
+                $"headless seat copy pin failed slot={slot}: the seat will start WITHOUT CouchCoop and cannot join; "
+                + $"host copy remains disabled in file(s)=[{string.Join(", ", disabledCopyFiles)}]");
+        }
+
         return new SeatModPinOutcome(profiles, applied, rewritten, nothingToPin);
     }
 
@@ -229,11 +247,19 @@ internal static class HeadlessSeatModSelection
         Rewritten,
     }
 
-    private static PinFileResult PinFile(string settingsPath, IReadOnlyCollection<SeatModRowKey> rows, int slot)
+    private static PinFileResult PinFile(
+        string settingsPath,
+        IReadOnlyCollection<SeatModRowKey> rowsToDisable,
+        IReadOnlyCollection<SeatModRowKey> rowsToEnable,
+        int slot,
+        out bool copyDisabled)
     {
+        copyDisabled = false;
         try
         {
-            var edit = SeatModList.Disable(File.ReadAllText(settingsPath), rows);
+            var original = File.ReadAllText(settingsPath);
+            copyDisabled = HasDisabledCopy(original, rowsToEnable);
+            var edit = SeatModList.Apply(original, rowsToDisable, rowsToEnable);
             if (edit.Refusal is not null && edit.NothingToPin)
             {
                 CouchCoopLog.Stderr(
@@ -263,9 +289,10 @@ internal static class HeadlessSeatModSelection
                 var temporary = settingsPath + ".couchcoop-pin.tmp";
                 File.WriteAllText(temporary, edit.Updated);
                 File.Move(temporary, settingsPath, overwrite: true);
+                copyDisabled = HasDisabledCopy(edit.Updated, rowsToEnable);
             }
 
-            if (!edit.Applied) return PinFileResult.NotApplied;
+            if (!edit.Applied || copyDisabled) return PinFileResult.NotApplied;
             return edit.Updated is null ? PinFileResult.AlreadyApplied : PinFileResult.Rewritten;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
@@ -276,13 +303,39 @@ internal static class HeadlessSeatModSelection
         }
     }
 
+    private static bool HasDisabledCopy(string settingsJson, IReadOnlyCollection<SeatModRowKey> rowsToEnable)
+    {
+        if (rowsToEnable.Count == 0) return false;
+        using var document = JsonDocument.Parse(settingsJson);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("mod_settings", out var modSettings) || modSettings.ValueKind != JsonValueKind.Object
+            || !modSettings.TryGetProperty("mod_list", out var list) || list.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var row in list.EnumerateArray())
+        {
+            if (row.ValueKind != JsonValueKind.Object
+                || !row.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String || !IsCouchCoop(id.GetString())
+                || !row.TryGetProperty("is_enabled", out var flag) || flag.ValueKind != JsonValueKind.False)
+                continue;
+
+            // A non-string source cannot safely identify a disabled CouchCoop copy to repair.
+            if (!row.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String
+                || rowsToEnable.Contains(new SeatModRowKey(ModId, source.GetString()!)))
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Rewrite one <c>settings.save</c> so the <c>couchcoop</c> row for <paramref name="sourceToDisable"/>
-    /// is present and disabled. Returns <see langword="null"/> when the file must be left exactly as it
-    /// was copied. The copy pin alone, as <see cref="SeatModList.Disable"/> applies it.
+    /// is present and disabled, and the other copy's existing row is enabled. Returns <see langword="null"/>
+    /// when the file must be left exactly as copied. The copy pin alone, as <see cref="SeatModList.Apply"/> applies it.
     /// </summary>
-    internal static string? Pin(string settingsJson, string sourceToDisable)
-        => SeatModList.Disable(settingsJson, [new SeatModRowKey(ModId, sourceToDisable)]).Updated;
+    internal static string? Pin(string settingsJson, string? sourceToDisable)
+        => SeatModList.Apply(settingsJson, RowsToDisable(sourceToDisable, null), RowsToEnable(sourceToDisable)).Updated;
 
     private static IEnumerable<SeatModRowKey> HostChosenRows(IEnumerable<SeatModRowKey>? hostChosen)
         => hostChosen is null
@@ -294,7 +347,7 @@ internal static class HeadlessSeatModSelection
 
 /// <summary>What pinning one seat's profiles came to.</summary>
 /// <param name="Profiles">Profile <c>settings.save</c> files found in the seat.</param>
-/// <param name="Applied">Of those, how many now disable every requested row (rewritten, or already so).</param>
+/// <param name="Applied">Of those, how many now satisfy every requested flag (rewritten, or already so).</param>
 /// <param name="Rewritten">Of those, how many had to be rewritten.</param>
 /// <param name="NothingToPin">
 /// Of those, how many have no mod list to pin — none at all, or an empty one (<see cref="SeatModListEdit.NothingToPin"/>).
