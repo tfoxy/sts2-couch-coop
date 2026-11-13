@@ -166,10 +166,14 @@ Pushing is always explicit — no agent pushes a branch or a tag on its own.
 Inside the payload, the game-version-sensitive assemblies sit one lane deep — `couchcoop/lanes/<game
 version>/` — beside the shared frontend, licences and the `couchcoop/couchcoop.dll` the game loads by
 the `<modDir>/<id>.dll` convention. That loader picks a lane at run time from the build it finds
-itself in; nothing about the choice is baked into the download. A lane is named after a game Steam
-branch on the way in (`eng/Sts2.ReferenceSdk/<lane>/`, reviewed by
+itself in; nothing about the choice is baked into the download. Each reviewed game build has a lane
+on the way in (`eng/Sts2.ReferenceSdk/<lane>/`, reviewed by
 `scripts/verify-sts2-reference-sdk.sh`) and after the game version it was pinned from on the way out,
 because a directory the loader matches against a running game should be named for what it matches.
+
+The lanes are `stable` (v0.107.1), `public-beta` (v0.111.0) and `beta-v113` (v0.113.0), shipping
+under `lanes/0.107.1/`, `lanes/0.111.0/` and `lanes/0.113.0/`. The latter two cover beta builds;
+the loader picks the highest floor at or below the running game version.
 
 `scripts/package-release.sh` builds every lane in one invocation — it clones the two pinned sibling
 repositories once and then stages the lanes into one payload — because the workflow calls it once and

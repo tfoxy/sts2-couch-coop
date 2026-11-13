@@ -19,8 +19,8 @@ usage:
   scripts/compare-sts2-reference-builds.sh LANE GAME_ASSEMBLIES_DIR [LANE GAME_ASSEMBLIES_DIR ...]
   scripts/compare-sts2-reference-builds.sh GAME_ASSEMBLIES_DIR
 
-Lane names are game Steam branches -- `stable` (the default `public` branch) and `public-beta` --
-matching eng/Sts2.ReferenceSdk/<lane>/ and scripts/with-game-branch.sh. The one-argument form means
+Lanes are reviewed game builds -- `stable`, `public-beta` and `beta-v113` --
+matching eng/Sts2.ReferenceSdk/<lane>/. The one-argument form means
 the stable lane.
 
 Multiple lanes run SEQUENTIALLY, never concurrently: every pass builds the same consumer projects

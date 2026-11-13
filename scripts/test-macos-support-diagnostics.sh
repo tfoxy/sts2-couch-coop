@@ -10,10 +10,10 @@ trap 'rm -rf "$fixture"' EXIT
 app="$fixture/Slay The Spire 2.app"
 mod="$app/Contents/MacOS/mods/couchcoop"
 log="$fixture/godot.log"
-mkdir -p "$app/Contents/Resources" "$mod/lanes/0.107.1" "$mod/lanes/0.111.0"
+mkdir -p "$app/Contents/Resources" "$mod/lanes/0.107.1" "$mod/lanes/0.111.0" "$mod/lanes/0.113.0"
 printf '{"version":"v0.111.0"}\n' > "$app/Contents/Resources/release_info.json"
 for file in couchcoop.json couchcoop.dll; do printf fixture > "$mod/$file"; done
-for lane in 0.107.1 0.111.0; do
+for lane in 0.107.1 0.111.0 0.113.0; do
   printf fixture > "$mod/lanes/$lane/CouchCoop.Mod.dll"
   printf fixture > "$mod/lanes/$lane/CouchCoop.Spirectl.dll"
 done
@@ -81,6 +81,8 @@ output="$("$repo_root/scripts/macos-support-diagnostics.sh" --app "$app" --mod "
 after="$(snapshot)"
 [[ "$before" == "$after" ]] || { echo "support diagnostics changed the fixture" >&2; exit 1; }
 grep -F 'package_layout           ok' <<< "$output" >/dev/null
+grep -F 'lanes/0.113.0/CouchCoop.Mod.dll' <<< "$output" >/dev/null
+grep -F 'lanes/0.113.0/CouchCoop.Spirectl.dll' <<< "$output" >/dev/null
 while IFS= read -r expected; do
   grep -Fx "$expected" <<< "$output" >/dev/null || { echo "missing approved checkpoint: $expected" >&2; exit 1; }
 done <<'EOF'
@@ -125,4 +127,7 @@ reason=placeholder
 [couchcoop] live-host-runtime result=supported suffix=leak
 EOF
 ! grep -F "$fixture" <<< "$output" >/dev/null || { echo "support output leaked a fixture path" >&2; exit 1; }
+rm "$mod/lanes/0.113.0/CouchCoop.Spirectl.dll"
+missing_output="$("$repo_root/scripts/macos-support-diagnostics.sh" --app "$app" --mod "$mod" --log "$log")"
+grep -F 'missing-or-wrong-case:lanes/0.113.0/CouchCoop.Spirectl.dll' <<< "$missing_output" >/dev/null
 echo "test-macos-support-diagnostics: ok"

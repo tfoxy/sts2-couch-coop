@@ -42,7 +42,7 @@ done
 # more -- it is the list a workspace's lane.txt has to allow in full, and the list of lane
 # directories the payload has to hold.
 mapfile -t lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
-[[ ${#lanes[@]} -ge 2 ]] || fail "this test's lane.txt legs need at least two reference lanes"
+[[ ${#lanes[@]} -eq 3 ]] || fail "this test's lane.txt legs need all three reference lanes"
 # The assemblies that vary by lane, and therefore ship under lanes/<floor>/ instead of at the
 # payload root. Read from the reviewed table so this fixture follows the real layout.
 mapfile -t lane_assemblies < <(release_lane_assembly_names)
@@ -77,6 +77,32 @@ for file in \
 done
 printf 'crate\tversion\tchosen_spdx\tlicense_filename\nexample\t1.0.0\tMIT\texample.LICENSE\n' \
   > "$payload/licenses/msdf-generator/manifest.tsv"
+
+# Keep this synthetic payload valid under the release gate's renderer requirements.
+mkdir -p "$payload/frontend/app/render-stream" "$payload/render-capture/linux" \
+  "$payload/render-capture/windows" "$payload/licenses/render-capture/windows" "$payload/licenses/render-capture/net"
+for file in rs_gsw_wasm_client.js rs_gsw_wasm_bg.wasm core-build; do
+  printf 'fixture\n' > "$payload/frontend/app/render-stream/$file"
+done
+for file in librender_stream_capture.so librender_stream_net.so; do
+  printf '\177ELFfixture\n' > "$payload/render-capture/linux/$file"
+done
+printf 'fixture\n' > "$payload/render-capture/linux/calibration"
+for file in render_stream_capture.dll render_stream_net.dll; do
+  printf 'MZfixture\n' > "$payload/render-capture/windows/$file"
+done
+printf '[libraries]\nlinux.x86_64 = "librender_stream_capture.so"\n' > "$payload/render-capture/linux/render_stream_capture.gdextension"
+printf '[libraries]\nwindows.x86_64 = "render_stream_capture.dll"\n' > "$payload/render-capture/windows/render_stream_capture.gdextension"
+for file in llvm-mingw-LICENSE.txt mingw-w64-runtime-COPYING.txt rust-std-MIT.txt; do
+  printf 'fixture license\n' > "$payload/licenses/render-capture/windows/$file"
+done
+printf 'fixture notice\n' > "$payload/licenses/render-capture/net/THIRD_PARTY_NOTICES.md"
+printf 'crate\tversion\tchosen_spdx\tlicense_filename\nring\t0.17.14\tApache-2.0 AND ISC\tring-0.17.14.txt\n' \
+  > "$payload/licenses/render-capture/net/manifest.tsv"
+printf 'fixture license\n' > "$payload/licenses/render-capture/net/ring-0.17.14.txt"
+for file in Godot-gdextension-LICENSE.txt zlib-LICENSE zstd-LICENSE basis_universal-LICENSE; do
+  printf 'fixture\n' > "$payload/licenses/render-capture/$file"
+done
 
 # One directory per lane, named after that lane's game floor, holding only the lane-varying
 # assemblies. A release payload carries EVERY lane -- that is the whole point of the merged shape --

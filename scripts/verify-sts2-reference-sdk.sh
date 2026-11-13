@@ -9,10 +9,9 @@ set -euo pipefail
 #   scripts/verify-sts2-reference-sdk.sh              every reviewed lane
 #   scripts/verify-sts2-reference-sdk.sh <lane>...    only the named lanes
 #
-# Lane names are GAME STEAM BRANCHES (`stable` = the default `public` branch, `public-beta`), the
-# same vocabulary as scripts/with-game-branch.sh. The `-beta` suffix on a package version is NuGet
-# PRERELEASE and says nothing about the branch: `0.107.0-beta` is the STABLE lane's pin. Never read
-# a lane off a package suffix.
+# Lanes pin reviewed game builds; a Steam branch can have more than one lane. The `-beta` suffix
+# on a package version is NuGet PRERELEASE and says nothing about the branch: `0.107.0-beta` is the
+# STABLE lane's pin. Never read a lane off a package suffix.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/release-lanes.sh
@@ -21,7 +20,7 @@ sdk_root="$repo_root/eng/Sts2.ReferenceSdk"
 shared_targets="$sdk_root/Sts2.ReferenceSdk.targets"
 
 # The reviewed lanes, in review order.
-reviewed_lanes=(stable public-beta)
+reviewed_lanes=(stable public-beta beta-v113)
 
 usage() {
   printf 'usage: scripts/verify-sts2-reference-sdk.sh [%s]...\n' "$(
@@ -37,21 +36,20 @@ lane_package_version() {
   case "$1" in
     stable)      echo '0.107.0-beta' ;;   # NuGet prerelease suffix; this is the STABLE lane
     public-beta) echo '0.111.0-beta' ;;
+    beta-v113)   echo '0.113.0-beta' ;;
     *) return 1 ;;
   esac
 }
 
 lane_godot_version() {
   case "$1" in
-    stable|public-beta) echo '4.5.1' ;;
+    stable|public-beta|beta-v113) echo '4.5.1' ;;
     *) return 1 ;;
   esac
 }
 
 # The exact file set a lane's build must stage. Written out per lane on purpose: it is a review of
-# one package version. 0.107.0-beta and 0.111.0-beta happen to ship the same eight assemblies
-# (measured Sep 12 2026), so these two lists are identical today -- that is a finding, not a
-# default, and a new lane must be listed rather than inheriting.
+# one package version, so a new lane must be listed rather than inheriting another lane's set.
 lane_expected_dlls() {
   case "$1" in
     stable)
@@ -68,6 +66,19 @@ lane_expected_dlls() {
         sts2.dll
       ;;
     public-beta)
+      printf '%s\n' \
+        0Harmony.dll \
+        CouchCoop.Sts2.ReferenceSdk.dll \
+        GodotSharp.dll \
+        MonoMod.Backports.dll \
+        MonoMod.ILHelpers.dll \
+        Sentry.dll \
+        SmartFormat.dll \
+        SmartFormat.ZString.dll \
+        Steamworks.NET.dll \
+        sts2.dll
+      ;;
+    beta-v113)
       printf '%s\n' \
         0Harmony.dll \
         CouchCoop.Sts2.ReferenceSdk.dll \

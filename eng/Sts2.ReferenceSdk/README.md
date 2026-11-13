@@ -13,16 +13,19 @@ by the release build.
 
 ## Lanes
 
-The game ships on more than one Steam branch, and one reference package cannot serve both, so there
-is one **lane** per branch. A lane is a pinned package version, a `packages.lock.json`, a reviewed
+The game ships multiple builds across its Steam branches, so there is one **lane** per reviewed
+game build. A lane is a pinned package version, a `packages.lock.json`, a reviewed
 content hash and a reviewed assembly allowlist.
 
 | lane | game Steam branch | game build | `FuYnAloft.Sts2.References` | project |
 | --- | --- | --- | --- | --- |
 | `stable` | `public` (the default branch) | v0.107.1 | `0.107.0-beta` | `stable/Sts2.ReferenceSdk.stable.csproj` |
 | `public-beta` | `public-beta` | v0.111.0 | `0.111.0-beta` | `public-beta/Sts2.ReferenceSdk.public-beta.csproj` |
+| `beta-v113` | `public-beta` | v0.113.0 | `0.113.0-beta` | `beta-v113/Sts2.ReferenceSdk.beta-v113.csproj` |
 
-Lane names are **game Steam branches**, the same vocabulary as `scripts/with-game-branch.sh`.
+`stable` and `public-beta` retain their original names and pins; `beta-v113` adds a newer build
+from the same beta branch. The payload directories are `lanes/0.107.1/`, `lanes/0.111.0/` and
+`lanes/0.113.0/`; the loader selects the highest floor at or below the running game version.
 
 > **The `-beta` suffix is NuGet prerelease, not the Steam branch.** Every published version of this
 > package carries it — `0.108.0-beta`, `0.109.0-beta`, `0.110.1-beta`, `0.111.0-beta` — including
@@ -33,8 +36,8 @@ Lane names are **game Steam branches**, the same vocabulary as `scripts/with-gam
 The stable lane pairs package `0.107.0` with game build `0.107.1` because no `0.107.1` package is
 published. The comparison gate below is what makes that pairing a fact rather than a hope.
 
-Measured Sep 12 2026: `0.107.0-beta` and `0.111.0-beta` ship exactly the same eight assemblies, so
-both allowlists are identical today. That is a finding about two package versions, not a shared
+`0.107.0-beta`, `0.111.0-beta` and `0.113.0-beta` ship the same eight assemblies, so
+their allowlists are identical today. That is a finding about these package versions, not a shared
 default — each lane lists its own, and `scripts/verify-sts2-reference-sdk.sh` keeps an expected
 file set per lane. Note the one asymmetry already visible: the beta *game install* ships
 `Sentry.Godot.dll` and the beta `sts2.dll` references it, but the *package* does not ship it, so no
@@ -51,6 +54,9 @@ stable/                         one lane
   packages.lock.json
 public-beta/
   Sts2.ReferenceSdk.public-beta.csproj
+  packages.lock.json
+beta-v113/
+  Sts2.ReferenceSdk.beta-v113.csproj
   packages.lock.json
 ```
 

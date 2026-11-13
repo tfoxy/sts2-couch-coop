@@ -47,7 +47,7 @@ layout="ok"
 for name in couchcoop.json couchcoop.dll; do
   release_exact_path "$mod" "$name" >/dev/null 2>&1 || layout="missing-or-wrong-case:$name"
 done
-for lane in stable public-beta; do
+for lane in stable public-beta beta-v113; do
   directory="$(release_lane_dir_name "$lane")"
   for name in CouchCoop.Mod.dll CouchCoop.Spirectl.dll; do
     release_exact_path "$mod" "lanes/$directory/$name" >/dev/null 2>&1 || layout="missing-or-wrong-case:lanes/$directory/$name"
@@ -60,7 +60,7 @@ allowlisted=(
   QRCoder.dll DeviceDetector.NET.dll LiteDB.dll Microsoft.Extensions.DependencyInjection.Abstractions.dll
   Microsoft.Extensions.Logging.Abstractions.dll System.Diagnostics.DiagnosticSource.dll YamlDotNet.dll
 )
-for lane in stable public-beta; do
+for lane in stable public-beta beta-v113; do
   directory="$(release_lane_dir_name "$lane")"
   allowlisted+=("lanes/$directory/CouchCoop.Mod.dll" "lanes/$directory/CouchCoop.Spirectl.dll")
 done

@@ -25,6 +25,10 @@ lane_assemblies=()
 while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
 known_lanes=()
 while IFS= read -r lane; do known_lanes+=("$lane"); done < <(release_lane_known_names)
+[[ "$(release_lane_game_api beta-v113)" == v113 ]] || fail "beta-v113 must compile the v113 API"
+[[ "$(release_lane_game_build beta-v113)" == v0.113.0 ]] || fail "beta-v113 must target game v0.113.0"
+[[ "$(release_lane_game_floor beta-v113)" == v0.113.0 ]] || fail "beta-v113 must start at v0.113.0"
+[[ "$(release_lane_steam_branch beta-v113)" == public-beta ]] || fail "beta-v113 must cover the beta branch"
 
 # ------------------------------------------------------------------------------------------------
 # The lane table itself. A lane that exists on disk but is unreviewed here (or the reverse) would
@@ -47,10 +51,12 @@ for lane in "${known_lanes[@]}"; do
 done
 # The merged floor is the LOWEST lane floor, never the newest: too high and the one payload refuses
 # to load on the older branch whose lane it also carries.
-[[ "$(release_payload_min_game_version stable public-beta)" == "$(release_lane_game_floor stable)" ]] \
+[[ "$(release_payload_min_game_version "${known_lanes[@]}")" == "$(release_lane_game_floor stable)" ]] \
   || fail "the merged floor is not the lowest lane floor"
 [[ "$(release_payload_min_game_version public-beta)" == "$(release_lane_game_floor public-beta)" ]] \
   || fail "a single-lane payload does not declare that lane's own floor"
+[[ "$(release_payload_min_game_version public-beta beta-v113)" == v0.111.0 ]] \
+  || fail "the beta lanes do not retain the older beta floor"
 [[ "$(printf '%s\n' v9.10.2 v10.2.1 v9.99.99 | release_semver_tag_latest)" == "v10.2.1" ]] \
   || fail "tag semantic ordering does not preserve the v prefix"
 
@@ -330,6 +336,21 @@ make_valid_payload "$beta_only" public-beta
 [[ "$(jq -r '.min_game_version' "$beta_only/couchcoop.json")" == "$(release_lane_game_floor public-beta)" ]] \
   || fail "the public-beta-only fixture does not declare the public-beta floor"
 
+v113_only="$fixture_root/v113-only/couchcoop"
+make_valid_payload "$v113_only" beta-v113
+"$verifier" --payload "$v113_only" --version 1.2.3 --lane beta-v113 >/dev/null
+[[ "$(jq -r '.min_game_version' "$v113_only/couchcoop.json")" == v0.113.0 ]] \
+  || fail "the beta-v113-only fixture does not declare its floor"
+expect_reject_saying v113-only-complete 'not complete' \
+  "$verifier" --payload "$v113_only" --version 1.2.3 --lane beta-v113 --complete
+
+old_lanes="$fixture_root/old-lanes/couchcoop"
+make_valid_payload "$old_lanes" stable public-beta
+expect_reject_saying old-lanes-complete 'not complete' \
+  "$verifier" --payload "$old_lanes" --version 1.2.3 --lane stable --lane public-beta --complete
+expect_reject_saying old-lanes-missing-v113 'does not carry the requested lane: beta-v113' \
+  "$verifier" --payload "$old_lanes" --version 1.2.3 --lane beta-v113
+
 expect_reject_saying unusable-requested-lane 'unusable lane name' \
   "$verifier" --payload "$valid" --version 1.2.3 --lane 'Not A Lane'
 expect_reject_saying unreviewed-requested-lane 'unreviewed lane name' \
@@ -479,9 +500,11 @@ jq -e '
     and (.size | type == "number" and . > 0)
     and (.sha256 | test("^[0-9a-f]{64}$")))
 ' "$recomputed" >/dev/null || fail "recomputed contents manifest is not a valid v1 document"
-jq -e --arg path "couchcoop/lanes/$(release_lane_dir_name public-beta)/CouchCoop.Mod.dll" \
-  'any(.files[]; .path == $path)' "$recomputed" >/dev/null \
-  || fail "recomputed contents manifest does not list the lane assemblies"
+for lane in "${known_lanes[@]}"; do
+  jq -e --arg path "couchcoop/lanes/$(release_lane_dir_name "$lane")/CouchCoop.Mod.dll" \
+    'any(.files[]; .path == $path)' "$recomputed" >/dev/null \
+    || fail "recomputed contents manifest does not list the $lane assemblies"
+done
 diff -u \
   <(jq -r '.files[].path' "$recomputed" | LC_ALL=C sort) \
   <(unzip -Z1 "$valid_archive" | sed -n '/[^\/]$/p' | LC_ALL=C sort) \

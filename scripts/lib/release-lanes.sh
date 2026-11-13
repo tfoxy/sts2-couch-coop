@@ -3,9 +3,9 @@
 # shellcheck source=release-portable.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release-portable.sh"
 #
-# A lane is named after a GAME STEAM BRANCH (`stable`, `public-beta`) and selects which pinned STS2
-# reference package a release build compiles against (eng/Sts2.ReferenceSdk/<lane>/). The `-beta`
-# suffix on a NuGet package version is PRERELEASE and says nothing about the branch: `0.107.0-beta`
+# A lane selects a reviewed game build and its pinned STS2 reference package
+# (eng/Sts2.ReferenceSdk/<lane>/). Multiple lanes can cover builds from the same Steam branch.
+# The `-beta` suffix on a NuGet package version is PRERELEASE and says nothing about the branch: `0.107.0-beta`
 # is the STABLE lane's pin. Never read a lane off a package version suffix.
 #
 # ONE RELEASE IS ONE ARCHIVE, carrying every lane. It used to be one archive per lane published as
@@ -32,7 +32,7 @@ release_lane_is_valid_name() {
 # lane means adding it here AND to every reviewed table below AND to eng/Sts2.ReferenceSdk/ — which
 # scripts/test-verify-release-archive.sh asserts, so a half-added lane fails loudly.
 release_lane_known_names() {
-  printf '%s\n' stable public-beta
+  printf '%s\n' stable public-beta beta-v113
 }
 
 # The assemblies that differ between lanes, and so ship once per lane under `lanes/<floor>/` instead
@@ -57,6 +57,7 @@ release_lane_game_api() {
   case "$lane" in
     stable) value="v107" ;;
     public-beta) value="v111" ;;
+    beta-v113) value="v113" ;;
     *)
       echo "release-lanes: lane '$lane' has no reviewed bridge API lane; add one to scripts/lib/release-lanes.sh" >&2
       return 1
@@ -80,6 +81,7 @@ release_lane_game_build() {
   case "$lane" in
     stable) value="v0.107.1" ;;
     public-beta) value="v0.111.0" ;;
+    beta-v113) value="v0.113.0" ;;
     *)
       echo "release-lanes: lane '$lane' has no reviewed game build; add one to scripts/lib/release-lanes.sh" >&2
       return 1
@@ -122,6 +124,7 @@ release_lane_game_floor() {
     stable) value="v0.107.1" ;;
     # Game v0.111.0 — the build eng/Sts2.ReferenceSdk/public-beta pins its references from.
     public-beta) value="v0.111.0" ;;
+    beta-v113) value="v0.113.0" ;;
     *)
       echo "release-lanes: lane '$lane' has no reviewed game floor; add one to scripts/lib/release-lanes.sh" >&2
       return 1
@@ -199,13 +202,18 @@ release_join_with_and() {
 # It must never say Steam serves a build per branch. It does not: one item, one revision, and the mod
 # chooses at load time. See the header of this file for the client behaviour that forced that.
 release_compatibility_summary() {
-  local lane where=() builds=()
+  local lane location locations=" " where=() builds=()
   [[ $# -gt 0 ]] || { echo "release-lanes: release_compatibility_summary needs at least one lane" >&2; return 1; }
   for lane in "$@"; do
     if [[ "$lane" == "$RELEASE_LANE_DEFAULT" ]]; then
-      where+=("the normal game")
+      location="the normal game"
     else
-      where+=("its $(release_lane_steam_branch "$lane") branch")
+      location="its $(release_lane_steam_branch "$lane") branch"
+    fi
+    # A branch can have more than one game-build lane in the same download.
+    if [[ "$locations" != *" $location "* ]]; then
+      where+=("$location")
+      locations+="$location "
     fi
     builds+=("$(release_lane_game_build "$lane")")
   done
@@ -345,6 +353,7 @@ release_lane_steam_branch() {
   case "$lane" in
     stable) value="public" ;;
     public-beta) value="public-beta" ;;
+    beta-v113) value="public-beta" ;;
     *)
       echo "release-lanes: lane '$lane' has no reviewed Steam branch; add one to scripts/lib/release-lanes.sh" >&2
       return 1

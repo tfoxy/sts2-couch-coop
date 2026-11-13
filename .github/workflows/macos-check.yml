@@ -286,7 +286,7 @@ jobs:
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
-          scripts/verify-sts2-reference-sdk.sh stable public-beta
+          scripts/verify-sts2-reference-sdk.sh stable public-beta beta-v113
           scripts/test-verify-release-archive.sh
           scripts/test-macos-support-diagnostics.sh
           scripts/test-iphone-safari-simulator.sh
@@ -297,7 +297,7 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="$RUNNER_TEMP/couchcoop-reference-sdk"
-          for lane in stable public-beta; do
+          for lane in stable public-beta beta-v113; do
             dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
               -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
           done
@@ -411,7 +411,7 @@ jobs:
           unzip -q "$archive" -d "$extracted"
           version="$(jq -er '.version' "$extracted/couchcoop/couchcoop.json")"
           scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
-            --lane stable --lane public-beta --complete
+            --lane stable --lane public-beta --lane beta-v113 --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
 
       - name: Run iPhone 13 Simulator Safari survival contract
@@ -563,7 +563,7 @@ jobs:
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
-          scripts/verify-sts2-reference-sdk.sh stable public-beta
+          scripts/verify-sts2-reference-sdk.sh stable public-beta beta-v113
           scripts/test-verify-release-archive.sh
           scripts/test-macos-support-diagnostics.sh
           scripts/test-iphone-safari-simulator.sh
@@ -574,7 +574,7 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="$RUNNER_TEMP/couchcoop-reference-sdk"
-          for lane in stable public-beta; do
+          for lane in stable public-beta beta-v113; do
             dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
               -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
           done
@@ -688,7 +688,7 @@ jobs:
           unzip -q "$archive" -d "$extracted"
           version="$(jq -er '.version' "$extracted/couchcoop/couchcoop.json")"
           scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
-            --lane stable --lane public-beta --complete
+            --lane stable --lane public-beta --lane beta-v113 --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
 
       - name: Verify stock Godot honors a fake HOME

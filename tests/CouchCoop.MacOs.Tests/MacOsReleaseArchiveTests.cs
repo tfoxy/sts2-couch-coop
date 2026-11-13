@@ -61,7 +61,7 @@ internal static class MacOsReleaseArchiveTests
         var laneRoot = Path.Combine(payload, "lanes");
         Assert(Directory.Exists(laneRoot), "payload has lanes directory");
         var laneDirectories = Directory.GetDirectories(laneRoot).OrderBy(Path.GetFileName, StringComparer.Ordinal).ToArray();
-        Assert(laneDirectories.Select(Path.GetFileName).SequenceEqual(["0.107.1", "0.111.0"]), "archive has exact stable and beta lane directories");
+        Assert(laneDirectories.Select(Path.GetFileName).SequenceEqual(["0.107.1", "0.111.0", "0.113.0"]), "archive has exact reviewed game-build lane directories");
         foreach (var lane in laneDirectories)
         {
             var names = Directory.GetFiles(lane).Select(Path.GetFileName).OrderBy(x => x, StringComparer.Ordinal).ToArray();
@@ -71,7 +71,7 @@ internal static class MacOsReleaseArchiveTests
         foreach (var file in Directory.GetFiles(payload, "*", SearchOption.AllDirectories))
         {
             var relative = Path.GetRelativePath(payload, file).Replace(Path.DirectorySeparatorChar, '/');
-            var isLane = LaneAssemblies.Any(name => relative == $"lanes/0.107.1/{name}" || relative == $"lanes/0.111.0/{name}");
+            var isLane = LaneAssemblies.Any(name => relative == $"lanes/0.107.1/{name}" || relative == $"lanes/0.111.0/{name}" || relative == $"lanes/0.113.0/{name}");
             var isKnownShared = allowed.Contains(relative);
             var isAllowedFrontend = relative.StartsWith("frontend/", StringComparison.Ordinal);
             var isAllowedLicense = relative.StartsWith("licenses/", StringComparison.Ordinal);

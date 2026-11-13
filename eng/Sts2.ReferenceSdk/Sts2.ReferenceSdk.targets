@@ -2,8 +2,8 @@
   <!--
     Shared logic for every STS2 reference lane under this directory.
 
-    A lane project (stable/, public-beta/) holds only three things: its exact package pins, its
-    reviewed assembly allowlist, and its assembly name. Everything mechanical lives here so two
+    A lane project holds only three things: its exact package pins, its
+    reviewed assembly allowlist, and its assembly name. Everything mechanical lives here so
     lanes cannot drift apart, and so reviewing a new lane means reading a pin list rather than a
     second copy of a staging target.
 
