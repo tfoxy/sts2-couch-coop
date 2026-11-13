@@ -100,6 +100,14 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(group.get(".settings-item").text()).toContain("Use new renderer (Beta)");
   });
 
+  it("is hidden from viewers until its game integration ships", () => {
+    available();
+    mountPanel();
+    const section = wrapper!.get('[data-testid="mirror-renderer-section"]');
+    expect((section.element as HTMLElement).style.display).toBe("none");
+    expect(section.find('[data-testid="mirror-renderer"]').exists()).toBe(true);
+  });
+
   it("while checked, disables every forced row and shows its forced value; supported rows stay the viewer's", async () => {
     available();
     mountPanel();

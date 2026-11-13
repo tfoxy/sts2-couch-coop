@@ -459,19 +459,22 @@ onBeforeUnmount(() => setHelpListeners(false));
 
       <div class="settings-group">
         <p class="settings-group-label">{{ t('settings.thisDevice') }}</p>
-        <!-- FIRST in the group, before Stage: the new renderer replaces what every row below configures. -->
-        <div class="settings-item">
-          <label class="settings-row">
-            <input type="checkbox" v-model="newRenderer" :disabled="newRendererDisabled" data-testid="mirror-renderer" />
-            <span>{{ t('settings.newRenderer') }}</span>
-          </label>
-          <SettingsHelpTip v-bind="help('newRenderer', t('settings.newRenderer'))" />
+        <!-- FIRST in the group, before Stage: the new renderer replaces what every row below configures.
+             Hidden until its integration with the game is ready to ship; the setting and `?renderer=` still work. -->
+        <div style="display: none" data-testid="mirror-renderer-section">
+          <div class="settings-item">
+            <label class="settings-row">
+              <input type="checkbox" v-model="newRenderer" :disabled="newRendererDisabled" data-testid="mirror-renderer" />
+              <span>{{ t('settings.newRenderer') }}</span>
+            </label>
+            <SettingsHelpTip v-bind="help('newRenderer', t('settings.newRenderer'))" />
+          </div>
+          <p v-if="newRendererReason" class="settings-note" role="status" data-testid="mirror-renderer-reason">{{ newRendererReason }}</p>
+          <p v-if="newRendererStopped" role="status" data-testid="mirror-renderer-stopped">
+            {{ t('settings.newRendererStopped', { reason: newRendererStopped }) }}
+            <button type="button" @click="retryRenderStream()">{{ t('boot.tryAgain') }}</button>
+          </p>
         </div>
-        <p v-if="newRendererReason" class="settings-note" role="status" data-testid="mirror-renderer-reason">{{ newRendererReason }}</p>
-        <p v-if="newRendererStopped" role="status" data-testid="mirror-renderer-stopped">
-          {{ t('settings.newRendererStopped', { reason: newRendererStopped }) }}
-          <button type="button" @click="retryRenderStream()">{{ t('boot.tryAgain') }}</button>
-        </p>
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.stage') }}</span>
