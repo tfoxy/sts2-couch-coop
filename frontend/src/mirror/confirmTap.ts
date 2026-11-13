@@ -21,8 +21,13 @@
 
 import { reactive, ref, shallowRef } from "vue";
 
-import { resolveAtlasSprite, type AtlasSprite, type AtlasSpriteRect } from "@/mirror/atlasSprite";
+import type { GodotSceneState } from "@godot-scene-web/core";
+import { parseGodotTextScene } from "@godot-scene-web/tscn-parser";
+
+import { hostUrl } from "@/join/hostBase";
+import { extResourcePath, resolveAtlasSprite, type AtlasSprite, type AtlasSpriteRect } from "@/mirror/atlasSprite";
 import { warmImage } from "@/mirror/textureCache";
+import { resourceRoute } from "@/protocol/browserResources";
 
 /**
  * Which kind of irreversible choice a confirm-eligible widget is. Only `relic` behaves differently (the
@@ -45,13 +50,16 @@ export interface ConfirmSprites {
   tick: ConfirmSprite;
 }
 
-// The three AtlasTexture resources confirm_button.tscn paints with. Paths only — the regions inside each atlas are
-// RESOLVED at runtime from the .tres, never hardcoded, because a repack moves them.
-const CONFIRM_SPRITE_PATHS = {
-  button: "res://images/atlases/ui_atlas.sprites/confirm_button.tres",
-  outline: "res://images/atlases/compressed.sprites/confirm_button_outline.tres",
-  tick: "res://images/atlases/compressed.sprites/confirm_button_tick.tres"
-} as const;
+// The game's confirm button scene, and the TextureRect in it that holds each sprite (node name + parent path, as
+// the scene state spells them). Neither the .tres paths nor the regions inside each atlas are hardcoded: a game
+// build that repacks or renames an atlas folder moves them, and a hardcoded path then silently turned the whole
+// feature off. The scene names whichever paths this build ships.
+const CONFIRM_BUTTON_SCENE = "res://scenes/ui/confirm_button.tscn";
+const CONFIRM_SPRITE_NODES = {
+  button: { name: "Image", parent: "." },
+  outline: { name: "Outline", parent: "." },
+  tick: { name: "Icon", parent: "Image" }
+} as const satisfies Record<keyof ConfirmSprites, { name: string; parent: string }>;
 
 /**
  * The live confirm-button state.
@@ -196,7 +204,14 @@ export function primeConfirmSprites(): Promise<void> {
       .then((sprites) => {
         confirmSprites.value = sprites;
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        // Not silent: a failed resolve turns the feature off for the whole page (every eligible widget falls back
+        // to the two-step tap), which otherwise looks exactly like the feature never existed.
+        console.warn(
+          `[confirmTap] confirm button art unavailable; falling back to the two-step tap: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
         confirmSprites.value = null;
       })
       .finally(() => {
@@ -206,11 +221,53 @@ export function primeConfirmSprites(): Promise<void> {
   return priming;
 }
 
+/**
+ * The host serves an exported scene as a pre-parsed scene-state JSON document (`kind: "scene"`); anything else is
+ * read as .tscn text. The same sniff godot-scene-web's project loader makes.
+ */
+function parseSceneBody(body: string): GodotSceneState {
+  const trimmed = body.trimStart();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Partial<GodotSceneState>;
+      if (parsed?.kind === "scene" && Array.isArray(parsed.nodes)) {
+        return { ...parsed, extResources: parsed.extResources ?? [] } as GodotSceneState;
+      }
+    } catch {
+      // Not a JSON scene document — fall through to the text parser.
+    }
+  }
+  return parseGodotTextScene(body, { path: CONFIRM_BUTTON_SCENE });
+}
+
+/** The `.tres` paths the confirm button scene paints each sprite with. Rejects when a node or texture is missing. */
+async function confirmSpritePaths(): Promise<Record<keyof ConfirmSprites, string>> {
+  const response = await fetch(hostUrl(resourceRoute(CONFIRM_BUTTON_SCENE)), {
+    headers: { accept: "text/plain" }
+  });
+  if (!response.ok) {
+    throw new Error(`${CONFIRM_BUTTON_SCENE}: HTTP ${response.status}`);
+  }
+  const scene = parseSceneBody(await response.text());
+  const pathFor = (key: keyof ConfirmSprites): string => {
+    const want = CONFIRM_SPRITE_NODES[key];
+    const node = scene.nodes.find((n) => n.name === want.name && n.parent === want.parent);
+    const texture = node?.properties.find((p) => p.name === "texture")?.value;
+    const path = extResourcePath(scene.extResources, texture);
+    if (!path) {
+      throw new Error(`${CONFIRM_BUTTON_SCENE}: no texture on ${want.parent}/${want.name}`);
+    }
+    return path;
+  };
+  return { button: pathFor("button"), outline: pathFor("outline"), tick: pathFor("tick") };
+}
+
 async function resolveConfirmSprites(): Promise<ConfirmSprites> {
+  const paths = await confirmSpritePaths();
   const [button, outline, tick] = await Promise.all([
-    resolveAtlasSprite(CONFIRM_SPRITE_PATHS.button),
-    resolveAtlasSprite(CONFIRM_SPRITE_PATHS.outline),
-    resolveAtlasSprite(CONFIRM_SPRITE_PATHS.tick)
+    resolveAtlasSprite(paths.button),
+    resolveAtlasSprite(paths.outline),
+    resolveAtlasSprite(paths.tick)
   ]);
   // Warm the pages through the shared texture cache: it de-dupes with the renderer's own loads (these two atlases
   // are core UI, already decoded in any live screen) and it is what records the page's natural size, which

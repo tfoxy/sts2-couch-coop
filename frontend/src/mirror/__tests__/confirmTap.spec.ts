@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   commitConfirmTap,
+  confirmButtonReady,
+  confirmSprites,
   confirmTap,
   confirmedRelicTarget,
   forgetConfirmedRelic,
   hideConfirmTap,
+  primeConfirmSprites,
   setConfirmBelowOverlay,
   setConfirmCommit,
   showConfirmTap,
@@ -1133,5 +1136,149 @@ describe("confirm tap — the true game-space box", () => {
     renderer.reconcile(state);
 
     expect(renderer.confirmTapAt(450, 270)).toEqual({ id: "slot", kind: "shop" });
+  });
+});
+
+// The button's art is found through the game's own confirm button scene, never through hardcoded .tres paths: the
+// v0.113.0 beta renamed an atlas folder, a hardcoded path failed to resolve, and the feature silently fell back to
+// the two-step tap on every eligible screen.
+describe("confirm tap — sprite resolution", () => {
+  function atlasTres(page: string, region: string): string {
+    return [
+      '[gd_resource type="AtlasTexture" load_steps=2 format=3]',
+      "",
+      `[ext_resource type="Texture2D" path="${page}" id="1"]`,
+      "",
+      "[resource]",
+      'atlas = ExtResource("1")',
+      `region = Rect2(${region})`,
+      "margin = Rect2(1, 2, 3, 4)",
+      ""
+    ].join("\n");
+  }
+
+  function stubResources(files: Record<string, string>): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = decodeURIComponent(String(input));
+      const key = Object.keys(files).find((path) => url.includes(`/res/${path.slice("res://".length)}`));
+      return key === undefined
+        ? new Response("missing", { status: 404 })
+        : new Response(files[key], { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const SCENE = "res://scenes/ui/confirm_button.tscn";
+
+  function jsonScene(paths: { button: string; outline: string; tick: string }, omitOutline = false): string {
+    const textured = (name: string, parent: string, path: string) => ({
+      name,
+      type: "TextureRect",
+      parent,
+      groups: [],
+      properties: [{ name: "texture", value: { type: "ExtResource", path } }]
+    });
+    const nodes = [
+      { index: 0, name: "ConfirmButton", type: "Control", groups: [], properties: [] },
+      textured("Shadow", ".", paths.button),
+      ...(omitOutline ? [] : [textured("Outline", ".", paths.outline)]),
+      textured("Image", ".", paths.button),
+      textured("Icon", "Image", paths.tick)
+    ];
+    return JSON.stringify({ kind: "scene", nodes, connections: [], extResources: [], subResources: [] });
+  }
+
+  beforeEach(() => {
+    __resetConfirmTapForTest();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    __resetConfirmTapForTest();
+  });
+
+  it("resolves the art from the host's JSON scene document (the v0.113.0 atlas folder)", async () => {
+    const paths = {
+      button: "res://images/atlases/ui_atlas.sprites/confirm_button.tres",
+      outline: "res://images/atlases/compressed_atlas.sprites/confirm_button_outline.tres",
+      tick: "res://images/atlases/compressed_atlas.sprites/confirm_button_tick.tres"
+    };
+    stubResources({
+      [SCENE]: jsonScene(paths),
+      [paths.button]: atlasTres("res://images/atlases/ui_atlas.png", "10, 20, 30, 40"),
+      [paths.outline]: atlasTres("res://images/atlases/compressed_atlas.png", "50, 60, 70, 80"),
+      [paths.tick]: atlasTres("res://images/atlases/compressed_atlas.png", "90, 100, 110, 120")
+    });
+
+    await primeConfirmSprites();
+
+    expect(confirmButtonReady()).toBe(true);
+    const sprites = confirmSprites.value!;
+    expect(sprites.button.pageUrl).toContain("/res/images/atlases/ui_atlas.png");
+    expect(sprites.outline.pageUrl).toContain("/res/images/atlases/compressed_atlas.png");
+    expect(sprites.outline.region).toEqual({ x: 50, y: 60, width: 70, height: 80 });
+    expect(sprites.tick.region).toEqual({ x: 90, y: 100, width: 110, height: 120 });
+    expect(sprites.tick.margin).toEqual({ x: 1, y: 2, width: 3, height: 4 });
+  });
+
+  it("resolves the art from .tscn text (the stable atlas folder)", async () => {
+    const paths = {
+      button: "res://images/atlases/ui_atlas.sprites/confirm_button.tres",
+      outline: "res://images/atlases/compressed.sprites/confirm_button_outline.tres",
+      tick: "res://images/atlases/compressed.sprites/confirm_button_tick.tres"
+    };
+    const tscn = [
+      "[gd_scene load_steps=4 format=3]",
+      "",
+      `[ext_resource type="Texture2D" path="${paths.button}" id="1"]`,
+      `[ext_resource type="Texture2D" path="${paths.outline}" id="2"]`,
+      `[ext_resource type="Texture2D" path="${paths.tick}" id="3"]`,
+      "",
+      '[node name="ConfirmButton" type="Control"]',
+      "",
+      '[node name="Outline" type="TextureRect" parent="."]',
+      'texture = ExtResource("2")',
+      "",
+      '[node name="Image" type="TextureRect" parent="."]',
+      'texture = ExtResource("1")',
+      "",
+      '[node name="Icon" type="TextureRect" parent="Image"]',
+      'texture = ExtResource("3")',
+      ""
+    ].join("\n");
+    stubResources({
+      [SCENE]: tscn,
+      [paths.button]: atlasTres("res://images/atlases/ui_atlas.png", "1, 1, 2, 2"),
+      [paths.outline]: atlasTres("res://images/atlases/compressed.png", "3, 3, 4, 4"),
+      [paths.tick]: atlasTres("res://images/atlases/compressed.png", "5, 5, 6, 6")
+    });
+
+    await primeConfirmSprites();
+
+    expect(confirmButtonReady()).toBe(true);
+    expect(confirmSprites.value!.outline.pageUrl).toContain("/res/images/atlases/compressed.png");
+    expect(confirmSprites.value!.tick.region).toEqual({ x: 5, y: 5, width: 6, height: 6 });
+  });
+
+  it("falls back to the two-step tap, with a warning, when the scene lacks a sprite node", async () => {
+    const paths = {
+      button: "res://images/atlases/ui_atlas.sprites/confirm_button.tres",
+      outline: "res://images/atlases/compressed_atlas.sprites/confirm_button_outline.tres",
+      tick: "res://images/atlases/compressed_atlas.sprites/confirm_button_tick.tres"
+    };
+    stubResources({
+      [SCENE]: jsonScene(paths, true),
+      [paths.button]: atlasTres("res://images/atlases/ui_atlas.png", "1, 1, 2, 2"),
+      [paths.tick]: atlasTres("res://images/atlases/compressed_atlas.png", "5, 5, 6, 6")
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await primeConfirmSprites();
+
+    expect(confirmButtonReady()).toBe(false);
+    expect(confirmSprites.value).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Outline"));
   });
 });

@@ -138,7 +138,7 @@ export function atlasSpriteLayout(
 
 // An `ExtResource("n")` property → the res:// path it names. The parser gives the ref (id and/or path) and the
 // document's own ext-resource table; a .tres written with an inline path needs no lookup.
-function extResourcePath(
+export function extResourcePath(
   extResources: readonly { id: string; path?: string }[],
   value: GodotVariant | undefined
 ): string | null {
