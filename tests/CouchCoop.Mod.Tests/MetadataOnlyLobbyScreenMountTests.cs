@@ -49,6 +49,30 @@ internal static class MetadataOnlyLobbyScreenMountTests
         {
             Assert(HasDirectMethod(assemblyPath, target.TypeName, target.MethodName, target.ParameterCount),
                 $"{target.TypeName} must directly declare {target.MethodName} with {target.ParameterCount} parameter(s)");
+            if (target.MethodName == "PlayerChanged" || target.TypeName == RosterSignalTargets.StartRunLobby)
+            {
+#if STS2_API_V113
+                var expectedCount = target.MethodName == "PlayerChanged" ? 1 : 5;
+                var otherLaneCount = target.MethodName == "PlayerChanged" ? 2 : 4;
+#else
+                var expectedCount = target.MethodName == "PlayerChanged" ? 2 : 4;
+                var otherLaneCount = target.MethodName == "PlayerChanged" ? 1 : 5;
+#endif
+                Assert(target.ParameterCount == expectedCount, "roster arity is pinned to the selected API lane");
+                if (target.MethodName == "PlayerChanged")
+                {
+                    Assert(!HasDirectMethod(assemblyPath, target.TypeName, target.MethodName, otherLaneCount),
+                        $"{target.TypeName}.{target.MethodName} must not resolve with the other lane's arity");
+                }
+#if STS2_API_V113
+                else
+                {
+                    Assert(HasDirectMethod(assemblyPath, target.TypeName, target.MethodName, expectedCount,
+                            requireBooleanSecondParameter: true),
+                        "the v113 lobby constructor includes its boolean second parameter");
+                }
+#endif
+            }
         }
     }
 
@@ -59,6 +83,17 @@ internal static class MetadataOnlyLobbyScreenMountTests
             "a declared two-argument fixture method resolves by its parameter count");
         Assert(!HasDirectMethod(parameterized, "CouchCoop.Mod.Tests.MetadataOnlyFixtures.TwoArguments", "Assign", 1),
             "a different parameter count refuses");
+
+        const string constructors = "CouchCoop.Mod.Tests.MetadataOnlyFixtures.";
+        Assert(HasDirectMethod(parameterized, constructors + "BooleanConstructor", ".ctor", 5,
+                requireBooleanSecondParameter: true),
+            "a five-argument constructor with a boolean second parameter resolves");
+        Assert(!HasDirectMethod(parameterized, constructors + "OtherConstructor", ".ctor", 5,
+                requireBooleanSecondParameter: true),
+            "a constructor with the same arity and a different second parameter refuses");
+        Assert(!HasDirectMethod(parameterized, constructors + "BooleanConstructor", ".ctor", 4,
+                requireBooleanSecondParameter: true),
+            "a boolean second parameter does not hide a wrong constructor arity");
 
         // The lobby-cap member checks: an int field or int getter matches, and the near misses do not.
         const string cases = "CouchCoop.Mod.Tests.MetadataOnlyFixtures.";
@@ -116,7 +151,9 @@ internal static class MetadataOnlyLobbyScreenMountTests
     internal static bool HasDirectZeroArgumentMethod(string assemblyPath, string fullTypeName, string methodName)
         => HasDirectMethod(assemblyPath, fullTypeName, methodName, parameterCount: 0);
 
-    internal static bool HasDirectMethod(string assemblyPath, string fullTypeName, string methodName, int parameterCount)
+    internal static bool HasDirectMethod(
+        string assemblyPath, string fullTypeName, string methodName, int parameterCount,
+        bool requireBooleanSecondParameter = false)
     {
         using var stream = File.OpenRead(assemblyPath);
         using var pe = new PEReader(stream);
@@ -136,7 +173,8 @@ internal static class MetadataOnlyLobbyScreenMountTests
 
             return type.GetMethods().Select(metadata.GetMethodDefinition).Any(method =>
                 string.Equals(metadata.GetString(method.Name), methodName, StringComparison.Ordinal)
-                && ParameterCount(metadata, method) == parameterCount);
+                && ParameterCount(metadata, method) == parameterCount
+                && (!requireBooleanSecondParameter || HasBooleanSecondParameter(metadata, method)));
         }
 
         return false;
@@ -217,6 +255,18 @@ internal static class MetadataOnlyLobbyScreenMountTests
         }
 
         return false;
+    }
+
+    private static bool HasBooleanSecondParameter(MetadataReader metadata, MethodDefinition method)
+    {
+        var signature = metadata.GetBlobReader(method.Signature);
+        var header = signature.ReadSignatureHeader();
+        if (header.IsGeneric) signature.ReadCompressedInteger();
+        if (signature.ReadCompressedInteger() < 2
+            || signature.ReadSignatureTypeCode() != SignatureTypeCode.Void
+            || signature.ReadSignatureTypeCode() != SignatureTypeCode.TypeHandle) return false;
+        signature.ReadTypeHandle();
+        return signature.ReadSignatureTypeCode() == SignatureTypeCode.Boolean;
     }
 
     private static int ParameterCount(MetadataReader metadata, MethodDefinition method)

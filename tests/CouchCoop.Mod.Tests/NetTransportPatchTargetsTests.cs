@@ -22,6 +22,7 @@ internal static class NetTransportPatchTargetsTests
     public static void Run()
     {
         HostTransportTargetsResolve();
+        DualHostDisconnectSignatureMatchesGame();
         SavedRunHostIdentityTargetResolves();
         ServiceReflectionSeamsResolve();
         CommandLineOverrideTargetsResolve();
@@ -33,6 +34,22 @@ internal static class NetTransportPatchTargetsTests
         JoinHostParsing();
         SeatSpawnGateFailsOpen();
         SavedRunHostIdentityResolutionAndLifetime();
+    }
+
+    private static void DualHostDisconnectSignatureMatchesGame()
+    {
+        var gameMethod = typeof(MegaCrit.Sts2.Core.Multiplayer.Transport.NetHost)
+            .GetMethod(nameof(DualNetHost.DisconnectClient))!;
+        var overrideMethod = typeof(DualNetHost).GetMethod(nameof(DualNetHost.DisconnectClient))!;
+        Assert(overrideMethod.DeclaringType == typeof(DualNetHost)
+                && overrideMethod.GetBaseDefinition() == gameMethod.GetBaseDefinition(),
+            "the dual host overrides the game's disconnect entry point on this lane");
+#if STS2_API_V113
+        var parameters = overrideMethod.GetParameters();
+        Assert(parameters.Length == 4 && parameters[3].ParameterType == typeof(string)
+                && parameters[3].HasDefaultValue && parameters[3].DefaultValue is null,
+            "v113 preserves the optional disconnect debug reason");
+#endif
     }
 
     private static void SavedRunHostIdentityTargetResolves()
@@ -148,7 +165,7 @@ internal static class NetTransportPatchTargetsTests
             "ENetClient.HostNetId getter resolves (the hardcoded 1uL a Steam-hosted seat must not believe)");
         Assert(AccessTools.Field(typeof(MegaCrit.Sts2.Core.Multiplayer.Quality.NetQualityTracker), "_netService") is not null,
             "NetQualityTracker._netService resolves (the coercion reads the client's own HostNetId through it)");
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         // Layer 3's own seams, named rather than left to the loop above: on this lane their absence is not a
         // degraded seat but a seat that cannot join a Steam-hosted session at all.
         Assert(HostNetIdPatch.Targets.Any(t =>

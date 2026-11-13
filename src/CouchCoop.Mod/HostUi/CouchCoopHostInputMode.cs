@@ -1,7 +1,7 @@
 using System;
 using CouchCoop.Mod.Session;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
 // Aliased rather than imported: the game's enum shares its name with the controller manager's property that
 // carries it, and an unqualified `InputType` in both positions reads as a typo.
 using GameInputType = MegaCrit.Sts2.Core.ControllerInput.InputType;
@@ -58,7 +58,7 @@ internal static class CouchCoopHostInputMode
                 return default;
             }
 
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
             var inputType = controllers.InputType;
             return new HostInputMode(
                 WithoutMouse: inputType is GameInputType.Controller or GameInputType.KeyboardOnlyMode,

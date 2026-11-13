@@ -51,7 +51,7 @@ namespace CouchCoop.Mod.Patches;
 /// - <see cref="NAudioManager"/>: PlayLoop, StopLoop, SetParam, StopAllLoops, PlayOneShot(×2), PlayMusic,
 ///   UpdateMusicParameter, StopMusic, SetMasterVol, SetSfxVol, SetAmbienceVol, SetBgmVol.
 /// - <see cref="NRunMusicController"/>: UpdateMusic, PlayCustomMusic, UpdateCustomTrack, StopCustomMusic,
-///   UpdateAmbience, UpdateTrack(×2), UpdateMusicParameter, ToggleMerchantTrack, TriggerEliteSecondPhase,
+///   UpdateAmbience, UpdateTrack (all lane overloads), UpdateMusicParameter, ToggleMerchantTrack, TriggerEliteSecondPhase,
 ///   TriggerCampfireGoingOut, StopMusic, and the private LoadActBank / UnloadActBanks (per-act bank streaming).
 /// Neither type touches FMOD per frame — the only per-frame FMOD driver is the <c>FmodManager</c> GDScript
 /// autoload, handled by <see cref="Session.HeadlessFmodShutdown"/>.
@@ -103,13 +103,16 @@ internal static class HeadlessAudioMutePatch
         (typeof(NRunMusicController), "StopCustomMusic", []),
         (typeof(NRunMusicController), "UpdateAmbience", []),
         (typeof(NRunMusicController), "UpdateTrack", []),
+#if STS2_API_V113
+        (typeof(NRunMusicController), "UpdateTrack", [typeof(MegaCrit.Sts2.Core.Rooms.RoomType)]),
+#endif
         (typeof(NRunMusicController), "UpdateTrack", [typeof(string), typeof(float)]),
         (typeof(NRunMusicController), "UpdateMusicParameter", [typeof(string), typeof(float)]),
         (typeof(NRunMusicController), "ToggleMerchantTrack", []),
         (typeof(NRunMusicController), "TriggerEliteSecondPhase", []),
         (typeof(NRunMusicController), "TriggerCampfireGoingOut", []),
         (typeof(NRunMusicController), "StopMusic", []),
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         // v0.111.0: LoadActBank(bankPath, verifyEvent) returns whether the bank loaded, and wraps a retry loop
         // of its own. Skipping it reports "not loaded", which is the truth on a seat with no FMOD — see
         // SkipOriginalReturningFalse.

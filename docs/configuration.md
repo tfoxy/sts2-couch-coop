@@ -160,7 +160,7 @@ in a temp directory and needs no real game install.
 **The mod builds, deploys and runs on both supported game builds.** `with-game-branch.sh public-beta
 -- <any build>` works: the API lane table in
 [`../spirectl/bridge-mod/Sts2GameApi.props`](../../spirectl/bridge-mod/Sts2GameApi.props) maps
-`v0.107.1` to lane `v107` and `v0.111.0` to lane `v111`, the repo root's `Directory.Build.props`
+`v0.107.1` to lane `v107`, `v0.111.0` to `v111`, and source-only `v0.113.0` to `v113`, the repo root's `Directory.Build.props`
 imports that same table so CouchCoop's own sources are `#if`-split by game build exactly as the
 bridge's are, and the lane is **detected from the install being compiled against**, or passed
 explicitly when there is no install to detect from — never guessed. A game build with no row fails the

@@ -41,20 +41,28 @@ internal static class RosterSignalTargets
     internal const string RunManager = "MegaCrit.Sts2.Core.Runs.RunManager";
     internal const string Constructor = ".ctor";
 
+#if STS2_API_V113
+    private const int PlayerChangedParameters = 1;
+    private const int StartRunLobbyParameters = 5;
+#else
+    private const int PlayerChangedParameters = 2;
+    private const int StartRunLobbyParameters = 4;
+#endif
+
     internal static IReadOnlyList<RosterSignalTarget> Targets { get; } =
     [
         new(CharacterSelectScreen, "PlayerConnected", 1),
-        new(CharacterSelectScreen, "PlayerChanged", 2),
+        new(CharacterSelectScreen, "PlayerChanged", PlayerChangedParameters),
         new(CharacterSelectScreen, "RemotePlayerDisconnected", 1),
         new(LobbyAssignmentTargets.DailyRunScreen, "PlayerConnected", 1),
-        new(LobbyAssignmentTargets.DailyRunScreen, "PlayerChanged", 2),
+        new(LobbyAssignmentTargets.DailyRunScreen, "PlayerChanged", PlayerChangedParameters),
         new(LobbyAssignmentTargets.DailyRunScreen, "RemotePlayerDisconnected", 1),
         new(LobbyAssignmentTargets.CustomRunScreen, "PlayerConnected", 1),
-        new(LobbyAssignmentTargets.CustomRunScreen, "PlayerChanged", 2),
+        new(LobbyAssignmentTargets.CustomRunScreen, "PlayerChanged", PlayerChangedParameters),
         new(LobbyAssignmentTargets.CustomRunScreen, "RemotePlayerDisconnected", 1),
         new(LoadRunScreen, "PlayerConnected", 1),
         new(LoadRunScreen, "RemotePlayerDisconnected", 1),
-        new(StartRunLobby, Constructor, 4),
+        new(StartRunLobby, Constructor, StartRunLobbyParameters),
         new(LoadRunLobby, Constructor, 3),
         new(RunManager, "CleanUp", 1),
     ];

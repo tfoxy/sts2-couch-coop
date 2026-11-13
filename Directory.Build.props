@@ -32,10 +32,15 @@
 
     Imported AFTER the block above, which is what resolves $(Sts2AssembliesDir) — the lane is detected from the
     install being compiled against. Outputs $(Sts2GameApi), $(Sts2GameVersion), and one of the STS2_API_V107 /
-    STS2_API_V111 compile constants. Pass -p:Sts2GameApi=<lane> to name a lane for an assemblies directory that
+    STS2_API_V111 / STS2_API_V113 compile constants. Pass -p:Sts2GameApi=<lane> to name a lane for an assemblies directory that
     carries no release_info.json, which is what the declaration-only reference SDK under eng/ is.
   -->
   <Import Project="$(CouchCoopSts2GameApiProps)" Condition="Exists('$(CouchCoopSts2GameApiProps)')" />
+
+  <!-- Shared API shapes introduced in v111 also apply when a lane is explicitly selected. -->
+  <PropertyGroup Condition="'$(Sts2GameApi)' == 'v111' or '$(Sts2GameApi)' == 'v113'">
+    <DefineConstants>$(DefineConstants);STS2_API_V111_OR_LATER</DefineConstants>
+  </PropertyGroup>
 
   <Target Name="ValidateSts2GameApiTable" BeforeTargets="ResolveReferences">
     <!--

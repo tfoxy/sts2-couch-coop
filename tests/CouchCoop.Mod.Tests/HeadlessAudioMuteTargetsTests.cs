@@ -57,6 +57,11 @@ internal static class HeadlessAudioMuteTargetsTests
         var types = HeadlessAudioMutePatch.Targets.Select(t => t.Type.Name).Distinct().ToHashSet();
         Assert(types.Contains("NAudioManager"), "target list covers NAudioManager (SFX / loops / volumes)");
         Assert(types.Contains("NRunMusicController"), "target list covers NRunMusicController (music / per-act bank load)");
+#if STS2_API_V113
+        Assert(HeadlessAudioMutePatch.Targets.Any(t => t.Type.Name == "NRunMusicController" && t.Name == "UpdateTrack"
+                && t.Args.SequenceEqual(new[] { typeof(MegaCrit.Sts2.Core.Rooms.RoomType) })),
+            "v113's room-specific music update is muted too");
+#endif
         // Bank streaming is the highest-risk post-shutdown call; assert it is explicitly listed.
         Assert(HeadlessAudioMutePatch.Targets.Any(t => t.Type.Name == "NRunMusicController" && t.Name == "LoadActBank"),
             "target list includes NRunMusicController.LoadActBank (per-act bank load into a torn-down server must be a no-op)");

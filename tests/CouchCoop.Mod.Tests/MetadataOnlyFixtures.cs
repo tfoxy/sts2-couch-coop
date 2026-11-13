@@ -46,3 +46,13 @@ public class CapAsStaticField
 {
     public static int _maxPlayers;
 }
+
+public class BooleanConstructor
+{
+    public BooleanConstructor(DayOfWeek mode, bool custom, object service, object listener, int count) { }
+}
+
+public class OtherConstructor
+{
+    public OtherConstructor(DayOfWeek mode, object service, object listener, int count, object time) { }
+}

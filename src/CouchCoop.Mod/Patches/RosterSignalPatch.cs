@@ -46,23 +46,35 @@ internal static class RosterSignalPatch
     /// </summary>
     internal static IReadOnlyList<RosterSignalBinding> Bindings { get; } =
     [
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.PlayerConnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.PlayerChanged),
+#if STS2_API_V113
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+#else
             [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+#endif
         new(typeof(NCharacterSelectScreen), nameof(NCharacterSelectScreen.RemotePlayerDisconnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.PlayerConnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.PlayerChanged),
+#if STS2_API_V113
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+#else
             [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+#endif
         new(typeof(NDailyRunScreen), nameof(NDailyRunScreen.RemotePlayerDisconnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.PlayerConnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.PlayerChanged),
+#if STS2_API_V113
+            [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
+#else
             [typeof(StartRunLobbyPlayer), typeof(bool)], nameof(PostfixWake)),
+#endif
         new(typeof(NCustomRunScreen), nameof(NCustomRunScreen.RemotePlayerDisconnected),
             [typeof(StartRunLobbyPlayer)], nameof(PostfixWake)),
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.PlayerConnected),
@@ -92,7 +104,11 @@ internal static class RosterSignalPatch
         new(typeof(NMultiplayerLoadGameScreen), nameof(NMultiplayerLoadGameScreen.RemotePlayerDisconnected),
             [typeof(ulong)], nameof(PostfixWake)),
         new(typeof(StartRunLobby), RosterSignalTargets.Constructor,
+#if STS2_API_V113
+            [typeof(GameMode), typeof(bool), typeof(INetGameService), typeof(IStartRunLobbyListener), typeof(int)],
+#else
             [typeof(GameMode), typeof(INetGameService), typeof(IStartRunLobbyListener), typeof(int)],
+#endif
             nameof(PostfixStartRunLobbyCreated), CostsCoop: true),
         new(typeof(LoadRunLobby), RosterSignalTargets.Constructor,
             [typeof(INetGameService), typeof(ILoadRunLobbyListener), typeof(SerializableRun)],
@@ -195,13 +211,21 @@ internal static class RosterSignalPatch
 
     private static void PostfixWake() => Note(record: null);
 
+#if STS2_API_V113
+    private static void PostfixStartRunLobbyCreated(StartRunLobby __instance, INetGameService __2, IStartRunLobbyListener __3)
+        => NoteStartRunLobbyCreated(__instance, __2, __3);
+#else
     private static void PostfixStartRunLobbyCreated(StartRunLobby __instance, INetGameService __1, IStartRunLobbyListener __2)
+        => NoteStartRunLobbyCreated(__instance, __1, __2);
+#endif
+
+    private static void NoteStartRunLobbyCreated(StartRunLobby lobby, INetGameService netService, IStartRunLobbyListener listener)
         => Note(() =>
         {
-            RosterHostService.Note(__1);
-            if (__2 is NDailyRunScreen)
+            RosterHostService.Note(netService);
+            if (listener is NDailyRunScreen)
             {
-                LobbyAssignmentRecord.RecordLobby(__2, __instance);
+                LobbyAssignmentRecord.RecordLobby(listener, lobby);
                 // Construction can complete after screen initialization. The controller reads next frame.
                 CouchCoopQrHostPanelController.NoteLobbyAssigned();
             }

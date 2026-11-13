@@ -5,7 +5,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Quality;
 using MegaCrit.Sts2.Core.Multiplayer.Transport.ENet;
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
 using MegaCrit.Sts2.Core.Multiplayer.Connection;
 #endif
 
@@ -73,7 +73,7 @@ internal static class HostNetIdPatch
 
     private static ulong _hostNetId;
     private static FieldInfo? _netServiceField;
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
     private static FieldInfo? _handshakeHandlerField;
 #endif
 
@@ -83,7 +83,7 @@ internal static class HostNetIdPatch
         (typeof(ENetClient), "get_HostNetId", []),
         (typeof(NetQualityTracker), "HandleHeartbeatRequestMessage",
             [typeof(MegaCrit.Sts2.Core.Multiplayer.Messages.HeartbeatRequestMessage), typeof(ulong)]),
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         // Layer 3. The peer-version handshake does not exist on v0.107.1, so neither does this target.
         (typeof(HandshakeManager), "HandshakeMessageReceived",
             [typeof(ulong), typeof(MegaCrit.Sts2.Core.Multiplayer.Serialization.PacketReader)]),
@@ -142,7 +142,7 @@ internal static class HostNetIdPatch
             // a layer that cannot bind must not take the others down with it.
             ApplyHostNetIdGetter(harmony);
             ApplyHeartbeatCoercion(harmony);
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
             ApplyHandshakeSenderCoercion(harmony);
 #endif
         }
@@ -184,7 +184,7 @@ internal static class HostNetIdPatch
         TryPatch(harmony, heartbeat, nameof(PrefixHandleHeartbeatRequestMessage), "NetQualityTracker.HandleHeartbeatRequestMessage");
     }
 
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
     // Layer 3.
     private static void ApplyHandshakeSenderCoercion(Harmony harmony)
     {
@@ -240,7 +240,7 @@ internal static class HostNetIdPatch
         return true;
     }
 
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
     // Harmony prefix on HandshakeManager.HandshakeMessageReceived(ulong senderId, PacketReader reader).
     // Rewrites the transport's placeholder sender to the host id this seat was launched with, so the handshake is
     // matched to — and answered at — the identity the rest of the client already uses. Runs only on a CLIENT's

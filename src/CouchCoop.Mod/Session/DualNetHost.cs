@@ -169,15 +169,27 @@ internal sealed class DualNetHost : SteamHost
         }
     }
 
+#if STS2_API_V113
+    public override void DisconnectClient(ulong peerId, NetError reason, bool now = false, string? debugReason = null)
+#else
     public override void DisconnectClient(ulong peerId, NetError reason, bool now = false)
+#endif
     {
         if (_enetStarted && DualHostRouting.RouteFor(peerId, base.ConnectedPeerIds) == DualHostSide.Enet)
         {
+#if STS2_API_V113
+            _enet.DisconnectClient(peerId, reason, now, debugReason);
+#else
             _enet.DisconnectClient(peerId, reason, now);
+#endif
             return;
         }
 
+#if STS2_API_V113
+        base.DisconnectClient(peerId, reason, now, debugReason);
+#else
         base.DisconnectClient(peerId, reason, now);
+#endif
     }
 
     // Steam-only by nature: "closed" means the lobby stops being visible to friends. The ENet side has no such

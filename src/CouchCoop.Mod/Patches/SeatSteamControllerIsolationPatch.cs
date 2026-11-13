@@ -38,7 +38,7 @@ namespace CouchCoop.Mod.Patches;
 /// <b>A target that does not resolve degrades; it does not refuse.</b> Losing this patch costs isolation — the
 /// host's pad also moves the seat — not a seat's ability to join, and not the player's saves, so a miss is
 /// reported through <see cref="CouchCoopPatchDiagnostics"/> with <c>costsCoop: false</c> and the seat carries on.
-/// <c>SeatSteamControllerIsolationTargetsTests</c> resolves the same three names at test time, on both API lanes.
+/// <c>SeatSteamControllerIsolationTargetsTests</c> resolves the same three names at test time, on all API lanes.
 ///
 /// Installed from <c>CouchCoopMod.Init</c> for a headless seat only (<c>COUCHCOOP_HEADLESS_CLIENT=1</c>): the host
 /// keeps Steam Input exactly as the game shipped it.
@@ -63,7 +63,11 @@ internal static class SeatSteamControllerIsolationPatch
     internal const string RefreshMethodName = "UpdateControllerConnections";
 
     /// <inheritdoc cref="TargetType"/>
+#if STS2_API_V113
+    internal const string ControllerHandleFieldName = "_currentActiveController";
+#else
     internal const string ControllerHandleFieldName = "_currentControllerHandle";
+#endif
 
     /// <inheritdoc cref="TargetType"/>
     internal const string InputTypeFieldName = "_currentInputType";
@@ -133,6 +137,27 @@ internal static class SeatSteamControllerIsolationPatch
     private static void Degrade(string detail) =>
         CouchCoopPatchDiagnostics.PatchFailed(nameof(SeatSteamControllerIsolationPatch), detail, costsCoop: false);
 
+#if STS2_API_V113
+    // Typed field injection keeps the seat's Steam controller absent whenever connections refresh.
+    private static bool PrefixNoSteamController(
+        ref Steamworks.InputHandle_t? ____currentActiveController,
+        ref Steamworks.ESteamInputType? ____currentInputType)
+    {
+        try
+        {
+            var tookControllerEarly = ____currentActiveController.HasValue;
+            ____currentActiveController = null;
+            ____currentInputType = null;
+            if (tookControllerEarly) ReleaseActionsHeldByEarlyController();
+        }
+        catch (Exception ex)
+        {
+            CouchCoopLog.Error($"headless steam input: prefix failed ({ex.GetType().Name}: {ex.Message})");
+        }
+
+        return false;
+    }
+#else
     // Harmony prefix on the connection refresh: clear the current Steam controller and skip the original, so none
     // is ever picked up. Reflection rather than Harmony's typed `____field` injection so this project still names
     // no Steamworks type (see the Steamworks.NET reference note in CouchCoop.Mod.csproj).
@@ -156,6 +181,8 @@ internal static class SeatSteamControllerIsolationPatch
 
         return false;
     }
+
+#endif
 
     // Steam controller input only reaches the game as changes of state, so an action the host was holding when the
     // controller is dropped would never see its release in this seat. Release each held action once, with the

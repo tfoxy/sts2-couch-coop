@@ -14,6 +14,9 @@ internal static class SeatSteamControllerIsolationTargetsTests
     {
         RefreshMethodResolvesInTheShapeThePrefixReplaces();
         ClearedFieldsAreNullableInstanceFields();
+#if STS2_API_V113
+        PrefixInjectsTheLaneFields();
+#endif
         EarlyControllerReleasesOnlyHeldActions();
     }
 
@@ -54,6 +57,33 @@ internal static class SeatSteamControllerIsolationTargetsTests
                 $"{type.Name}.{name} holds a {underlying} (got {Nullable.GetUnderlyingType(field.FieldType)?.Name})");
         }
     }
+
+#if STS2_API_V113
+    private static void PrefixInjectsTheLaneFields()
+    {
+        var prefix = typeof(SeatSteamControllerIsolationPatch).GetMethod(
+            "PrefixNoSteamController", BindingFlags.Static | BindingFlags.NonPublic)!;
+        Assert(prefix.ReturnType == typeof(bool), "the v113 prefix can skip the connection refresh");
+        var parameters = prefix.GetParameters();
+        var fields = new[]
+        {
+            SeatSteamControllerIsolationPatch.ControllerHandleFieldName,
+            SeatSteamControllerIsolationPatch.InputTypeFieldName,
+        };
+        Assert(parameters.Length == fields.Length, "the v113 prefix injects only the two cleared fields");
+        for (var index = 0; index < fields.Length; index++)
+        {
+            var field = AccessTools.Field(SeatSteamControllerIsolationPatch.TargetType, fields[index])!;
+            Assert(parameters[index].Name == "___" + field.Name
+                    && parameters[index].ParameterType == field.FieldType.MakeByRefType(),
+                $"the prefix injects {field.Name} by reference with its exact type");
+        }
+
+        object?[] arguments = [null, null];
+        Assert(prefix.Invoke(null, arguments) is false && arguments.All(value => value is null),
+            "a seat with no controller skips refresh and leaves both controller fields empty");
+    }
+#endif
 
     // The late-init drop: only held actions get a release, each exactly once, and every inspected name is released
     // back afterwards whether or not it was held — the same rule the joypad strip keeps for InputMap action names.

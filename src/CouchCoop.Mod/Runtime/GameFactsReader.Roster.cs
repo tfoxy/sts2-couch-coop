@@ -188,7 +188,7 @@ internal sealed partial class GameFactsReader
     /// on v0.107.1 and a list of per-player records on v0.111.0.
     /// </summary>
     private static bool IsAdmitted(LoadRunLobby lobby, ulong netId)
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         => lobby.PlayerIds.Contains(netId);
 #else
         => lobby.ConnectedPlayerIds.Contains(netId);

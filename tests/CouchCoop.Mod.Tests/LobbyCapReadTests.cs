@@ -300,7 +300,7 @@ internal static class LobbyCapReadTests
     // Internal because the `beta-targets` verb runs this leg rather than a copy.
     internal static void LobbyCapMemberResolves()
     {
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         // The one by-name read (a granted exception): the private field must exist, be an instance int, and be the
         // one the reader names. A build that renames or retypes it fails here instead of reading nothing at run time.
         var field = AccessTools.Field(typeof(StartRunLobby), GameFactsReader.LobbyCapMemberName);

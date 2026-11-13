@@ -639,6 +639,14 @@ internal static class CouchCoopRosterObserverTests
             var postfix = typeof(RosterSignalPatch).GetMethod(
                 binding.Postfix, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
             Expect(postfix is not null, $"{label}: postfix {binding.Postfix} exists");
+            foreach (var parameter in postfix!.GetParameters())
+            {
+                if (parameter.Name is not { } name || !name.StartsWith("__", StringComparison.Ordinal)
+                    || !int.TryParse(name.AsSpan(2), out var argumentIndex)) continue;
+                Expect(argumentIndex >= 0 && argumentIndex < binding.Parameters.Length
+                        && parameter.ParameterType == binding.Parameters[argumentIndex],
+                    $"{label}: postfix {name} has the constructor argument's type at that position");
+            }
         }
 
         // The two lobby constructors hand the postfix the constructed lobby; the listener callbacks and the run clean-up

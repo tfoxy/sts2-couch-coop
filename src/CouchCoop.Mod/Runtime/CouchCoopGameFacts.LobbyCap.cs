@@ -6,7 +6,7 @@ using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect;
 using MegaCrit.Sts2.Core.Saves;
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
 using System.Reflection;
 using HarmonyLib;
 #endif
@@ -113,7 +113,7 @@ internal sealed partial class GameFactsReader
             _ => null,
         };
 
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
     /// <summary>
     /// The one by-name game member CouchCoop reads: the start-run lobby's live player cap. On this lane the game keeps
     /// it in a private field and offers no public way to learn it. It has to be the live value, not one seen when

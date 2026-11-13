@@ -124,7 +124,7 @@ internal static class SavedRunLoadLobbyIdentityTests
     /// at build time instead of at whatever live session next tries to resume a saved Steam run.</para>
     /// </summary>
     private static IReadOnlyList<ulong> RegisteredNetIds(LoadRunLobby lobby)
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         => lobby.PlayerIds.ToList();
 #else
         => lobby.ConnectedPlayerIds.ToList();
@@ -173,13 +173,17 @@ internal static class SavedRunLoadLobbyIdentityTests
         public void SetGameLoading(bool isLoading) { }
         public void SetBufferMessages(bool bufferMessages) { }
         public string? GetRawLobbyIdentifier() => null;
+#if STS2_API_V113
+        public void DisconnectClient(ulong peerId, NetError reason, bool now = false, string? debugReason = null)
+#else
         public void DisconnectClient(ulong peerId, NetError reason, bool now = false)
+#endif
         {
             EvictedPeers.Add(peerId);
             ClientDisconnected?.Invoke(peerId, new NetErrorInfo(reason, selfInitiated: true));
         }
         public void SetPeerReadyForBroadcasting(ulong peerId) { }
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         // v0.111.0 widened both service interfaces with the peer-version handshake and a connection-FAILED
         // event (distinct from a disconnect: the peer never got in). Nothing this test asserts goes near them;
         // they are here so the fake still satisfies the interface on that build.
@@ -202,7 +206,7 @@ internal static class SavedRunLoadLobbyIdentityTests
     {
         public List<ulong> ConnectedPlayerIds { get; } = [];
 
-#if STS2_API_V111
+#if STS2_API_V111_OR_LATER
         // v0.111.0 hands the listener the whole lobby-player record rather than a bare netId.
         public void PlayerConnected(LoadRunLobbyPlayer player) => ConnectedPlayerIds.Add(player.id);
 #else
