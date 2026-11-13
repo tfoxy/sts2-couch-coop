@@ -9,6 +9,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-13
+
+### Added
+
+- Support for the new beta (v0.113.0)
+  - Blitz and Dread runs can be joined.
+    - Blitz shop shows the confirm button
+  - The Fool
+    - Impaled arrows show in the enemies
+    - Melodies and arrow count (to the left of the energy count) show properly
+- The new renderer (hidden for now)
+
 ## [0.5.3] - 2026-10-22
 
 ### Fixed
@@ -264,7 +276,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.6.0
 [0.5.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.3
 [0.5.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.2
 [0.5.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.1
