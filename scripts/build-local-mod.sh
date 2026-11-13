@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-config_path="$repo_root/sts2.local.yaml"
+config_path="${CouchCoopLocalConfigPath:-$repo_root/sts2.local.yaml}"
 configuration="${COUCHCOOP_CONFIGURATION:-Debug}"
 # `sts2 game deploy --build` exports the absolute directory it will copy into the mods folder.
 # Honour it so the build and the deploy can never disagree about where the mod was written; an
@@ -39,7 +39,7 @@ load_resolved_config() {
   resolved_config_loaded=1
   command -v sts2 >/dev/null 2>&1 || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  resolved_config="$( (cd "$repo_root" && sts2 --json config resolve modsDir gamePath) 2>/dev/null || true)"
+  resolved_config="$( (cd "$repo_root" && sts2 --json config resolve modsDir gamePath assembliesDir) 2>/dev/null || true)"
 }
 
 # config_value <resolved-key> <sts2.local.yaml-key>
@@ -76,15 +76,42 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+command -v jq >/dev/null 2>&1 || {
+  echo "build-local-mod: jq is required for the version guard and deployed mod stamp." >&2
+  exit 1
+}
+
+# Load in the parent shell so config_value's command substitutions share the cached result.
+load_resolved_config
+msbuild_args=()
+resolved_config_dir="$(printf '%s' "$resolved_config" | jq -r '.configDir // empty' 2>/dev/null || true)"
+if [[ -n "$resolved_config_dir" && "$resolved_config_dir" != "$repo_root" &&
+      -f "$resolved_config_dir/sts2.local.yaml" ]]; then
+  config_path="$resolved_config_dir/sts2.local.yaml"
+  msbuild_args+=("-p:CouchCoopLocalConfigPath=$config_path")
+fi
+
 if [[ ! -f "$config_path" ]]; then
   echo "Missing sts2.local.yaml; create it with game.path and game.assembliesDir." >&2
   exit 1
 fi
 
+assemblies_dir="${STS2_ASSEMBLIES_DIR:-$(config_value assembliesDir assembliesDir)}"
+if [[ -z "$assemblies_dir" ]]; then
+  echo "Missing game.assembliesDir in $config_path; set it or STS2_ASSEMBLIES_DIR before building." >&2
+  exit 1
+fi
+case "$assemblies_dir" in
+  /*) ;;
+  *) assemblies_dir="$repo_root/$assemblies_dir" ;;
+esac
+msbuild_args+=("-p:Sts2AssembliesDir=$assemblies_dir")
+
+game_path="$(config_value gamePath path)"
+explicit_output="$output_dir"
 if [[ -z "$output_dir" ]]; then
   mods_dir="$(config_value modsDir modsDir)"
   if [[ -z "$mods_dir" ]]; then
-    game_path="$(config_value gamePath path)"
     if [[ -z "$game_path" ]]; then
       echo "Missing game.path in sts2.local.yaml; cannot choose a default mods output directory." >&2
       exit 1
@@ -98,6 +125,40 @@ case "$output_dir" in
   /*) ;;
   *) output_dir="$repo_root/$output_dir" ;;
 esac
+
+# An explicit deploy destination can name a different install than the CLI's current config.
+if [[ -n "$explicit_output" ]]; then
+  output_game_path="$(dirname "$(dirname "$output_dir")")"
+  if [[ -f "$output_game_path/release_info.json" ]]; then
+    game_path="$output_game_path"
+  fi
+fi
+if [[ -n "$game_path" && "$game_path" != /* ]]; then
+  game_path="$repo_root/$game_path"
+fi
+
+release_version() {
+  [[ -f "$1" ]] || return 0
+  jq -r '.version | select(type == "string" and length > 0)' "$1" 2>/dev/null || true
+}
+
+compiled_release_info="$assemblies_dir/../release_info.json"
+target_release_info="${game_path:-<unresolved gamePath>}/release_info.json"
+compiled_version="$(release_version "$compiled_release_info")"
+target_version="$(release_version "$target_release_info")"
+if [[ -n "$compiled_version" && -n "$target_version" ]]; then
+  if [[ "$compiled_version" != "$target_version" ]]; then
+    printf 'Refusing local build: compiled game %s (%s) differs from target game %s (%s).\n' \
+      "$compiled_version" "$assemblies_dir" "$target_version" "$game_path" >&2
+    echo 'Use scripts/with-game-branch.sh <branch> -- scripts/build-local-mod.sh; scripts/with-game-branch.sh list shows branches.' >&2
+    exit 3
+  fi
+else
+  skip_reasons=()
+  [[ -n "$compiled_version" ]] || skip_reasons+=("compiled version unavailable at $compiled_release_info;")
+  [[ -n "$target_version" ]] || skip_reasons+=("target version unavailable at $target_release_info;")
+  printf 'Local build version guard skipped: %s\n' "${skip_reasons[*]}" >&2
+fi
 
 mkdir -p "$output_dir"
 
@@ -130,6 +191,7 @@ rm -rf "$output_dir/lanes"
 
 dotnet publish "$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" \
   -c "$configuration" \
+  "${msbuild_args[@]}" \
   -p:CouchCoopBuildToLocalMods=false \
   -p:CouchCoopEnableHotReload=true \
   -o "$output_dir"
@@ -142,6 +204,7 @@ rm -f "$output_dir/hot-reload/CouchCoop.Mod.HotReload.deps.json" \
 
 dotnet build "$repo_root/src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csproj" \
   -c "$configuration" \
+  "${msbuild_args[@]}" \
   -p:CouchCoopEnableHotReload=true \
   -p:HotReloadDeployDir="$output_dir/hot-reload"
 
@@ -157,6 +220,7 @@ COUCHCOOP_FRONTEND_OUT_DIR="$output_dir/frontend" npm --prefix "$repo_root/front
 # Last, because it stamps what was actually published: a dev manifest version that cannot lose the
 # game's Workshop-vs-local version comparison, plus the build-info.txt that says which source commit,
 # API lane and sibling checkouts this deploy came from.
-"$repo_root/scripts/stamp-local-mod.sh" --output "$output_dir" --configuration "$configuration"
+STS2_ASSEMBLIES_DIR="$assemblies_dir" CouchCoopLocalConfigPath="$config_path" \
+  "$repo_root/scripts/stamp-local-mod.sh" --output "$output_dir" --configuration "$configuration"
 
 printf '{"outputDir":"%s","configuration":"%s"}\n' "$output_dir" "$configuration"

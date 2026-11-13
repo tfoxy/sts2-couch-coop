@@ -40,6 +40,7 @@ checks=(
   "validate-artifacts|scripts/validate-artifacts.sh --json"
   "macos-iphone-workflow-policy|scripts/test-macos-iphone-workflow-policy.sh"
   "test-validate-forbidden-patterns|scripts/test-validate-forbidden-patterns.sh"
+  "test-build-local-mod-guard|scripts/test-build-local-mod-guard.sh"
   "validate-forbidden-patterns|scripts/validate-forbidden-patterns.sh --json"
   "test-check-public-tree|scripts/test-check-public-tree.sh"
   "public-tree|python3 scripts/check-public-tree.py"

@@ -42,7 +42,7 @@ than reloading across a contract change.
 ## Two game installs on one machine (game branches)
 
 Testing against a beta or older game build needs a second install, and the whole difficulty is that
-CouchCoop finds the game **twice**, through two resolvers that never compare notes:
+CouchCoop finds the game through two readers:
 
 - the `sts2` CLI's config stack — `sts2.config.yaml` + `sts2.local.yaml` read from one directory,
   chosen by `SPIRECTL_CONFIG_DIR`, by `--config <file>`, or by walking up from the working directory;
@@ -51,13 +51,11 @@ CouchCoop finds the game **twice**, through two resolvers that never compare not
   `STS2_ASSEMBLIES_DIR`, `COUCHCOOP_GAME_MODS_DIR` and `COUCHCOOP_LOCAL_MOD_DIR`; plus
   `scripts/build-local-mod.sh`, which asks the CLI and falls back to its own sed reader.
 
-**`sts2 --config beta.yaml game deploy --build` silently builds the wrong binary.** The deploy exports
-`SPIRECTL_DEPLOY_OUTPUT_DIR`, `SPIRECTL_DEPLOY_PROJECT_ROOT` and `SPIRECTL_DEPLOY_MOD_NAME` to the
-build command and nothing else — never the assemblies dir. So the compile resolves STS2 references
-through the MSBuild reader, which still reads the repo-root `sts2.local.yaml` and hands it the
-**stable** assemblies, and the deploy then installs that binary into the **beta** install's mods dir.
-Build succeeds, deploy succeeds, verify succeeds, and you are measuring a mod compiled against the
-other game version.
+`scripts/build-local-mod.sh` follows the CLI's resolved assemblies and config directory for both
+compiles; an explicit `STS2_ASSEMBLIES_DIR` still wins. Before compiling or cleaning the output, it
+compares the assemblies' game version with the target install's `release_info.json` (including an
+explicit deploy destination). Different known versions refuse the build with exit 3 and a hint to
+use the wrapper below. If either version is unavailable, it prints why the guard was skipped.
 
 `scripts/with-game-branch.sh` is the one switch that feeds both resolvers, and the assertion that the
 install you got is the install you asked for:
