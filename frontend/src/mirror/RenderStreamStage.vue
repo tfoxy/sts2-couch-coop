@@ -220,7 +220,10 @@ const confirmStageStyle = computed(() => pictureStageStyle.value && ({
 
 const handRaiseStageStyle = computed(() => pictureStageStyle.value && ({
   ...pictureStageStyle.value,
-  zIndex: handCovered.value ? "-1" : "1"
+  zIndex: "1",
+  // The stream's dimmer cannot paint over DOM chrome; reproduce its darkening while the blocked target
+  // leaves pointer events to the canvas below, just as the mirror's scene-ordered button does.
+  filter: handCovered.value ? "brightness(0.15)" : undefined
 }));
 
 function commitConfirm(): void {

@@ -871,7 +871,12 @@ describe("stream hand-raise button", () => {
     wrapper!.get('[data-testid="mirror-hand-raise-button"]').element.dispatchEvent(event);
   }
 
-  function handFrame(overlay?: "loot" | "card-reward") {
+  // Vue may write the filter through its WebKit alias.
+  function stageFilter(stage: HTMLElement): string {
+    return stage.style.filter || stage.style.getPropertyValue("-webkit-filter");
+  }
+
+  function handFrame(overlay?: "loot" | "card-reward" | "deck-view") {
     const fake = clients[0];
     const presence = fake.options.extensions!.find((e) => e.id === "couchcoop.handRaiseChrome")!;
     const raise = fake.options.extensions!.find((e) => e.id === "couchcoop.raisedHand")!;
@@ -905,7 +910,7 @@ describe("stream hand-raise button", () => {
       hideOverlay() { overlayVisible = false; } };
   }
 
-  it.each(["loot", "card-reward"] as const)("sinks hand chrome beneath %s even when the holder centre is uncovered", async (overlay) => {
+  it.each(["loot", "card-reward", "deck-view"] as const)("keeps hand chrome visible, dimmed and input-less under %s even when the holder centre is uncovered", async (overlay) => {
     const sent: MirrorInputMessage[] = [];
     mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
     const h = handFrame(overlay);
@@ -915,26 +920,35 @@ describe("stream hand-raise button", () => {
     const stage = () => wrapper!.get('[data-testid="render-stream-hand-raise-stage"]').element as HTMLElement;
     expect(button().classes()).toContain("mirror-hand-raise--blocked");
     expect((button().element as HTMLElement).style.pointerEvents).toBe("none");
-    expect(stage().style.zIndex).toBe("-1");
+    expect(stage().style.zIndex).toBe("1");
+    expect(stageFilter(stage())).toBe("brightness(0.15)");
+    const chrome = wrapper!.get('[data-testid="mirror-hand-raise-chrome"]').element as HTMLElement;
+    expect(stage().contains(chrome)).toBe(true);
+    expect(chrome.style.visibility).toBe("");
+    expect(chrome.style.display).toBe("");
+    expect(chrome.style.pointerEvents).toBe("none");
     pointer("pointerdown");
     now += 100;
     pointer("pointerup");
     expect(mirrorSettings.raiseHandCards).toBe(false);
     expect(handRaiseUi.pressOverride).toBeNull();
 
-    // The sunk, non-interactive chrome leaves the real game input path available at the HUD slot.
+    // The non-interactive chrome leaves the same canvas input path available at the HUD slot.
     clients[0].clientToGame = vi.fn((x: number, y: number) => ({ point: { x, y }, item: null, drawn: { x, y } }));
     for (const [type, buttons] of [["pointerdown", 1], ["pointerup", 0]] as const) {
-      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 1100, clientY: 530, buttons });
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 1130, clientY: 542, buttons });
       Object.defineProperties(event, { pointerType: { value: "mouse" }, pointerId: { value: 1 } });
       wrapper!.get("canvas").element.dispatchEvent(event);
     }
-    expect(sent.map(({ kind, pressed }) => [kind, pressed])).toEqual([["click", true], ["click", false]]);
+    expect(sent.map(({ kind, pressed, coordX, coordY }) => [kind, pressed, coordX, coordY]))
+      .toEqual([["click", true, 1130, 542], ["click", false, 1130, 542]]);
     h.hideOverlay();
     h.presence.beforeDraw!({ ...h.frame, seq: 2 });
     await nextTick();
     expect(button().classes()).not.toContain("mirror-hand-raise--blocked");
     expect(stage().style.zIndex).toBe("1");
+    expect(stageFilter(stage())).toBe("");
+    expect((button().element as HTMLElement).style.pointerEvents).toBe("auto");
     pointer("pointerdown");
     now += 100;
     pointer("pointerup");
@@ -965,13 +979,15 @@ describe("stream hand-raise button", () => {
     expect(chrome.style.transform).toBe("");
     expect(stage.contains(chrome)).toBe(true);
     expect(button.style.pointerEvents).toBe("auto");
+    expect(stage.style.zIndex).toBe("1");
+    expect(stageFilter(stage)).toBe("");
     h.hide();
     h.presence.beforeDraw!({ ...h.frame, seq: 2 });
     await nextTick();
     expect(wrapper!.find('[data-testid="mirror-hand-raise-button"]').exists()).toBe(false);
   });
 
-  it("blocks and sinks the button under game overlays, cancelling a hold without saving", async () => {
+  it("blocks and dims the button under game overlays, cancelling a hold without saving", async () => {
     mountStage({ sendInput: vi.fn() });
     const h = handFrame();
     h.presence.beforeDraw!(h.frame);
@@ -984,7 +1000,8 @@ describe("stream hand-raise button", () => {
     const button = () => wrapper!.get('[data-testid="mirror-hand-raise-button"]');
     const stage = () => wrapper!.get('[data-testid="render-stream-hand-raise-stage"]').element as HTMLElement;
     expect(button().classes()).toContain("mirror-hand-raise--blocked");
-    expect(stage().style.zIndex).toBe("-1");
+    expect(stage().style.zIndex).toBe("1");
+    expect(stageFilter(stage())).toBe("brightness(0.15)");
     expect(handRaiseUi.pressOverride).toBeNull();
     pointer("pointerup");
     pointer("pointerdown");
@@ -995,11 +1012,14 @@ describe("stream hand-raise button", () => {
     h.cover(false);
     h.presence.beforeDraw!({ ...h.frame, seq: null });
     await nextTick();
-    expect(stage().style.zIndex).toBe("-1");
+    expect(stage().style.zIndex).toBe("1");
+    expect(stageFilter(stage())).toBe("brightness(0.15)");
     h.presence.beforeDraw!({ ...h.frame, seq: 3 });
     await nextTick();
     expect(button().classes()).not.toContain("mirror-hand-raise--blocked");
     expect(stage().style.zIndex).toBe("1");
+    expect(stageFilter(stage())).toBe("");
+    expect((button().element as HTMLElement).style.pointerEvents).toBe("auto");
     pointer("pointerdown");
     now += 100;
     pointer("pointerup");

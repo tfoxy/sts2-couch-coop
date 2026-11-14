@@ -180,6 +180,15 @@ describe("MirrorHandRaiseButton", () => {
     expect(mirrorSettings.raiseHandCards).toBe(false);
     expect(readStoredMirrorSettings().raiseHandCards).toBeUndefined();
     expect(wrapper.get("[data-testid=mirror-hand-raise-button]").classes()).toContain("mirror-hand-raise--blocked");
+    // Mirror paint stays in the renderer's scene order; stream dimming must not be applied here.
+    const chrome = target.querySelector<HTMLElement>("[data-testid=mirror-hand-raise-chrome]");
+    if (backend === "dom") {
+      expect(chrome).not.toBeNull();
+      expect(chrome!.style.filter).toBe("");
+      expect(chrome!.parentElement).toBe(target);
+    } else {
+      expect(chrome).toBeNull();
+    }
     wrapper.unmount();
   });
 
