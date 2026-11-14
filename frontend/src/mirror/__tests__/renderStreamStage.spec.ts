@@ -257,7 +257,7 @@ describe("RenderStreamStage", () => {
     mirrorSettings.uiScaling = true;
     mountStage();
     expect((clients[0].options.extensions ?? []).map((e) => e.id))
-      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.hoverTips"]);
+      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.hoverTips", "couchcoop.textScale"]);
   });
 
   it("attaches the held-card and confirm-tap modules on the viewer's saved choices", () => {
@@ -472,7 +472,7 @@ describe("RenderStreamStage", () => {
       const original = clients[0];
       const canvas = original.options.canvas;
       expect(ids(original)).toEqual([
-        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
+        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
       ]);
       for (const key of ["raiseHandCards", "uiScaling", "raiseHeldCard", "confirmTap"] as const) {
         for (const enabled of [true, false, true]) {
@@ -508,7 +508,7 @@ describe("RenderStreamStage", () => {
       expect(clients).toHaveLength(2);
       expect(clients[1].options.endpoint).toEqual(wide);
       expect(clients[1].options.canvas.width).toBe(2340);
-      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.hoverTips"]);
+      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.hoverTips", "couchcoop.textScale"]);
     });
 
     it("a suspended stage remounts nothing, and builds from the current settings when it wakes", async () => {

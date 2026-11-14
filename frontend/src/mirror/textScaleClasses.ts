@@ -465,6 +465,42 @@ const NO_DECLS: TextScaleDecls = { self: {}, text: {} };
 /** "This node scales nothing" — the shared empty pair, also what a switched-off consumer substitutes. */
 export const EMPTY_TEXT_SCALE_DECLS: TextScaleDecls = NO_DECLS;
 
+/** The old text path's base compensation; the stream already draws at game size. */
+export const OLD_TEXT_BASE = 1.08;
+
+/** Live measurements against the old renderer's displayed glyph size. Overrides may shrink text. */
+export const STREAM_TEXT_FACTOR_OVERRIDES: Readonly<Record<string, number>> = {
+  "healthbar-hp": 1.40,
+  "power-amount": 1.46,
+  "intent-value": 1.30,
+  "topbar-deck-count": 1.171,
+  "topbar-hp": 1.157,
+  "topbar-gold": 1.157,
+  "merchant-inventory-cost": 1.15,
+  "merchant-card-cost": 1.15,
+  "merchant-potion-cost": 1.15,
+  "merchant-relic-cost": 1.15,
+  "merchant-removal-cost": 1.15,
+  "draw-pile": 1.10,
+  "discard-pile": 1.10,
+  "end-turn": 1.06,
+  "relic-amount": 1.28,
+  // Unmeasured number labels follow their measured siblings: power, piles and energy.
+  "orb-passive-amount": 1.46,
+  "orb-evoke-amount": 1.46,
+  "exhaust-pile": 1.10,
+  "star-counter": 1.24 / OLD_TEXT_BASE
+};
+
+/** Rigid stream enlargement, without changing the old renderer's declarations or wrapping. */
+export function streamTextScaleOf(decls: TextScaleDecls): number {
+  const scale = decls.self[S] ?? decls.text.transform?.match(/^scale\(([\d.]+)\)$/)?.[1];
+  const oldFactor = Number(scale ?? 1);
+  // End Turn's font-size min() needs the base font px to enforce its absolute cap. ItemQuery
+  // exposes command bounds, not font metrics; the per-class override calibrates its displayed size.
+  return Number.isFinite(oldFactor) && oldFactor > 0 ? Math.max(1, oldFactor / OLD_TEXT_BASE) : 1;
+}
+
 /**
  * THE CASCADE RESULT for one node, as values instead of as CSS — what the canvas text path reads (M4).
  *

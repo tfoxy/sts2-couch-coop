@@ -57,6 +57,18 @@ function fixture() {
 }
 
 describe("stream extension live settings", () => {
+  it("installs text scaling after all ancestor transform modules", () => {
+    const f = fixture();
+    try {
+      expect(f.built.extensions.map((extension) => extension.id)).toEqual([
+        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.hoverTips",
+        "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets"
+      ]);
+    } finally {
+      f.dispose();
+    }
+  });
+
   it.each([
     ["raiseHandCards", "couchcoop.raisedHand", 3],
     ["uiScaling", "couchcoop.viewScale", 6],

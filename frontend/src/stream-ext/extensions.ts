@@ -12,6 +12,7 @@ import { createPointerTargetModule, type PointerTargetModule } from "@/stream-ex
 import { createHandPresenceExtension, createRaisedHandExtension } from "@/stream-ext/raisedHand";
 import { createHoverTipsModule } from "@/stream-ext/hoverTips";
 import { createViewScaleExtension } from "@/stream-ext/viewScale";
+import { createTextScaleExtension } from "@/stream-ext/textScale";
 
 export interface StreamExtensionsOptions {
   readonly settings: MirrorSettings;
@@ -54,6 +55,8 @@ export function buildStreamExtensions(options: StreamExtensionsOptions): StreamE
   // Measure owners after every module that can move them on this frame.
   if (install("uiScaling")) {
     extensions.push(settingGated(createHoverTipsModule({ designWidth: options.presentationWidth }).extension, enabled("uiScaling")));
+    // Label anchors must see every ancestor's override for this frame.
+    extensions.push(settingGated(createTextScaleExtension(), enabled("uiScaling")));
   }
   if (install("confirmTap")) {
     const confirm = createConfirmTapExtension();
