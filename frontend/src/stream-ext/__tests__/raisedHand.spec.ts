@@ -1,12 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { Affine2D, ExtensionFrame, ItemMeta, ItemMetaBatch, ItemQuery, OverrideTable, Rect } from "@godot-scene-web/render-stream-client";
+
+import { creatureHudMeasure } from "@/mirror/raise/creatureHud";
+import { parseSceneDelta } from "@/mirror/sceneTree";
 
 import {
   computeRaisePlan,
   creatureShiftFor,
   creatureShifts,
   createRaisedHandExtension,
+  createHandPresenceExtension,
   raiseLiftPx,
   type CreatureGroupFacts,
   type RaiseFrameInput
@@ -14,7 +18,10 @@ import {
 import {
   RAISE_GROUPS,
   RS_GROUP_CREATURE_HUD,
+  RS_GROUP_CREATURE_POWER,
+  RS_GROUP_CREATURE_RETICLE,
   RS_GROUP_HAND_CONTAINER,
+  RS_GROUP_HAND_COVER,
   RS_GROUP_HAND_HOLDER,
   RS_GROUP_HAND_ROOT,
   RS_GROUP_TARGETING_ARROW
@@ -102,21 +109,30 @@ class FakeOverrides implements OverrideTable {
   size = 0;
 }
 
-function fakeQuery(overrides: Record<number, { parent?: number | null; y?: number; visible?: boolean }>): ItemQuery {
+function fakeQuery(overrides: Record<number, { parent?: number | null; y?: number; visible?: boolean; rect?: Rect | null }>): ItemQuery {
+  const children = (id: number) => Uint32Array.from(Object.keys(overrides).map(Number).filter((child) => overrides[child].parent === id));
+  const rect = (id: number): Rect | null => {
+    const o = overrides[id];
+    if (o?.rect !== undefined) return o.rect;
+    return o?.y === undefined ? null : { x: 0, y: o.y, w: 0, h: 0 };
+  };
+  const subtreeRect = (id: number): Rect | null => {
+    const rects = [rect(id), ...Array.from(children(id), subtreeRect)].filter((r): r is Rect => r !== null);
+    if (rects.length === 0) return null;
+    const x = Math.min(...rects.map((r) => r.x));
+    const y = Math.min(...rects.map((r) => r.y));
+    return { x, y, w: Math.max(...rects.map((r) => r.x + r.w)) - x, h: Math.max(...rects.map((r) => r.y + r.h)) - y };
+  };
   return {
     parent: (id) => overrides[id]?.parent ?? null,
-    children: () => new Uint32Array(0),
+    children,
     transform: (id) => {
       const o = overrides[id];
       if (o === undefined || o.y === undefined) return null;
       return [1, 0, 0, 1, 0, o.y];
     },
-    rect: (id) => {
-      const o = overrides[id];
-      if (o === undefined || o.y === undefined) return null;
-      return { x: 0, y: o.y, w: 0, h: 0 } as Rect;
-    },
-    subtreeRect: () => null,
+    rect,
+    subtreeRect,
     visible: (id) => overrides[id]?.visible ?? true,
     meta: (id) => {
       const m = metas.get(id);
@@ -135,6 +151,112 @@ function frame(seq: number | null): ExtensionFrame {
 }
 
 describe("raisedHand — extension glue", () => {
+  it.each(["health first", "intents first"])("matches the old HUD measurement with draw-less groups (%s)", (order) => {
+    metas.clear();
+    overrides = new FakeOverrides();
+    const rootY = 600;
+    query = fakeQuery({
+      1: { y: rootY, rect: null },
+      20: { parent: 1, y: rootY + 7, rect: null },
+      21: { parent: 1, y: rootY - 310, rect: null },
+      22: { parent: 1, y: rootY - 278, rect: null },
+      23: { parent: 20, y: rootY + 39, rect: null },
+      24: { parent: 22, rect: { x: 0, y: rootY - 278, w: 252, h: 178 } },
+      25: { parent: 21, rect: { x: 0, y: rootY - 310, w: 100, h: 26 } },
+      // Drawn health labels can overshoot the display's own origin; they must not define displayTop.
+      26: { parent: 20, rect: { x: 0, y: rootY - 6, w: 258, h: 26 } }
+    });
+    const health = { ...meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), scene: "res://scenes/combat/creature_state_display.tscn" };
+    const intents = meta(21, [RS_GROUP_CREATURE_HUD], "Intents");
+    const items = [
+      ...(order === "health first" ? [health, intents] : [intents, health]),
+      meta(22, [RS_GROUP_CREATURE_RETICLE], "SelectionReticle"),
+      meta(23, [RS_GROUP_CREATURE_POWER], "PowerContainer")
+    ];
+    for (const m of items) metas.set(m.id, m);
+
+    // The same geometry in the old renderer's parent-relative node shape.
+    const at = (y: number) => ({ xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x: 0, y } });
+    const nodes = parseSceneDelta({ type: "scene-delta", upserts: [
+      { id: "1", name: "Creature", transform: at(rootY) },
+      { id: "20", parentId: "1", name: "HealthBar", transform: at(7) },
+      { id: "21", parentId: "1", name: "Intents", transform: at(-310), localRect: { position: { x: 0, y: 0 }, size: { x: 100, y: 40 } } },
+      { id: "22", parentId: "1", name: "SelectionReticle", transform: at(-278) },
+      { id: "23", parentId: "20", name: "PowerContainer", transform: at(32) }
+    ] })!.upserts;
+    const reference = creatureHudMeasure(new Map(nodes.map((n) => [n.id, n])),
+      (id) => nodes.filter((n) => n.parentId === id).map((n) => n.id), "1");
+    expect(reference.healthBar).toBe(-357);
+    expect(reference.intents).toBe(-101);
+
+    const ext = createRaisedHandExtension();
+    ext.onItemMeta!(batch(items));
+    ext.beforeDraw!(frame(1));
+    expect(query.rect(22)).toBeNull();
+    expect(query.subtreeRect(22)?.y).toBe(rootY - 278);
+    expect(overrides.values.get(20)?.transform[5]).toBe(reference.healthBar);
+    expect(overrides.values.get(21)?.transform[5]).toBe(reference.intents);
+    ext.dispose!();
+  });
+
+  it("preserves the intent lift while drawn children bob across transactions", () => {
+    metas.clear();
+    overrides = new FakeOverrides();
+    const geometry = {
+      1: { y: 600, rect: null },
+      20: { parent: 1, y: 607, rect: null },
+      21: { parent: 1, y: 290, rect: null },
+      25: { parent: 21, y: 284, rect: { x: 0, y: 284, w: 100, h: 26 } }
+    };
+    query = fakeQuery(geometry);
+    const items = [meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), meta(21, [RS_GROUP_CREATURE_HUD], "Intents")];
+    for (const m of items) metas.set(m.id, m);
+    const ext = createRaisedHandExtension();
+    ext.onItemMeta!(batch(items));
+    ext.beforeDraw!(frame(1));
+    const lift = overrides.values.get(21)!.transform[5];
+    geometry[25].y += 12;
+    geometry[25].rect.y += 12;
+    ext.beforeDraw!(frame(2));
+    expect(overrides.values.get(21)!.transform[5]).toBe(lift);
+    ext.dispose!();
+  });
+
+  it("leaves intents unshifted when their own transform is unknown despite drawn descendants", () => {
+    metas.clear();
+    overrides = new FakeOverrides();
+    query = fakeQuery({
+      1: { y: 600, rect: null },
+      20: { parent: 1, y: 607, rect: null },
+      21: { parent: 1, rect: null },
+      25: { parent: 21, rect: { x: 0, y: 290, w: 100, h: 26 } }
+    });
+    const items = [meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), meta(21, [RS_GROUP_CREATURE_HUD], "Intents")];
+    for (const m of items) metas.set(m.id, m);
+    const ext = createRaisedHandExtension();
+    ext.onItemMeta!(batch(items));
+    ext.beforeDraw!(frame(1));
+    expect(overrides.values.has(21)).toBe(false);
+    ext.dispose!();
+  });
+
+  it("uses the reticle fallback when its subtree has no known bounds", () => {
+    metas.clear();
+    overrides = new FakeOverrides();
+    query = fakeQuery({
+      1: { y: 600 },
+      20: { parent: 1, y: 607, rect: null },
+      22: { parent: 1, y: 322, rect: null }
+    });
+    const items = [meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), meta(22, [RS_GROUP_CREATURE_RETICLE])];
+    for (const m of items) metas.set(m.id, m);
+    const ext = createRaisedHandExtension();
+    ext.onItemMeta!(batch(items));
+    ext.beforeDraw!(frame(1));
+    expect(overrides.values.get(20)?.transform[5]).toBe(-244);
+    ext.dispose!();
+  });
+
   it("indexes the mod's groups and writes a lift only while dirty", () => {
     metas.clear();
     overrides = new FakeOverrides();
@@ -209,5 +331,140 @@ describe("raisedHand — off is empty", () => {
     const ext = createRaisedHandExtension();
     expect(ext.wants?.fields).toEqual(["path"]);
     expect([...(ext.wants?.groups ?? [])].sort()).toEqual([...RAISE_GROUPS].slice().sort());
+  });
+});
+
+
+describe("hand presence — stream chrome", () => {
+  it("tracks visual covers independently of holder hits, only on transactions or identity changes", () => {
+    const onPresent = vi.fn();
+    const extension = createHandPresenceExtension(onPresent);
+    expect(extension.wants?.groups).toContain(RS_GROUP_HAND_COVER);
+    const q = fakeQuery({
+      10: { rect: { x: 400, y: 900, w: 100, h: 120 } },
+      90: { rect: null }
+    });
+    const hit = vi.spyOn(q, "hitTest").mockReturnValue(10);
+    const visible = vi.spyOn(q, "visible");
+    const f: ExtensionFrame = { seq: 1, now: 0, query: q, overrides: new FakeOverrides(), requestRedraw: vi.fn() };
+    const holder = meta(10, [RS_GROUP_HAND_HOLDER]);
+    const cover = meta(90, [RS_GROUP_HAND_COVER]);
+    extension.onItemMeta!(batch([holder, cover]));
+    extension.beforeDraw!(f);
+    expect(onPresent).toHaveBeenLastCalledWith(true, true);
+    expect(hit).not.toHaveBeenCalled();
+    visible.mockClear();
+    onPresent.mockClear();
+    extension.beforeDraw!(f);
+    extension.beforeDraw!({ ...f, seq: null });
+    expect(visible).not.toHaveBeenCalled();
+    expect(onPresent).not.toHaveBeenCalled();
+
+    visible.mockImplementation((id) => id !== 90);
+    extension.beforeDraw!({ ...f, seq: 2 });
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    visible.mockReturnValue(true);
+    extension.beforeDraw!({ ...f, seq: 3 });
+    expect(onPresent).toHaveBeenLastCalledWith(true, true);
+    for (const removeCover of [
+      () => extension.onItemMeta!(batch([meta(90, [])], "delta")),
+      () => extension.onItemsRemoved!(Uint32Array.of(90)),
+      () => extension.onItemMeta!(batch([holder]))
+    ]) {
+      removeCover();
+      extension.beforeDraw!({ ...f, seq: null });
+      expect(onPresent).toHaveBeenLastCalledWith(true, false);
+      extension.onItemMeta!(batch([cover], "delta"));
+      extension.beforeDraw!({ ...f, seq: null });
+      expect(onPresent).toHaveBeenLastCalledWith(true, true);
+    }
+    extension.dispose!();
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+  });
+
+  it("reads visible holders only on stream changes, then retires the button on removal or teardown", () => {
+    const onPresent = vi.fn();
+    const extension = createHandPresenceExtension(onPresent);
+    const query = fakeQuery({ 10: { visible: true } });
+    const visible = vi.spyOn(query, "visible");
+    const f: ExtensionFrame = { seq: 1, now: 0, query, overrides: new FakeOverrides(), requestRedraw: vi.fn() };
+    extension.onItemMeta!(batch([meta(10, [RS_GROUP_HAND_HOLDER])]));
+    extension.beforeDraw!(f);
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    visible.mockClear();
+    onPresent.mockClear();
+    extension.beforeDraw!(f);
+    extension.beforeDraw!({ ...f, seq: null });
+    expect(visible).not.toHaveBeenCalled();
+    expect(onPresent).not.toHaveBeenCalled();
+    visible.mockReturnValue(false);
+    extension.beforeDraw!({ ...f, seq: 2 });
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+    visible.mockReturnValue(true);
+    extension.beforeDraw!({ ...f, seq: 3 });
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    extension.onItemsRemoved!(Uint32Array.of(10));
+    visible.mockClear();
+    extension.beforeDraw!({ ...f, seq: null });
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+    expect(visible).not.toHaveBeenCalled();
+    extension.dispose!();
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+    expect(f.requestRedraw).not.toHaveBeenCalled();
+  });
+
+  it.each([10, 100, 200])("accepts hits within the hand via ancestor %i and checks covers only on stream changes", (ancestor) => {
+    const onPresent = vi.fn();
+    const extension = createHandPresenceExtension(onPresent);
+    const q = fakeQuery({
+      200: {}, 100: { parent: 200 },
+      10: { parent: 100, rect: null },
+      11: { parent: ancestor },
+      12: { parent: 10, rect: { x: 100, y: 200, w: 80, h: 120 } }, 99: {}
+    });
+    const hit = vi.spyOn(q, "hitTest").mockReturnValue(11);
+    const o = new FakeOverrides();
+    vi.spyOn(o, "effective").mockReturnValue([1, 0, 0, 1, 30, -119]);
+    const f: ExtensionFrame = { seq: 1, now: 0, query: q, overrides: o, requestRedraw: vi.fn() };
+    extension.onItemMeta!(batch([
+      meta(10, [RS_GROUP_HAND_HOLDER]), meta(100, [RS_GROUP_HAND_CONTAINER]), meta(200, [RS_GROUP_HAND_ROOT])
+    ]));
+    extension.beforeDraw!(f);
+    expect(hit).toHaveBeenLastCalledWith(170, 141);
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    hit.mockReturnValue(99).mockClear();
+    extension.beforeDraw!({ ...f, seq: null });
+    expect(hit).not.toHaveBeenCalled();
+    extension.beforeDraw!({ ...f, seq: 2 });
+    expect(onPresent).toHaveBeenLastCalledWith(true, true);
+    hit.mockReturnValue(11);
+    extension.onItemMeta!(batch([], "delta"));
+    extension.beforeDraw!({ ...f, seq: null });
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    vi.spyOn(q, "visible").mockReturnValue(false);
+    hit.mockClear();
+    extension.beforeDraw!({ ...f, seq: 3 });
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+    expect(hit).not.toHaveBeenCalled();
+    extension.dispose!();
+  });
+
+  it("drops holders when a full table replaces combat or a delta removes their role", () => {
+    const onPresent = vi.fn();
+    const extension = createHandPresenceExtension(onPresent);
+    const f: ExtensionFrame = { seq: null, now: 0, query: fakeQuery({}), overrides: new FakeOverrides(), requestRedraw: vi.fn() };
+    extension.onItemMeta!(batch([meta(10, [RS_GROUP_HAND_HOLDER])]));
+    extension.beforeDraw!(f);
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    extension.onItemMeta!(batch([meta(10, [])], "delta"));
+    extension.beforeDraw!(f);
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+    extension.onItemMeta!(batch([meta(11, [RS_GROUP_HAND_HOLDER])]));
+    extension.beforeDraw!(f);
+    expect(onPresent).toHaveBeenLastCalledWith(true, false);
+    extension.onItemMeta!(batch([]));
+    extension.beforeDraw!(f);
+    expect(onPresent).toHaveBeenLastCalledWith(false, false);
+    extension.dispose!();
   });
 });

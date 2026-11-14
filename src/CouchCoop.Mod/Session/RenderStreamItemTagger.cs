@@ -31,6 +31,7 @@ internal static class RenderStreamItemTagger
     internal const string HandHolderGroup = "couchcoop_rs_hand_holder";
     internal const string HandRootGroup = "couchcoop_rs_hand_root";
     internal const string HandContainerGroup = "couchcoop_rs_hand_container";
+    internal const string HandCoverGroup = "couchcoop_rs_hand_cover";
     internal const string TargetingArrowGroup = "couchcoop_rs_targeting_arrow";
     internal const string HandChoiceGroup = "couchcoop_rs_hand_choice";
     internal const string CreatureHudGroup = "couchcoop_rs_creature_hud";
@@ -51,11 +52,13 @@ internal static class RenderStreamItemTagger
     private const string HandChoiceType = "NChooseACardSelectionScreen";
     private const string HandChoiceName = "SelectModeBackstop";
     private const string CreatureSceneFileSuffix = "combat/creature.tscn";
+    private const string CreatureStateDisplaySceneFileSuffix = "combat/creature_state_display.tscn";
     private const string CreatureHealthBarName = "HealthBar";
     private const string CreatureIntentsName = "Intents";
     private const string CreatureReticleName = "SelectionReticle";
     private const string CreaturePowerName = "PowerContainer";
     private const string CardRewardScreenType = "NCardRewardSelectionScreen";
+    private const string RewardsScreenType = "NRewardsScreen";
     private const string CardType = "NCard";
     private const string TreasureRelicType = "NTreasureRoomRelicHolder";
     // CONFIRM TAP: the three confirm-eligible families to tag. The shop set is the whole merchant
@@ -218,6 +221,8 @@ internal static class RenderStreamItemTagger
         if (facts.TypeLeaf == HandChoiceType || facts.Name == HandChoiceName) groups.Add(HandChoiceGroup);
         if (facts.TypeLeaf == TreasureRelicType) groups.Add(TreasureRelicGroup);
         if (facts.TypeLeaf == CardRewardScreenType) groups.Add(CardRewardRootGroup);
+        // These screens visually cover combat chrome even when their input backstops pass through to the hand.
+        if (facts.TypeLeaf is RewardsScreenType or CardRewardScreenType) groups.Add(HandCoverGroup);
         if (facts.TypeLeaf == CardType && facts.CardRewardAncestor) groups.Add(CardRewardCardGroup);
         if (facts.TypeLeaf == EventOptionType) groups.Add(EventOptionGroup);
         if (facts.TypeLeaf == RestSiteType) groups.Add(RestSiteGroup);
@@ -235,11 +240,12 @@ internal static class RenderStreamItemTagger
             {
                 groups.Add(CreatureReticleGroup);
             }
+        }
 
-            if (facts.Name == CreaturePowerName && facts.ParentName == CreatureHealthBarName)
-            {
-                groups.Add(CreaturePowerGroup);
-            }
+        if (facts.Name == CreaturePowerName && facts.ParentName == CreatureHealthBarName
+            && facts.ParentSceneFile?.EndsWith(CreatureStateDisplaySceneFileSuffix, StringComparison.Ordinal) == true)
+        {
+            groups.Add(CreaturePowerGroup);
         }
 
         return groups;

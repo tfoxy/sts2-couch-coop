@@ -177,7 +177,7 @@ describe("pointerTargets — interactive pages always run it", () => {
 
   it("is in an interactive page's list whatever the viewer enabled, and never in a receive-only page's", () => {
     const interactive = buildStreamExtensions({ settings: off, presentationWidth: 1920, interactive: true });
-    expect(interactive.extensions.map((e) => e.id)).toEqual(["couchcoop.pointerTargets"]);
+    expect(interactive.extensions.map((e) => e.id)).toContain("couchcoop.pointerTargets");
     expect(interactive.pointerTargets).not.toBeNull();
     const viewOnly = buildStreamExtensions({ settings: off, presentationWidth: 1920 });
     expect(viewOnly.extensions).toEqual([]);

@@ -3,6 +3,7 @@
   "hand_holder": "couchcoop_rs_hand_holder",
   "hand_root": "couchcoop_rs_hand_root",
   "hand_container": "couchcoop_rs_hand_container",
+  "hand_cover": "couchcoop_rs_hand_cover",
   "targeting_arrow": "couchcoop_rs_targeting_arrow",
   "hand_choice": "couchcoop_rs_hand_choice",
   "creature_hud": "couchcoop_rs_creature_hud",

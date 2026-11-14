@@ -19,9 +19,8 @@
 //     seat's current descriptor (`refresh-endpoint`); a different one arriving reconnects with it, the same one (or
 //     none within `refreshTimeoutMs`) is a stop;
 //   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on;
-//   * the extension modules: built from the viewer's four module settings and the seat's presentation width at
-//     mount, so a change to any of them mid-session remounts the client (a fresh canvas and a fresh join) with the
-//     new list — the modules' `wants` ride the hello, so an attached client cannot gain or drop one in place.
+//   * the extension modules: interactive stages install them once and gate their work on live settings. A changed
+//     presentation width or input capability needs a fresh client because its hello cannot change in place.
 //
 // VIEW ONLY when `sendInput` is absent (the dev probe, a receive-only page). With `sendInput`, the stage also owns
 // the input channel: pointer events over the canvas → the pointer mapping → the seat socket's `input` message
@@ -43,6 +42,8 @@ import { translate as t } from "@/i18n";
 import FullscreenButton from "@/components/FullscreenButton.vue";
 import IosInstallButton from "@/components/IosInstallButton.vue";
 import SettingsGearButton from "@/components/SettingsGearButton.vue";
+import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
+import { effectiveRaiseHandCards } from "@/mirror/handRaiseUi";
 import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import { confirmButtonReady, primeConfirmSprites } from "@/mirror/confirmTap";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
@@ -107,6 +108,8 @@ const canvasEl = ref<HTMLCanvasElement | null>(null);
 // a canvas whose WebGL context nobody has lost yet.
 const canvasGeneration = ref(0);
 const phase = ref<Phase>("connecting");
+const handPresent = ref(false);
+const handCovered = ref(false);
 // Which carrier the open connection uses (`client.stats().carrier`, read when the session arrives): the stage's
 // `data-stream-carrier`, so QA reads the carrier from the DOM instead of from CDP network events. Null while not
 // streaming.
@@ -193,9 +196,9 @@ const overlayText = computed(() => {
   }
 });
 
-// The shared button lives in design pixels over the measured, letterboxed canvas. Stretch the design width so
+// Shared buttons live in design pixels over the measured, letterboxed canvas. Stretch the design width so
 // bottom-right anchors follow a widescreen seat's right edge, and clip the authored overhang at the picture edge.
-const confirmStageStyle = computed(() => {
+const pictureStageStyle = computed(() => {
   void layoutTick.value;
   const rect = canvasEl.value?.getBoundingClientRect();
   if (!rect || rect.height <= 0) return null;
@@ -205,12 +208,20 @@ const confirmStageStyle = computed(() => {
     top: `${rect.top}px`,
     width: `${rect.width / scale}px`,
     height: "1080px",
-    transform: `scale(${scale})`,
-    // A canvas cannot interleave DOM chrome with its draw calls: sinking the layer behind it masks the button
-    // while a game overlay covers its choice; the retained state restores it when that overlay closes.
-    zIndex: confirmController.value?.state.belowOverlay ? "-1" : "1"
+    transform: `scale(${scale})`
   };
 });
+const confirmStageStyle = computed(() => pictureStageStyle.value && ({
+  ...pictureStageStyle.value,
+  // A canvas cannot interleave DOM chrome with its draw calls: sinking the layer behind it masks the button
+  // while a game overlay covers its choice; the retained state restores it when that overlay closes.
+  zIndex: confirmController.value?.state.belowOverlay ? "-1" : "1"
+}));
+
+const handRaiseStageStyle = computed(() => pictureStageStyle.value && ({
+  ...pictureStageStyle.value,
+  zIndex: handCovered.value ? "-1" : "1"
+}));
 
 function commitConfirm(): void {
   streamInput?.commitConfirm();
@@ -287,17 +298,9 @@ function stop(reason: string): void {
   }
 }
 
-// Everything `buildStreamExtensions` reads: the four module settings and the seat's presentation width (the view-scale
-// clamp's design width). A seat relaunched at a new width, or a module toggled mid-session, changes it.
+// Only the presentation width and input capability change the installed extension list or its design space.
 function extensionsKey(): string {
-  return [
-    mirrorSettings.raiseHandCards,
-    mirrorSettings.uiScaling,
-    mirrorSettings.raiseHeldCard,
-    mirrorSettings.confirmTap,
-    presentation.value[0],
-    props.sendInput !== undefined
-  ].join("|");
+  return [presentation.value[0], props.sendInput !== undefined].join("|");
 }
 
 function mountClient(): void {
@@ -307,7 +310,12 @@ function mountClient(): void {
   const built = buildStreamExtensions({
     settings: mirrorSettings,
     presentationWidth: presentation.value[0],
-    interactive: props.sendInput !== undefined
+    interactive: props.sendInput !== undefined,
+    raiseHandCards: () => effectiveRaiseHandCards.value,
+    onHandPresent: (present, covered) => {
+      handPresent.value = present;
+      handCovered.value = covered;
+    }
   });
   confirmController.value = built.confirmTap;
   if (built.confirmTap && props.sendInput) void primeConfirmSprites();
@@ -323,6 +331,7 @@ function mountClient(): void {
       onStatus
     });
   } catch (error) {
+    for (const extension of built.extensions) extension.dispose?.();
     stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
@@ -402,6 +411,8 @@ function disposeClient(): void {
   detachStreamInput(false);
   detachKeyPad(false);
   inputModules = null;
+  handPresent.value = false;
+  handCovered.value = false;
   confirmController.value = null;
   mountedExtensionsKey = null;
   carrier.value = null;
@@ -439,7 +450,7 @@ function onVisibilityChange(): void {
 }
 
 // The mounted client runs a stale extension list: replace it with a fresh client (on a fresh canvas, since dispose
-// loses the old one's context) built from the current settings and presentation. A suspended stage has no client and
+// loses the old one's context) built for the current input capability and presentation. A suspended stage has no client and
 // builds from the current values when it next mounts.
 function remountIfStale(): void {
   if (stopped || client === null || mountedExtensionsKey === extensionsKey()) return;
@@ -623,6 +634,14 @@ defineExpose({
     </template>
     <p v-if="overlayText" class="render-stream-status" role="status" data-testid="render-stream-status">{{ overlayText }}</p>
     <div
+      v-if="handPresent && inputEnabled && sendInput"
+      class="render-stream-hand-raise-stage"
+      data-testid="render-stream-hand-raise-stage"
+      :style="handRaiseStageStyle ?? { visibility: 'hidden' }"
+    >
+      <MirrorHandRaiseButton :stream-hand-present="handPresent" :stream-covered="handCovered" />
+    </div>
+    <div
       v-if="confirmController && inputEnabled && sendInput"
       class="render-stream-confirm-stage"
       data-testid="render-stream-confirm-stage"
@@ -693,7 +712,8 @@ defineExpose({
 }
 
 /* Couch's own design-space chrome, clipped and scaled to the stream picture. Its children opt into input. */
-.render-stream-confirm-stage {
+.render-stream-confirm-stage,
+.render-stream-hand-raise-stage {
   position: fixed;
   transform-origin: top left;
   overflow: hidden;

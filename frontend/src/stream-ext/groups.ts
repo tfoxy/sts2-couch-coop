@@ -6,6 +6,7 @@
 export const RS_GROUP_HAND_HOLDER = "couchcoop_rs_hand_holder";
 export const RS_GROUP_HAND_ROOT = "couchcoop_rs_hand_root";
 export const RS_GROUP_HAND_CONTAINER = "couchcoop_rs_hand_container";
+export const RS_GROUP_HAND_COVER = "couchcoop_rs_hand_cover";
 export const RS_GROUP_TARGETING_ARROW = "couchcoop_rs_targeting_arrow";
 export const RS_GROUP_HAND_CHOICE = "couchcoop_rs_hand_choice";
 export const RS_GROUP_CREATURE_HUD = "couchcoop_rs_creature_hud";

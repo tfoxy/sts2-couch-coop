@@ -811,14 +811,28 @@ internal static class RenderStreamPairingTests
             parentScene: "res://scenes/combat/creature.tscn")).Contains(RenderStreamItemTagger.CreatureReticleGroup),
             "a creature reticle is tagged");
         Assert(groups(F("PowerContainer", "Godot.Control", parentName: "HealthBar",
-            parentScene: "res://scenes/combat/creature.tscn")).Contains(RenderStreamItemTagger.CreaturePowerGroup),
-            "a creature power container is tagged");
+            parentScene: "res://scenes/combat/creature_state_display.tscn")).Contains(RenderStreamItemTagger.CreaturePowerGroup),
+            "a creature power container is tagged under its state display");
+        Assert(groups(F("PowerContainer", "Godot.Control", parentName: "HealthBar",
+            parentScene: "res://scenes/combat/creature.tscn")).Count == 0,
+            "a power container requires a state-display parent scene");
+        Assert(groups(F("PowerContainer", "Godot.Control", parentName: "Elsewhere",
+            parentScene: "res://scenes/combat/creature_state_display.tscn")).Count == 0,
+            "a power container requires a HealthBar parent name");
         // The same names outside a creature are NOT tagged (a creature's own inner HealthBar must not move alone).
         Assert(groups(F("HealthBar", "Godot.Control", parentName: "Elsewhere",
             parentScene: "res://scenes/combat/creature_state_display.tscn")).Count == 0,
             "a non-creature HealthBar is not a HUD group");
         Assert(groups(F("CardReward", "NCardRewardSelectionScreen")).Contains(RenderStreamItemTagger.CardRewardRootGroup),
             "the card-reward screen root is tagged");
+        foreach (var screen in new[] { "NRewardsScreen", "NCardRewardSelectionScreen" })
+        {
+            Assert(groups(F("Screen", screen)).Contains(RenderStreamItemTagger.HandCoverGroup),
+                $"{screen} covers hand chrome regardless of its input filter or drawn bounds");
+        }
+        Assert(!groups(F("Screen", "NPlayerHand")).Contains(RenderStreamItemTagger.HandCoverGroup)
+            && !groups(F("Screen", "Godot.Control")).Contains(RenderStreamItemTagger.HandCoverGroup),
+            "hand chrome cover tags belong only to the recognised overlay screens");
         Assert(groups(F("Card", "NCard", rewardAncestor: true)).Contains(RenderStreamItemTagger.CardRewardCardGroup)
             && groups(F("Card", "NCard")).Count == 0,
             "an NCard is tagged only under a card-reward screen");
@@ -853,7 +867,7 @@ internal static class RenderStreamPairingTests
             .Where(field => field.IsLiteral && field.FieldType == typeof(string) && field.Name.EndsWith("Group", StringComparison.Ordinal))
             .ToDictionary(field => RoleKey(field.Name[..^"Group".Length]), field => (string)field.GetRawConstantValue()!);
 
-        Assert(table.Count == 14, $"the shared table lists the 14 groups (got {table.Count})");
+        Assert(table.Count == 15, $"the shared table lists the 15 groups (got {table.Count})");
         Assert(consts.Count == table.Count && consts.All(entry => table.TryGetValue(entry.Key, out var name) && name == entry.Value),
             "the tagger's group consts equal the shared table: "
             + string.Join(", ", consts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={entry.Value}")));

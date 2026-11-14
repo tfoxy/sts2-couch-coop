@@ -72,6 +72,12 @@ const DOWN_SCALE = 0.95;
 const PRESS_MS = 120;
 const RELEASE_MS = 220;
 const SUSTAIN_MS = 400;
+const props = withDefaults(defineProps<{
+  /** Stream chrome paints in its own design-space layer, without a mirrored DOM anchor. */
+  streamHandPresent?: boolean;
+  streamCovered?: boolean;
+}>(), { streamHandPresent: undefined });
+const stream = computed(() => props.streamHandPresent !== undefined);
 
 // --- state ------------------------------------------------------------------------------------------------------
 const sprite = ref<AtlasSprite | null>(null);
@@ -88,13 +94,15 @@ let canvasRevision = 0;
 const on = effectiveRaiseHandCards;
 // Only while a combat hand is on screen — there is nothing to raise anywhere else, and an inert button in the
 // corner of the map screen is just clutter.
-const shown = computed(() => handRaiseUi.handPresent && handRaiseUi.layer?.anchorId != null && sprite.value !== null);
-const canvasBackend = computed(() => handRaiseUi.layer?.backend === "canvas");
+const shown = computed(() => sprite.value !== null && (stream.value
+  ? props.streamHandPresent
+  : handRaiseUi.handPresent && handRaiseUi.layer?.anchorId != null));
+const canvasBackend = computed(() => !stream.value && handRaiseUi.layer?.backend === "canvas");
 // The visible DOM chrome is intentionally below later scene siblings. Some non-blocking game layers span the
 // whole stage even though their transparent pixels should not make this client control unreachable, so input
 // cannot rely on the visible chrome being the browser event target. Both backends use the transparent target
 // below; the renderer's cover answer disables it whenever a REAL later backstop is present.
-const blocked = computed(() => handRaiseUi.layer?.covered === true);
+const blocked = computed(() => stream.value ? props.streamCovered === true : handRaiseUi.layer?.covered === true);
 const teleportTarget = computed(() => handRaiseUi.layer?.domTarget ?? document.body);
 
 async function prime(): Promise<void> {
@@ -120,7 +128,7 @@ async function prime(): Promise<void> {
 onMounted(prime);
 // A hand appearing is the first moment the button can matter; re-try then for a client that connected mid-run and
 // missed the initial fetch (idempotent — `prime` returns immediately once resolved).
-watch(() => handRaiseUi.handPresent, (present) => { if (present) void prime(); });
+watch(() => props.streamHandPresent ?? handRaiseUi.handPresent, (present) => { if (present) void prime(); });
 
 // --- paint ------------------------------------------------------------------------------------------------------
 // Where the slab lands inside BOX. `textureSizeVersion` is read so this recomputes when the atlas page's natural
@@ -166,6 +174,7 @@ const pressTransition = computed(() => `scale ${pressed.value ? PRESS_MS : RELEA
 const targetStyle = computed<CSSProperties>(() => {
   const a = anchor.value;
   return {
+    ...(stream.value ? { pointerEvents: blocked.value ? "none" as const : "auto" as const } : {}),
     right: `${a.right}px`,
     bottom: `${a.bottom}px`,
     width: `${a.width}px`,
@@ -191,6 +200,7 @@ const targetStyle = computed<CSSProperties>(() => {
  * and the press keeps pivoting at the centre, matching the design arm.
  */
 const chromeStyle = computed<CSSProperties>(() => {
+  if (stream.value) return { ...targetStyle.value, pointerEvents: "none" };
   const a = anchor.value;
   const s = layoutScale();
   return {
@@ -279,7 +289,7 @@ watchEffect(() => {
 });
 
 // --- input ------------------------------------------------------------------------------------------------------
-// Every press immediately INVERTS the saved state. A release at or before SUSTAIN_MS promotes that inversion to
+// Every press immediately INVERTS the saved state. A release within the tap duration promotes that inversion to
 // the saved toggle; a longer press is momentary and restores the saved state on release. Pointer capture keeps the
 // override active outside the target until the matching release/cancel arrives.
 function onDown(event: PointerEvent): void {
@@ -330,7 +340,7 @@ onBeforeUnmount(() => {
 <template>
   <!-- Paint ownership: on DOM, the visible control is a real child of CombatPileContainer. Canvas paints the
        equivalent texture command in that anchor's draw range, so it needs no visible DOM twin. -->
-  <Teleport v-if="shown && !canvasBackend" :to="teleportTarget">
+  <Teleport v-if="shown && !canvasBackend" :to="teleportTarget" :disabled="stream">
   <div
     class="mirror-hand-raise mirror-hand-raise--chrome"
     data-testid="mirror-hand-raise-chrome"

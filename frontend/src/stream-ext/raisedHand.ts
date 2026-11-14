@@ -41,10 +41,14 @@ import {
   RS_GROUP_CREATURE_RETICLE,
   RS_GROUP_HAND_CHOICE,
   RS_GROUP_HAND_CONTAINER,
+  RS_GROUP_HAND_COVER,
   RS_GROUP_HAND_HOLDER,
   RS_GROUP_HAND_ROOT,
   RS_GROUP_TARGETING_ARROW
 } from "@/stream-ext/groups";
+
+/** The intent row's authored box; drawn children can bob independently inside it. */
+const INTENT_ROW_HEIGHT = 40;
 
 /** A holder's pose, read from the frame. */
 export interface HolderPose {
@@ -66,9 +70,9 @@ export interface CreatureGroupFacts {
   readonly kind: "HealthBar" | "Intents";
   /** The creature root (the group's parent). */
   readonly rootId: number;
-  /** The group's top edge in creature-local space. */
-  readonly top: number;
-  /** The group's own height, presentation px (for the intents bottom edge). */
+  /** The display or intent row origin in creature-local space; null when unknown. */
+  readonly top: number | null;
+  /** The intent row's authored height, design px (for its bottom edge). */
   readonly height: number;
   /** The creature-local top of the first power row (HealthBar groups only). */
   readonly powerTop: number | null;
@@ -110,13 +114,13 @@ export function raiseLiftPx(input: RaiseFrameInput): number {
 }
 
 /** The creature-local reticle and power tops, and the pair of shifts they imply (the old creatureHud.ts measure). */
-export function creatureShifts(group: CreatureGroupFacts): CreatureShifts {
-  const reticleTop = group.reticleTop ?? CREATURE_RETICLE_TOP_FALLBACK;
-  const powerTop = group.powerTop ?? CREATURE_POWER_TOP_FALLBACK;
-  const healthBar = reticleTop - (powerTop + CREATURE_POWER_ROW_H);
-  const intentsBottom = group.kind === "Intents" ? group.top + group.height : null;
-  const intents = intentsBottom == null ? 0 : group.top + healthBar - CREATURE_INTENT_GAP - intentsBottom;
-  return { healthBar, intents };
+export function creatureShifts(healthBar: CreatureGroupFacts | undefined, intents?: CreatureGroupFacts): CreatureShifts {
+  const reticleTop = healthBar?.reticleTop ?? intents?.reticleTop ?? CREATURE_RETICLE_TOP_FALLBACK;
+  const powerTop = healthBar?.powerTop ?? CREATURE_POWER_TOP_FALLBACK;
+  const healthBarDy = reticleTop - (powerTop + CREATURE_POWER_ROW_H);
+  const intentsBottom = intents?.top == null ? null : intents.top + intents.height;
+  const intentsDy = intentsBottom == null ? 0 : (healthBar?.top ?? 0) + healthBarDy - CREATURE_INTENT_GAP - intentsBottom;
+  return { healthBar: healthBarDy, intents: intentsDy };
 }
 
 /** The shift a HUD group takes: the Intents ride one shift, the state display ("HealthBar") the other. */
@@ -141,15 +145,23 @@ export function computeRaisePlan(input: RaiseFrameInput): RaisePlan {
     if (dy !== 0) offsets.push({ id: holder.id, dy });
   }
 
-  // The two HUD groups of one creature share one measurement (the old code's shiftsByRoot cache).
-  const shiftsByRoot = new Map<number, CreatureShifts>();
+  // Measure both groups together before caching a creature's pair of shifts, independent of item-meta order.
+  const groupsByRoot = new Map<number, { healthBar?: CreatureGroupFacts; intents?: CreatureGroupFacts }>();
   for (const group of input.creatureGroups) {
-    let shifts = shiftsByRoot.get(group.rootId);
-    if (shifts === undefined) {
-      shifts = creatureShifts(group);
-      shiftsByRoot.set(group.rootId, shifts);
+    let pair = groupsByRoot.get(group.rootId);
+    if (pair === undefined) {
+      pair = {};
+      groupsByRoot.set(group.rootId, pair);
     }
-    const dy = Math.round(creatureShiftFor(group.kind, shifts));
+    if (group.kind === "HealthBar") pair.healthBar = group;
+    else pair.intents = group;
+  }
+  const shiftsByRoot = new Map<number, CreatureShifts>();
+  for (const [rootId, pair] of groupsByRoot) {
+    shiftsByRoot.set(rootId, creatureShifts(pair.healthBar, pair.intents));
+  }
+  for (const group of input.creatureGroups) {
+    const dy = Math.round(creatureShiftFor(group.kind, shiftsByRoot.get(group.rootId)!));
     if (dy !== 0) offsets.push({ id: group.id, dy });
   }
 
@@ -183,8 +195,8 @@ function readFacts(q: ItemQuery, id: number): PoseFacts {
 }
 
 /** The top of `id` in `rootT`'s local space: its global rect top minus the root's global origin. */
-function topInLocal(rect: { y: number } | null, rootT: readonly number[]): number {
-  return rect === null ? 0 : rect.y - rootT[5];
+function topInLocal(rect: { y: number } | null, rootT: readonly number[]): number | null {
+  return rect === null ? null : rect.y - rootT[5];
 }
 
 /**
@@ -319,12 +331,13 @@ export function createRaisedHandExtension(): RenderStreamExtension {
         const rootT = q.transform(rootId);
         if (rootT === null) continue;
         const kind = pathLeaf(facts.meta?.path) === "Intents" ? "Intents" as const : "HealthBar" as const;
+        // Measure stable control boxes so animated descendants keep their own motion after the lift.
         creatureGroups.push({
           id,
           kind,
           rootId,
-          top: topInLocal(facts.rect, rootT),
-          height: facts.rect?.h ?? 0,
+          top: facts.transform === null ? null : facts.transform[5] - rootT[5],
+          height: kind === "Intents" ? INTENT_ROW_HEIGHT : 0,
           powerTop: kind === "HealthBar" ? powerTopFor(q, id, rootT, powers) : null,
           reticleTop: reticleTopFor(q, rootId, rootT, reticles)
         });
@@ -363,7 +376,7 @@ export function createRaisedHandExtension(): RenderStreamExtension {
 
 function reticleTopFor(q: ItemQuery, rootId: number, rootT: readonly number[], reticles: ReadonlySet<number>): number | null {
   for (const childId of q.children(rootId)) {
-    if (reticles.has(childId)) return topInLocal(q.rect(childId), rootT);
+    if (reticles.has(childId)) return topInLocal(q.subtreeRect(childId), rootT);
   }
   return null;
 }
@@ -380,4 +393,87 @@ function powerTopFor(q: ItemQuery, healthBarId: number, rootT: readonly number[]
     }
   }
   return null;
+}
+
+/** Hand chrome stays available while the raise setting is off; its facts come only from applied stream frames. */
+export function createHandPresenceExtension(onPresent: (present: boolean, covered: boolean) => void): RenderStreamExtension {
+  const holders = new Set<number>();
+  const hand = new Set<number>();
+  const covers = new Set<number>();
+  let dirty = true;
+  let lastSeq: number | null = null;
+  return {
+    id: "couchcoop.handRaiseChrome",
+    wants: { groups: [RS_GROUP_HAND_HOLDER, RS_GROUP_HAND_CONTAINER, RS_GROUP_HAND_ROOT, RS_GROUP_HAND_COVER] },
+    onItemMeta(batch) {
+      if (batch.form === "full") {
+        holders.clear();
+        hand.clear();
+        covers.clear();
+      }
+      for (const item of batch.items) {
+        if (item.groups.includes(RS_GROUP_HAND_HOLDER)) holders.add(item.id);
+        else holders.delete(item.id);
+        if (item.groups.some((g) => g === RS_GROUP_HAND_HOLDER || g === RS_GROUP_HAND_CONTAINER || g === RS_GROUP_HAND_ROOT)) hand.add(item.id);
+        else hand.delete(item.id);
+        if (item.groups.includes(RS_GROUP_HAND_COVER)) covers.add(item.id);
+        else covers.delete(item.id);
+      }
+      dirty = true;
+    },
+    onItemsRemoved(ids) {
+      for (const id of ids) {
+        holders.delete(id);
+        hand.delete(id);
+        covers.delete(id);
+      }
+      dirty = true;
+    },
+    beforeDraw(frame) {
+      const newTx = frame.seq !== null && frame.seq !== lastSeq;
+      if (frame.seq !== null) lastSeq = frame.seq;
+      if (!dirty && !newTx) return;
+      dirty = false;
+      let present = false;
+      let covered = false;
+      const q = frame.query;
+      for (const id of holders) {
+        if (!q.visible(id)) continue;
+        present = true;
+        // The old mirror's coverAbove follows visual backstops regardless of mouse filters. Reward overlays can
+        // leave the hand hittable, so their seat-tagged roots cover this chrome even outside their drawn bounds.
+        for (const cover of covers) {
+          if (q.visible(cover)) {
+            covered = true;
+            break;
+          }
+        }
+        if (covered) break;
+        const box = q.rect(id) ?? q.subtreeRect(id);
+        if (box !== null) {
+          // Hit-test the drawn centre, including raises and view-scale overrides, as the confirm chrome does.
+          const [a, b, c, d, tx, ty] = frame.overrides.effective(id);
+          const x = box.x + box.w / 2;
+          const y = box.y + box.h / 2;
+          let top = q.hitTest(a * x + c * y + tx, b * x + d * y + ty);
+          covered = top !== null;
+          for (let depth = 0; top !== null && depth < 16; depth++) {
+            if (hand.has(top)) {
+              covered = false;
+              break;
+            }
+            top = q.parent(top);
+          }
+        }
+        break;
+      }
+      onPresent(present, covered);
+    },
+    dispose() {
+      holders.clear();
+      hand.clear();
+      covers.clear();
+      onPresent(false, false);
+    }
+  };
 }
