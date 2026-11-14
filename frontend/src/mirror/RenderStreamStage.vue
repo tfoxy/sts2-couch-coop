@@ -43,6 +43,8 @@ import { translate as t } from "@/i18n";
 import FullscreenButton from "@/components/FullscreenButton.vue";
 import IosInstallButton from "@/components/IosInstallButton.vue";
 import SettingsGearButton from "@/components/SettingsGearButton.vue";
+import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
+import { confirmButtonReady, primeConfirmSprites } from "@/mirror/confirmTap";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { streamChromeGeometry } from "@/mirror/streamChrome";
@@ -129,7 +131,7 @@ let keyPadEpoch = 0;
 // CONFIRM TAP: the live module controller (recreated per client mount), whose reactive `state` drives the button.
 const confirmController = shallowRef<ConfirmTapController | null>(null);
 // Bumped when the canvas's CSS box moves or resizes (a resize, a rotation, the safe-area preference), so the confirm
-// button's page-px anchor — the client's `presentationToCss`, which reads the live layout — is recomputed.
+// button's design-space stage is fitted to the picture again.
 const layoutTick = ref(0);
 let layoutObserver: ResizeObserver | null = null;
 // The extension inputs the mounted client was built from (see `extensionsKey`); null while no client is mounted.
@@ -191,29 +193,27 @@ const overlayText = computed(() => {
   }
 });
 
-// CONFIRM TAP: the button's live anchor, in page px. The module holds the widget's presentation-space rect; the
-// client maps it through `presentationToCss` (canvas-local, letterboxing included). Null while no widget is armed.
-const confirmAnchor = computed(() => {
+// The shared button lives in design pixels over the measured, letterboxed canvas. Stretch the design width so
+// bottom-right anchors follow a widescreen seat's right edge, and clip the authored overhang at the picture edge.
+const confirmStageStyle = computed(() => {
   void layoutTick.value;
-  const c = confirmController.value;
-  const rect = c?.state.rect ?? null;
-  if (c === null || c.state.targetId === null || rect === null || client === null) return null;
-  return client.presentationToCss(rect);
+  const rect = canvasEl.value?.getBoundingClientRect();
+  if (!rect || rect.height <= 0) return null;
+  const scale = rect.height / 1080;
+  return {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width / scale}px`,
+    height: "1080px",
+    transform: `scale(${scale})`,
+    // A canvas cannot interleave DOM chrome with its draw calls: sinking the layer behind it masks the button
+    // while a game overlay covers its choice; the retained state restores it when that overlay closes.
+    zIndex: confirmController.value?.state.belowOverlay ? "-1" : "1"
+  };
 });
 
-// The button commits only a press that STARTED on it. It appears under the finger that focused the widget, so the
-// click a browser synthesizes after that touch tap lands on it; acting on that click spent the reward on the focus
-// tap itself (C3's live leg: the event option was taken, never confirmed).
-let confirmPressed = false;
-
-function pressConfirm(): void {
-  confirmPressed = true;
-}
-
 function commitConfirm(): void {
-  const pressed = confirmPressed;
-  confirmPressed = false;
-  if (pressed) streamInput?.commitConfirm();
+  streamInput?.commitConfirm();
 }
 
 function onStatus(status: RenderStreamStatus): void {
@@ -310,6 +310,7 @@ function mountClient(): void {
     interactive: props.sendInput !== undefined
   });
   confirmController.value = built.confirmTap;
+  if (built.confirmTap && props.sendInput) void primeConfirmSprites();
   const create = props.createClient ?? createRenderStreamClient;
   try {
     client = create({
@@ -356,11 +357,13 @@ function attachStreamInput(): void {
       if (epoch === streamInputEpoch) props.sendInput?.(message);
     },
     tapToFocus: () => mirrorSettings.tapToFocus,
+    touchPolicy: inputModules?.pointerTargets ?? undefined,
     heldCard: inputModules?.heldCard ?? undefined,
     raiseHeldCard: () => mirrorSettings.raiseHeldCard,
     unfocusOnRelease: () => mirrorSettings.unfocusOnRelease,
     confirmTap: inputModules?.confirmTap ?? undefined,
     confirmTapEnabled: () => mirrorSettings.confirmTap,
+    confirmButtonReady,
     ...(inputModules?.pointerTargets
       ? { resolveTarget: targetResolver(inputModules.pointerTargets) }
       : {})
@@ -619,20 +622,14 @@ defineExpose({
       </div>
     </template>
     <p v-if="overlayText" class="render-stream-status" role="status" data-testid="render-stream-status">{{ overlayText }}</p>
-    <button
-      v-if="confirmAnchor"
-      class="render-stream-confirm"
-      :style="{
-        left: `${confirmAnchor.x}px`,
-        top: `${confirmAnchor.y}px`,
-        width: `${confirmAnchor.w}px`,
-        height: `${confirmAnchor.h}px`
-      }"
-      data-testid="render-stream-confirm-button"
-      @pointerdown.stop="pressConfirm"
-      @pointerup.stop
-      @click.stop="commitConfirm"
-    >{{ t('a11y.confirm') }}</button>
+    <div
+      v-if="confirmController && inputEnabled && sendInput"
+      class="render-stream-confirm-stage"
+      data-testid="render-stream-confirm-stage"
+      :style="confirmStageStyle ?? { visibility: 'hidden' }"
+    >
+      <MirrorConfirmButton :state="confirmController.state" :commit="commitConfirm" />
+    </div>
   </div>
 </template>
 
@@ -695,21 +692,11 @@ defineExpose({
   transform-origin: top left;
 }
 
-/* CONFIRM TAP: the client confirm button, anchored over the confirm-eligible widget the tap focused. The stage maps
-   the widget's presentation rect through the client, so the button tracks the widget (focus growth included). */
-.render-stream-confirm {
+/* Couch's own design-space chrome, clipped and scaled to the stream picture. Its children opt into input. */
+.render-stream-confirm-stage {
   position: fixed;
-  z-index: 10;
-  box-sizing: border-box;
-  min-width: 88px;
-  min-height: 44px;
-  padding: 6px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.65);
-  border-radius: 8px;
-  background: rgba(20, 20, 24, 0.92);
-  color: #fff;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
-  cursor: pointer;
+  transform-origin: top left;
+  overflow: hidden;
+  pointer-events: none;
 }
 </style>

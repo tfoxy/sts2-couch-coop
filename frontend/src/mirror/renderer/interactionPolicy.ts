@@ -387,7 +387,7 @@ export function isDecorativeOverlay(node: MirrorNode): boolean {
 // TOUCH_TARGET, so without this it would carry a `data-touch-id` and steal taps meant for the real card beneath
 // (the residual flaky false-commit). Verified live: the SELECTABLE cards live under NCardGrid/NGridCardHolder
 // (no match here), so this never disables a real card. Matched by node TYPE (the container's class name).
-const ECHO_CONTAINER = /Preview|HoverTip|Inspect/;
+export const ECHO_CONTAINER = /Preview|HoverTip|Inspect/;
 
 export function isEchoContainer(node: MirrorNode): boolean {
   return (nodeBits(node) & NodeBits.Echo) !== 0;

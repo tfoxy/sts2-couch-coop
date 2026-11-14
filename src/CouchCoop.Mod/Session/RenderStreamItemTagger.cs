@@ -63,7 +63,7 @@ internal static class RenderStreamItemTagger
     private const string EventOptionType = "NEventOptionButton";
     private const string RestSiteType = "NRestSiteButton";
     private static readonly string[] ShopItemTypes =
-        ["NMerchantRelic", "NMerchantPotion", "NMerchantCard", "NMerchantCardRemoval"];
+        ["NMerchantRelic", "NMerchantPotion", "NMerchantCard", "NMerchantCardRemoval", "NBlitzMerchantSlot"];
 
     private static SceneTree? _tree;
     private static bool _installed;

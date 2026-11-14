@@ -10,6 +10,22 @@ import {
 } from "@/mirror/streamInput";
 import type { ConfirmTapController } from "@/stream-ext/confirmTap";
 import type { HeldCardController } from "@/stream-ext/heldCard";
+import type { ExtensionFrame, ItemMeta, ItemQuery } from "@godot-scene-web/render-stream-client";
+import { createPointerTargetModule } from "@/stream-ext/pointerTargets";
+import { RS_GROUP_CARD_REWARD_CARD, RS_GROUP_HAND_HOLDER } from "@/stream-ext/groups";
+import { MULTIPLAYER_PLAYER_STATE_SCENE_FILE } from "@/mirror/renderer/interactionPolicy";
+
+const modality = vi.hoisted(() => ({
+  current: "unknown" as "unknown" | "touch" | "pointer",
+  listeners: new Set<(next: "unknown" | "touch" | "pointer") => void>()
+}));
+vi.mock("@/inputModality", () => ({
+  lastPressModality: () => modality.current,
+  onPressModalityChange: (listener: (next: "unknown" | "touch" | "pointer") => void) => {
+    modality.listeners.add(listener);
+    return () => modality.listeners.delete(listener);
+  }
+}));
 
 // INP2 — the render-stream input channel. These specs pin the two things the increment owns: the mapping (every
 // pointer event goes through INP1's `clientToGame`, so a raised card's tap reaches its game centre, and a letterbox
@@ -66,6 +82,8 @@ function stubClient(map: StubMap): StreamInputClient {
 
 function makeInput(options: {
   map?: StubMap;
+  items?: Record<number, Partial<ItemMeta>>;
+  parents?: Record<number, number>;
   tapToFocus?: () => boolean;
   clock?: () => number;
   heldCard?: HeldCardController;
@@ -73,21 +91,33 @@ function makeInput(options: {
   unfocusOnRelease?: () => boolean;
   confirmTap?: ConfirmTapController;
   confirmTapEnabled?: () => boolean;
+  confirmButtonReady?: () => boolean;
   resolveTarget?: StreamInputOptions["resolveTarget"];
 } = {}): void {
   const map = options.map ?? ((x, y) => ({ x, y, item: null }));
   let client: StreamInputClient | null = stubClient(map);
+  const policy = createPointerTargetModule();
+  const query = {
+    meta: (id: number) => options.items?.[id] ? { id, node: true, groups: [], meta: {}, ...options.items[id] } : null,
+    parent: (id: number) => options.parents?.[id] ?? null,
+    children: (id: number) => Uint32Array.from(
+      Object.entries(options.parents ?? {}).filter(([, parent]) => parent === id).map(([child]) => Number(child))
+    )
+  } as ItemQuery;
+  policy.extension.beforeDraw?.({ query } as never);
   capture = createStreamInput({
     stage,
     getClient: () => client,
     send: (m) => sent.push(m),
     tapToFocus: options.tapToFocus,
+    touchPolicy: policy,
     now: options.clock,
     heldCard: options.heldCard,
     raiseHeldCard: options.raiseHeldCard,
     unfocusOnRelease: options.unfocusOnRelease,
     confirmTap: options.confirmTap,
     confirmTapEnabled: options.confirmTapEnabled,
+    confirmButtonReady: options.confirmButtonReady,
     ...(options.resolveTarget ? { resolveTarget: options.resolveTarget } : {})
   });
   void client;
@@ -107,7 +137,7 @@ function heldController(isHand: (item: number | null) => boolean): { controller:
 }
 
 /** A fake confirm-tap controller that classifies `item` as `hit`, and records show/hide. */
-function confirmController(hit: { id: number; kind: "shop" } | null): { controller: ConfirmTapController; show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> } {
+function confirmController(hit: { id: number; kind: "shop"; retapActivates?: boolean } | null): { controller: ConfirmTapController; show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> } {
   const show = vi.fn();
   const hide = vi.fn();
   return {
@@ -116,7 +146,8 @@ function confirmController(hit: { id: number; kind: "shop" } | null): { controll
       show,
       hide,
       dispose: vi.fn(),
-      state: { targetId: null, kind: null, rect: null }
+      commit: () => { hide(); return true; },
+      state: { targetId: null, kind: null, rect: null, belowOverlay: false }
     } as ConfirmTapController,
     show,
     hide
@@ -131,6 +162,8 @@ beforeEach(() => {
   stage = document.createElement("div");
   document.body.appendChild(stage);
   sent = [];
+  modality.current = "unknown";
+  modality.listeners.clear();
 });
 
 afterEach(() => {
@@ -209,7 +242,7 @@ describe("createStreamInput — mapping + send path", () => {
 
   it("with tapToFocus on, a touch tap arms the hit item (hover) and a later re-tap of it commits", () => {
     let clock = 0;
-    makeInput({ map: (x, y) => ({ x, y, item: 7 }), tapToFocus: () => true, clock: () => clock });
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), items: { 7: { class: "NCard" } }, tapToFocus: () => true, clock: () => clock });
     stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
     expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
@@ -226,7 +259,7 @@ describe("createStreamInput — mapping + send path", () => {
 
   it("with tapToFocus on, a re-tap of the armed item inside the debounce window is swallowed", () => {
     let clock = 0;
-    makeInput({ map: (x, y) => ({ x, y, item: 7 }), tapToFocus: () => true, clock: () => clock });
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), items: { 7: { class: "NCard" } }, tapToFocus: () => true, clock: () => clock });
     stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
     stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
     clock = 50; // still inside the 200ms debounce
@@ -306,6 +339,268 @@ describe("createStreamInput — mapping cannot be skipped", () => {
     stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 480, clientY: 270 }));
     stage.dispatchEvent(pointerEvent("pointerup", { clientX: 480, clientY: 270 }));
     flushFrames();
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("createStreamInput — touch target parity", () => {
+  function tap(x = 640, y = 360): void {
+    stage.dispatchEvent(touch("pointerdown", { clientX: x, clientY: y }));
+    stage.dispatchEvent(touch("pointerup", { clientX: x, clientY: y }));
+  }
+
+  it.each([
+    ["card", { script: "res://ui/cards/NCard.cs" }],
+    ["reward row", { class: "MegaCrit.Sts2.Core.Nodes.Rewards.NRewardButton" }],
+    ["reward card", { groups: [RS_GROUP_CARD_REWARD_CARD] }],
+    ["hand holder", { groups: [RS_GROUP_HAND_HOLDER] }]
+  ] satisfies [string, Partial<ItemMeta>][])("focuses a %s first, then clicks its owning widget across child hits", (_name, meta) => {
+    let clock = 0;
+    makeInput({
+      map: (x, y) => ({ x, y, item: x < 650 ? 8 : 9 }),
+      items: { 7: meta, 8: { class: "Control" }, 9: { class: "Label" } },
+      parents: { 8: 7, 9: 7 }, tapToFocus: () => true, clock: () => clock
+    });
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
+    clock = 250;
+    tap(660);
+    expect(sent.slice(1)).toEqual([
+      { kind: "hover", coordX: 660, coordY: 360 },
+      { kind: "click", button: "left", coordX: 660, coordY: 360 }
+    ]);
+  });
+
+  it.each([
+    ["Proceed", { class: "NProceedButton", scene: "res://scenes/ui/proceed_button.tscn" }],
+    ["event Proceed", { class: "NEventOptionButton", scene: "res://scenes/ui/proceed_button.tscn" }],
+    ["relic", { script: "res://ui/NRelic.cs" }],
+    ["potion", { class: "NPotionHolder" }],
+    ["map button", { class: "NMapButton" }],
+    ["deck back button", { class: "NBackButton" }],
+    ["map node", { class: "NMapPoint" }],
+    ["treasure chest", { class: "NTreasureRoomChest" }],
+    ["unclassified item", {}]
+  ] satisfies [string, Partial<ItemMeta>][])("clicks %s on the first tap with focus-first enabled", (_name, meta) => {
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), items: { 7: meta }, parents: { 8: 7 }, tapToFocus: () => true });
+    tap();
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
+  });
+
+  it("focuses a remote player's HP label first and clicks on a re-tap after debounce", () => {
+    let clock = 0;
+    const scene = MULTIPLAYER_PLAYER_STATE_SCENE_FILE;
+    makeInput({
+      map: (x, y) => ({ x, y, item: 8 }),
+      items: { 7: { class: "Control", scene, path: "." }, 8: { class: "Label", scene, path: "HP/Label" } },
+      parents: { 8: 7 }, tapToFocus: () => true, clock: () => clock
+    });
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
+    clock = 250;
+    tap();
+    expect(sent.slice(1)).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
+  });
+
+  it("focuses the reward card beside its holder's Hitbox before clicking", () => {
+    let clock = 0;
+    makeInput({
+      map: (x, y) => ({ x, y, item: 8 }),
+      items: { 7: { groups: [RS_GROUP_CARD_REWARD_CARD] }, 8: { class: "NClickableControl" } },
+      parents: { 7: 6, 8: 6 }, tapToFocus: () => true, clock: () => clock
+    });
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
+    clock = 250;
+    tap();
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(1);
+  });
+
+  it("clicks End Turn first and then parks at the mapped stage centre without a target stamp", () => {
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({ left: 20, top: 10, width: 1000, height: 500 } as DOMRect);
+    makeInput({
+      map: (x, y) => ({ x: x * 2, y: y * 2, item: 8 }),
+      items: { 7: { scene: "res://scenes/combat/end_turn_button.tscn" } }, parents: { 8: 7 },
+      tapToFocus: () => true,
+      resolveTarget: () => ({ key: 8, identity: { item: 8, instanceId: "123" }, local: { x: 1, y: 2 } })
+    });
+    tap();
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 1280, coordY: 720, targetInstance: "123", localX: 1, localY: 2 },
+      { kind: "click", button: "left", coordX: 1280, coordY: 720, targetInstance: "123", localX: 1, localY: 2 },
+      { kind: "hover", coordX: 1040, coordY: 520 }
+    ]);
+  });
+
+  it("clicks an already-hovered card immediately, bypassing the arm and debounce", () => {
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), items: { 7: { class: "NCard" } }, tapToFocus: () => true, clock: () => 0 });
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 640, clientY: 360 }));
+    flushFrames();
+    sent.length = 0;
+    tap();
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
+  });
+
+  it("keeps a committed card ready for the next tap without another arm", () => {
+    let clock = 0;
+    makeInput({ map: (x, y) => ({ x, y, item: 7 }), items: { 7: { class: "NCard" } }, tapToFocus: () => true, clock: () => clock });
+    tap();
+    clock = 250;
+    tap();
+    sent.length = 0;
+    tap();
+    expect(sent).toEqual([
+      { kind: "hover", coordX: 640, coordY: 360 },
+      { kind: "click", button: "left", coordX: 640, coordY: 360 }
+    ]);
+  });
+});
+
+describe("createStreamInput — reward-list auto-focus", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function rewards() {
+    const policy = createPointerTargetModule();
+    let rows = [20, 30];
+    let visible = true;
+    let seq = 0;
+    const items: ItemMeta[] = [
+      { id: 10, node: true, class: "NRewardsScreen", groups: [], meta: {} },
+      ...rows.flatMap((id) => [
+        { id, node: true, class: "NRewardButton", groups: [], meta: {} },
+        { id: id + 1, node: true, class: "Control", path: "Hitbox", groups: [], meta: {} }
+      ])
+    ];
+    const rect = (id: number) => {
+      const index = rows.indexOf(id - 1);
+      return index < 0 ? null : { x: 100, y: 200 + index * 100, w: 200, h: 40 };
+    };
+    const hitTest = (x: number, y: number) => rows.map((id) => id + 1).find((id) => {
+      const r = rect(id)!;
+      return visible && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+    }) ?? null;
+    const query: ItemQuery = {
+      meta: (id) => items.find((item) => item.id === id) ?? null,
+      parent: (id) => id === 10 ? null : id % 10 === 0 ? 10 : id - 1,
+      children: (id) => Uint32Array.from(id === 10 ? rows : rows.includes(id) ? [id + 1] : []),
+      rect, subtreeRect: () => null, visible: () => visible,
+      transform: () => [1, 0, 0, 1, 0, 0], hitTest
+    };
+    policy.extension.onItemMeta!({ form: "full", items });
+    capture = createStreamInput({
+      stage,
+      getClient: () => stubClient((x, y) => ({ x: x / 2, y: y / 2, item: hitTest(x / 2, y / 2) })),
+      send: (message) => sent.push(message), tapToFocus: () => true, touchPolicy: policy, now: () => Date.now()
+    });
+    const draw = (nextRows = rows, nextVisible = visible) => {
+      rows = nextRows;
+      visible = nextVisible;
+      policy.extension.beforeDraw!({ seq: ++seq, query, overrides: { effective: () => [1, 0, 0, 1, 0, 0] } } as unknown as ExtensionFrame);
+    };
+    return { draw };
+  }
+
+  function tap(y = 440): void {
+    stage.dispatchEvent(touch("pointerdown", { clientX: 400, clientY: y }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 400, clientY: y }));
+  }
+
+  it("readies the first row on entry and the replacement after a claim for one-tap real clicks", () => {
+    modality.current = "touch";
+    const list = rewards();
+    list.draw();
+    expect(sent).toEqual([{ kind: "hover", coordX: 200, coordY: 220 }]);
+    tap();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 200, coordY: 220 });
+    sent.length = 0;
+    list.draw([30]);
+    expect(sent).toEqual([{ kind: "hover", coordX: 200, coordY: 220 }]);
+    tap();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 200, coordY: 220 });
+    expect(sent.filter((message) => message.kind === "click")).toHaveLength(1);
+  });
+
+  it("retains focus-first and debounce for an unfocused row, canceling the pending correction", () => {
+    modality.current = "touch";
+    const list = rewards();
+    list.draw();
+    sent.length = 0;
+    tap(640);
+    expect(sent).toEqual([{ kind: "hover", coordX: 200, coordY: 320 }]);
+    vi.advanceTimersByTime(800);
+    expect(sent).toHaveLength(1); // the coordinator must not steal focus back
+    tap(640);
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 200, coordY: 320 });
+  });
+
+  it("does not auto-focus merely because pointer mode becomes touch on an unchanged list", () => {
+    modality.current = "pointer";
+    const list = rewards();
+    list.draw();
+    modality.current = "touch";
+    list.draw();
+    expect(sent).toEqual([]);
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 200, coordY: 220 }]);
+  });
+
+  it("keeps a stationary hovered row ready after the bounded settle checks finish", () => {
+    modality.current = "touch";
+    const list = rewards();
+    list.draw();
+    vi.advanceTimersByTime(5000);
+    sent.length = 0;
+    tap();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 200, coordY: 220 });
+  });
+
+  it("drops readiness on a pointer transition and focus elsewhere", () => {
+    modality.current = "touch";
+    const list = rewards();
+    list.draw();
+    modality.current = "pointer";
+    for (const listener of modality.listeners) listener("pointer");
+    stage.dispatchEvent(pointerEvent("pointermove", { clientX: 900, clientY: 900 }));
+    stage.dispatchEvent(pointerEvent("pointerdown", { clientX: 900, clientY: 900 }));
+    stage.dispatchEvent(pointerEvent("pointerup", { clientX: 900, clientY: 900 }));
+    sent.length = 0;
+    modality.current = "touch";
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 200, coordY: 220 }]);
+  });
+
+  it("retires readiness when the reward screen closes", () => {
+    modality.current = "touch";
+    const list = rewards();
+    list.draw();
+    list.draw([], false);
+    modality.current = "pointer";
+    list.draw([20, 30], true);
+    modality.current = "touch";
+    sent.length = 0;
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 200, coordY: 220 }]);
+  });
+
+  it("unsubscribes snapshots and modality changes and cancels settle work on disposal", () => {
+    modality.current = "touch";
+    const list = rewards();
+    list.draw();
+    capture.dispose();
+    expect(modality.listeners.size).toBe(0);
+    sent.length = 0;
+    list.draw([30]);
+    vi.advanceTimersByTime(5000);
     expect(sent).toEqual([]);
   });
 });
@@ -954,5 +1249,71 @@ describe("createStreamInput — pointer targets (C3)", () => {
     sent.length = 0;
     capture.commitConfirm();
     expect(sent).toEqual([{ kind: "click", button: "left", coordX: 150, coordY: 40, ...target(2, 50, 40) }]);
+  });
+});
+
+describe("createStreamInput — removal re-tap", () => {
+  it("focuses removal once, swallows bounce, then activates the same service", () => {
+    let now = 0;
+    const confirm = confirmController({ id: 8, kind: "shop", retapActivates: true });
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), confirmTap: confirm.controller, confirmTapEnabled: () => true,
+      tapToFocus: () => true, clock: () => now });
+    const tap = () => {
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    };
+    tap();
+    expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
+    now = 100;
+    tap();
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(0);
+    now = 250;
+    tap();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 640, coordY: 360 });
+  });
+
+  it("consumes a stale removal re-tap after the service is spent", () => {
+    const confirm = confirmController({ id: 8, kind: "shop", retapActivates: true });
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), items: { 8: { class: "NMerchantCardRemoval" } },
+      confirmTap: confirm.controller, confirmTapEnabled: () => true, tapToFocus: () => true });
+    const tap = () => {
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    };
+    tap();
+    confirm.controller.classify = () => null;
+    tap();
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(0);
+  });
+
+  it("does not click a confirm target invalidated after focus", () => {
+    const confirm = confirmController({ id: 8, kind: "shop" });
+    confirm.controller.commit = () => false;
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), confirmTap: confirm.controller, confirmTapEnabled: () => true });
+    stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+    stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    capture.commitConfirm();
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(0);
+  });
+});
+
+
+describe("createStreamInput — confirm art readiness", () => {
+  it("falls back to focus then click when the shared button art is unavailable", () => {
+    let now = 0;
+    const confirm = confirmController({ id: 8, kind: "shop" });
+    makeInput({ map: (x, y) => ({ x, y, item: 8 }), items: { 8: { class: "NMerchantCard" } },
+      confirmTap: confirm.controller, confirmTapEnabled: () => true, confirmButtonReady: () => false,
+      tapToFocus: () => true, clock: () => now });
+    const tap = () => {
+      stage.dispatchEvent(touch("pointerdown", { clientX: 640, clientY: 360 }));
+      stage.dispatchEvent(touch("pointerup", { clientX: 640, clientY: 360 }));
+    };
+    tap();
+    expect(confirm.show).not.toHaveBeenCalled();
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(0);
+    now = 250;
+    tap();
+    expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 640, coordY: 360 });
   });
 });

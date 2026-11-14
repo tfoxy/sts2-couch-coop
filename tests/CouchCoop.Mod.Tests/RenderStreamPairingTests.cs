@@ -828,7 +828,7 @@ internal static class RenderStreamPairingTests
             "an event option button is tagged");
         Assert(groups(F("Rest", "NRestSiteButton")).Contains(RenderStreamItemTagger.RestSiteGroup),
             "a rest-site choice is tagged");
-        foreach (var shop in new[] { "NMerchantRelic", "NMerchantPotion", "NMerchantCard", "NMerchantCardRemoval" })
+        foreach (var shop in new[] { "NMerchantRelic", "NMerchantPotion", "NMerchantCard", "NMerchantCardRemoval", "NBlitzMerchantSlot" })
         {
             Assert(groups(F("Item", shop)).Contains(RenderStreamItemTagger.ShopItemGroup),
                 $"a merchant inventory item ({shop}) is tagged a shop item");

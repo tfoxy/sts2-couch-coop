@@ -28,6 +28,13 @@ import { atlasSpriteLayout, STRETCH_KEEP_ASPECT_CENTERED } from "@/mirror/atlasS
 import { commitConfirmTap, confirmSprites, confirmTap, type ConfirmSprite } from "@/mirror/confirmTap";
 import { naturalSize, textureSizeVersion } from "@/mirror/textureCache";
 
+const props = defineProps<{
+  /** A stream owns its confirm state and input; the node mirror uses the defaults. */
+  state?: { readonly targetId: string | number | null; readonly belowOverlay: boolean };
+  commit?: () => void;
+}>();
+const buttonState = computed(() => props.state ?? confirmTap);
+
 // --- authored layout (design px) --------------------------------------------------------------------------------
 // The root Control is bottom-right anchored at offsets (-160, -354, +40, -244): a 200x110 box whose right edge sits
 // 40px PAST the viewport edge (the game clips it; so does the stage). The three paint layers inset out of that box
@@ -79,7 +86,7 @@ function clearTimers(): void {
 }
 
 watch(
-  () => confirmTap.targetId,
+  () => buttonState.value.targetId,
   (targetId) => {
     clearTimers();
     if (targetId !== null) {
@@ -172,8 +179,8 @@ const rootStyle = computed<CSSProperties>(() => {
     // card-reward / shop-inventory backstop, since those paint UNDER their own content — but BELOW it while one of
     // the game's modal overlays (map, deck, a card/relic dialog, pause) is over the option, so the button dims with
     // the content it belongs to instead of floating on top of the modal, and can't be tapped through it.
-    zIndex: confirmTap.belowOverlay ? "-1" : "10",
-    pointerEvents: confirmTap.belowOverlay ? "none" : "auto"
+    zIndex: buttonState.value.belowOverlay ? "-1" : "10",
+    pointerEvents: buttonState.value.belowOverlay ? "none" : "auto"
   };
 });
 
@@ -222,7 +229,8 @@ function onUp(): void {
     return;
   }
   pressed.value = false;
-  commitConfirmTap();
+  if (props.commit) props.commit();
+  else commitConfirmTap();
 }
 
 function onCancel(): void {

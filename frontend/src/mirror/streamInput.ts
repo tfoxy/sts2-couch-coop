@@ -24,7 +24,7 @@
 //     so INP1's `clientToGame` (a hit test) runs once per frame, not per event, and an edge still maps at its own
 //     event.
 //   * COUCH'S STS2 GESTURES are GSW `intercept` hooks (docs/input.md "Mouse mode" recipes in ../godot-scene-web):
-//       - TAP TO FOCUS (`tapToFocus`, live): a tap on a drawn item not yet armed only hovers it (swallowed); a re-tap
+//       - TAP TO FOCUS (`tapToFocus`, live): a tap on a hover-first widget not yet armed only hovers it; a re-tap
 //         of the armed item past TAP_ARM_DEBOUNCE_MS commits (a sooner one is a finger bounce, swallowed); a tap on
 //         clear colour commits at once.
 //       - HELD-CARD LIFT (`raiseHeldCard` + `unfocusOnRelease`, live): a still hold on a hand card for PEEK_MS is a
@@ -60,6 +60,9 @@ import {
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import type { ConfirmTapController } from "@/stream-ext/confirmTap";
 import type { HeldCardController } from "@/stream-ext/heldCard";
+import type { PointerTargetModule } from "@/stream-ext/pointerTargets";
+import { lastPressModality, onPressModalityChange } from "@/inputModality";
+import { createRewardFocusCoordinator } from "@/mirror/rewardFocusCoordinator";
 
 /** The render-stream client surface the channel reads (INP1's `clientToGame`). */
 export interface StreamInputClient {
@@ -82,6 +85,8 @@ export interface StreamInputOptions {
   send: (message: MirrorInputMessage) => void;
   /** TAP TO FOCUS (read live, so a settings flip takes effect mid-session): two-step play on touch. */
   tapToFocus?: () => boolean;
+  /** Shared widget policy over the stream's item metadata. Unclassified hits click immediately. */
+  touchPolicy?: Pick<PointerTargetModule, "touchTargetFor" | "isEndTurn" | "subscribeRewardFocus">;
   /** Injectable clock for the tap-arm debounce (specs drive it); defaults to `performance.now`. */
   now?: () => number;
   /** HELD-CARD LIFT: the module's controller (identity climb + lift override). */
@@ -94,6 +99,8 @@ export interface StreamInputOptions {
   confirmTap?: ConfirmTapController;
   /** CONFIRM TAP switch (read live). */
   confirmTapEnabled?: () => boolean;
+  /** Missing button art falls back to the ordinary two-step tap, as in the node mirror. */
+  confirmButtonReady?: () => boolean;
   /**
    * POINTER TARGETS (C3): which node a client point is on (godot-scene-web's `pointerTargetResolver` with couch's
    * climb, over the live client). Given, hover/click messages carry that node; absent, they are coordinate-only.
@@ -158,6 +165,8 @@ interface TouchState {
   readonly downY: number;
   /** The long-press peek has focused + lifted the card (its release is then never a tap). */
   peeking: boolean;
+  /** A previous hover/peek already readied this widget before the finger landed. */
+  readonly focusedTargetAtDown: number | null;
 }
 
 export function createStreamInput(options: StreamInputOptions): StreamInput {
@@ -170,10 +179,15 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   // TAP TO FOCUS: the item armed by the first tap (and when), so a re-tap commits and a different item re-arms.
   let armedItem: number | null = null;
   let armedAtMs = 0;
+  let mappedItem: number | null = null;
+  // Each viewer owns its seat's cursor, so this channel's last hover approximates the game's focused widget.
+  let focusedItem: number | null = null;
+  let programmaticFocusedItem: number | null = null;
   // CONFIRM TAP: the game coordinate the focus hover went to (and the client point it came from), replayed by the
   // commit.
   let confirmCoord: InputVec2 | null = null;
   let confirmClient: InputVec2 | null = null;
+  let removalArm: { id: number; at: number } | null = null;
   let touch: TouchState | null = null;
   let disposed = false;
 
@@ -251,6 +265,7 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
       }
       if (record.event === "mouse_motion") {
         send({ kind: "hover", ...coord(record.position), ...stampOf(record) });
+        focusedItem = mappedItem === null ? null : options.touchPolicy?.touchTargetFor(mappedItem) ?? null;
         return;
       }
       if (record.event !== "mouse_button") return;
@@ -417,11 +432,22 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   /** Drop the lift and the button, so neither outlives the gesture that raised it. */
   function clearOverlayState(): void {
     heldCard?.setHeld(null, 0, "drag");
+    removalArm = null;
     dismissConfirm();
   }
 
   function hover(position: InputVec2, clientX: number, clientY: number): void {
+    mappedItem = itemAt(clientX, clientY);
     capture.hover(position, [clientX, clientY]);
+  }
+
+  /** Park without a target stamp: this hover should leave the widget, never retarget back onto it. */
+  function parkCursor(): void {
+    const r = stage.getBoundingClientRect();
+    const centre = lookup(r.left + r.width / 2, r.top + r.height / 2);
+    focusedItem = null;
+    mappedItem = null;
+    if (centre !== null) capture.hover([centre.point.x, centre.point.y]);
   }
 
   /** A peek is lifting: clear the lift (never a play), and optionally hover the seat centre to drop the focus. */
@@ -430,12 +456,7 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     heldCard?.setHeld(null, gameY, "drag");
     clearArmed();
     if (unfocusOnRelease() === false) return;
-    const r = stage.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    const centre = lookup(cx, cy);
-    // No client point: this hover names no node (it is there to point at nothing, so the focus drops).
-    if (centre !== null) capture.hover([centre.point.x, centre.point.y]);
+    parkCursor();
   }
 
   function interceptTap(gesture: PointerGesture, at: InputVec2): PointerGestureDecision {
@@ -449,7 +470,27 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     // never spend a reward there.
     if (confirmTapEnabled() === true && confirmTap !== undefined) {
       const hit = confirmTap.classify(item ?? -1);
-      if (hit !== null) {
+      const staleRemoval = removalArm;
+      if (staleRemoval !== null && hit?.id !== staleRemoval.id) {
+        removalArm = null;
+        if (hit === null && item !== null && options.touchPolicy?.touchTargetFor(item) === staleRemoval.id) {
+          clearArmed();
+          hover(at, gesture.clientX, gesture.clientY);
+          return "swallow";
+        }
+      }
+      if (hit?.retapActivates === true && tapToFocus?.() === true) {
+        if (removalArm?.id === hit.id) {
+          if (clock() - removalArm.at < TAP_ARM_DEBOUNCE_MS) return "swallow";
+          removalArm = null;
+          clearArmed();
+          return "send";
+        }
+        removalArm = { id: hit.id, at: clock() };
+      } else {
+        removalArm = null;
+      }
+      if (hit !== null && options.confirmButtonReady?.() !== false) {
         confirmCoord = [at[0], at[1]];
         confirmClient = [gesture.clientX, gesture.clientY];
         confirmTap.show(hit.id, hit.kind);
@@ -458,20 +499,22 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
         return "swallow";
       }
     }
-    if (tapToFocus?.() !== true) return "send";
-    if (item !== null && armedItem === item) {
-      if (clock() - armedAtMs < TAP_ARM_DEBOUNCE_MS) return "swallow"; // finger bounce
+    const target = item === null ? null : options.touchPolicy?.touchTargetFor(item) ?? null;
+    if (target === null) {
       clearArmed();
       return "send";
     }
-    if (item !== null) {
-      armedItem = item;
-      armedAtMs = clock();
-      hover(at, gesture.clientX, gesture.clientY);
-      return "swallow";
+    if (state?.focusedTargetAtDown === target || tapToFocus?.() !== true) return "send";
+    if (armedItem === target) {
+      if (clock() - armedAtMs < TAP_ARM_DEBOUNCE_MS) return "swallow"; // finger bounce
+      return "send";
     }
-    clearArmed();
-    return "send";
+    armedItem = target;
+    armedAtMs = clock();
+    hover(at, gesture.clientX, gesture.clientY);
+    // An arm-only hover retains the bounce guard until a deliberate re-tap; a mouse hover or peek is ready now.
+    focusedItem = null;
+    return "swallow";
   }
 
   function intercept(gesture: PointerGesture): PointerGestureDecision {
@@ -484,7 +527,11 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
         dismissConfirm();
         const item = itemAt(gesture.clientX, gesture.clientY);
         const handCard = item !== null && heldCard !== undefined ? heldCard.handCardFor(item) : null;
-        touch = { handCard, downY: at[1], peeking: false };
+        const target = item === null ? null : options.touchPolicy?.touchTargetFor(item) ?? null;
+        // Latch before GSW's down-hover, so that hover cannot ready its own first tap.
+        const ready = target === focusedItem || target === programmaticFocusedItem;
+        touch = { handCard, downY: at[1], peeking: false, focusedTargetAtDown: ready ? target : null };
+        rewardFocusCoordinator.noteTouchTarget(target === null ? null : String(target));
         return "send";
       }
       case "long-press": {
@@ -529,6 +576,8 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
         if (decision === "send") {
           clickScope -= 1;
           if (clickScope === 0) flushScopedPress();
+          const item = itemAt(gesture.clientX, gesture.clientY);
+          if (item !== null && options.touchPolicy?.isEndTurn(item)) parkCursor();
         }
         return;
       case "scroll-start": {
@@ -570,7 +619,11 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   const capture: PointerCapture = createPointerCapture({
     stage: stageProxy,
     mode: "mouse",
-    map: (clientX, clientY) => lookup(clientX, clientY)?.point ?? null,
+    map: (clientX, clientY) => {
+      const game = lookup(clientX, clientY);
+      mappedItem = game?.item ?? null;
+      return game?.point ?? null;
+    },
     sink,
     ...(options.resolveTarget !== undefined
       ? { targets: "all" as const, resolveTarget: options.resolveTarget }
@@ -584,6 +637,31 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
       onGesture
     },
     now: clock
+  });
+
+  const rewardFocusCoordinator = createRewardFocusCoordinator({
+    modality: lastPressModality,
+    canControl: () => !disposed && getClient() !== null,
+    input: {
+      focusTarget(id, gameX, gameY, markReady = true) {
+        programmaticFocusedItem = markReady ? Number(id) : null;
+        capture.hover([gameX, gameY]);
+        // The stream has no native focused flag; use the same last-hover approximation as mouse input.
+        focusedItem = Number(id);
+      },
+      clearProgrammaticFocus() { programmaticFocusedItem = null; }
+    }
+  });
+  let rewardIds = new Set<number>();
+  const unsubscribeRewardFocus = options.touchPolicy?.subscribeRewardFocus((snapshot) => {
+    const nextIds = new Set(snapshot.rows.map((row) => Number(row.id)));
+    if (focusedItem !== null && rewardIds.has(focusedItem) && !nextIds.has(focusedItem)) focusedItem = null;
+    if (armedItem !== null && rewardIds.has(armedItem) && !nextIds.has(armedItem)) clearArmed();
+    rewardIds = nextIds;
+    rewardFocusCoordinator.afterReconcile(snapshot);
+  });
+  const unsubscribePressModality = onPressModalityChange((modality) => {
+    if (modality === "pointer") rewardFocusCoordinator.releaseReady();
   });
 
   // RIGHT CLICK from a `contextmenu` no pointer made (the keyboard's menu key). A mouse right button already went
@@ -608,7 +686,8 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
     if (at === null || disposed) return;
     confirmCoord = null;
     confirmClient = null;
-    confirmTap?.hide();
+    removalArm = null;
+    if (confirmTap?.commit() === false) return;
     // The client point names the widget the focus tap was on, so the commit reaches it even if it moved since.
     turn(() =>
       inClickScope(() =>
@@ -620,6 +699,9 @@ export function createStreamInput(options: StreamInputOptions): StreamInput {
   return {
     dispose(): void {
       if (disposed) return;
+      unsubscribeRewardFocus?.();
+      unsubscribePressModality();
+      rewardFocusCoordinator.dispose();
       // GSW releases whatever is held (at the last point, `canceled`) before it lets go of the listeners: the seat
       // outlives this channel and would otherwise keep the button down.
       capture.dispose();

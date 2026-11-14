@@ -11,6 +11,8 @@ import type {
 } from "@godot-scene-web/render-stream-client";
 
 import RenderStreamStage from "@/mirror/RenderStreamStage.vue";
+import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
+import { __resetConfirmTapForTest, __setConfirmSpritesForTest, confirmTap } from "@/mirror/confirmTap";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { RS_GROUP_SHOP_ITEM } from "@/stream-ext/groups";
@@ -59,6 +61,9 @@ function setVisibility(state: DocumentVisibilityState): void {
 }
 
 beforeEach(() => {
+  __resetConfirmTapForTest();
+  const sprite = { pageUrl: "/test-atlas.png", region: { x: 0, y: 0, width: 10, height: 10 }, margin: { x: 0, y: 0, width: 0, height: 0 } };
+  __setConfirmSpritesForTest({ button: sprite, outline: sprite, tick: sprite });
   clients = [];
   visibility = "visible";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
@@ -482,12 +487,14 @@ describe("RenderStreamStage", () => {
     });
   });
 
-  it("re-anchors the confirm button when the layout changes (resize / rotation)", async () => {
+  it.each([[1920, 1920], [2340, 2340], [1920, 2340]])("anchors the shared confirm for presentation %i at picture width %i", async (presentationWidth, width) => {
+    let canvasRect = new DOMRect(60, 100, width / 2, 540);
+    vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockImplementation(() => canvasRect);
     mirrorSettings.confirmTap = true;
     const sent: MirrorInputMessage[] = [];
-    mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
+    mountStage({ endpoint: { ...endpoint, presentation: [presentationWidth, 1080] }, sendInput: (m: MirrorInputMessage) => sent.push(m) });
     const fake = clients[0];
-    // The tap lands on a shop item's child (20 → 10), drawn at presentation rect (100, 200, 300×80).
+    // The tap lands on a shop item's child (20 → 10); its oversized subtree must never size the confirm button.
     fake.clientToGame = vi.fn(() => ({ point: { x: 640, y: 360 }, item: 20, drawn: { x: 640, y: 360 } }));
     const confirm = (fake.options.extensions ?? []).find((e) => e.id === "couchcoop.confirmTap")!;
     const rect = { x: 100, y: 200, w: 300, h: 80 };
@@ -501,6 +508,12 @@ describe("RenderStreamStage", () => {
       }
     });
 
+    // A node-mirror selection belongs to its own button, even while the stream is mounted.
+    confirmTap.targetId = "node-mirror-option";
+    await nextTick();
+    expect(wrapper!.find('[data-testid="mirror-confirm-button"]').exists()).toBe(false);
+    confirmTap.targetId = null;
+
     const canvas = wrapper!.get('[data-testid="render-stream-canvas"]').element;
     for (const type of ["pointerdown", "pointerup"]) {
       const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 640, clientY: 360, button: 0 });
@@ -509,26 +522,66 @@ describe("RenderStreamStage", () => {
       canvas.dispatchEvent(event);
     }
     await nextTick();
-    const button = () => wrapper!.find('[data-testid="render-stream-confirm-button"]');
+    const button = () => wrapper!.find('[data-testid="mirror-confirm-button"]');
     expect(button().exists()).toBe(true);
-    expect((button().element as HTMLElement).style.left).toBe("100px");
+    const component = wrapper!.getComponent(MirrorConfirmButton);
+    expect(component.props("state")?.targetId).toBe(10);
+    expect(confirmTap.targetId).toBeNull(); // stream input never claims the node mirror's singleton
+    expect(wrapper!.find('[data-testid="render-stream-confirm-button"]').exists()).toBe(false);
+    expect(button().text()).toBe("");
+    expect(button().findAll(".mirror-confirm-paint")).toHaveLength(4);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextTick();
+    const buttonStyle = (button().element as HTMLElement).style;
+    expect(buttonStyle.translate).toBe("0px 0");
+    expect(buttonStyle.transition).toContain("translate 350ms");
+    expect(buttonStyle.right).toBe("-40px");
+    expect(buttonStyle.bottom).toBe("244px");
+    expect(buttonStyle.width).toBe("200px");
+    expect(buttonStyle.height).toBe("110px");
+    expect(width - parseFloat(buttonStyle.right) - parseFloat(buttonStyle.width)).toBe(width - 160);
+    expect(1080 - parseFloat(buttonStyle.bottom) - parseFloat(buttonStyle.height)).toBe(726);
+    const layer = () => wrapper!.get('[data-testid="render-stream-confirm-stage"]').element as HTMLElement;
+    expect(layer().style.left).toBe("60px");
+    expect(layer().style.top).toBe("100px");
+    expect(layer().style.width).toBe(`${width}px`);
+    expect(layer().style.height).toBe("1080px");
+    expect(layer().style.transform).toBe("scale(0.5)");
 
-    // The page reflows (a rotation): the same presentation rect now maps elsewhere on the page.
-    vi.mocked(fake.presentationToCss).mockImplementation((r) => ({ ...r, x: r.x + 50 }));
+    // A rotation / letterbox resize moves the whole design stage, retaining the authored slot.
+    canvasRect = new DOMRect(110, 20, width, 1080);
     window.dispatchEvent(new Event("resize"));
     await nextTick();
-    expect((button().element as HTMLElement).style.left).toBe("150px");
+    expect(layer().style.left).toBe("110px");
+    expect(layer().style.top).toBe("20px");
+    expect(layer().style.transform).toBe("scale(1)");
+    expect(fake.presentationToCss).not.toHaveBeenCalled();
+    Object.assign(component.props("state")!, { belowOverlay: true });
+    await nextTick();
+    expect(layer().style.zIndex).toBe("-1");
+    expect((button().element as HTMLElement).style.pointerEvents).toBe("none");
+    Object.assign(component.props("state")!, { belowOverlay: false });
+    await nextTick();
+    expect(layer().style.zIndex).toBe("1");
     expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]); // the tap only focused
 
     // C3: the click a browser synthesizes after that tap lands on the button that just appeared under the finger. It
     // started on the canvas, so it commits nothing; a press on the button itself does.
+    await button().trigger("pointerup");
     await button().trigger("click");
     expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
     expect(button().exists()).toBe(true);
     await button().trigger("pointerdown");
+    await button().trigger("pointercancel");
+    await button().trigger("pointerup");
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(0);
+    await button().trigger("pointerdown");
     await button().trigger("pointerup");
     await button().trigger("click");
+    expect(sent.filter((m) => m.kind === "click")).toHaveLength(1);
     expect(sent.at(-1)).toEqual({ kind: "click", button: "left", coordX: 640, coordY: 360 });
+    expect(button().exists()).toBe(true); // retained for the shared exit slide
+    expect((button().element as HTMLElement).style.translate).toBe("180px 0");
   });
 
   it("hands a changed descriptor to the client", async () => {
@@ -547,6 +600,27 @@ describe("RenderStreamStage", () => {
       Object.defineProperty(event, "pointerId", { value: 1 });
       canvas.dispatchEvent(event);
     };
+
+    it("passes the streamed widget policy to touch input", () => {
+      const sent: MirrorInputMessage[] = [];
+      mirrorSettings.tapToFocus = true;
+      mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
+      const fake = clients[0];
+      fake.clientToGame = vi.fn((x, y) => ({ point: { x, y }, item: 7, drawn: { x, y } }));
+      const policy = fake.options.extensions!.find((e) => e.id === "couchcoop.pointerTargets")!;
+      policy.beforeDraw!({ query: {
+        parent: () => null,
+        meta: () => ({ id: 7, node: true, class: "NCard", groups: [], meta: {} })
+      } } as never);
+      const canvas = wrapper!.get('[data-testid="render-stream-canvas"]').element;
+      for (const type of ["pointerdown", "pointerup"]) {
+        const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 640, clientY: 360 });
+        Object.defineProperty(event, "pointerType", { value: "touch" });
+        Object.defineProperty(event, "pointerId", { value: 1 });
+        canvas.dispatchEvent(event);
+      }
+      expect(sent).toEqual([{ kind: "hover", coordX: 640, coordY: 360 }]);
+    });
 
     it("survives an access-generation change: the new sender gets it, a press held from before is retired silently", async () => {
       const oldSend: MirrorInputMessage[] = [];
