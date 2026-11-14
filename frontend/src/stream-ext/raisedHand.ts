@@ -454,7 +454,7 @@ export function createHandPresenceExtension(onPresent: (present: boolean, covere
       for (const id of holders) {
         if (!q.visible(id)) continue;
         present = true;
-        // The old mirror's coverAbove follows visual backstops regardless of mouse filters. Reward overlays can
+        // The old mirror's coverAbove follows visual backstops regardless of mouse filters. Full-screen overlays can
         // leave the hand hittable, so their seat-tagged roots cover this chrome even outside their drawn bounds.
         for (const cover of covers) {
           if (q.visible(cover)) {

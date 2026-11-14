@@ -2,6 +2,8 @@ import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nextTick } from "vue";
 
+import handCoverScreens from "../../../../tests/fixtures/render-stream/hand-cover-screens.json";
+
 import type {
   ExtensionFrame,
   ItemMeta,
@@ -876,7 +878,7 @@ describe("stream hand-raise button", () => {
     return stage.style.filter || stage.style.getPropertyValue("-webkit-filter");
   }
 
-  function handFrame(overlay?: "loot" | "card-reward" | "deck-view") {
+  function handFrame(overlay?: keyof typeof handCoverScreens) {
     const fake = clients[0];
     const presence = fake.options.extensions!.find((e) => e.id === "couchcoop.handRaiseChrome")!;
     const raise = fake.options.extensions!.find((e) => e.id === "couchcoop.raisedHand")!;
@@ -910,7 +912,8 @@ describe("stream hand-raise button", () => {
       hideOverlay() { overlayVisible = false; } };
   }
 
-  it.each(["loot", "card-reward", "deck-view"] as const)("keeps hand chrome visible, dimmed and input-less under %s even when the holder centre is uncovered", async (overlay) => {
+  // The seat's tagger tests read the same cases, so these roots must actually receive the cover group.
+  it.each(Object.keys(handCoverScreens) as (keyof typeof handCoverScreens)[])("keeps hand chrome visible, dimmed and input-less under %s even when the holder centre is uncovered", async (overlay) => {
     const sent: MirrorInputMessage[] = [];
     mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
     const h = handFrame(overlay);

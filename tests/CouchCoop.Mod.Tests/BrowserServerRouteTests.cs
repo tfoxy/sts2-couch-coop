@@ -224,6 +224,13 @@ if (args is [RenderCaptureAvailabilityTests.Verb, ..])
     return;
 }
 
+if (args is ["render-stream-tagger", ..])
+{
+    RenderStreamPairingTests.RunItemTaggerTests();
+    Console.WriteLine("render-stream tagger: ok");
+    return;
+}
+
 if (args is [RenderStreamPairingTests.Verb, ..])
 {
     await RenderStreamPairingTests.RunAsync();

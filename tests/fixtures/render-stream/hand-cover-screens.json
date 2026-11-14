@@ -1,0 +1,13 @@
+{
+  "loot": "NRewardsScreen",
+  "card-reward": "NCardRewardSelectionScreen",
+  "deck-view": "NDeckViewScreen",
+  "cards-view": "NSimpleCardsViewScreen",
+  "card-pile": "NCardPileScreen",
+  "player-details": "NMultiplayerPlayerExpandedState",
+  "map": "NMapScreen",
+  "inspect-card": "NInspectCardScreen",
+  "inspect-relic": "NInspectRelicScreen",
+  "pause": "NPauseMenu",
+  "settings": "NSettingsScreen"
+}

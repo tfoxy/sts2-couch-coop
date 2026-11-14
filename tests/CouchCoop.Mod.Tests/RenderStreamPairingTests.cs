@@ -51,6 +51,11 @@ internal static class RenderStreamPairingTests
         LanOfferIsAlwaysMade();
         TheTokenIsNeverLogged();
         HostCaptureVariableIsConfigurationNotAWarning();
+        RunItemTaggerTests();
+    }
+
+    public static void RunItemTaggerTests()
+    {
         ItemTaggerGroupsMatchTheModules();
         ItemTaggerGroupNamesMatchTheSharedTable();
         ItemTaggerReadsParentFactsOnlyForCreatureNames();
@@ -828,13 +833,18 @@ internal static class RenderStreamPairingTests
             "a non-creature HealthBar is not a HUD group");
         Assert(groups(F("CardReward", "NCardRewardSelectionScreen")).Contains(RenderStreamItemTagger.CardRewardRootGroup),
             "the card-reward screen root is tagged");
-        foreach (var screen in new[] { "NRewardsScreen", "NCardRewardSelectionScreen" })
+        var coverScreens = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(
+            File.ReadAllText(Path.Combine(RepoRoot(), "tests", "fixtures", "render-stream", "hand-cover-screens.json")))!;
+        Assert(coverScreens["deck-view"] == "NDeckViewScreen", "the deck-view root is a hand-cover regression case");
+        foreach (var (label, screen) in coverScreens)
         {
             Assert(groups(F("Screen", screen)).Contains(RenderStreamItemTagger.HandCoverGroup),
-                $"{screen} covers hand chrome regardless of its input filter or drawn bounds");
+                $"{label} ({screen}) covers hand chrome regardless of its input filter or drawn bounds");
         }
         Assert(!groups(F("Screen", "NPlayerHand")).Contains(RenderStreamItemTagger.HandCoverGroup)
-            && !groups(F("Screen", "Godot.Control")).Contains(RenderStreamItemTagger.HandCoverGroup),
+            && !groups(F("Screen", "Godot.Control")).Contains(RenderStreamItemTagger.HandCoverGroup)
+            && !groups(F("Screen", "NChooseACardSelectionScreen")).Contains(RenderStreamItemTagger.HandCoverGroup)
+            && !groups(F("SelectModeBackstop", "Godot.ColorRect")).Contains(RenderStreamItemTagger.HandCoverGroup),
             "hand chrome cover tags belong only to the recognised overlay screens");
         Assert(groups(F("Card", "NCard", rewardAncestor: true)).Contains(RenderStreamItemTagger.CardRewardCardGroup)
             && groups(F("Card", "NCard")).Count == 0,

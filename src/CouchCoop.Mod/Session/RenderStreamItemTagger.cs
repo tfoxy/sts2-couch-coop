@@ -60,6 +60,10 @@ internal static class RenderStreamItemTagger
     private const string CreaturePowerName = "PowerContainer";
     private const string CardRewardScreenType = "NCardRewardSelectionScreen";
     private const string RewardsScreenType = "NRewardsScreen";
+    private static readonly string[] HandCoverScreenTypes =
+        [RewardsScreenType, CardRewardScreenType, "NDeckViewScreen", "NSimpleCardsViewScreen", "NCardPileScreen",
+            "NMultiplayerPlayerExpandedState", "NMapScreen", "NInspectCardScreen", "NInspectRelicScreen",
+            "NPauseMenu", "NSettingsScreen"];
     private const string CardType = "NCard";
     private const string TreasureRelicType = "NTreasureRoomRelicHolder";
     // CONFIRM TAP: the three confirm-eligible families to tag. The shop set is the whole merchant
@@ -225,7 +229,7 @@ internal static class RenderStreamItemTagger
         if (facts.TypeLeaf == TreasureRelicType) groups.Add(TreasureRelicGroup);
         if (facts.TypeLeaf == CardRewardScreenType) groups.Add(CardRewardRootGroup);
         // These screens visually cover combat chrome even when their input backstops pass through to the hand.
-        if (facts.TypeLeaf is RewardsScreenType or CardRewardScreenType) groups.Add(HandCoverGroup);
+        if (Array.IndexOf(HandCoverScreenTypes, facts.TypeLeaf) >= 0) groups.Add(HandCoverGroup);
         if (facts.TypeLeaf == CardType && facts.CardRewardAncestor) groups.Add(CardRewardCardGroup);
         if (facts.TypeLeaf == EventOptionType) groups.Add(EventOptionGroup);
         if (facts.TypeLeaf == RestSiteType) groups.Add(RestSiteGroup);
