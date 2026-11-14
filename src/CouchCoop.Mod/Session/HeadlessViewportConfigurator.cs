@@ -29,7 +29,14 @@ public static class HeadlessViewportConfigurator
     private static bool _started;
 
     private static readonly Vector2I TargetSize = new(1920, 1080);
-    private static readonly Presentation PresentationOwner = new(ApplyPresentation);
+    private static readonly Presentation PresentationOwner = new(ApplyPresentation, OnOwnershipChanged);
+
+    private static void OnOwnershipChanged(bool wide)
+    {
+        StreamMapDrawingToolsPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
+        StreamHandPlacementPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
+        StreamCreaturePlacementPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
+    }
 
     // Main-thread only, shared with the swap so the existing mirror re-assert cannot fight capture sizing.
     internal static void SetStreamPresentationWidth(int width) => PresentationOwner.SetStreamWidth(width);
@@ -38,12 +45,13 @@ public static class HeadlessViewportConfigurator
     internal static Vector2 ResolveStreamPlacement(Vector2 target, float anchorLeft)
         => PresentationOwner.ResolvePlacement(target, anchorLeft);
 
-    internal sealed class Presentation(Func<bool, int, bool> apply)
+    internal sealed class Presentation(Func<bool, int, bool> apply, Action<bool>? onOwnershipChanged = null)
     {
         private bool _streamOwnsPresentation;
         private int _streamWidth = 1920;
 
         internal bool StreamOwnsPresentation => _streamOwnsPresentation;
+        internal int StreamWidth => _streamWidth;
 
         internal bool ReassertMirror() => _streamOwnsPresentation || apply(false, 1920);
 
@@ -61,9 +69,11 @@ public static class HeadlessViewportConfigurator
                 _streamWidth = width;
                 _streamOwnsPresentation = true;
                 apply(true, width);
+                onOwnershipChanged?.Invoke(true);
             }
             else if (_streamOwnsPresentation)
             {
+                onOwnershipChanged?.Invoke(false);
                 apply(false, 1920);
                 _streamOwnsPresentation = false;
                 _streamWidth = 1920;
