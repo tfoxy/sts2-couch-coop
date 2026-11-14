@@ -1,27 +1,14 @@
 using CouchCoop.Mod.Runtime;
 using Godot;
 using System;
-using System.Threading.Tasks;
+using System.Threading;
 
 namespace CouchCoop.Mod.Session;
 
 /// <summary>
-/// Forces a headless co-op client's root window to render a fixed 16:9 (1920x1080) design space, so its browser
-/// mirror fills the width like the real 16:9 host instead of showing a pillar-boxed square.
-/// A wide render-stream arm temporarily owns the presentation until capture teardown completes.
-///
-/// Why this is needed: the project uses stretch mode <c>canvas_items</c> with aspect <c>expand</c>, and the game
-/// only pins a fixed <c>ContentScaleAspect = Keep</c> + <c>ContentScaleSize</c> once the player has picked a
-/// non-Auto aspect ratio in settings. A headless client has no saved settings, so it stays on Auto → Expand. With no real 16:9 window the windowless viewport grows to a ~1920x1920 SQUARE, which lays out
-/// bottom-anchored UI (the character-select buttons) below a 16:9 frame and leaves wide pillar-boxes in the
-/// mirror. We apply the same 16:9 answer the game would (Keep + 1920x1080) so the headless lays out exactly
-/// like a 16:9 host. The mirror renders the scene tree (canvas-space node rects), so the content space — not the
-/// square framebuffer — is what it reflects.
-///
-/// Timing: the mod's Init runs very early (ModInitializer / ExecuteVeryEarly), BEFORE the SceneTree/main loop
-/// exists, so we can't touch the root window inline. We retry on the GAME MAIN THREAD via
-/// <see cref="Sts2MainThreadDispatcher"/> (whose context is captured during runtime creation in this same Init)
-/// until the root window exists, then re-assert a few more times to win any race with the game's own display apply.
+/// Keeps a windowless seat's mirror at Keep/1920x1080 because it has no saved aspect setting.
+/// Display applies, menu mounts and root size changes can reset that policy, so their hooks schedule a
+/// coalesced deferred reassertion. A wide stream owns presentation until capture teardown completes.
 /// </summary>
 public static class HeadlessViewportConfigurator
 {
@@ -30,6 +17,7 @@ public static class HeadlessViewportConfigurator
 
     private static readonly Vector2I TargetSize = new(1920, 1080);
     private static readonly Presentation PresentationOwner = new(ApplyPresentation, OnOwnershipChanged);
+    internal static Reassertion Updates { get; set; } = new(PresentationOwner, Defer, AttachRoot);
 
     private static void OnOwnershipChanged(bool wide)
     {
@@ -81,80 +69,86 @@ public static class HeadlessViewportConfigurator
         }
     }
 
-    // Phase 1: poll fast (0.25s) until the tree exists + a handful of successful re-asserts win the startup race
-    // with NGame's own display apply. Phase 2: keep re-asserting at a low steady rate FOR THE PROCESS LIFETIME —
-    // NGame re-applies its display settings on later screen transitions (a headless on the Auto setting reverts to
-    // Expand → the square viewport returns + off-16:9 content leaks back into the mirror), so a one-shot converge
-    // isn't enough. The steady check is cheap (3 property reads; a set only on drift). It exits only when the
-    // dispatcher throws repeatedly (the game is shutting down).
-    private const int FastIntervalMs = 250;
-    private const int MaxFastAttempts = 80;          // ~20s of fast polling for the tree
-    private const int ReassertCount = 8;             // successful fast re-asserts before settling to steady
-    private const int SteadyIntervalMs = 2000;       // low-rate drift re-assert thereafter
-    private const int MaxConsecutiveDispatchFailures = 20;  // ~40s of dispatcher errors ⇒ game gone, stop
-
     /// <summary>Idempotent. Safe to call repeatedly (CouchCoopMod.Init may run more than once).</summary>
     public static void Configure()
     {
         lock (Gate)
         {
-            if (_started)
-            {
-                return;
-            }
-
+            if (_started) return;
             _started = true;
         }
 
-        CouchCoopLog.Stderr("headless viewport configurator starting");
-        _ = Task.Run(ConfigureLoopAsync);
+        HeadlessViewportPatch.Apply();
+        // Also handles initialization after the startup signal, including repeated Init on hot reload.
+        Updates.Startup();
     }
 
-    private static async Task ConfigureLoopAsync()
+    private static void Defer(Action action)
     {
-        // Phase 1 — converge fast: poll until the tree exists and we've re-asserted a few times.
-        var applied = 0;
-        for (var attempt = 0; attempt < MaxFastAttempts && applied < ReassertCount; attempt++)
+        using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.WindowlessViewport);
+        GameMainThread.Invoke(() =>
         {
-            if (TryApply(out _))
-            {
-                applied++;
-            }
-
-            await Task.Delay(FastIntervalMs).ConfigureAwait(false);
-        }
-
-        // Phase 2 — persist: re-assert on drift at a low steady rate until the dispatcher gives up (game gone).
-        var consecutiveFailures = 0;
-        while (consecutiveFailures < MaxConsecutiveDispatchFailures)
-        {
-            consecutiveFailures = TryApply(out var threw) ? 0 : (threw ? consecutiveFailures + 1 : 0);
-            await Task.Delay(SteadyIntervalMs).ConfigureAwait(false);
-        }
+            Callable.From(action).CallDeferred();
+            return true;
+        });
     }
 
-    // Run ApplyOnce on the game main thread. Returns true once it could inspect/assert the root window; `threw`
-    // is set when the dispatcher itself faulted (distinct from "tree not ready yet", which just returns false).
-    private static bool TryApply(out bool threw)
+    private static bool AttachRoot()
     {
-        threw = false;
-        try
-        {
-            // ApplyOnce runs on the game main thread (the dispatcher posts to the captured game context). Only a
-            // windowless instance reaches here, which is why the zero-client tripwire excuses it (see the allowance).
-            using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.WindowlessViewport);
-            return GameMainThread.Invoke(ApplyOnce);
-        }
-        catch (Exception exception)
-        {
-            threw = true;
-            CouchCoopLog.Stderr($"headless viewport apply failed: {exception.GetType().Name}: {exception.Message}");
+        if (Engine.GetMainLoop() is not SceneTree { Root: { } root } || !GodotObject.IsInstanceValid(root))
             return false;
-        }
+        root.SizeChanged += HeadlessViewportPatch.AfterPresentationChanged;
+        return true;
     }
 
-    // Runs on the main thread. Capture ownership suppresses even the root read in the mirror's existing loop.
-    private static bool ApplyOnce() => PresentationOwner.ReassertMirror();
+    // The callbacks enqueue only; root reads and the ownership check happen after synchronous handlers finish.
+    internal sealed class Reassertion(Presentation presentation, Action<Action> defer, Func<bool> attachRoot)
+    {
+        private int _pending;
+        private bool _attached;
+
+        internal void Startup()
+        {
+            if (!_attached) Request();
+        }
+
+        internal void Request()
+        {
+            if (Interlocked.Exchange(ref _pending, 1) != 0) return;
+            try
+            {
+                defer(Run);
+            }
+            catch (Exception exception)
+            {
+                Interlocked.Exchange(ref _pending, 0);
+                LogFailure(exception);
+            }
+        }
+
+        private void Run()
+        {
+            // A write may raise SizeChanged synchronously and enqueue a final, drift-free pass.
+            Interlocked.Exchange(ref _pending, 0);
+            try
+            {
+                if (!_attached)
+                {
+                    if (!attachRoot()) return;
+                    _attached = true;
+                }
+                using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.WindowlessViewport);
+                presentation.ReassertMirror();
+            }
+            catch (Exception exception)
+            {
+                LogFailure(exception);
+            }
+        }
+
+        private static void LogFailure(Exception exception)
+            => CouchCoopLog.Stderr($"headless viewport apply failed: {exception.GetType().Name}: {exception.Message}");
+    }
 
     private static bool ApplyPresentation(bool expand, int width)
     {
@@ -163,6 +157,31 @@ public static class HeadlessViewportConfigurator
             return false;
         }
 
+        return ApplyPresentation(new RootPresentationWindow(root), expand, width);
+    }
+
+    internal interface IPresentationWindow
+    {
+        Window.ContentScaleAspectEnum ContentScaleAspect { get; set; }
+        Vector2I ContentScaleSize { get; set; }
+        Vector2I Size { get; set; }
+        Vector2 VisibleSize { get; }
+    }
+
+    private sealed class RootPresentationWindow(Window root) : IPresentationWindow
+    {
+        public Window.ContentScaleAspectEnum ContentScaleAspect
+        {
+            get => root.ContentScaleAspect;
+            set => root.ContentScaleAspect = value;
+        }
+        public Vector2I ContentScaleSize { get => root.ContentScaleSize; set => root.ContentScaleSize = value; }
+        public Vector2I Size { get => root.Size; set => root.Size = value; }
+        public Vector2 VisibleSize => root.GetVisibleRect().Size;
+    }
+
+    internal static bool ApplyPresentation(IPresentationWindow root, bool expand, int width)
+    {
         var beforeAspect = root.ContentScaleAspect;
         var beforeContent = root.ContentScaleSize;
         var beforeWindow = root.Size;
@@ -170,6 +189,13 @@ public static class HeadlessViewportConfigurator
         var windowSize = new Vector2I(width, TargetSize.Y);
 
         var changed = false;
+        // Resize first so synchronous resize handlers cannot overwrite the final content policy.
+        if (root.Size != windowSize)
+        {
+            root.Size = windowSize;
+            changed = true;
+        }
+
         if (root.ContentScaleAspect != aspect || root.ContentScaleSize != TargetSize)
         {
             root.ContentScaleAspect = aspect;
@@ -177,18 +203,11 @@ public static class HeadlessViewportConfigurator
             changed = true;
         }
 
-        // Keep the window and content policy in sync: mirror uses 16:9, while a wide capture expands the visible rect.
-        if (root.Size != windowSize)
-        {
-            root.Size = windowSize;
-            changed = true;
-        }
-
         if (changed)
         {
             CouchCoopLog.Stderr(
                 $"headless viewport: aspect {beforeAspect}->{aspect}, content {beforeContent}->{TargetSize}, "
-                + $"window {beforeWindow}->{root.Size}, visible={root.GetVisibleRect().Size}");
+                + $"window {beforeWindow}->{root.Size}, visible={root.VisibleSize}");
         }
 
         return true;

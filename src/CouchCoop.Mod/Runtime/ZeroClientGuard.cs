@@ -196,7 +196,8 @@ public static class ZeroClientAllowances
     public static readonly ZeroClientAllowance WindowlessViewport = ZeroClientAllowance.Register(
         "windowless-viewport",
         "Only a windowless instance (a headless seat or a --headless host) starts it: with no window to own the root "
-        + "viewport it has to be re-asserted at a low steady rate. A player's windowed host never starts this loop.",
+        + "viewport its presentation is re-asserted once at startup and after display, menu or root-size signals. "
+        + "These coalesced deferred applies do not wake at idle. A player's windowed host never installs them.",
         ZeroClientEntries.MainThreadDispatch);
 
     public static IReadOnlyList<ZeroClientAllowance> All => ZeroClientAllowance.AllRegistered;

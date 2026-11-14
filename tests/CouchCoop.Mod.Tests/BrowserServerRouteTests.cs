@@ -605,6 +605,7 @@ if (args is ["host-ui", ..])
 if (args is ["renderer-swap", ..])
 {
     RenderStreamSwapTests.Run();
+    HeadlessViewportTests.Run();
     StreamDesignPlacementTests.Run();
     StreamMapDrawingToolsTests.Run();
     StreamHandPlacementTests.Run();
@@ -794,6 +795,7 @@ if (args is ["beta-targets", ..])
     Leg("SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes", SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
     Leg(nameof(HeadlessAssetLoadingActivityTests), HeadlessAssetLoadingActivityTests.TargetsResolve);
+    Leg(nameof(HeadlessViewportTests), HeadlessViewportTests.TargetsResolve);
     Leg(nameof(StreamDesignPlacementTests), StreamDesignPlacementTests.TargetsResolve);
     Leg(nameof(StreamMapDrawingToolsTests), StreamMapDrawingToolsTests.TargetsResolve);
     Leg(nameof(StreamHandPlacementTests), StreamHandPlacementTests.TargetsResolve);
@@ -972,6 +974,7 @@ WindowsSeatLifetimeTests.Run();
 HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
 RenderStreamSwapTests.Run();
+HeadlessViewportTests.Run();
 StreamDesignPlacementTests.Run();
 StreamMapDrawingToolsTests.Run();
 StreamHandPlacementTests.Run();
