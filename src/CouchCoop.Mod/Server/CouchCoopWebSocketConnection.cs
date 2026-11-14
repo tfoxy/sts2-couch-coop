@@ -126,6 +126,7 @@ public sealed class CouchCoopWebSocketConnection
     private BrowserRendererStateDto _fallbackRendererState = new("mirror");
     private readonly IHostBrowserAccess? _hostAccess;
     private volatile bool _watchRequested;
+    private bool _mirrorRestoreBlocked;
     private bool _watchCounted;
     private long _watchEpoch;
     private long _streamWatchEpoch = -1;
@@ -217,7 +218,7 @@ public sealed class CouchCoopWebSocketConnection
     /// True when this connection currently wants the `scene-delta` stream (the stream watch gate). The scene fan-out
     /// consults this per connection, so a viewer parked on the join picker receives ZERO scene bytes.
     /// </summary>
-    public bool WantsSceneStream => !_closing && _sceneStreaming && AllowsWork(_streamAccessGeneration, _streamWatchEpoch);
+    public bool WantsSceneStream => !_closing && !MirrorRestorePending && _sceneStreaming && AllowsWork(_streamAccessGeneration, _streamWatchEpoch);
 
     /// <summary>
     /// Stage-B walk skip: true when this viewer declared through the required `?staticBg=1` connect selector or a
@@ -1224,10 +1225,19 @@ public sealed class CouchCoopWebSocketConnection
     private void OnHostAccessChanged(HostBrowserAccessState state)
     {
         // The authoritative state has already changed synchronously. Do no scene/game reads in this callback.
-        if (_accessReady && _watchRequested && !_closing) _ = Task.Run(RefreshHostAccessAsync);
+        if (_accessReady && _watchRequested && !_closing) _ = Task.Run(() => RefreshHostAccessAsync());
     }
 
-    private async Task RefreshHostAccessAsync()
+    internal void OnRendererChanged()
+    {
+        // Only published facts here; session and observer work runs outside the capture callback.
+        if (_accessReady && !_closing) _ = Task.Run(() => RefreshHostAccessAsync(rendererChanged: true));
+    }
+
+    private bool MirrorRestorePending => _isHeadlessClient && _rendererSwapHost is { } swap
+        && swap.RendererStatus.State is "mirror" or "failed" && !swap.MirrorRestoreComplete;
+
+    private async Task RefreshHostAccessAsync(bool rendererChanged = false)
     {
         await _accessTransitionGate.WaitAsync().ConfigureAwait(false);
         try
@@ -1236,9 +1246,11 @@ public sealed class CouchCoopWebSocketConnection
             var state = AccessState;
             var watchEpoch = Interlocked.Read(ref _watchEpoch);
             // Even a revoke/reopen that completed before this worker ran invalidates the old retained scene.
-            if (!state.Allowed || _streamAccessGeneration != state.Generation || _streamWatchEpoch != watchEpoch || !_watchRequested)
+            if (MirrorRestorePending || !state.Allowed || _streamAccessGeneration != state.Generation || _streamWatchEpoch != watchEpoch || !_watchRequested)
                 await SetSceneStreamingAsync(false, state.Generation, watchEpoch).ConfigureAwait(false);
-            await SendBytesAsync([], CancellationToken.None, accessUpdate: true).ConfigureAwait(false);
+            // Publish restoration before a resumed observer can send its first full scene.
+            if (rendererChanged || _mirrorRestoreBlocked) await ResendSessionAsync(null, CancellationToken.None).ConfigureAwait(false);
+            if (!rendererChanged) await SendBytesAsync([], CancellationToken.None, accessUpdate: true).ConfigureAwait(false);
             if (_watchRequested && AllowsAccess(state.Generation))
                 await SetSceneStreamingAsync(true, state.Generation, watchEpoch).ConfigureAwait(false);
         }
@@ -1605,7 +1617,13 @@ public sealed class CouchCoopWebSocketConnection
 
         lock (_sceneLock)
         {
+            if (MirrorRestorePending)
+            {
+                _mirrorRestoreBlocked = true;
+                return;
+            }
             if (!AllowsWork(generation, watchEpoch)) return;
+            _mirrorRestoreBlocked = false;
             if (_sceneStreaming)
             {
                 return;
@@ -1904,7 +1922,7 @@ public sealed class CouchCoopWebSocketConnection
                 ? StreamingSeatDescriptor.Build(status.Snapshot, _requestOrigin,
                     Environment.GetEnvironmentVariable, StreamingSeatDescriptor.CertificateCovers)
                 : null,
-            RendererState = new(status.State, status.Reason),
+            RendererState = new(status.State, status.Reason, swap.MirrorRestoreComplete),
         };
     }
 

@@ -232,16 +232,19 @@ export interface BrowserStaticBackgroundDescriptor {
 export interface BrowserRendererState {
   state: "mirror" | "arming" | "armed" | "failed";
   reason?: string;
+  restoreComplete?: boolean;
 }
 
 function normalizeRendererState(raw: unknown): BrowserRendererState | undefined {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const value = raw as { state?: unknown; reason?: unknown };
+  const value = raw as { state?: unknown; reason?: unknown; restoreComplete?: unknown };
   if (value.state !== "mirror" && value.state !== "arming" && value.state !== "armed" && value.state !== "failed") {
     return undefined;
   }
   if (value.reason !== undefined && typeof value.reason !== "string") return undefined;
-  return { state: value.state, ...(value.reason !== undefined ? { reason: value.reason } : {}) };
+  if (value.restoreComplete !== undefined && typeof value.restoreComplete !== "boolean") return undefined;
+  return { state: value.state, ...(value.reason !== undefined ? { reason: value.reason } : {}),
+    ...(value.restoreComplete !== undefined ? { restoreComplete: value.restoreComplete } : {}) };
 }
 
 // The `renderStream` descriptor.

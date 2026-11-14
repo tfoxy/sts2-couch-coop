@@ -31,6 +31,7 @@ internal sealed class RenderStreamSwap : IDisposable
 
     internal string[] WantingPages => _wantingPages.Keys.ToArray();
 
+    internal bool MirrorRestoreComplete { get; private set; } = true;
     internal string State { get; private set; } = "mirror";
     internal string? Reason { get; private set; }
     internal RenderStreamSnapshot? Snapshot { get; private set; }
@@ -94,6 +95,7 @@ internal sealed class RenderStreamSwap : IDisposable
     private void Arm(double? aspect)
     {
         _armGeneration++;
+        MirrorRestoreComplete = false;
         _setSuspenderEnabled(false);
         _phase = Phase.Arming;
         Change("arming");
@@ -122,6 +124,7 @@ internal sealed class RenderStreamSwap : IDisposable
         Snapshot = null;
         _setPresentationWidth(StreamingSeatLaunch.PresentationBaseWidth);
         _setSuspenderEnabled(true);
+        MirrorRestoreComplete = true;
         Change("failed", reason);
     }
 
@@ -142,7 +145,11 @@ internal sealed class RenderStreamSwap : IDisposable
         // Publish the mirror fallback before beginning teardown, in this same main-thread turn.
         var result = _capture.Disarm(reason, lingerMs: 1500);
         if (result == 3) Disarmed();
-        else if (result is not (0 or 44)) Change("failed", $"disarm-refused:{result.ToString(CultureInfo.InvariantCulture)}");
+        else if (result is not (0 or 44))
+        {
+            MirrorRestoreComplete = true;
+            Change("failed", $"disarm-refused:{result.ToString(CultureInfo.InvariantCulture)}");
+        }
     }
 
     private void Disarmed()
@@ -155,8 +162,10 @@ internal sealed class RenderStreamSwap : IDisposable
         Snapshot = null;
         _setPresentationWidth(StreamingSeatLaunch.PresentationBaseWidth);
         _setSuspenderEnabled(true);
+        MirrorRestoreComplete = true;
         _requestTrim();
         if (State != "failed") Change("mirror");
+        else _onChanged();
         if (rearm) Arm(_wantingPages.First().Value);
     }
 

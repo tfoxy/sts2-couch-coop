@@ -644,7 +644,7 @@ function detachInput(silent = false): void {
 }
 
 function attachInput(): void {
-  if (props.sendInput && renderer && stage.value && !inputCapture) {
+  if (props.sceneReady !== false && props.sendInput && renderer && stage.value && !inputCapture) {
     // EAGER SCROLLING. Built before inputCapture because the capture takes it as a collaborator: it
     // gets first refusal on a wheel tick over the map / a card grid, owns the one-finger pan there, and
     // compensates every resolved coordinate while the local offset runs ahead of the host's.
@@ -939,7 +939,7 @@ function mountScene(): void {
     // return that credit just like a revision-driven reconcile does.
     sceneCheckpoint("render-begin");
     if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-mount-reconcile-entry", revision: props.state.revision});
-    const initialPresented = renderer.reconcile(props.state);
+    const initialPresented = props.sceneReady === false ? false : renderer.reconcile(props.state);
     if (warmAckTraceEnabled()) emitWarmAckTrace({kind: "view-mount-reconcile-result", revision: props.state.revision,
       result: initialPresented === false ? "pending" : "presented"});
     syncHandRaiseUi();

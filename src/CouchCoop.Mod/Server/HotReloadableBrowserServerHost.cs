@@ -68,8 +68,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         _generation = new BuiltInBrowserServerGeneration(this);
     }
 
-    private sealed record RendererPublication(string State, string? Reason, RenderStreamSnapshot? Snapshot, string[] WantingPages);
-    private RendererPublication _rendererPublication = new("mirror", null, null, []);
+    private sealed record RendererPublication(string State, string? Reason, RenderStreamSnapshot? Snapshot, string[] WantingPages, bool MirrorRestoreComplete);
+    private RendererPublication _rendererPublication = new("mirror", null, null, [], true);
     private RenderStreamSwap? _rendererSwap;
     private volatile bool _rendererDisposed;
     private event Action? RendererChanged;
@@ -86,6 +86,8 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
                 : (snapshot.Listen, snapshot.Token, snapshot.CertificateHash, snapshot.RootSize, snapshot.StreamVersion));
         }
     }
+
+    public bool MirrorRestoreComplete => Volatile.Read(ref _rendererPublication).MirrorRestoreComplete;
 
     public bool WantsRenderStream(string pageId)
         => Array.IndexOf(Volatile.Read(ref _rendererPublication).WantingPages, pageId) >= 0;
@@ -111,7 +113,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     private void PublishRenderer()
     {
         var swap = _rendererSwap!;
-        Volatile.Write(ref _rendererPublication, new(swap.State, swap.Reason, swap.Snapshot, swap.WantingPages));
+        Volatile.Write(ref _rendererPublication, new(swap.State, swap.Reason, swap.Snapshot, swap.WantingPages, swap.MirrorRestoreComplete));
         RendererChanged?.Invoke();
     }
 

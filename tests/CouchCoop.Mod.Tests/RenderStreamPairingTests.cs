@@ -515,8 +515,10 @@ internal static class RenderStreamPairingTests
             new BrowserRenderStreamWebTransportDto("https://127.0.0.1:13366/render-stream", [new string('c', 64)])));
         Assert(wt.Contains("\"webTransport\":{\"url\":\"https://127.0.0.1:13366/render-stream\",\"certificateHashes\":[\"", StringComparison.Ordinal),
             $"the client's key names: {wt}");
-        Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror")) == "{\"state\":\"mirror\"}",
-            "a renderer state omits its absent reason");
+        Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror")) == "{\"state\":\"mirror\",\"restoreComplete\":true}",
+            "a restored renderer state omits its absent reason");
+        Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror", RestoreComplete: false))
+            == "{\"state\":\"mirror\",\"restoreComplete\":false}", "early fallback distinguishes pending restoration");
         var unpinned = BrowserJson.Serialize(new BrowserRenderStreamWebTransportDto("https://h:1/render-stream"));
         Assert(unpinned == "{\"url\":\"https://h:1/render-stream\"}", $"no certificateHashes member when unpinned: {unpinned}");
     }

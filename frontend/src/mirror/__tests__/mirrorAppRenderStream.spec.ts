@@ -953,46 +953,119 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     expect(fake.clients[0].disposed).toBe(true);
   });
 
-  it.each(["withdrawal", "checkbox"])("returns to the mirror in the same tick as %s", async (cause) => {
+  it.each(["withdrawal", "checkbox", "failure"])("loads a fresh restored scene after %s", async (cause) => {
     const seat = await showMirror();
     await startStream(seat);
     fail({ kind: "streaming", firstFrame: true });
     await settle();
     expect(app!.findComponent(MirrorView).exists()).toBe(false);
     seat.sent.length = 0;
-    if (cause === "checkbox") {
+    if (cause === "failure") {
+      fail({ kind: "ended" });
+      await settle();
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "mirror" }]);
+    } else if (cause === "checkbox") {
       await app!.get('[data-testid="mirror-renderer"]').setValue(false);
-    } else {
-      seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror" } }));
-      await nextTick();
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "mirror" }]);
+      // An in-flight armed session cannot reopen the watch or remount the retained warm-up scene.
+      seat.emit(seatSession({ rendererState: { state: "armed", restoreComplete: false } }));
+      await settle();
+      expect(seat.ofType("watch")).toEqual([]);
     }
-    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
     expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
+    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
+    expect(seat.ofType("watch")).toEqual([]);
+    // Even a full scene sent before restoration is a straggler, not this return's baseline.
+    seat.emit(sceneDelta);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: true } }));
+    await settle();
     expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
-    expect(renderStreamContext.stopped).toBeNull();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.find('.mirror-join-stack').exists()).toBe(true);
+    seat.emit({ ...sceneDelta, full: false });
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    seat.emit(sceneDelta);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.find('.mirror-join-stack').exists()).toBe(false);
+    expect(renderStreamContext.stopped).toBe(cause === "failure" ? "ended" : null);
     expect(fake.clients[0].disposed).toBe(true);
     if (cause === "checkbox") {
-      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "mirror" }]);
-      // An in-flight session with the old descriptor cannot reverse the explicit switch off.
-      seat.emit(seatSession());
-      await settle();
-      expect(app!.findComponent(MirrorView).exists()).toBe(true);
-      expect(renderStreamContext.rendererState?.state).toBe("armed");
-      expect(renderStreamContext.sessionEndpoint).not.toBeNull();
-      expect(renderStreamContext.firstFrame).toBe(false);
-      expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
-      expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
-      seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror" } }));
-      await settle();
-      expect(renderStreamContext.returningToMirror).toBe(false);
+      const mirror = app!.getComponent(MirrorView).element;
       await app!.get('[data-testid="mirror-renderer"]').setValue(true);
       seat.emit(seatSession({ renderStream: { ...descriptor, token: "b".repeat(64) } }));
       await settle();
       expect(fake.clients).toHaveLength(2);
       expect(fake.clients[1].options.endpoint.token).toBe("b".repeat(64));
       expect(app!.get('[data-testid="mirror-stream-shell"]').classes()).toContain("mirror-stream-pending");
-      expect(app!.findComponent(MirrorView).exists()).toBe(true);
+      expect(app!.getComponent(MirrorView).element).toBe(mirror);
     }
+  });
+
+  it("sends stream input when restarted before the returning mirror scene arrives", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
+    seat.sent.length = 0;
+
+    await app!.get('[data-testid="mirror-renderer"]').setValue(true);
+    seat.emit(seatSession({ renderStream: { ...descriptor, token: "b".repeat(64) },
+      rendererState: { state: "armed", restoreComplete: false } }));
+    await settle();
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    const stage = app!.getComponent((await realStageImport()).default);
+    expect(stage.props("inputEnabled")).toBe(true);
+    stage.props("sendInput")!({ kind: "key", key: "KeyE", pressed: true });
+    expect(seat.ofType("input")).toHaveLength(1);
+    expect(seat.ofType("input")[0]).toMatchObject({ kind: "key", key: "KeyE", pressed: true });
+  });
+
+  it("keeps loading when a restarted stream is cancelled before its first frame", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
+    seat.sent.length = 0;
+
+    await app!.get('[data-testid="mirror-renderer"]').setValue(true);
+    seat.emit(seatSession({ renderStream: { ...descriptor, token: "b".repeat(64) },
+      rendererState: { state: "armed", restoreComplete: false } }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    expect(renderStreamContext.firstFrame).toBe(false);
+    await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
+    expect(seat.ofType("watch")).toEqual([]);
+
+    seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: true } }));
+    await settle();
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    seat.emit(sceneDelta);
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
   });
 
   it("keeps the mirror when the stage chunk fails before its first frame", async () => {

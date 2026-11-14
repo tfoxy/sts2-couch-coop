@@ -359,9 +359,7 @@ public sealed class CouchCoopBrowserServer(
 
     private void OnRendererChanged()
     {
-        // Capture signals must not read game state in their callback. Session facts are read after it returns.
-        if (CouchCoopMod.EngineAvailable) Godot.Callable.From(ResendSessions).CallDeferred();
-        else ResendSessions();
+        foreach (var connection in _connections.Values) connection.OnRendererChanged();
     }
 
     private void RegisterConnection()

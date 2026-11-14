@@ -85,6 +85,27 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); applied.on = false; mirrorSettings.stretchEnabled = true; });
 
 describe("MirrorView × an applied (not presented) reconcile", () => {
+  it("does not reconcile, attach input or return presentation credit on an unready mount", async () => {
+    mirrorSettings.keyboard = true;
+    const ack = vi.fn(), send = vi.fn(), presented = vi.fn();
+    const wrapper = mount(MirrorView, { props: { state: sceneState(), revision: 1, sceneReady: false,
+      sendInput: send, onSceneRendered: ack, connectionAttemptId: "return-1", onFirstSceneFramePresented: presented }, attachTo: document.body });
+    vi.advanceTimersByTime(RAF_TICK * 3);
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyM" }));
+    expect(wrapper.find('[data-node-id="world"]').exists()).toBe(false);
+    expect(wrapper.find('.mirror-node').exists()).toBe(false);
+    expect(ack).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(presented).not.toHaveBeenCalled();
+    await wrapper.setProps({ sceneReady: true, revision: 2 });
+    vi.advanceTimersByTime(RAF_TICK * 3);
+    expect(wrapper.find('.mirror-node').exists()).toBe(true);
+    expect(ack).toHaveBeenCalled();
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyM" }));
+    expect(send).toHaveBeenCalled();
+    wrapper.unmount();
+    mirrorSettings.keyboard = false;
+  });
   it("acks it, skips the per-frame runtime pass, but runs a coalesced forced pass", async () => {
     const acks = vi.fn();
     const wrapper = mount(MirrorView, { props: { state: sceneState(), revision: 1, onSceneRendered: acks }, attachTo: document.body });

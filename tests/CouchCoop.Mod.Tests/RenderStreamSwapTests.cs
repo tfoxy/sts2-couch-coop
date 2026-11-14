@@ -16,6 +16,7 @@ internal static class RenderStreamSwapTests
             MirrorAndStandardArmKeepTheirPresentation,
             WideArmFailuresRestoreBeforeResumingMirror,
             DeferredDisarmedRestoresBeforeRearm,
+            RestoreCompletionFollowsDeferredRestoration,
             DisposedSwapIgnoresDeferredRestore,
             OnlyArmedPublishesTheSnapshot,
             RefusedArmRestoresTheSuspender,
@@ -40,6 +41,7 @@ internal static class RenderStreamSwapTests
             DisposalCancelsGraceAndSignalSubscriptions,
             QuitStillDisarmsArmingAndArmedCaptures,
             DisarmRefusalsHandleAlreadyStoppedOrStopping,
+            RefusedDisarmAllowsMirrorFallback,
         ];
         foreach (var test in tests) test();
         Console.WriteLine($"RenderStreamSwapTests: {tests.Length} passed.");
@@ -191,6 +193,28 @@ internal static class RenderStreamSwapTests
         Assert(f.PresentationWhenResumed is (false, 1920) && f.Capture.ArmCalls == 2, "resume sees mirror dimensions before rearm");
         nextFrame.Dequeue()();
         Assert(f.Swap.State == "arming" && f.PresentationChanges.Count == 3, "duplicate deferred teardown cannot restore over a newer arm");
+    }
+
+    private static void RestoreCompletionFollowsDeferredRestoration()
+    {
+        foreach (var failed in new[] { false, true })
+        {
+            var nextFrame = new Queue<Action>();
+            using var f = new Fixture(deferSignal: nextFrame.Enqueue);
+            Assert(f.Swap.MirrorRestoreComplete, "initial mirror is restored");
+            f.Swap.Request("page", true, 2340.0 / 1080);
+            f.Capture.EmitArmed(Snapshot("wide"));
+            if (failed) f.Capture.EmitStreamEnded("ended");
+            else f.Swap.Request("page", false);
+            Assert(!f.Swap.MirrorRestoreComplete, "early fallback is not a restoration completion");
+            f.Capture.EmitDisarmed();
+            Assert(!f.Swap.MirrorRestoreComplete, "capture signal alone cannot release the mirror");
+            var changes = f.Changes.Count;
+            nextFrame.Dequeue()();
+            Assert(f.Swap.MirrorRestoreComplete && f.SuspenderEnabled && f.PresentationWhenResumed is (false, 1920),
+                "completion follows presentation and visual-suspender restoration");
+            Assert(f.Changes.Count == changes + 1, "completion is published even for a failed stream");
+        }
     }
 
     private static void DisposedSwapIgnoresDeferredRestore()
@@ -525,6 +549,16 @@ internal static class RenderStreamSwapTests
             if (result == 44) f.Capture.EmitDisarmed();
             Assert(f.SuspenderEnabled && f.TrimCalls == 1, "stopped capture restores memory saving once");
         }
+    }
+
+    private static void RefusedDisarmAllowsMirrorFallback()
+    {
+        using var f = new Fixture();
+        f.Arm();
+        f.Capture.DisarmResult = 1;
+        f.Swap.Request("page", false);
+        Assert(f.Swap.State == "failed" && f.Swap.Reason == "disarm-refused:1", "refused disarm reports failure");
+        Assert(f.Swap.MirrorRestoreComplete, "terminal disarm refusal allows the mirror fallback without a disarmed signal");
     }
 
     private static RenderStreamSnapshot Snapshot(string arm) => new(

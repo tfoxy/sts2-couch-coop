@@ -68,7 +68,7 @@ internal sealed partial class BrowserServerRouteTests
         var output = await stdout + await stderr;
         Expect(process.ExitCode == 0, $"the streaming seat child passed (exit {process.ExitCode}): {output}");
         Expect(!output.Contains(RenderStreamSeatToken, StringComparison.Ordinal), "the child printed no token");
-        Console.WriteLine("render-stream descriptor routes: 3 passed.");
+        Console.WriteLine("render-stream descriptor routes: 4 passed.");
     }
 
     /// <summary>The streaming seat's half, in a process launched with the seat's environment.</summary>
@@ -151,6 +151,8 @@ internal sealed partial class BrowserServerRouteTests
             await seat.StopServerAsync();
             Expect(seat.DemandHost!.Subscribers == 0, "the stopped generation unsubscribes from renderer changes");
 
+            await AssertMirrorReturnRestorationAsync();
+
             await using var hotSeat = await RelayedSeat.StartAsync(withCapture: true, hotGeneration: true);
             using var beforeReload = await hotSeat.ConnectAsync(AllowedPageOrigin);
             using (var initial = await ReadSessionAsync(beforeReload)) ExpectRenderer(initial.RootElement, "mirror");
@@ -190,6 +192,39 @@ internal sealed partial class BrowserServerRouteTests
             Console.Error.WriteLine(error);
             return 1;
         }
+    }
+
+    private static async Task AssertMirrorReturnRestorationAsync()
+    {
+        await using var seat = await RelayedSeat.StartAsync(withCapture: true, deferRestore: true);
+        using var socket = await seat.ConnectAsync(AllowedPageOrigin);
+        using (var initial = await ReadSessionAsync(socket)) ExpectRenderer(initial.RootElement, "mirror");
+        await SendRendererAsync(socket, "stream", "2.1666666666666665");
+        using (var arming = await ReadRendererAsync(socket, "arming")) ExpectRenderer(arming.RootElement, "arming");
+        seat.Armed(RenderStreamSeatToken);
+        using (var armed = await ReadRendererAsync(socket, "armed")) ExpectDescriptor(armed.RootElement, "return test", 2340);
+        await SendRendererAsync(socket, "mirror");
+        using (var fallback = await ReadRendererAsync(socket, "mirror"))
+            Expect(!fallback.RootElement.GetProperty("rendererState").GetProperty("restoreComplete").GetBoolean(),
+                "early fallback explicitly has not restored the presentation");
+        await SendControlAsync(socket, "{\"type\":\"watch\",\"on\":true}");
+        await AssertNoSceneDeltaAsync(socket, "watch before restore cannot send a wide keyframe");
+        Expect(!seat.Runtime!.SceneSubscriptionActive && seat.StreamingDemand == 0, "early watch cannot open the producer");
+        seat.Disarmed();
+        Expect(seat.PendingRestore!.Count == 1, "disarmed restoration is deferred");
+        await AssertNoSceneDeltaAsync(socket, "disarmed signal alone cannot resume capture");
+        Expect(!seat.Runtime.SceneSubscriptionActive, "producer stays closed until deferred restoration");
+        GameMainThread.Invoke(() => { seat.PendingRestore.Dequeue()(); return true; });
+        using (var restored = await ReadRendererAsync(socket, "mirror"))
+            Expect(restored.RootElement.GetProperty("rendererState").GetProperty("restoreComplete").GetBoolean(),
+                "completion session precedes the returning keyframe");
+        Expect(await WaitForSceneSubscriptionAsync(seat.Runtime, true), "restoration automatically resumes early watch demand");
+        seat.Runtime.PushSceneDelta(BuildSampleSceneDelta("native-return", 1920, true, ["native-return"]));
+        using var first = JsonDocument.Parse(await ReadNextSceneDeltaMatchingAsync(socket,
+            root => root.GetProperty("full").GetBoolean()));
+        Expect(first.RootElement.GetProperty("orderedIds")[0].GetString() == "native-return",
+            "the first returning full scene is produced after restoration");
+        await CloseWebSocketSilentlyAsync(socket);
     }
 
     private static void ExpectDescriptor(JsonElement session, string where, int width = 1920)
@@ -261,6 +296,8 @@ internal sealed partial class BrowserServerRouteTests
         internal TrackingRendererHost? DemandHost;
         internal RenderStreamSwapTests.FakeCapture? Capture;
         internal int StreamingDemand;
+        internal RecordingSpirectlRuntime? Runtime;
+        internal Queue<Action>? PendingRestore;
         private ICouchCoopHotGeneration? _hotGeneration;
 
         private ICouchCoopHotGeneration CreateHotGeneration()
@@ -303,13 +340,14 @@ internal sealed partial class BrowserServerRouteTests
             _relay = RelayLoopAsync(pipeName, pipeToken);
         }
 
-        public static async Task<RelayedSeat> StartAsync(bool withCapture = false, bool hotGeneration = false)
+        public static async Task<RelayedSeat> StartAsync(bool withCapture = false, bool hotGeneration = false, bool deferRestore = false)
         {
             var root = new TempStaticRoot();
             var previous = GameMainThread.Source;
             var mainThread = new HopCountingMainThread();
             GameMainThread.Source = mainThread;
             var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+            var pendingRestore = new Queue<Action>();
             HotReloadableBrowserServerHost? host = null;
             RenderStreamSwapTests.FakeCapture? capture = null;
             if (withCapture)
@@ -320,7 +358,8 @@ internal sealed partial class BrowserServerRouteTests
                 var injectedCapture = capture;
                 host = new(runtime.NewEnvelopeFactory().RuntimeHost, root.Path);
                 host.CreateRendererSwap = changed => new RenderStreamSwap(injectedCapture,
-                    (_, _) => new NoopCancellation(), _ => { }, () => { }, changed, _ => { });
+                    (_, _) => new NoopCancellation(), _ => { }, () => { }, changed, _ => { },
+                    deferSignal: deferRestore ? pendingRestore.Enqueue : null);
             }
             var demandHost = host is null ? null : new TrackingRendererHost(host);
             RelayedSeat? seat = null;
@@ -336,7 +375,7 @@ internal sealed partial class BrowserServerRouteTests
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             seat = new RelayedSeat(root, mainThread, previous, server, pipe, listener, pipeName, pipeToken)
-            { Host = host, Capture = capture, DemandHost = demandHost };
+            { Host = host, Capture = capture, DemandHost = demandHost, Runtime = runtime, PendingRestore = pendingRestore };
             if (hotGeneration) seat._hotGeneration = seat.CreateHotGeneration();
             return seat;
         }
@@ -451,6 +490,7 @@ internal sealed partial class BrowserServerRouteTests
         public (string State, string? Reason,
             (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
             => host.RendererStatus;
+        public bool MirrorRestoreComplete => host.MirrorRestoreComplete;
         public bool WantsRenderStream(string pageId) => host.WantsRenderStream(pageId);
         public void RequestRenderer(string pageId, bool wantsStream, double? aspect) => host.RequestRenderer(pageId, wantsStream, aspect);
         public void ReleaseRenderer(string pageId)

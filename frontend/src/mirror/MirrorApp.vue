@@ -989,7 +989,9 @@ const joinMode = computed(() =>
 const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
 const mirrorView = shallowRef<InstanceType<typeof MirrorView> | null>(null);
 const holdMirrorForStream = ref(false);
-watch(streamRendererOn, (on) => {
+const mirrorReturnAwaitingScene = ref(false);
+watch(streamRendererOn, (on, wasOn) => {
+  if (wasOn && !on && renderStreamContext.firstFrame) mirrorReturnAwaitingScene.value = true;
   holdMirrorForStream.value = on && mirrorView.value !== null;
   renderStreamContext.firstFrame = false;
 }, { flush: "sync" });
@@ -1106,6 +1108,7 @@ watch(() => renderStreamContext.retryRequest, () => requestSeatRenderer(activeCl
 const wantsHostStream = computed(() =>
   sceneAblation.streamsScene && (joined.value || directView.value)
     && (!streamRendererOn.value || holdMirrorForStream.value)
+    && (!mirrorReturnAwaitingScene.value || mirrorReturnRestored.value)
 );
 // The stream shows where the scene would: on a granted view, once it has somewhere to connect.
 const showStream = computed(() =>
@@ -1123,8 +1126,22 @@ const showHostAccessNotice = computed(() =>
   && !joined.value && !pendingName.value && !joinMessage.value && !seatNotice.value
   && hostAccessBlocked.value && hostAccess.value?.reason !== "transitioning"
 );
+// A returning seat must acknowledge restoration before watch:on can request a fresh full scene.
+// A shared seat still streaming for another page keeps its existing behavior.
+const mirrorReturnRestored = computed(() => mirrorSettings.renderStreamUrl !== null || directView.value
+  || (joinSession.value?.renderStream == null && joinSession.value?.rendererState?.restoreComplete !== false)
+  || (joinSession.value?.renderStream == null && joinSession.value?.rendererState?.state === "armed"));
+const mirrorSceneReady = computed(() => {
+  // Scene admission updates on the client notification/revision, including full scenes with no nodes.
+  void revision.value;
+  return !hostAccessBlocked.value && activeClient.sceneGeneration === hostAccess.value?.generation;
+});
+watch([mirrorSceneReady, revision], ([ready]) => {
+  if (ready && mirrorReturnRestored.value) mirrorReturnAwaitingScene.value = false;
+});
 const showScene = computed(() =>
   sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
+    && (!mirrorReturnAwaitingScene.value || (mirrorReturnRestored.value && mirrorSceneReady.value))
 );
 
 // DROP THE SURFACE GRADIENT WHILE IT IS COVERED (see `.game-surface.surface-covered` in @/styles.css for the
@@ -1180,6 +1197,7 @@ watch(
 // A stopped stream (failed, ended, refused) falls back to the old renderer for the session; `renderer` stays saved.
 function onRenderStreamFailed(reason: string): void {
   stopRenderStream(reason, mirrorSettings);
+  requestSeatRenderer(activeClient, "mirror");
 }
 
 // Push the requested watch state to the active connection after admission.
@@ -1280,7 +1298,9 @@ const viewControls = computed(() => {
   const state = mirrorState.value;
   const client = activeClient;
   const current = () => client === activeClient && state === mirrorState.value
-    && client.hostAccess.allowed && generation === client.hostAccess.generation;
+    && client.hostAccess.allowed && generation === client.hostAccess.generation
+    && (streamRendererOn.value || !mirrorReturnAwaitingScene.value
+      || (mirrorReturnRestored.value && mirrorSceneReady.value));
   return {
     sendInput: (message: MirrorInputMessage) => { if (current()) client.sendInput(message); },
     sendAction: (message: MirrorActionMessage) => { if (current()) client.sendAction(message); },
@@ -1742,7 +1762,7 @@ onBeforeUnmount(() => {
       :state="mirrorState"
       :revision="revision"
       :access-generation="hostAccess?.generation"
-      :scene-ready="!hostAccessBlocked && activeClient.sceneGeneration === hostAccess?.generation"
+      :scene-ready="mirrorSceneReady"
       :send-input="viewControls.sendInput"
       :send-action="viewControls.sendAction"
       :send-scroll="viewControls.sendScroll"

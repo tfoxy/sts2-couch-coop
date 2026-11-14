@@ -38,6 +38,8 @@ public interface IHotRendererSwapHost
     (string State, string? Reason,
         (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus { get; }
 
+    // Completion follows presentation and visual-suspender restoration, independently of early fallback state.
+    bool MirrorRestoreComplete => true;
     bool WantsRenderStream(string pageId);
     void RequestRenderer(string pageId, bool wantsStream, double? aspect);
     void ReleaseRenderer(string pageId);
