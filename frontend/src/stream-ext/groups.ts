@@ -3,6 +3,7 @@
 // both pinned to tests/fixtures/render-stream/item-groups.json: the C# runner's item-tagger test asserts the
 // tagger's consts equal it, and stream-ext/__tests__/groups.spec.ts asserts these RS_GROUP_<ROLE> exports do.
 
+export const RS_GROUP_HOVER_TIP = "couchcoop_rs_hover_tip";
 export const RS_GROUP_HAND_HOLDER = "couchcoop_rs_hand_holder";
 export const RS_GROUP_HAND_ROOT = "couchcoop_rs_hand_root";
 export const RS_GROUP_HAND_CONTAINER = "couchcoop_rs_hand_container";

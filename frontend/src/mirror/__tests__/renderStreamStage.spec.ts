@@ -250,12 +250,12 @@ describe("RenderStreamStage", () => {
     }
   });
 
-  it("attaches the raise-hand and view-scale modules on the viewer's saved choices", () => {
+  it("attaches the raise-hand and readability modules on the viewer's saved choices", () => {
     mirrorSettings.raiseHandCards = true;
     mirrorSettings.uiScaling = true;
     mountStage();
     expect((clients[0].options.extensions ?? []).map((e) => e.id))
-      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale"]);
+      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.hoverTips"]);
   });
 
   it("attaches the held-card and confirm-tap modules on the viewer's saved choices", () => {
@@ -470,7 +470,7 @@ describe("RenderStreamStage", () => {
       const original = clients[0];
       const canvas = original.options.canvas;
       expect(ids(original)).toEqual([
-        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
+        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
       ]);
       for (const key of ["raiseHandCards", "uiScaling", "raiseHeldCard", "confirmTap"] as const) {
         for (const enabled of [true, false, true]) {
@@ -506,7 +506,7 @@ describe("RenderStreamStage", () => {
       expect(clients).toHaveLength(2);
       expect(clients[1].options.endpoint).toEqual(wide);
       expect(clients[1].options.canvas.width).toBe(2340);
-      expect(ids(clients[1])).toEqual(["couchcoop.viewScale"]);
+      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.hoverTips"]);
     });
 
     it("a suspended stage remounts nothing, and builds from the current settings when it wakes", async () => {

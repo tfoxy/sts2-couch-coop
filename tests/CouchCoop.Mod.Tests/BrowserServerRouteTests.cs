@@ -785,6 +785,7 @@ if (args is ["beta-targets", ..])
 
     // networking/hosting seams, the headless FMOD forwards, the clean-exit popup suppression, and the two
     // lobby-screen mount points — in the same order the full sequence takes them.
+    Leg(nameof(RenderStreamHoverTipOwnerTests), RenderStreamHoverTipOwnerTests.Run);
     Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
     Leg("HostTransportCapacityTests.HostCallTargets", HostTransportCapacityTests.HostCallTargetsResolve);
     Leg("SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes", SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes);

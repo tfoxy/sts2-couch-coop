@@ -42,6 +42,7 @@ internal static class RenderStreamItemTagger
     internal const string TreasureRelicGroup = "couchcoop_rs_treasure_relic";
     internal const string EventOptionGroup = "couchcoop_rs_event_option";
     internal const string ShopItemGroup = "couchcoop_rs_shop_item";
+    internal const string HoverTipGroup = "couchcoop_rs_hover_tip";
     internal const string RestSiteGroup = "couchcoop_rs_rest_site";
 
     // The node-type leaves and names the groups key on (the old mirror's raise/viewScale identity, verbatim).
@@ -80,6 +81,7 @@ internal static class RenderStreamItemTagger
         }
 
         _installed = true;
+        RenderStreamHoverTipOwner.Install();
         _ = Task.Run(InstallLoopAsync);
     }
 
@@ -214,6 +216,7 @@ internal static class RenderStreamItemTagger
     {
         var groups = new List<string>(2);
 
+        if (facts.TypeLeaf == "NHoverTipSet") groups.Add(HoverTipGroup);
         if (facts.TypeLeaf == HandHolderType) groups.Add(HandHolderGroup);
         if (facts.TypeLeaf == HandRootType) groups.Add(HandRootGroup);
         if (facts.Name == HandContainerName) groups.Add(HandContainerGroup);

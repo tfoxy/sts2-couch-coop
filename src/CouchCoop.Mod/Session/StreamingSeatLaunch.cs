@@ -337,9 +337,9 @@ internal static class StreamingSeatLaunch
             ["GRC_RESOURCE_INLINE_MAX_BYTES"] = "4096",
             ["GRC_PERF_TIMELINE_MAX_BYTES"] = PerfTimelineMaxBytes,
             ["GRC_MESH_DYNAMIC"] = "auto",
-            // Grant the extension modules their identities, live filters and couch role groups. The capture resolves nothing until a
-            // viewer's page actually asks (an extension's `wants`), so a pure viewer pays the same as before.
-            ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter",
+            // Grant identities, live filters and couch role groups only when a viewer asks (`wants`).
+            // Custom metadata is category-granted; the client requests only the CouchCoop tip owner keys.
+            ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter,meta",
         };
         if (config.NetModule is { } netModule)
         {

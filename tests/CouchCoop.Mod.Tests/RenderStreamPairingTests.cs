@@ -176,7 +176,7 @@ internal static class RenderStreamPairingTests
             ["GRC_RESOURCE_INLINE_MAX_BYTES"] = "4096",
             ["GRC_PERF_TIMELINE_MAX_BYTES"] = "8388608",
             ["GRC_MESH_DYNAMIC"] = "auto",
-            ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter",
+            ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter,meta",
         };
         Assert(env.Count == expected.Count && expected.All(kv => env.TryGetValue(kv.Key, out var v) && v == kv.Value),
             "the streaming seat's environment is exactly the acceptance table: "
@@ -790,6 +790,9 @@ internal static class RenderStreamPairingTests
             => new(name, type, parentName, parentScene, rewardAncestor);
 
         var groups = (RenderStreamItemTagger.ItemTagFacts f) => RenderStreamItemTagger.GroupsFor(f);
+        Assert(groups(F("Tips", "NHoverTipSet")).SequenceEqual(new[] { RenderStreamItemTagger.HoverTipGroup }),
+            "a hover-tip root has its own role group");
+        RenderStreamHoverTipOwnerTests.Run();
         Assert(groups(F("NHandCardHolder-CARD", "NHandCardHolder")).Contains(RenderStreamItemTagger.HandHolderGroup),
             "a hand card holder is tagged a holder");
         Assert(groups(F("NPlayerHand", "NPlayerHand")).Contains(RenderStreamItemTagger.HandRootGroup),
@@ -867,7 +870,7 @@ internal static class RenderStreamPairingTests
             .Where(field => field.IsLiteral && field.FieldType == typeof(string) && field.Name.EndsWith("Group", StringComparison.Ordinal))
             .ToDictionary(field => RoleKey(field.Name[..^"Group".Length]), field => (string)field.GetRawConstantValue()!);
 
-        Assert(table.Count == 15, $"the shared table lists the 15 groups (got {table.Count})");
+        Assert(table.Count == 16, $"the shared table lists the 16 groups (got {table.Count})");
         Assert(consts.Count == table.Count && consts.All(entry => table.TryGetValue(entry.Key, out var name) && name == entry.Value),
             "the tagger's group consts equal the shared table: "
             + string.Join(", ", consts.OrderBy(entry => entry.Key).Select(entry => $"{entry.Key}={entry.Value}")));

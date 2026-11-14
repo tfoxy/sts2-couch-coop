@@ -10,6 +10,7 @@ import { createConfirmTapExtension, type ConfirmTapController } from "@/stream-e
 import { createHeldCardExtension, type HeldCardController } from "@/stream-ext/heldCard";
 import { createPointerTargetModule, type PointerTargetModule } from "@/stream-ext/pointerTargets";
 import { createHandPresenceExtension, createRaisedHandExtension } from "@/stream-ext/raisedHand";
+import { createHoverTipsModule } from "@/stream-ext/hoverTips";
 import { createViewScaleExtension } from "@/stream-ext/viewScale";
 
 export interface StreamExtensionsOptions {
@@ -49,6 +50,10 @@ export function buildStreamExtensions(options: StreamExtensionsOptions): StreamE
     const held = createHeldCardExtension();
     extensions.push(settingGated(held.extension, enabled("raiseHeldCard"), () => held.controller.setHeld(null, 0, "drag")));
     heldCard = held.controller;
+  }
+  // Measure owners after every module that can move them on this frame.
+  if (install("uiScaling")) {
+    extensions.push(settingGated(createHoverTipsModule({ designWidth: options.presentationWidth }).extension, enabled("uiScaling")));
   }
   if (install("confirmTap")) {
     const confirm = createConfirmTapExtension();
