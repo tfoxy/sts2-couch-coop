@@ -24,6 +24,7 @@ public static class HeadlessViewportConfigurator
         StreamMapDrawingToolsPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
         StreamHandPlacementPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
         StreamCreaturePlacementPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
+        StreamEnergyPlacementPatch.SetWidth(wide ? PresentationOwner.StreamWidth : 1920);
     }
 
     // Main-thread only, shared with the swap so the existing mirror re-assert cannot fight capture sizing.

@@ -169,6 +169,7 @@ internal static class StreamingSeatRoleTests
         AssertGated(init, "StreamMapDrawingToolsPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
         AssertGated(init, "StreamHandPlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
         AssertGated(init, "StreamCreaturePlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
+        AssertGated(init, "StreamEnergyPlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
 
         var launcher = File.ReadAllText(
             Path.Combine(root, "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));

@@ -610,6 +610,7 @@ if (args is ["renderer-swap", ..])
     StreamMapDrawingToolsTests.Run();
     StreamHandPlacementTests.Run();
     StreamCreaturePlacementTests.Run();
+    StreamEnergyPlacementTests.Run();
     return;
 }
 
@@ -800,6 +801,7 @@ if (args is ["beta-targets", ..])
     Leg(nameof(StreamMapDrawingToolsTests), StreamMapDrawingToolsTests.TargetsResolve);
     Leg(nameof(StreamHandPlacementTests), StreamHandPlacementTests.TargetsResolve);
     Leg(nameof(StreamCreaturePlacementTests), StreamCreaturePlacementTests.TargetsResolve);
+    Leg(nameof(StreamEnergyPlacementTests), StreamEnergyPlacementTests.TargetsResolve);
     Leg(nameof(HostMusicStateTests), HostMusicStateTests.TargetsResolve);
     Leg(nameof(SeatAudioFeedTests), SeatAudioFeedTests.TargetsResolve);
     // The seat's Steam-Cloud write paths. Same standing as the FMOD forwards above, and the same consequence if
@@ -979,6 +981,7 @@ StreamDesignPlacementTests.Run();
 StreamMapDrawingToolsTests.Run();
 StreamHandPlacementTests.Run();
 StreamCreaturePlacementTests.Run();
+StreamEnergyPlacementTests.Run();
 HeadlessTermSignalTests.Run();
 SeatStopEventTests.Run();
 ConnectionRegistryTests.Run();
