@@ -320,7 +320,7 @@ internal sealed partial class BrowserServerRouteTests
                 var injectedCapture = capture;
                 host = new(runtime.NewEnvelopeFactory().RuntimeHost, root.Path);
                 host.CreateRendererSwap = changed => new RenderStreamSwap(injectedCapture,
-                    (_, _) => new NoopCancellation(), _ => { }, () => { }, changed);
+                    (_, _) => new NoopCancellation(), _ => { }, () => { }, changed, _ => { });
             }
             var demandHost = host is null ? null : new TrackingRendererHost(host);
             RelayedSeat? seat = null;

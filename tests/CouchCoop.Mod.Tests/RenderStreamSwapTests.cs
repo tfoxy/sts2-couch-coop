@@ -12,6 +12,11 @@ internal static class RenderStreamSwapTests
             InitialMirrorDoesNoCaptureWork,
             ArmResumesBeforeCallingCapture,
             ArmUsesTheRequestingAspectAndConfiguredCap,
+            WideArmOwnsPresentationUntilDisarmed,
+            MirrorAndStandardArmKeepTheirPresentation,
+            WideArmFailuresRestoreBeforeResumingMirror,
+            DeferredDisarmedRestoresBeforeRearm,
+            DisposedSwapIgnoresDeferredRestore,
             OnlyArmedPublishesTheSnapshot,
             RefusedArmRestoresTheSuspender,
             ArmFailureAllowsAnExplicitRetry,
@@ -113,6 +118,91 @@ internal static class RenderStreamSwapTests
             f.Swap.Request("page", true, aspect);
             Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == $"presentation:{width}x1080", "aspect follows presentation width clamping");
         }
+    }
+
+    private static void WideArmOwnsPresentationUntilDisarmed()
+    {
+        using var f = new Fixture();
+        f.Capture.BeforeArm = () => Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2340) }),
+            "expand and the wide window are set before capture queries the presentation");
+        f.Swap.Request("page", true, 2340.0 / 1080);
+        Assert(f.Presentation.ReassertMirror() && f.PresentationChanges.Count == 1, "arming suppresses mirror re-asserts");
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Presentation.ReassertMirror();
+        Assert(f.PresentationChanges.Count == 1, "armed stream owns presentation without recurring writes");
+        f.Swap.Request("page", false);
+        f.Presentation.ReassertMirror();
+        Assert(f.PresentationChanges.Count == 1, "capture retains presentation during teardown");
+        f.Capture.EmitDisarmed();
+        Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2340), (false, 1920) }), "disarmed restores Keep and a 1920 window");
+        Assert(f.PresentationWhenResumed is (false, 1920), "mirror resumes only after its presentation is restored");
+        f.Presentation.ReassertMirror();
+        Assert(f.PresentationChanges.Count == 3 && f.PresentationChanges[^1] == (false, 1920), "mirror re-asserts resume after restoration");
+    }
+
+    private static void MirrorAndStandardArmKeepTheirPresentation()
+    {
+        using var f = new Fixture();
+        f.Presentation.ReassertMirror();
+        Assert(f.PresentationChanges.SequenceEqual(new[] { (false, 1920) }), "mirror seat asserts Keep and 1920");
+        f.Swap.Request("page", true, 1920.0 / 1080);
+        f.Capture.EmitArmed(Snapshot("standard"));
+        Assert(f.PresentationChanges.Count == 1, "16:9 arm does not change presentation");
+        f.Presentation.ReassertMirror();
+        Assert(f.PresentationChanges.Count == 2 && f.PresentationChanges.All(p => p == (false, 1920)),
+            "16:9 capture keeps the existing mirror policy");
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        Assert(f.PresentationChanges.Count == 2, "16:9 teardown needs no presentation restore");
+    }
+
+    private static void WideArmFailuresRestoreBeforeResumingMirror()
+    {
+        foreach (var synchronous in new[] { false, true })
+        {
+            var nextFrame = new Queue<Action>();
+            using var f = new Fixture(deferSignal: nextFrame.Enqueue);
+            if (synchronous) f.Capture.ArmResult = 9;
+            f.Swap.Request("page", true, 2340.0 / 1080);
+            if (!synchronous)
+            {
+                f.Capture.EmitArmFailed("failed");
+                Assert(f.PresentationChanges.Count == 1 && !f.SuspenderEnabled, "signal waits a frame before restoring");
+                nextFrame.Dequeue()();
+            }
+            Assert(f.Swap.State == "failed" && f.PresentationWhenResumed is (false, 1920), "failed arm restores before mirror resume");
+            Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2340), (false, 1920) }), "failed arm releases wide ownership");
+        }
+    }
+
+    private static void DeferredDisarmedRestoresBeforeRearm()
+    {
+        var nextFrame = new Queue<Action>();
+        using var f = new Fixture(deferSignal: nextFrame.Enqueue);
+        f.Swap.Request("page", true, 2340.0 / 1080);
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Swap.Request("page", false);
+        f.Swap.Request("reload", true, 2520.0 / 1080);
+        f.Capture.EmitDisarmed();
+        f.Capture.EmitDisarmed();
+        Assert(!f.SuspenderEnabled && f.PresentationChanges.Count == 1, "disarmed signal does no inline window reads or writes");
+        nextFrame.Dequeue()();
+        Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2340), (false, 1920), (true, 2520) }), "restore precedes the next wide arm");
+        Assert(f.PresentationWhenResumed is (false, 1920) && f.Capture.ArmCalls == 2, "resume sees mirror dimensions before rearm");
+        nextFrame.Dequeue()();
+        Assert(f.Swap.State == "arming" && f.PresentationChanges.Count == 3, "duplicate deferred teardown cannot restore over a newer arm");
+    }
+
+    private static void DisposedSwapIgnoresDeferredRestore()
+    {
+        var nextFrame = new Queue<Action>();
+        using var f = new Fixture(deferSignal: nextFrame.Enqueue);
+        f.Swap.Request("page", true, 2340.0 / 1080);
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        f.Swap.Dispose();
+        nextFrame.Dequeue()();
+        Assert(f.PresentationChanges.Count == 1 && !f.SuspenderEnabled, "disposed swap cannot change the window from a queued signal");
     }
 
     private static void OnlyArmedPublishesTheSnapshot()
@@ -447,17 +537,31 @@ internal static class RenderStreamSwapTests
         internal readonly List<Deadline> Deadlines = [];
         internal readonly FakeCapture Capture;
         internal readonly RenderStreamSwap Swap;
+        internal readonly HeadlessViewportConfigurator.Presentation Presentation;
+        internal readonly List<(bool Expand, int Width)> PresentationChanges = [];
+        internal (bool Expand, int Width)? PresentationWhenResumed;
         internal bool SuspenderEnabled = true;
         internal int TrimCalls;
         private TimeSpan _now;
 
-        internal Fixture(int maxWidth = 2520)
+        internal Fixture(int maxWidth = 2520, Action<Action>? deferSignal = null)
         {
             Capture = new FakeCapture(Events);
+            Presentation = new HeadlessViewportConfigurator.Presentation((expand, width) =>
+            {
+                PresentationChanges.Add((expand, width));
+                return true;
+            });
             Swap = new RenderStreamSwap(Capture, Schedule,
-                on => { SuspenderEnabled = on; Events.Add($"suspender:{on}"); },
+                on =>
+                {
+                    SuspenderEnabled = on;
+                    if (on && PresentationChanges.Count != 0) PresentationWhenResumed = PresentationChanges[^1];
+                    Events.Add($"suspender:{on}");
+                },
                 () => { TrimCalls++; Events.Add("trim"); },
-                () => { Events.Add($"changed:{Swap!.State}"); Changes.Add((Swap.State, Swap.Snapshot)); }, maxWidth);
+                () => { Events.Add($"changed:{Swap!.State}"); Changes.Add((Swap.State, Swap.Snapshot)); },
+                Presentation.SetStreamWidth, maxWidth, deferSignal);
         }
 
         internal void Arm()

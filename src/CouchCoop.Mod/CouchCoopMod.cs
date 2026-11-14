@@ -216,6 +216,7 @@ public static class CouchCoopMod
             // a seat join. Unflagged, it loads nothing and logs nothing (one warning if the extension is named
             // anyway). See StreamingSeatRole for the standby capture and saver gates below.
             StreamingSeatRole.StartCaptureOrExit();
+            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamDesignPlacementPatch.Apply();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
             // session impossible); on a headless couch seat it re-materializes "fastmp=join" + "clientId=<netId>"

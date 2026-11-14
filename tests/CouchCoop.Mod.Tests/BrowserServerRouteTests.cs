@@ -605,6 +605,7 @@ if (args is ["host-ui", ..])
 if (args is ["renderer-swap", ..])
 {
     RenderStreamSwapTests.Run();
+    StreamDesignPlacementTests.Run();
     return;
 }
 
@@ -789,6 +790,7 @@ if (args is ["beta-targets", ..])
     Leg("SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes", SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
     Leg(nameof(HeadlessAssetLoadingActivityTests), HeadlessAssetLoadingActivityTests.TargetsResolve);
+    Leg(nameof(StreamDesignPlacementTests), StreamDesignPlacementTests.TargetsResolve);
     Leg(nameof(HostMusicStateTests), HostMusicStateTests.TargetsResolve);
     Leg(nameof(SeatAudioFeedTests), SeatAudioFeedTests.TargetsResolve);
     // The seat's Steam-Cloud write paths. Same standing as the FMOD forwards above, and the same consequence if
@@ -963,6 +965,7 @@ WindowsSeatLifetimeTests.Run();
 HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
 RenderStreamSwapTests.Run();
+StreamDesignPlacementTests.Run();
 HeadlessTermSignalTests.Run();
 SeatStopEventTests.Run();
 ConnectionRegistryTests.Run();

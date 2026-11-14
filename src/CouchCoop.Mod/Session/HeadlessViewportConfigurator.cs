@@ -8,6 +8,7 @@ namespace CouchCoop.Mod.Session;
 /// <summary>
 /// Forces a headless co-op client's root window to render a fixed 16:9 (1920x1080) design space, so its browser
 /// mirror fills the width like the real 16:9 host instead of showing a pillar-boxed square.
+/// A wide render-stream arm temporarily owns the presentation until capture teardown completes.
 ///
 /// Why this is needed: the project uses stretch mode <c>canvas_items</c> with aspect <c>expand</c>, and the game
 /// only pins a fixed <c>ContentScaleAspect = Keep</c> + <c>ContentScaleSize</c> once the player has picked a
@@ -28,6 +29,47 @@ public static class HeadlessViewportConfigurator
     private static bool _started;
 
     private static readonly Vector2I TargetSize = new(1920, 1080);
+    private static readonly Presentation PresentationOwner = new(ApplyPresentation);
+
+    // Main-thread only, shared with the swap so the existing mirror re-assert cannot fight capture sizing.
+    internal static void SetStreamPresentationWidth(int width) => PresentationOwner.SetStreamWidth(width);
+    internal static bool StreamOwnsPresentation => PresentationOwner.StreamOwnsPresentation;
+
+    internal static Vector2 ResolveStreamPlacement(Vector2 target, float anchorLeft)
+        => PresentationOwner.ResolvePlacement(target, anchorLeft);
+
+    internal sealed class Presentation(Func<bool, int, bool> apply)
+    {
+        private bool _streamOwnsPresentation;
+        private int _streamWidth = 1920;
+
+        internal bool StreamOwnsPresentation => _streamOwnsPresentation;
+
+        internal bool ReassertMirror() => _streamOwnsPresentation || apply(false, 1920);
+
+        // Preserve the design-space placement, carried across the extra width by the control's anchor.
+        // A mirror or 16:9 stream returns the original target exactly, including throughout swap-back.
+        internal Vector2 ResolvePlacement(Vector2 target, float anchorLeft)
+            => _streamOwnsPresentation
+                ? new Vector2(target.X * 1920 / _streamWidth + anchorLeft * (_streamWidth - 1920), target.Y)
+                : target;
+
+        internal void SetStreamWidth(int width)
+        {
+            if (width > 1920)
+            {
+                _streamWidth = width;
+                _streamOwnsPresentation = true;
+                apply(true, width);
+            }
+            else if (_streamOwnsPresentation)
+            {
+                apply(false, 1920);
+                _streamOwnsPresentation = false;
+                _streamWidth = 1920;
+            }
+        }
+    }
 
     // Phase 1: poll fast (0.25s) until the tree exists + a handful of successful re-asserts win the startup race
     // with NGame's own display apply. Phase 2: keep re-asserting at a low steady rate FOR THE PROCESS LIFETIME —
@@ -101,9 +143,10 @@ public static class HeadlessViewportConfigurator
         }
     }
 
-    // Runs on the main thread. Returns false until the root window exists (so the caller keeps retrying), true
-    // once we've been able to inspect/assert it.
-    private static bool ApplyOnce()
+    // Runs on the main thread. Capture ownership suppresses even the root read in the mirror's existing loop.
+    private static bool ApplyOnce() => PresentationOwner.ReassertMirror();
+
+    private static bool ApplyPresentation(bool expand, int width)
     {
         if (Engine.GetMainLoop() is not SceneTree { Root: { } root } || !GodotObject.IsInstanceValid(root))
         {
@@ -113,28 +156,28 @@ public static class HeadlessViewportConfigurator
         var beforeAspect = root.ContentScaleAspect;
         var beforeContent = root.ContentScaleSize;
         var beforeWindow = root.Size;
+        var aspect = expand ? Window.ContentScaleAspectEnum.Expand : Window.ContentScaleAspectEnum.Keep;
+        var windowSize = new Vector2I(width, TargetSize.Y);
 
         var changed = false;
-        if (root.ContentScaleAspect != Window.ContentScaleAspectEnum.Keep || root.ContentScaleSize != TargetSize)
+        if (root.ContentScaleAspect != aspect || root.ContentScaleSize != TargetSize)
         {
-            root.ContentScaleAspect = Window.ContentScaleAspectEnum.Keep;
+            root.ContentScaleAspect = aspect;
             root.ContentScaleSize = TargetSize;
             changed = true;
         }
 
-        // Belt-and-suspenders: the mirror reflects canvas-space node rects, which in canvas_items mode follow the
-        // 2D size override (content scale). If the headless still lays out square, also pin the window size so the
-        // root viewport itself is 16:9.
-        if (root.Size != TargetSize)
+        // Keep the window and content policy in sync: mirror uses 16:9, while a wide capture expands the visible rect.
+        if (root.Size != windowSize)
         {
-            root.Size = TargetSize;
+            root.Size = windowSize;
             changed = true;
         }
 
         if (changed)
         {
             CouchCoopLog.Stderr(
-                $"headless viewport: aspect {beforeAspect}->Keep, content {beforeContent}->{TargetSize}, "
+                $"headless viewport: aspect {beforeAspect}->{aspect}, content {beforeContent}->{TargetSize}, "
                 + $"window {beforeWindow}->{root.Size}, visible={root.GetVisibleRect().Size}");
         }
 

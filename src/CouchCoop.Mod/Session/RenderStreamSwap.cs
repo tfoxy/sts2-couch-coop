@@ -18,12 +18,15 @@ internal sealed class RenderStreamSwap : IDisposable
     private readonly Action<bool> _setSuspenderEnabled;
     private readonly Action _requestTrim;
     private readonly Action _onChanged;
+    private readonly Action<int> _setPresentationWidth;
+    private readonly Action<Action> _deferSignal;
     private readonly int _maxWidth;
     private readonly Dictionary<string, double?> _wantingPages = new(StringComparer.Ordinal);
     private Phase _phase;
     private IDisposable? _signals;
     private IDisposable? _grace;
     private int _graceGeneration;
+    private int _armGeneration;
     private bool _disposed;
 
     internal string[] WantingPages => _wantingPages.Keys.ToArray();
@@ -38,13 +41,17 @@ internal sealed class RenderStreamSwap : IDisposable
         Action<bool> setSuspenderEnabled,
         Action requestTrim,
         Action onChanged,
-        int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth)
+        Action<int> setPresentationWidth,
+        int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth,
+        Action<Action>? deferSignal = null)
     {
         _capture = capture;
         _schedule = schedule;
         _setSuspenderEnabled = setSuspenderEnabled;
         _requestTrim = requestTrim;
         _onChanged = onChanged;
+        _setPresentationWidth = setPresentationWidth;
+        _deferSignal = deferSignal ?? (callback => callback());
         _maxWidth = maxWidth;
     }
 
@@ -73,7 +80,8 @@ internal sealed class RenderStreamSwap : IDisposable
         }
 
         _signals ??= _capture.Subscribe(new RenderStreamCaptureSignals(
-            Armed, Disarmed, ArmFailed, StreamEnded, _ => CancelGrace(), (_, _) => ClientLeft()));
+            Armed, () => DeferSignal(Disarmed), reason => DeferSignal(() => ArmFailed(reason)),
+            StreamEnded, _ => CancelGrace(), (_, _) => ClientLeft()));
         Arm(aspect);
     }
 
@@ -85,10 +93,12 @@ internal sealed class RenderStreamSwap : IDisposable
 
     private void Arm(double? aspect)
     {
+        _armGeneration++;
         _setSuspenderEnabled(false);
         _phase = Phase.Arming;
         Change("arming");
         var width = StreamingSeatLaunch.PresentationWidth(aspect, _maxWidth);
+        _setPresentationWidth(width);
         var result = _capture.Arm(new Dictionary<string, string>
         {
             ["GRC_ROOT_SIZE"] = $"presentation:{width.ToString(CultureInfo.InvariantCulture)}x1080",
@@ -110,6 +120,7 @@ internal sealed class RenderStreamSwap : IDisposable
         if (_disposed || _phase != Phase.Arming) return;
         _phase = Phase.Mirror;
         Snapshot = null;
+        _setPresentationWidth(StreamingSeatLaunch.PresentationBaseWidth);
         _setSuspenderEnabled(true);
         Change("failed", reason);
     }
@@ -142,6 +153,7 @@ internal sealed class RenderStreamSwap : IDisposable
         CancelGrace();
         _phase = Phase.Mirror;
         Snapshot = null;
+        _setPresentationWidth(StreamingSeatLaunch.PresentationBaseWidth);
         _setSuspenderEnabled(true);
         _requestTrim();
         if (State != "failed") Change("mirror");
@@ -172,6 +184,15 @@ internal sealed class RenderStreamSwap : IDisposable
         _grace = null;
     }
 
+    private void DeferSignal(Action callback)
+    {
+        var generation = _armGeneration;
+        _deferSignal(() =>
+        {
+            if (!_disposed && generation == _armGeneration) callback();
+        });
+    }
+
     private void Change(string state, string? reason = null)
     {
         State = state;
@@ -187,11 +208,18 @@ internal sealed class RenderStreamSwap : IDisposable
         _signals?.Dispose();
     }
 
-    internal static RenderStreamSwap CreateForSeat(Action onChanged) => new(
-        new GodotRenderStreamCapture(), ScheduleOnMainThread,
-        CouchCoopHeadlessVisualSuspender.SetEnabled, HeadlessMallocTrim.Trim, onChanged,
-        StreamingSeatLaunch.ParseMaxPresentationWidth(
-            System.Environment.GetEnvironmentVariable(StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable), out _));
+    internal static RenderStreamSwap CreateForSeat(Action onChanged)
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree) throw new InvalidOperationException("No SceneTree for capture swap.");
+        return new RenderStreamSwap(
+            new GodotRenderStreamCapture(), ScheduleOnMainThread,
+            CouchCoopHeadlessVisualSuspender.SetEnabled, HeadlessMallocTrim.Trim, onChanged,
+            HeadlessViewportConfigurator.SetStreamPresentationWidth,
+            StreamingSeatLaunch.ParseMaxPresentationWidth(
+                System.Environment.GetEnvironmentVariable(StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable), out _),
+            // Restore outside the capture signal, before resuming the mirror's visual suspender.
+            callback => tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(callback), (uint)GodotObject.ConnectFlags.OneShot));
+    }
 
     private static IDisposable ScheduleOnMainThread(TimeSpan delay, Action callback)
     {
