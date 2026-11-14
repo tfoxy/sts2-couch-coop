@@ -59,6 +59,8 @@ internal static class RenderStreamPairingTests
         ItemTaggerGroupsMatchTheModules();
         ItemTaggerGroupNamesMatchTheSharedTable();
         ItemTaggerReadsParentFactsOnlyForCreatureNames();
+        RenderStreamItemTaggerTests.Run();
+        Console.WriteLine("render-stream tagger: 3 identity checks passed.");
     }
 
     private const string Library = "/fake/library.so";

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ExtensionFrame, ItemMeta, ItemMetaBatch, ItemQuery, OverrideTable, Rect } from "@godot-scene-web/render-stream-client";
 
 import { buildStreamExtensions } from "@/stream-ext/extensions";
-import { RS_GROUP_CARD_REWARD_ROOT, RS_GROUP_TREASURE_RELIC } from "@/stream-ext/groups";
+import { RS_GROUP_CARD_REWARD_CARD, RS_GROUP_CARD_REWARD_ROOT, RS_GROUP_TREASURE_RELIC } from "@/stream-ext/groups";
 import { createViewScaleExtension, resolveStreamViewScale, scaleStampAffine } from "@/stream-ext/viewScale";
 import { VIEW_SCALE_PILE } from "@/mirror/viewScale";
 import { createMirrorSettings } from "@/mirror/mirrorSettings";
@@ -77,6 +77,28 @@ function fakeQuery(rects: Record<number, Rect | null>): ItemQuery {
 }
 
 describe("viewScale — extension glue", () => {
+  it.each(["delta", "full"] as const)("clears reward-card scaling after a %s removes its group", (form) => {
+    const overrides = new FakeOverrides();
+    const query = fakeQuery({ 1: { x: 600, y: 300, w: 200, h: 300 } });
+    const ext = createViewScaleExtension({ designWidth: 1920 });
+    const frame: ExtensionFrame = { seq: 1, now: 0, overrides, query, requestRedraw: () => {} };
+    ext.onItemMeta!(batch([meta(1, [RS_GROUP_CARD_REWARD_CARD])]));
+    ext.beforeDraw!(frame);
+    expect(overrides.written.get(1)![0]).toBe(1.15);
+
+    ext.onItemMeta!({ form, items: [meta(1, [])] });
+    ext.beforeDraw!(frame);
+    expect(overrides.written.has(1)).toBe(false);
+    const afterRemoval = overrides.writes;
+    ext.beforeDraw!(frame);
+    expect(overrides.writes).toBe(afterRemoval);
+
+    ext.onItemMeta!({ form: "delta", items: [meta(1, [RS_GROUP_CARD_REWARD_CARD])] });
+    ext.beforeDraw!(frame);
+    expect(overrides.written.get(1)![0]).toBe(1.15);
+    ext.dispose!();
+  });
+
   it("writes a rigid scale and then stays clean until the transaction moves", () => {
     const overrides = new FakeOverrides();
     const query = fakeQuery({ 1: { x: 696, y: 236, w: 526, h: 640 } });

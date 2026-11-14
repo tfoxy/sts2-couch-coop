@@ -80,6 +80,7 @@ export function scaleStampAffine(
 
 export function createViewScaleExtension(options: ViewScaleOptions): RenderStreamExtension {
   const desired = new Map<number, Desired>();
+  const applied = new Set<number>();
   let dirty = true;
   let lastSeq: number | null = null;
 
@@ -104,6 +105,13 @@ export function createViewScaleExtension(options: ViewScaleOptions): RenderStrea
       lastSeq = f.seq;
       dirty = false;
 
+      for (const id of applied) {
+        if (!desired.has(id)) {
+          f.overrides.clear(id);
+          applied.delete(id);
+        }
+      }
+
       for (const [id, d] of desired) {
         // Measure the widget's whole visual bounds, not just its own draw commands: a combat pile
         // button draws its sprite in a child (the root has no own commands), and the old mirror's
@@ -125,10 +133,12 @@ export function createViewScaleExtension(options: ViewScaleOptions): RenderStrea
         f.overrides.set(id, {
           transform: scaleStampAffine(d.scale, stamp.pivotX, stamp.pivotY, stamp.offsetX, stamp.offsetY)
         });
+        applied.add(id);
       }
     },
     dispose: () => {
       desired.clear();
+      applied.clear();
       dirty = false;
     }
   };

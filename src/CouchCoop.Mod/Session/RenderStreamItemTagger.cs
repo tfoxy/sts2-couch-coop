@@ -1,6 +1,7 @@
 using Godot;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace CouchCoop.Mod.Session;
@@ -14,15 +15,15 @@ namespace CouchCoop.Mod.Session;
 /// are NOT enough for a pooled hand holder (its path is the card that happens to fill it), a targeting arrow, a
 /// creature HUD group (identified by its PARENT's scene), or the card-reward screen's NCard descendants. For those,
 /// this component tags the live nodes with the mod's own groups, which the capture resolves through
-/// <c>is_in_group</c> when the first viewer asks. Tagging is static at node entry, matching the capture's own
-/// "resolved once at creation" identity rule.</para>
+/// <c>is_in_group</c> when the first viewer asks. Groups are replaced on each tree entry so pooled nodes
+/// carry their current context when the capture refreshes their identity.</para>
 ///
 /// <para><b>Cost.</b> Runs only on the streaming seat (<see cref="StreamingSeatRole.IsStreamingSeat"/>): the
 /// host's headed instance and a normal headless seat have no capture reading groups, so nothing is installed. On
-/// the streaming seat it is one <c>SceneTree.NodeAdded</c> handler; the per-node work is a managed type-leaf read and
-/// one name marshal. Everything else is read only for the nodes that can use it: the parent's scene path and name
-/// only for the four creature HUD names, and the bounded ancestor walk only for NCard nodes. <c>AddToGroup</c> runs
-/// on the few nodes that match.</para>
+/// the streaming seat it is one <c>SceneTree.NodeAdded</c> handler; the per-node work reads the managed type leaf,
+/// name and current group membership. Context is read only for the nodes that can use it: the parent's scene path and name
+/// only for the four creature HUD names, and the bounded ancestor walk only for NCard nodes. Only this tagger's
+/// groups are changed; groups owned by the game or other mods are preserved.</para>
 /// </remarks>
 internal static class RenderStreamItemTagger
 {
@@ -44,6 +45,13 @@ internal static class RenderStreamItemTagger
     internal const string ShopItemGroup = "couchcoop_rs_shop_item";
     internal const string HoverTipGroup = "couchcoop_rs_hover_tip";
     internal const string RestSiteGroup = "couchcoop_rs_rest_site";
+
+    private static readonly HashSet<string> OwnedGroups = new(StringComparer.Ordinal)
+    {
+        HandHolderGroup, HandRootGroup, HandContainerGroup, HandCoverGroup, TargetingArrowGroup, HandChoiceGroup,
+        CreatureHudGroup, CreatureReticleGroup, CreaturePowerGroup, CardRewardRootGroup, CardRewardCardGroup,
+        TreasureRelicGroup, EventOptionGroup, ShopItemGroup, HoverTipGroup, RestSiteGroup
+    };
 
     // The node-type leaves and names the groups key on (the old mirror's raise/viewScale identity, verbatim).
     private const string HandHolderType = "NHandCardHolder";
@@ -150,10 +158,22 @@ internal static class RenderStreamItemTagger
             return;
         }
 
-        foreach (var group in GroupsFor(BuildFacts(node)))
+        ReplaceGroups(BuildFacts(node), node.GetGroups().Select(group => group.ToString()),
+            group => node.AddToGroup(group), group => node.RemoveFromGroup(group));
+    }
+
+    // Capture reads Godot group membership again on re-entry and replaces the item's whole metadata row.
+    internal static void ReplaceGroups(ItemTagFacts facts, IEnumerable<string> currentGroups,
+        Action<string> add, Action<string> remove)
+    {
+        var desired = new HashSet<string>(GroupsFor(facts), StringComparer.Ordinal);
+        foreach (var group in currentGroups)
         {
-            node.AddToGroup(group);
+            if (desired.Remove(group)) continue;
+            if (OwnedGroups.Contains(group)) remove(group);
         }
+
+        foreach (var group in desired) add(group);
     }
 
     // The per-node facts the pure decision keys on. SceneFilePath is non-empty only on an instanced-scene root.
@@ -213,7 +233,7 @@ internal static class RenderStreamItemTagger
     }
 
     /// <summary>
-    /// The mod's own groups a node belongs to, from its static facts. Pure, so the runner unit-tests it without an
+    /// The mod's own groups a node belongs to, from its current facts. Pure, so the runner unit-tests it without an
     /// engine. A node may carry several groups (a hand choice name is also scanned separately from its type).
     /// </summary>
     internal static IReadOnlyList<string> GroupsFor(ItemTagFacts facts)
