@@ -609,6 +609,18 @@ if (args is ["host-ui", ..])
     return;
 }
 
+if (args is ["stream-creature", ..])
+{
+    StreamCreaturePlacementTests.Run();
+    return;
+}
+
+if (args is ["stream-card-reward", ..])
+{
+    StreamCardRewardPlacementTests.Run();
+    return;
+}
+
 if (args is ["renderer-swap", ..])
 {
     RenderStreamSwapTests.Run();
@@ -616,6 +628,7 @@ if (args is ["renderer-swap", ..])
     StreamDesignPlacementTests.Run();
     StreamMapDrawingToolsTests.Run();
     StreamHandPlacementTests.Run();
+    StreamCardRewardPlacementTests.Run();
     StreamCreaturePlacementTests.Run();
     StreamEnergyPlacementTests.Run();
     return;
@@ -807,6 +820,7 @@ if (args is ["beta-targets", ..])
     Leg(nameof(StreamDesignPlacementTests), StreamDesignPlacementTests.TargetsResolve);
     Leg(nameof(StreamMapDrawingToolsTests), StreamMapDrawingToolsTests.TargetsResolve);
     Leg(nameof(StreamHandPlacementTests), StreamHandPlacementTests.TargetsResolve);
+    Leg(nameof(StreamCardRewardPlacementTests), StreamCardRewardPlacementTests.TargetsResolve);
     Leg(nameof(StreamCreaturePlacementTests), StreamCreaturePlacementTests.TargetsResolve);
     Leg(nameof(StreamEnergyPlacementTests), StreamEnergyPlacementTests.TargetsResolve);
     Leg(nameof(HostMusicStateTests), HostMusicStateTests.TargetsResolve);
@@ -987,6 +1001,7 @@ HeadlessViewportTests.Run();
 StreamDesignPlacementTests.Run();
 StreamMapDrawingToolsTests.Run();
 StreamHandPlacementTests.Run();
+StreamCardRewardPlacementTests.Run();
 StreamCreaturePlacementTests.Run();
 StreamEnergyPlacementTests.Run();
 HeadlessTermSignalTests.Run();

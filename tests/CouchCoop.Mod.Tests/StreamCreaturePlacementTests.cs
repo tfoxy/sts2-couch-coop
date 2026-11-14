@@ -26,10 +26,17 @@ internal static class StreamCreaturePlacementTests
             DisarmRestoresBeforeMirrorSizing,
             FreedAndExitingNodesAreForgotten,
             NewNodesUseCurrentOwnership,
-            CompanionFamiliesRemainNativeWhileOthersSpread,
-            CompanionAnimationSurvivesNativePassAndDisarm,
-            FirstCompanionRetiresTheOwnersSpreadBaseline,
-            RegistrationRestoresAnOwnerThatAcquiresACompanion,
+            CompanionFamiliesFollowTheField,
+            CompanionReplacementUsesTheUnspreadOwner,
+            LaterNativePassKeepsTheCompanionEndpoint,
+            DisarmRestoresTheNewCompanionOffset,
+            DisarmDuringCompanionTweenRetiresSpreadWrites,
+            FirstSummonKeepsItsEndpointAcrossNestedPlacement,
+            WuppyCallbacksUseNativeOwnersAndSurviveDisarm,
+            RearmRetargetsAnUnfinishedCompanionTween,
+            ExpiredCompanionTweenIsForgottenAcrossPlacementBoundaries,
+            FinishedCompanionTweenIsRetiredBeforeItsParentExpires,
+            CompanionHooksAreInertOutsideTheirScope,
         ];
         foreach (var test in tests) test();
         Console.WriteLine($"StreamCreaturePlacementTests: {tests.Length} passed.");
@@ -47,6 +54,17 @@ internal static class StreamCreaturePlacementTests
                 && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(binding.Parameters),
                 $"{binding.Method} resolves with its complete typed signature");
         }
+        foreach (var binding in StreamCreaturePlacementPatch.CompanionBindings)
+        {
+            var method = StreamCreaturePlacementPatch.ResolveCompanion(binding);
+            Assert(method is { IsPublic: true, IsStatic: false } && method.DeclaringType == typeof(NCreature)
+                && method.ReturnType == typeof(void)
+                && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(binding.Parameters),
+                $"{binding.Method} is a complete public typed companion target");
+        }
+        var tween = StreamCreaturePlacementPatch.ResolveMethodTween();
+        Assert(tween is { IsPublic: true, IsStatic: false } && tween.ReturnType == typeof(MethodTweener),
+            "callback placement uses a public engine registration target");
         Assert(typeof(NCombatRoom).GetProperty(nameof(NCombatRoom.CreatureNodes))?.PropertyType == typeof(IEnumerable<NCreature>),
             "room membership has typed access");
         Assert(typeof(Creature).GetProperty(nameof(Creature.PetOwner))?.PropertyType == typeof(Player)
@@ -283,82 +301,232 @@ internal static class StreamCreaturePlacementTests
         Equal(added.Position, new Vector2(300, 190), "late additions restore on disarm too");
     }
 
-    private static void CompanionFamiliesRemainNativeWhileOthersSpread()
+    private static void CompanionFamiliesFollowTheField()
     {
         var f = new Fixture();
-        var companion = new Actor { Owner = f.Node, Position = new Vector2(-180, 200) };
-        f.Node.Companions.Add(companion);
-        var other = new Actor { Position = new Vector2(400, 220) };
-        f.Arm(2340);
-        f.Placement.Register([companion, other]);
-        Equal(f.Node.Position, new Vector2(-400, 200), "a companion owner keeps its native position while wide");
-        Equal(companion.Position, new Vector2(-180, 200), "companions are excluded from the spread too");
-        Equal(other.Position, new Vector2(487.5f, 220), "unrelated creatures still follow the spread field");
-        Assert(f.Tracks == 1 && f.Reads == 1, "only independent creatures acquire baseline ownership");
-        f.Placement.SetWidth(1920);
-        Equal(f.Node.Position, new Vector2(-400, 200), "disarm leaves the native owner untouched");
-        Equal(companion.Position, new Vector2(-180, 200), "disarm leaves the native companion untouched");
-        Equal(other.Position, new Vector2(400, 220), "other creatures still restore normally");
-    }
-
-    private static void CompanionAnimationSurvivesNativePassAndDisarm()
-    {
-        var f = new Fixture();
-        var companion = new Actor { Owner = f.Node, Position = new Vector2(-180, 200) };
-        f.Node.Companions.Add(companion);
+        var companion = f.Companion();
         f.Arm(2340);
         f.Placement.Register([companion]);
-        var target = f.Node.Position + new Vector2(280, -50);
-        companion.Position = companion.Position.Lerp(target, 0.5f);
-        var midAnimation = companion.Position;
+        Equal(f.Node.Position, new(-487.5f, 200), "the owner follows the field with a companion");
+        Equal(companion.Position, new(-219.375f, 200), "the companion follows its own field claim");
+        f.Placement.SetWidth(1920);
+        Equal(f.Node.Position, new(-400, 200), "the owner restores exactly");
+        Equal(companion.Position, new(-180, 200), "the companion restores exactly");
+    }
+
+    private static void CompanionReplacementUsesTheUnspreadOwner()
+    {
+        var f = new Fixture();
+        var companion = f.Companion();
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        var tween = f.Replace(companion, new(280, -50));
+        tween.Advance(1);
+        Equal(companion.Position, new(-146.25f, 150), "endpoint is field(owner baseline + native offset)");
+        Equal(f.Node.Position, new(-487.5f, 200), "owner remains spread after native computation");
+    }
+
+    private static void LaterNativePassKeepsTheCompanionEndpoint()
+    {
+        var f = new Fixture();
+        var companion = f.Companion();
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        var tween = f.Replace(companion, new(280, -50));
+        tween.Advance(0.5f);
         f.Placement.BeginNative();
-        Equal(companion.Position, midAnimation, "a later native pass never restores an obsolete companion pose");
+        var enemy = new Actor { Position = new(400, 220) };
+        f.Placement.EndNative([enemy, companion, f.Node]);
+        tween.Advance(1);
+        Equal(companion.Position, new(-146.25f, 150), "a later addition cannot reinstate a pre-summon baseline");
+    }
+
+    private static void DisarmRestoresTheNewCompanionOffset()
+    {
+        var f = new Fixture();
+        var companion = f.Companion();
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        f.Replace(companion, new(220, 0)).Advance(1);
+        f.Replace(companion, new(310, -50)).Advance(1);
+        f.Placement.SetWidth(1920);
+        Equal(companion.Position, new(-90, 150), "disarm restores the latest native endpoint");
+    }
+
+    private static void DisarmDuringCompanionTweenRetiresSpreadWrites()
+    {
+        var f = new Fixture();
+        var companion = f.Companion();
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        var tween = f.Replace(companion, new(280, -50));
+        tween.Advance(0.5f);
+        f.Placement.SetWidth(1920);
+        Equal(companion.Position, new(-120, 150), "disarm restores the native endpoint mid-animation");
+        foreach (var time in new[] { 0.6f, 0.9f, 1f })
+        {
+            tween.Advance(time);
+            Equal(companion.Position, new(-120, 150), "no later tween step writes spread into the mirror");
+        }
+    }
+
+    private static void FirstSummonKeepsItsEndpointAcrossNestedPlacement()
+    {
+        var f = new Fixture();
+        f.Arm(2340);
+        f.Placement.BeginNative(); // First addition owns the outer placement transaction.
+        var companion = f.Companion();
+        var tween = f.Replace(companion, new(280, -50));
         f.Placement.EndNative([f.Node, companion]);
-        Equal(companion.Position, midAnimation, "native pass completion does not spread a companion animation");
+        tween.Advance(1); // Even a zero-duration tween writes after the synchronous boundary.
+        Equal(companion.Position, new(-146.25f, 150), "first summon endpoint uses the unspread owner");
         f.Placement.SetWidth(1920);
-        Equal(companion.Position, midAnimation, "disarm preserves the current native animation pose");
-        companion.Position = target;
-        Equal(companion.Position, new Vector2(-120, 150), "an in-flight endpoint remains native after disarm");
-        Assert(f.Reads == 0 && f.Writes == 0 && f.Tracks == 0,
-            "companion families never enter the baseline protocol");
+        tween.Advance(1);
+        Equal(companion.Position, new(-120, 150), "the first pre-tween pose never replaces the native target");
     }
 
-    private static void FirstCompanionRetiresTheOwnersSpreadBaseline()
+    private static void WuppyCallbacksUseNativeOwnersAndSurviveDisarm()
     {
         var f = new Fixture();
+        var wuppy = f.Companion();
         f.Arm(2340);
-        Equal(f.Node.Position, new Vector2(-487.5f, 200), "an independent player initially spreads");
+        f.Placement.Register([wuppy]);
+        foreach (var offset in new[] { 280f, 240f, 205f })
+        {
+            f.Placement.RunNative(wuppy, () => wuppy.Position = f.Node.Position + new Vector2(offset, 0));
+            Equal(wuppy.Position, new Vector2((-400 + offset) * 2340 / 1920f, 200),
+                "every native callback computes from the unspread owner before spreading the result");
+        }
         f.Placement.BeginNative();
-        var companion = new Actor { Owner = f.Node, Position = new Vector2(-180, 200) };
-        f.Node.Companions.Add(companion);
-        var target = f.Node.Position + new Vector2(280, -50);
-        var other = new Actor { Position = new Vector2(400, 220) };
-        f.Placement.EndNative([f.Node, companion, other]);
-        Equal(f.Node.Position, new Vector2(-400, 200), "first companion leaves its owner native before a tween runs");
-        Equal(other.Position, new Vector2(487.5f, 220), "late independent additions still spread");
-        companion.Position = target;
-        f.Placement.BeginNative();
-        f.Placement.EndNative([f.Node, companion, other]);
-        Equal(companion.Position, new Vector2(-120, 150), "later native placement preserves the new companion offset");
+        f.Placement.EndNative([f.Node, wuppy]);
+        Equal(wuppy.Position, new(-237.65625f, 200), "a later room pass keeps the current callback baseline");
         f.Placement.SetWidth(1920);
-        Equal(companion.Position, new Vector2(-120, 150), "disarm cannot restore a pre-summon companion baseline");
-        Equal(f.Node.Position, new Vector2(-400, 200), "disarm cannot reinstate owner spread");
+        Equal(wuppy.Position, new(-195, 200), "mid-animation disarm restores the current native callback pose");
+        f.Placement.RunNative(wuppy, () => wuppy.Position = f.Node.Position + new Vector2(200, 0));
+        Equal(wuppy.Position, new(-200, 200), "later callbacks continue natively in the mirror");
+        Assert(!f.Placement.InNative, "inactive callbacks do not leave a native transaction open");
     }
 
-    private static void RegistrationRestoresAnOwnerThatAcquiresACompanion()
+    private static void RearmRetargetsAnUnfinishedCompanionTween()
     {
         var f = new Fixture();
+        var companion = f.Companion();
         f.Arm(2340);
-        var companion = new Actor { Owner = f.Node, Position = new Vector2(-180, 200) };
-        f.Node.Companions.Add(companion);
-        f.Placement.Register([f.Node, companion]);
-        Equal(f.Node.Position, new Vector2(-400, 200), "registration restores a previously tracked owner's native baseline");
-        var writes = f.Writes;
-        companion.Position = new Vector2(-120, 150);
-        f.Placement.SetWidth(2520);
+        f.Placement.Register([companion]);
+        var old = f.Replace(companion, new(250, 0));
+        var current = f.Replace(companion, new(280, -50));
+        current.Advance(0.25f);
         f.Placement.SetWidth(1920);
-        Assert(f.Writes == writes, "excluded families remain outside subsequent width and disarm writes");
-        Equal(companion.Position, new Vector2(-120, 150), "native companion updates are never recaptured");
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        old.Advance(1);
+        current.Advance(1);
+        Equal(companion.Position, new(-146.25f, 150), "all unfinished position steps follow the new ownership");
+        f.Placement.SetWidth(1920);
+        old.Advance(1);
+        current.Advance(1);
+        Equal(companion.Position, new(-120, 150), "repeated swaps leave no spread endpoint behind");
+    }
+
+    private static void ExpiredCompanionTweenIsForgottenAcrossPlacementBoundaries()
+    {
+        var f = new Fixture();
+        var companion = f.Companion();
+        var baseline = f.Node.Position + new Vector2(280, -50);
+        var old = new PositionTween(companion, companion.Position);
+        var current = new PositionTween(companion, baseline);
+        f.Placement.TrackEndpoint(companion, companion.Position, old.Hold);
+        f.Placement.TrackEndpoint(companion, baseline, current.Hold);
+        old.ParentExpired = true;
+
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        Equal(f.Node.Position, new(-487.5f, 200), "the owner spreads despite an expired companion hold");
+        Equal(companion.Position, new(-146.25f, 150), "arming uses the latest native companion target");
+        Assert(old.HoldCalls == 1, "arming removes the expired hold after its first attempt");
+
+        Assert(f.Placement.BeginNative(), "native placement still enters after the expired hold");
+        Equal(f.Node.Position, new(-400, 200), "native placement reads the unspread owner");
+        Equal(companion.Position, baseline, "native placement restores the companion endpoint");
+        f.Placement.EndNative([f.Node, companion]);
+        Equal(f.Node.Position, new(-487.5f, 200), "the owner spreads again after native placement");
+        Equal(companion.Position, new(-146.25f, 150), "native placement preserves the latest companion target");
+        Assert(!f.Placement.InNative, "an expired hold cannot strand a native transaction");
+
+        f.Placement.SetWidth(1920);
+        current.Advance(1);
+        Equal(f.Node.Position, new(-400, 200), "disarm restores the owner");
+        Equal(companion.Position, baseline, "the retained live step cannot write spread after disarm");
+        Assert(old.HoldCalls == 1, "later placement and disarm never call the expired hold again");
+        Assert(current.HoldCalls > 1, "the unfinished live hold remains available across boundaries");
+        Assert(!f.Placement.InNative && !f.Placement.Wide, "disarm completes outside native and wide mode");
+    }
+
+    private static void CompanionHooksAreInertOutsideTheirScope()
+    {
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+        var method = typeof(StreamCreaturePlacementPatch).GetMethod("BeforeMethodTween", flags)!;
+        object?[] args = [default(Callable), default(Variant), default(Variant)];
+        method.Invoke(null, args); // No Godot runtime is available; inspecting variants here would fail.
+        var handler = typeof(StreamCreaturePlacementPatch).GetMethod("HandleTween", flags)!;
+        object?[] propertyArgs = [null, null, default(Variant)];
+        Assert(handler.Invoke(null, propertyArgs) is null, "outside companion scope the shared hook is inert");
+    }
+
+    private static void FinishedCompanionTweenIsRetiredBeforeItsParentExpires()
+    {
+        var f = new Fixture();
+        var companion = f.Companion();
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        var finished = f.Replace(companion, new(250, 0));
+        var live = f.Replace(companion, new(280, -50));
+        finished.Finish();
+        var calls = finished.HoldCalls;
+        Assert(f.Placement.BeginNative(), "native placement still reaches the unfinished step");
+        f.Placement.EndNative([f.Node, companion]);
+        f.Placement.SetWidth(1920);
+        live.Advance(1);
+        Equal(companion.Position, new(-120, 150), "the unfinished replacement still restores on disarm");
+        Assert(finished.HoldCalls == calls, "a finished step is removed without probing its expired parent");
+        live.Finish();
+        var liveCalls = live.HoldCalls;
+        f.Arm(2340);
+        f.Placement.Register([companion]);
+        Equal(companion.Position, new(-146.25f, 150), "completed tweens keep their native endpoint baseline");
+        f.Placement.SetWidth(1920);
+        Equal(companion.Position, new(-120, 150), "disarm needs no completed tween calls");
+        Assert(live.HoldCalls == liveCalls && finished.HoldCalls == calls && !f.Placement.InNative,
+            "both completed steps stay retired across rearm and disarm");
+    }
+
+    private sealed class PositionTween(Actor node, Vector2 target)
+    {
+        private Vector2? _from;
+        private bool _held;
+        internal bool ParentExpired;
+        internal int HoldCalls;
+        private Action? _finished;
+        internal void OnFinished(Action retire) => _finished += retire;
+        internal void Finish()
+        {
+            _finished?.Invoke();
+            _finished = null;
+            ParentExpired = true;
+        }
+        internal bool Hold(Vector2 position)
+        {
+            HoldCalls++;
+            if (ParentExpired) return false;
+            _from = position;
+            _held = true;
+            return true;
+        }
+        internal void Advance(float time)
+        {
+            _from ??= node.Position;
+            node.Position = _held ? _from.Value : _from.Value.Lerp(target, time);
+        }
     }
 
     private sealed class Actor
@@ -377,8 +545,22 @@ internal static class StreamCreaturePlacementTests
         internal readonly StreamCreaturePlacementPatch.Placement<Actor> Placement;
         internal int Reads, Writes, Tracks;
         internal Fixture() => Placement = new(n => n.Valid, n => { Reads++; return n.Position; },
-            (n, p) => { Writes++; n.Position = p; }, n => n.Parent, n => n.LayoutParent, _ => Tracks++,
-            n => n.Owner is null && n.Companions.Count == 0);
+            (n, p) => { Writes++; n.Position = p; }, n => n.Parent, n => n.LayoutParent, _ => Tracks++);
+        internal Actor Companion()
+        {
+            var companion = new Actor { Owner = Node, Position = new(-180, 200) };
+            Node.Companions.Add(companion);
+            return companion;
+        }
+        internal PositionTween Replace(Actor companion, Vector2 offset)
+        {
+            Placement.BeginNative();
+            var baseline = Node.Position + offset;
+            var tween = new PositionTween(companion, Placement.Endpoint(companion, baseline));
+            Placement.TrackEndpoint(companion, baseline, tween.Hold, tween.OnFinished);
+            Placement.EndNative([companion]);
+            return tween;
+        }
         internal void Arm(int width) { Placement.SetWidth(width); Placement.Register([Node]); }
     }
 

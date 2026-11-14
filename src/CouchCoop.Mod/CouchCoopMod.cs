@@ -219,6 +219,7 @@ public static class CouchCoopMod
             if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamDesignPlacementPatch.Apply();
             if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamMapDrawingToolsPatch.Apply();
             if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamHandPlacementPatch.Apply();
+            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamCardRewardPlacementPatch.Apply();
             if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamCreaturePlacementPatch.Apply();
             if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamEnergyPlacementPatch.Apply();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts

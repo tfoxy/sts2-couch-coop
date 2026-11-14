@@ -15,13 +15,13 @@ internal static class StreamCreaturePlacementPatch
     private static bool _applied;
     private static SceneTree? _tree;
     private static Action<NCombatRoom>? _adjustAspect;
+    [ThreadStatic] private static NCreature? _companion;
     private static readonly Placement<NCreature> Creatures = new(
         Valid, node => node.Position, (node, position) => node.Position = position,
         node => node.GetParent() is CanvasItem parent ? parent.GetGlobalTransformWithCanvas() : Transform2D.Identity,
         node => node.GetParent()?.GetParent() is CanvasItem layoutParent
             ? layoutParent.GetGlobalTransformWithCanvas() : Transform2D.Identity,
-        node => node.TreeExiting += () => Creatures!.Forget(node),
-        node => node.Entity.PetOwner is null && node.Entity.Pets.Count == 0);
+        node => node.TreeExiting += () => Creatures!.Forget(node));
     private static readonly DeferredResize<NCombatRoom> Resize = new(
         action => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(action),
             (uint)GodotObject.ConnectFlags.OneShot),
@@ -48,6 +48,20 @@ internal static class StreamCreaturePlacementPatch
         => typeof(NCombatRoom).GetMethod(binding.Method,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly
             | (binding.IsStatic ? BindingFlags.Static : BindingFlags.Instance), binding.Parameters);
+
+    internal static IReadOnlyList<Binding> CompanionBindings { get; } =
+    [
+        new(nameof(NCreature.ScaleAndPositionOsty), [typeof(float), typeof(double)]),
+        new(nameof(NCreature.PositionWuppy), [typeof(bool)]),
+    ];
+
+    internal static MethodInfo? ResolveCompanion(Binding binding)
+        => typeof(NCreature).GetMethod(binding.Method,
+            BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly, binding.Parameters);
+
+    internal static MethodInfo? ResolveMethodTween()
+        => typeof(Tween).GetMethod(nameof(Tween.TweenMethod), BindingFlags.Public | BindingFlags.Instance,
+            [typeof(Callable), typeof(Variant), typeof(Variant), typeof(double)]);
 
     internal static void Apply()
     {
@@ -81,6 +95,22 @@ internal static class StreamCreaturePlacementPatch
                 CouchCoopPatchDiagnostics.PatchFailed(nameof(StreamCreaturePlacementPatch),
                     $"{binding.Method}: {exception.GetType().Name}: {exception.Message}", costsCoop: false);
             }
+        }
+        try
+        {
+            StreamPositionTweenPatch.Register(HandleTween);
+            foreach (var binding in CompanionBindings)
+                harmony.Patch(ResolveCompanion(binding)
+                    ?? throw new MissingMethodException(typeof(NCreature).FullName, binding.Method),
+                    prefix: new HarmonyMethod(typeof(StreamCreaturePlacementPatch), nameof(BeforeCompanion)),
+                    finalizer: new HarmonyMethod(typeof(StreamCreaturePlacementPatch), nameof(FinishCompanion)));
+            harmony.Patch(ResolveMethodTween() ?? throw new MissingMethodException(nameof(Tween.TweenMethod)),
+                prefix: new HarmonyMethod(typeof(StreamCreaturePlacementPatch), nameof(BeforeMethodTween)));
+        }
+        catch (Exception exception)
+        {
+            CouchCoopPatchDiagnostics.PatchFailed(nameof(StreamCreaturePlacementPatch),
+                $"companions: {exception.GetType().Name}: {exception.Message}", costsCoop: false);
         }
     }
 
@@ -124,6 +154,48 @@ internal static class StreamCreaturePlacementPatch
         return __exception;
     }
 
+    private sealed record CompanionScope(NCreature? Previous, bool Native);
+
+    private static void BeforeCompanion(NCreature __instance, out CompanionScope __state)
+    {
+        __state = new(_companion, Creatures.BeginNative());
+        _companion = __instance;
+    }
+
+    private static Exception? FinishCompanion(NCreature __instance, CompanionScope __state, Exception? __exception)
+    {
+        _companion = __state.Previous;
+        if (__state.Native) Creatures.EndNative([__instance]);
+        return __exception;
+    }
+
+    private static Action<PropertyTweener>? HandleTween(GodotObject node, NodePath property, ref Variant target)
+    {
+        // No native objects or variants are read outside the typed placement scope.
+        if (_companion is not { } companion || !ReferenceEquals(node, companion)
+            || property.ToString() != "position" || target.VariantType != Variant.Type.Vector2) return null;
+        var baseline = target.AsVector2();
+        target = Creatures.Endpoint(companion, baseline);
+        return tweener => Creatures.TrackEndpoint(companion, baseline, position =>
+        {
+            if (!GodotObject.IsInstanceValid(tweener)) return false;
+            var held = tweener.From(position);
+            if (held is null) return false;
+            held.SetCustomInterpolator(Callable.From<double, double>(HoldInitial));
+            return true;
+        }, retire => StreamPositionTweenPatch.OnFinished(tweener, retire));
+    }
+
+    private static double HoldInitial(double _) => 0;
+
+    private static void BeforeMethodTween(ref Callable __0, Variant __1, Variant __2)
+    {
+        if (_companion is not { } companion || __1.VariantType != Variant.Type.Vector2
+            || __2.VariantType != Variant.Type.Vector2) return;
+        var native = __0;
+        __0 = Callable.From<Vector2>(offset => Creatures.RunNative(companion, () => native.Call(offset)));
+    }
+
     // The native SizeChanged subscription reaches this prefix. Only enqueue here; read on the next frame.
     private static bool BeforeAspect(NCombatRoom __instance)
     {
@@ -145,9 +217,11 @@ internal static class StreamCreaturePlacementPatch
 
     internal sealed class Placement<T>(Func<T, bool> valid, Func<T, Vector2> read,
         Action<T, Vector2> write, Func<T, Transform2D> parent, Func<T, Transform2D> layoutParent,
-        Action<T>? tracked = null, Func<T, bool>? shouldSpread = null) where T : class
+        Action<T>? tracked = null) where T : class
     {
         private readonly Dictionary<T, Vector2> _saved = new();
+        private readonly Dictionary<T, List<Func<Vector2, bool>>> _tweens = new();
+        private readonly HashSet<T> _pendingEndpoints = [];
         private int _width = 1920;
         private int _nativeDepth;
         internal bool Wide => _width > 1920;
@@ -181,15 +255,49 @@ internal static class StreamCreaturePlacementPatch
         internal void EndNative(IEnumerable<T> nodes)
         {
             foreach (var node in nodes)
-                if (valid(node)) Save(node);
-            if (--_nativeDepth == 0) Reapply();
+                if (valid(node) && !_pendingEndpoints.Contains(node)) Save(node);
+            if (--_nativeDepth == 0)
+            {
+                Reapply();
+                _pendingEndpoints.Clear();
+            }
         }
 
-        internal void Forget(T node) => _saved.Remove(node);
+        internal Vector2 Endpoint(T node, Vector2 baseline)
+            => Spread(baseline, parent(node), _width, layoutParent(node));
+
+        internal void TrackEndpoint(T node, Vector2 baseline, Func<Vector2, bool> hold,
+            Action<Action>? onFinished = null)
+        {
+            if (!_saved.ContainsKey(node)) tracked?.Invoke(node);
+            _saved[node] = baseline;
+            if (!_tweens.TryGetValue(node, out var tweens)) _tweens.Add(node, tweens = []);
+            tweens.Add(hold);
+            onFinished?.Invoke(() =>
+            {
+                if (!_tweens.TryGetValue(node, out var active)) return;
+                active.Remove(hold);
+                if (active.Count == 0) _tweens.Remove(node);
+            });
+            if (InNative) _pendingEndpoints.Add(node);
+        }
+
+        internal void RunNative(T node, Action native)
+        {
+            var active = BeginNative();
+            try { native(); }
+            finally { if (active) EndNative([node]); }
+        }
+
+        internal void Forget(T node)
+        {
+            _saved.Remove(node);
+            _tweens.Remove(node);
+            _pendingEndpoints.Remove(node);
+        }
 
         private void Save(T node)
         {
-            if (shouldSpread?.Invoke(node) == false) { _saved.Remove(node); return; }
             var first = !_saved.ContainsKey(node);
             _saved[node] = read(node);
             if (first) tracked?.Invoke(node);
@@ -200,22 +308,31 @@ internal static class StreamCreaturePlacementPatch
             foreach (var (node, baseline) in _saved.ToArray())
                 if (valid(node))
                 {
+                    Hold(node, baseline);
                     write(node, baseline);
-                    if (shouldSpread?.Invoke(node) == false) _saved.Remove(node);
                 }
-                else _saved.Remove(node);
+                else Forget(node);
         }
 
         private void Reapply()
         {
             foreach (var (node, baseline) in _saved.ToArray())
-                if (!valid(node)) _saved.Remove(node);
-                else if (shouldSpread?.Invoke(node) == false)
+                if (!valid(node)) Forget(node);
+                else
                 {
-                    write(node, baseline);
-                    _saved.Remove(node);
+                    // A just-registered tween keeps its opening pose and owns later animation steps.
+                    var pending = _pendingEndpoints.Contains(node);
+                    var position = Endpoint(node, pending ? read(node) : baseline);
+                    Hold(node, pending ? Endpoint(node, baseline) : position, keepLatest: pending);
+                    write(node, position);
                 }
-                else write(node, Spread(baseline, parent(node), _width, layoutParent(node)));
+        }
+
+        private void Hold(T node, Vector2 position, bool keepLatest = false)
+        {
+            if (!_tweens.TryGetValue(node, out var tweens)) return;
+            for (var i = tweens.Count - (keepLatest ? 2 : 1); i >= 0; i--)
+                if (!tweens[i](position)) tweens.RemoveAt(i);
         }
     }
 

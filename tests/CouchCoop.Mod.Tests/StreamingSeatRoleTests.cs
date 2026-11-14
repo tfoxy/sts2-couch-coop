@@ -168,6 +168,7 @@ internal static class StreamingSeatRoleTests
         AssertGated(init, "StreamDesignPlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
         AssertGated(init, "StreamMapDrawingToolsPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
         AssertGated(init, "StreamHandPlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
+        AssertGated(init, "StreamCardRewardPlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
         AssertGated(init, "StreamCreaturePlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
         AssertGated(init, "StreamEnergyPlacementPatch.Apply();", "if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat)");
 
