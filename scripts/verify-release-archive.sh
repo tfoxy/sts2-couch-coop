@@ -67,7 +67,12 @@ is_allowed_payload_file() {
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
     licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
     # Capture records are extensionless: STS2 scans every *.json as a mod manifest.
-    render-capture/linux/librender_stream_capture.so|render-capture/linux/render_stream_capture.gdextension|render-capture/linux/calibration|render-capture/linux/librender_stream_net.so|render-capture/windows/render_stream_capture.dll|render-capture/windows/render_stream_capture.gdextension|render-capture/windows/render_stream_net.dll) return 0 ;;
+    render-capture/linux/librender_stream_capture.so|render-capture/linux/render_stream_capture.gdextension|render-capture/linux/librender_stream_net.so|render-capture/windows/render_stream_capture.dll|render-capture/windows/render_stream_capture.gdextension|render-capture/windows/render_stream_net.dll) return 0 ;;
+    render-capture/linux/calibration.*)
+      leaf="${path#render-capture/linux/calibration.}"
+      release_lane_is_known "$leaf"
+      return
+      ;;
     render-capture/windows/calibration.*)
       leaf="${path#render-capture/windows/calibration.}"
       release_lane_is_known "$leaf"
@@ -145,7 +150,6 @@ required_files=(
   frontend/app/render-stream/core-build
   render-capture/linux/librender_stream_capture.so
   render-capture/linux/render_stream_capture.gdextension
-  render-capture/linux/calibration
   render-capture/linux/librender_stream_net.so
   render-capture/windows/render_stream_capture.dll
   render-capture/windows/render_stream_capture.gdextension
@@ -319,6 +323,10 @@ verify_file_list() {
   for required in "${required_files[@]}"; do
     grep -Fxq "$required" "$list_file" || { echo "release payload is missing: $required" >&2; return 1; }
   done
+  grep -Eq '^render-capture/linux/calibration\.[^/]+$' "$list_file" || {
+    echo "release payload is missing Linux capture calibration records" >&2
+    return 1
+  }
   grep -Eq '^licenses/npm/[^/]+\.LICENSE$' "$list_file" || {
     echo "release payload is missing npm license texts" >&2
     return 1

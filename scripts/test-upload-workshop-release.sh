@@ -87,7 +87,9 @@ done
 for file in librender_stream_capture.so librender_stream_net.so; do
   printf '\177ELFfixture\n' > "$payload/render-capture/linux/$file"
 done
-printf 'fixture\n' > "$payload/render-capture/linux/calibration"
+for lane in "${lanes[@]}"; do
+  printf 'fixture\n' > "$payload/render-capture/linux/calibration.$lane"
+done
 for file in render_stream_capture.dll render_stream_net.dll; do
   printf 'MZfixture\n' > "$payload/render-capture/windows/$file"
 done

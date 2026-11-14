@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The source stamp of a staged render-stream capture (scripts/build-render-capture.sh): one sha256 over every
-# input that changes the four staged files, so scripts/build-render-stream.sh can skip a build whose stamp still
+# input that changes the staged files, so scripts/build-render-stream.sh can skip a build whose stamp still
 # matches. Sourced, not run.
 #
 # Inputs, in order:
@@ -8,7 +8,7 @@
 #     compiles in), the net module (rs-net/, its vendored wtransport included) and build-rs-net.sh;
 #   - a hash of their uncommitted state (`git diff HEAD --binary`, then every untracked, unignored file), so a
 #     dirty GSW checkout is stamped by its content rather than by HEAD alone;
-#   - this repo's build-render-capture.sh and the calibration record it stages.
+#   - this repo's build-render-capture.sh and the calibration records it stages.
 # Ignored output (capture/build/, rs-net/target/) is outside git's view and so outside the stamp.
 
 render_capture_gsw_paths=(
@@ -50,18 +50,35 @@ render_capture_stamp_inputs() {
       printf 'record %s %s\n' "$(basename "$path")" "$(sha256sum < "$path" | cut -d' ' -f1)"
     done
   else
-    [[ -s "$calibration" ]] || return 1
-    printf 'calibration %s\n' "$(sha256sum < "$calibration" | cut -d' ' -f1)"
+    printf 'staging %s\n' "$(sha256sum < "$repo_root/scripts/lib/render-capture-stamp.sh" | cut -d' ' -f1)"
+    for path in "$repo_root"/eng/render-capture/linux/*.json; do
+      [[ -f "$path" ]] || continue
+      printf 'record %s %s\n' "$(basename "$path")" "$(sha256sum < "$path" | cut -d' ' -f1)"
+    done
+    if [[ -n "$calibration" ]]; then
+      [[ -s "$calibration" ]] || return 1
+      printf 'calibration %s\n' "$(sha256sum < "$calibration" | cut -d' ' -f1)"
+    fi
   fi
 }
 
-# The calibration record build-render-capture.sh stages: COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE, else the
-# newest committed eng/render-capture/calibration-*.json.
+# Optional extra Linux record for development; committed candidates are always staged as well.
 render_capture_calibration_source() {
-  local repo_root="$1"
-  if [[ -n "${COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE:-}" ]]; then
-    printf '%s\n' "$COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE"
-    return 0
+  printf '%s\n' "${COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE:-}"
+}
+
+# STS2 treats *.json as manifests, so candidates have extensionless lane names.
+render_capture_stage_linux_records() {
+  local repo_root="$1" out="$2" calibration="$3" record count=0
+  if [[ -n "$calibration" && ! -s "$calibration" ]]; then
+    echo "capture calibration source is missing: $calibration" >&2; return 1
   fi
-  ls "$repo_root"/eng/render-capture/calibration-*.json 2>/dev/null | LC_ALL=C sort | tail -n 1
+  rm -f "$out/calibration" "$out"/calibration.*
+  for record in "$repo_root"/eng/render-capture/linux/*.json; do
+    [[ -f "$record" && "$record" != *.source.json ]] || continue
+    cp "$record" "$out/calibration.$(basename "$record" .json)"
+    count=$((count + 1))
+  done
+  [[ "$count" -gt 0 ]] || { echo 'no committed Linux capture records' >&2; return 1; }
+  if [[ -n "$calibration" ]]; then cp "$calibration" "$out/calibration.0-operator"; fi
 }

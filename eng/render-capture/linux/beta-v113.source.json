@@ -1,0 +1,21 @@
+{
+  "schema": "couchcoop-render-capture-record-source/1",
+  "lane": "beta-v113",
+  "platform": "linux-x86_64",
+  "gameBuild": "v0.113.0",
+  "steamBuildId": "26625880",
+  "exeSha256": "0b0ae3859c4c26d352b6483dc1cb11601a07bbc9890d97bcebae0d5d0bdd99ff",
+  "elfIdentity": {
+    "build_id": "d5fc2677b9aed9edbd81297609d7d53c93e2e34e"
+  },
+  "recordSha256": "97e67562d4146a2c1f933edb469ba05d2a730339d6e46f88a77754b5a00f7901",
+  "calibrator": {
+    "version": "9",
+    "gswCommit": "4df2d93e9f04ca83664d4a5fba2bc4ca52186e51",
+    "headerSha256": "3e01fb10af9abb6955314abacd65d45b697a8ea57c7bf651e59c29e8a399b9d7"
+  },
+  "provenance": {
+    "gameBuildBasis": "Installed release_info.json and Steam app manifest.",
+    "command": "python3 -I capture/tools/calibrate.py --binary <installed-executable> --header <godot-4.5.1-stable>/servers/rendering_server.h --version-name MegaDot --out <record>"
+  }
+}

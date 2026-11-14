@@ -35,7 +35,7 @@ internal static class RenderCaptureAvailability
     internal static StreamingSeatLaunch.ConfigResult Resolve(
         string? extension, string? calibration, string os, string arch,
         Func<string, string> readFile, Func<string, bool> fileExists,
-        Func<string, IEnumerable<string>> listFiles, Func<PeIdentity?> readIdentity)
+        Func<string, IEnumerable<string>> listFiles, Func<PeIdentity?> readIdentity, Func<string?>? readBuildId = null)
     {
         try
         {
@@ -100,6 +100,31 @@ internal static class RenderCaptureAvailability
                     Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
                 calibrationPath = matching;
             }
+            else if (os == "linux")
+            {
+                var buildId = readBuildId?.Invoke();
+                if (string.IsNullOrWhiteSpace(buildId)) return new(null, "the host executable has no readable Linux x86_64 GNU build-id", Reason: UnavailableReason.IdentityUnreadable);
+                var candidates = !string.IsNullOrWhiteSpace(calibration) ? [calibrationPath] : listFiles(directory)
+                    .Where(path => Path.GetFileName(path) == "calibration" || Path.GetFileName(path).StartsWith("calibration.", StringComparison.Ordinal))
+                    .OrderBy(Path.GetFileName, StringComparer.Ordinal).ToArray();
+                string? matching = null;
+                foreach (var candidate in candidates)
+                {
+                    if (!fileExists(candidate)) continue;
+                    try
+                    {
+                        using var record = JsonDocument.Parse(readFile(candidate));
+                        var engine = record.RootElement.GetProperty("engine");
+                        if (engine.GetProperty("platform").GetString() == "linux-" + arch
+                            && engine.GetProperty("build_id").GetString() == buildId)
+                        { matching = candidate; break; }
+                    }
+                    catch (Exception) { /* An invalid record cannot identify an engine. */ }
+                }
+                if (matching is null) return new(null, $"no capture calibration matches the host executable (build_id={buildId})",
+                    Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
+                calibrationPath = matching;
+            }
             else if (string.IsNullOrWhiteSpace(calibration) && !fileExists(calibrationPath))
             {
                 calibrationPath = Path.Combine(directory, StreamingSeatLaunch.PackagedCalibrationFileName);
@@ -112,6 +137,68 @@ internal static class RenderCaptureAvailability
         {
             return new(null, $"capture availability could not be read: {exception.GetType().Name}", Reason: UnavailableReason.Unknown);
         }
+    }
+
+    /// <summary>Reads GNU build-id from ELF64 x86_64 program notes, including stripped executables.</summary>
+    internal static string? ReadElfBuildId(Stream stream)
+    {
+        try
+        {
+            using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+            void At(long offset, long size)
+            {
+                if (offset < 0 || size < 0 || offset > stream.Length - size) throw new InvalidDataException();
+                stream.Position = offset;
+            }
+            At(0, 64);
+            if (reader.ReadUInt32() != 0x464c457f || reader.ReadByte() != 2
+                || reader.ReadByte() != 1 || reader.ReadByte() != 1) return null;
+            At(16, 8);
+            var type = reader.ReadUInt16();
+            if (type is not (2 or 3) || reader.ReadUInt16() != 62 || reader.ReadUInt32() != 1) return null;
+            At(32, 8);
+            var headers = checked((long)reader.ReadUInt64());
+            At(52, 6);
+            if (reader.ReadUInt16() != 64) return null;
+            var entrySize = reader.ReadUInt16();
+            var count = reader.ReadUInt16();
+            if (entrySize < 56 || count is 0 or 0xffff) return null;
+            At(headers, count * (long)entrySize);
+            string? buildId = null;
+            for (var i = 0; i < count; i++)
+            {
+                At(headers + i * (long)entrySize, 56);
+                if (reader.ReadUInt32() != 4) continue; // PT_NOTE
+                _ = reader.ReadUInt32();
+                var offset = checked((long)reader.ReadUInt64());
+                stream.Position += 16;
+                var size = checked((long)reader.ReadUInt64());
+                At(offset, size);
+                var end = offset + size;
+                while (stream.Position < end)
+                {
+                    if (end - stream.Position < 12) return null;
+                    var nameSize = reader.ReadUInt32();
+                    var descriptorSize = reader.ReadUInt32();
+                    var noteType = reader.ReadUInt32();
+                    var name = stream.Position;
+                    var descriptor = name + ((nameSize + 3L) & ~3L);
+                    var next = descriptor + ((descriptorSize + 3L) & ~3L);
+                    if (next > end) return null;
+                    if (noteType == 3 && nameSize == 4 && reader.ReadUInt32() == 0x00554e47) // GNU\0
+                    {
+                        if (descriptorSize is 0 or > 128) return null;
+                        stream.Position = descriptor;
+                        var id = Convert.ToHexString(reader.ReadBytes((int)descriptorSize)).ToLowerInvariant();
+                        if (buildId is not null && buildId != id) return null;
+                        buildId = id;
+                    }
+                    stream.Position = next;
+                }
+            }
+            return buildId;
+        }
+        catch (Exception) { return null; }
     }
 
     /// <summary>Reads PE identity without loading the executable. Malformed or ambiguous images fail closed.</summary>

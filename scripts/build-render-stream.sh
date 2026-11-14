@@ -81,13 +81,19 @@ core_ms=$(( $(now_ms) - core_started ))
 # --- capture + net module ---------------------------------------------------------------------------------
 capture_started="$(now_ms)"
 calibration="$(render_capture_calibration_source "$repo_root" || true)"
-want_stamp=""
-[[ -n "$calibration" && -s "$calibration" ]] && want_stamp="$(render_capture_stamp "$gsw_root" "$repo_root" "$calibration" || true)"
+want_stamp="$(render_capture_stamp "$gsw_root" "$repo_root" "$calibration" || true)"
 have_stamp="$(cat "$capture_dir/source-stamp" 2>/dev/null || true)"
 capture_complete=1
-for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
+for name in librender_stream_capture.so render_stream_capture.gdextension librender_stream_net.so; do
   [[ -s "$capture_dir/$name" ]] || capture_complete=0
 done
+for record in "$repo_root"/eng/render-capture/linux/*.json; do
+  [[ -f "$record" && "$record" != *.source.json ]] || continue
+  cmp -s "$record" "$capture_dir/calibration.$(basename "$record" .json)" || capture_complete=0
+done
+if [[ -n "$calibration" ]]; then
+  cmp -s "$calibration" "$capture_dir/calibration.0-operator" || capture_complete=0
+fi
 if [[ "$capture_complete" == 1 && -n "$want_stamp" && "$have_stamp" == "$want_stamp" ]]; then
   capture_action=skipped
   echo "render-stream: capture and net module fresh (${want_stamp#* }), not rebuilt" >&2
@@ -111,7 +117,13 @@ if [[ -n "$payload" ]]; then
   done
   target="$payload/render-capture/linux"
   mkdir -p "$target"
-  for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
+  rm -f "$target/calibration"
+  for record in "$target"/calibration.*; do
+    [[ -f "$record" && ! -f "$capture_dir/$(basename "$record")" ]] && rm -f "$record"
+  done
+  for file in "$capture_dir/librender_stream_capture.so" "$capture_dir/render_stream_capture.gdextension" \
+    "$capture_dir/librender_stream_net.so" "$capture_dir"/calibration.*; do
+    name="$(basename "$file")"
     if ! cmp -s "$capture_dir/$name" "$target/$name"; then
       cp "$capture_dir/$name" "$target/.$name.tmp.$$"
       mv -f "$target/.$name.tmp.$$" "$target/$name"

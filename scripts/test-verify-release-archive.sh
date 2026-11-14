@@ -129,7 +129,9 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   for file in librender_stream_capture.so librender_stream_net.so; do
     printf '\177ELFfixture\n' > "$root/render-capture/linux/$file"
   done
-  printf 'fixture\n' > "$root/render-capture/linux/calibration"
+  for lane in "${known_lanes[@]}"; do
+    printf 'fixture\n' > "$root/render-capture/linux/calibration.$lane"
+  done
   for file in render_stream_capture.dll render_stream_net.dll; do
     printf 'MZfixture\n' > "$root/render-capture/windows/$file"
   done
@@ -391,8 +393,8 @@ done
 # fourth image must fail here rather than inherit the first three's permission. An arbitrary
 # extension does not belong either, and neither does a subdirectory -- the arm is one level deep on
 # purpose, so a nested tree cannot ride in behind an allowed extension.
-# The capture's directory is the same shape: three named files, so a stray (a `.json` calibration would also be
-# read as a manifest) is refused.
+# The capture's directory accepts only named binaries/descriptors and reviewed lane records; a stray
+# `.json` calibration would also be read as a manifest and is refused.
 for stray in frontend/app/notes.txt frontend/app/nested/card-ripple-fixture.png \
   frontend/app/kitten-fixture.png frontend/app/card-ripple.png \
   frontend/app/render-stream/extra.js render-capture/notes.txt; do
@@ -584,11 +586,23 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
 PY
 expect_reject traversal "$verifier" --archive "$traversal_archive"
 
-for path in render-capture/librender_stream_capture.so render-capture/windows/calibration.nightly \
+for path in render-capture/librender_stream_capture.so render-capture/linux/calibration \
+  render-capture/linux/calibration.nightly render-capture/linux/calibration.0-operator \
+  render-capture/windows/calibration.nightly \
   render-capture/windows/calibration.stable.json render-capture/windows/toolchain.json render-capture/windows/source-stamp; do
-  bad="$(clone_payload "capture-$(basename "$path")")"
+  bad="$(clone_payload "capture-${path//\//-}")"
   printf 'fixture\n' > "$bad/$path"
   expect_reject "forbidden-${path//\//-}" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+done
+bad="$(clone_payload missing-linux-records)"
+rm "$bad"/render-capture/linux/calibration.*
+expect_reject_saying missing-linux-records 'release payload is missing Linux capture calibration records' \
+  "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+for lane in "${known_lanes[@]}"; do
+  one_record="$(clone_payload "linux-record-$lane")"
+  rm "$one_record"/render-capture/linux/calibration.*
+  printf 'fixture\n' > "$one_record/render-capture/linux/calibration.$lane"
+  "$verifier" --payload "$one_record" --version 1.2.3 "${all_lane_args[@]}" >/dev/null
 done
 bad="$(clone_payload missing-windows-net)"
 rm "$bad/render-capture/windows/render_stream_net.dll"

@@ -31,7 +31,7 @@ internal static class RenderCaptureAvailabilityTests
         StreamingSeatLaunch.ConfigResult Resolve(string os = "windows", string? record = null,
             Func<RenderCaptureAvailability.PeIdentity?>? identity = null) => RenderCaptureAvailability.Resolve(
                 Extension, record, os, "x86_64", path => files[path], files.ContainsKey,
-                _ => files.Keys.Reverse(), identity ?? (() => Identity));
+                _ => files.Keys.Reverse(), identity ?? (() => Identity), () => "aabb");
         Check(Resolve().Config?.Calibration == "/capture/calibration.b", "second record matches");
         files["/capture/calibration.a"] = Record(Identity);
         Check(Resolve().Config?.Calibration == "/capture/calibration.a", "matching candidates use ordinal filenames");
@@ -60,16 +60,121 @@ internal static class RenderCaptureAvailabilityTests
         files[Extension] = "[libraries]\nwindows.x86_64 = \"missing.dll\"";
         Check(Resolve().Config is null, "missing relative library");
         files[Extension] = "[libraries]\nlinux.x86_64 = \"/dev/absolute.so\"";
-        files["/dev/absolute.so"] = "ELF"; files["/capture/calibration"] = "Linux record is not fingerprinted";
+        files["/dev/absolute.so"] = "ELF"; files["/capture/calibration"] = "{\"engine\":{\"platform\":\"linux-x86_64\",\"build_id\":\"aabb\"}}";
         Check(Resolve("linux", identity: () => throw new Exception()).Config?.Calibration == "/capture/calibration",
-            "absolute Linux dev library accepted without an identity read");
+            "absolute Linux dev library accepted without a PE identity read");
         var unset = StreamingSeatLaunch.ResolveConfig(null, null, _ => false, "/mod/lanes/0.103.0");
         Check(unset.Config is null && unset.Refusal is null, "unset configuration is simply off");
         var mac = RenderCaptureAvailability.Resolve(null, null, "macos", "arm64", _ => throw new Exception(), _ => false, _ => [], () => throw new Exception());
         Check(mac.Config is null && mac.Refusal is null, "macOS without a packaged directory is not configured");
+        LinuxRecords();
+        ElfNotes();
         TypedOutcomes();
         CrossCheck();
         Console.WriteLine($"render-capture availability: {_assertions} passed.");
+    }
+
+    private static void LinuxRecords()
+    {
+        const string m12 = "9a404dfede6a1778b7348d0087804ae48a233e38";
+        const string m14 = "d5fc2677b9aed9edbd81297609d7d53c93e2e34e";
+        string RecordFor(string id, string platform = "linux-x86_64")
+            => JsonSerializer.Serialize(new { engine = new { platform, build_id = id } });
+        var files = new Dictionary<string, string>
+        {
+            [Extension] = "[libraries]\nlinux.x86_64 = \"capture.so\"",
+            ["/capture/capture.so"] = "ELF",
+            ["/capture/calibration.stable"] = RecordFor(m12),
+            ["/capture/calibration.public-beta"] = RecordFor(m14),
+            ["/capture/calibration.beta-v113"] = RecordFor(m14),
+            ["/capture/calibration.invalid"] = "broken",
+        };
+        string? BuildId(string? id)
+        {
+            if (id is null) return null;
+            using var elf = SyntheticElf(buildId: id);
+            return RenderCaptureAvailability.ReadElfBuildId(elf);
+        }
+        StreamingSeatLaunch.ConfigResult Resolve(string? id = m14, string? record = null) => RenderCaptureAvailability.Resolve(
+            Extension, record, "linux", "x86_64", path => files[path], files.ContainsKey,
+            _ => files.Keys.Reverse(), () => throw new Exception("Linux must not read PE identity"), () => BuildId(id));
+        Check(Resolve(m12).Config?.Calibration == "/capture/calibration.stable", "m.12 selects m.12 record");
+        Check(Resolve().Config?.Calibration == "/capture/calibration.beta-v113", "m.14 selects m.14 with ordinal tie break");
+        var unknown = Resolve("abcdef");
+        Check(unknown.Config is null && unknown.Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord
+            && unknown.Refusal?.Contains("build_id=abcdef") == true, "unknown build-id is named in typed refusal");
+        Check(Resolve(null).Reason == RenderCaptureAvailability.UnavailableReason.IdentityUnreadable, "unreadable ELF identity");
+        Check(Resolve(record: "/capture/calibration.stable").Reason == RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch,
+            "operator mismatch never falls back to matching candidate");
+        Check(Resolve(record: "/capture/calibration.public-beta").Config?.Calibration == "/capture/calibration.public-beta",
+            "operator matching record wins");
+        Check(Resolve(record: "/missing").Reason == RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch,
+            "missing operator record fails closed");
+        files["/capture/calibration.beta-v113"] = RecordFor(m14, "windows-x86_64");
+        files["/capture/calibration.public-beta"] = RecordFor(m14, "linux-arm64");
+        Check(Resolve().Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "Linux requires matching platform");
+        files["/capture/calibration.public-beta"] = "{\"engine\":{\"platform\":\"linux-x86_64\"}}";
+        Check(Resolve().Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "record missing build-id is skipped");
+    }
+
+    private static void ElfNotes()
+    {
+        using var elf = SyntheticElf();
+        Check(RenderCaptureAvailability.ReadElfBuildId(elf) == "aabbcc", "ELF GNU build-id, unrelated note and four-byte alignment");
+        using var pie = SyntheticElf(pie: true);
+        Check(RenderCaptureAvailability.ReadElfBuildId(pie) == "aabbcc", "PIE executable without section headers");
+        using var conflict = SyntheticElf(conflict: true);
+        Check(RenderCaptureAvailability.ReadElfBuildId(conflict) is null, "conflicting GNU notes fail closed");
+        using var throwing = new ThrowingStream();
+        Check(RenderCaptureAvailability.ReadElfBuildId(throwing) is null, "ELF reader exception");
+        foreach (var length in new[] { 0, 63, 100, 279 })
+        {
+            using var truncated = new MemoryStream(elf.ToArray()[..length]);
+            Check(RenderCaptureAvailability.ReadElfBuildId(truncated) is null, $"truncated ELF at {length}");
+        }
+        foreach (var (offset, value) in new (int, byte)[] { (0, 0), (4, 1), (5, 2), (18, 3), (54, 1), (56, 0), (280, 0xff) })
+        {
+            var bytes = elf.ToArray(); bytes[offset] = value;
+            using var malformed = new MemoryStream(bytes);
+            Check(RenderCaptureAvailability.ReadElfBuildId(malformed) is null, $"malformed ELF at {offset}");
+        }
+        var exe = Environment.GetEnvironmentVariable("COUCHCOOP_TEST_ELF");
+        if (!string.IsNullOrWhiteSpace(exe))
+        {
+            using var installed = File.OpenRead(exe);
+            var id = RenderCaptureAvailability.ReadElfBuildId(installed);
+            Check(id == Environment.GetEnvironmentVariable("COUCHCOOP_TEST_ELF_BUILD_ID"), "installed ELF build-id cross-check");
+            Console.WriteLine($"ELF cross-check: build_id={id}");
+        }
+        if (OperatingSystem.IsLinux())
+        {
+            using var host = File.OpenRead("/proc/self/exe");
+            Check(RenderCaptureAvailability.ReadElfBuildId(host) is { Length: > 0 }, "running executable GNU build-id");
+        }
+    }
+
+    private static MemoryStream SyntheticElf(bool pie = false, bool conflict = false, string buildId = "aabbcc")
+    {
+        var id = Convert.FromHexString(buildId);
+        var noteSize = 16 + ((id.Length + 3) & ~3);
+        var stream = new MemoryStream(new byte[512]);
+        using var w = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        w.Write(0x464c457f); w.Write((byte)2); w.Write((byte)1); w.Write((byte)1);
+        stream.Position = 16; w.Write((ushort)(pie ? 3 : 2)); w.Write((ushort)62); w.Write(1);
+        stream.Position = 32; w.Write((ulong)64);
+        stream.Position = 52; w.Write((ushort)64); w.Write((ushort)56); w.Write((ushort)1);
+        stream.Position = 64; w.Write(4); w.Write(0); w.Write((ulong)256);
+        stream.Position = 96; w.Write((ulong)(20 + noteSize * (conflict ? 2 : 1)));
+        // An unrelated, padded note precedes the GNU note.
+        stream.Position = 256; w.Write(1); w.Write(1); w.Write(7); w.Write(0); w.Write(0);
+        for (var i = 0; i < (conflict ? 2 : 1); i++)
+        {
+            stream.Position = 276 + i * noteSize; w.Write(4); w.Write(id.Length); w.Write(3); w.Write(0x00554e47);
+            w.Write(id);
+            if (i != 0) { stream.Position--; w.Write((byte)(id[^1] + i)); }
+        }
+        stream.Position = 0;
+        return stream;
     }
 
     private static void TypedOutcomes()
@@ -102,7 +207,7 @@ internal static class RenderCaptureAvailabilityTests
         Refused(Resolve(), RenderCaptureAvailability.UnavailableReason.NoMatchingRecord);
         Refused(Resolve(calibration: "/capture/calibration.a"), RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch);
         files[Extension] = "[libraries]\nlinux.x86_64 = \"capture.dll\"";
-        Refused(Resolve(os: "linux"), RenderCaptureAvailability.UnavailableReason.CalibrationMissing);
+        Refused(Resolve(os: "linux"), RenderCaptureAvailability.UnavailableReason.IdentityUnreadable);
     }
 
     private static string Record(RenderCaptureAvailability.PeIdentity identity, string platform = "windows-x86_64")

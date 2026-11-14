@@ -12,10 +12,12 @@ trap 'rm -rf "$tmp"' EXIT
 couch="$tmp/couch"
 gsw="$tmp/gsw"
 payload="$tmp/payload"
-mkdir -p "$couch/scripts/lib" "$couch/eng/render-capture" "$couch/.sts2" "$payload"
+mkdir -p "$couch/scripts/lib" "$couch/eng/render-capture/linux" "$couch/.sts2" "$payload"
 cp "$here/build-render-stream.sh" "$couch/scripts/"
 cp "$here/lib/render-capture-stamp.sh" "$couch/scripts/lib/"
-printf '{"calibration":1}\n' > "$couch/eng/render-capture/calibration-0001.json"
+printf '{"calibration":1}\n' > "$couch/eng/render-capture/linux/stable.json"
+printf '{"calibration":14}\n' > "$couch/eng/render-capture/linux/public-beta.json"
+printf '{"source":1}\n' > "$couch/eng/render-capture/linux/stable.source.json"
 
 # Stubs: count the run, then write what the real script writes (the capture stub stamps exactly as the real one).
 cat > "$couch/scripts/build-render-stream-client.sh" <<'EOF'
@@ -39,7 +41,7 @@ stamp="$(render_capture_stamp "$COUCHCOOP_GSW_ROOT" "$repo_root" "$calibration")
 for name in librender_stream_capture.so render_stream_capture.gdextension librender_stream_net.so; do
   printf '%s %s\n' "$name" "$stamp" > "$out/$name"
 done
-cp "$calibration" "$out/calibration"
+render_capture_stage_linux_records "$repo_root" "$out" "$calibration"
 printf '%s\n' "$stamp" > "$out/source-stamp"
 EOF
 chmod +x "$couch/scripts/"*.sh
@@ -80,9 +82,9 @@ mkdir -p "$payload/render-capture"
 for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
   printf 'old\n' > "$payload/render-capture/$name"
 done
-expect "first run builds both and deploys four files" built built 4
+expect "first run builds both and deploys all records" built built 5
 expect "second run skips both and replaces nothing" skipped skipped 0
-for name in librender_stream_capture.so render_stream_capture.gdextension calibration librender_stream_net.so; do
+for name in librender_stream_capture.so render_stream_capture.gdextension calibration.stable calibration.public-beta librender_stream_net.so; do
   [[ -s "$payload/render-capture/linux/$name" ]] || { echo "FAIL payload lacks render-capture/$name" >&2; failures=$((failures + 1)); }
 done
 
@@ -110,8 +112,28 @@ git -C "$gsw" -c user.email=t@t -c user.name=t commit -qam core
 expect "committed: core rebuilt once" built skipped 0
 expect "then fresh" skipped skipped 0
 
-printf '{"calibration":2}\n' > "$couch/eng/render-capture/calibration-0002.json"
-expect "a newer calibration record rebuilds the capture" skipped built 4
+printf '{"calibration":2}\n' > "$couch/eng/render-capture/linux/beta-v113.json"
+expect "an added Linux record rebuilds the capture" skipped built 4
+printf '{"calibration":3}\n' > "$couch/eng/render-capture/linux/stable.json"
+expect "editing an older Linux record rebuilds the capture" skipped built 4
+printf '{"source":2}\n' > "$couch/eng/render-capture/linux/stable.source.json"
+expect "Linux provenance changes invalidate the stamp" skipped built 3
+rm "$couch/.sts2/render-capture/linux/calibration.stable"
+expect "a missing staged record rebuilds the capture" skipped built 0
+rm "$couch/eng/render-capture/linux/beta-v113.json"
+expect "retiring a Linux record rebuilds the capture" skipped built 3
+[[ ! -e "$payload/render-capture/linux/calibration.beta-v113" && ! -e "$couch/.sts2/render-capture/linux/calibration.beta-v113" ]] || {
+  echo "FAIL retired Linux record remains"; exit 1;
+}
+[[ ! -e "$payload/render-capture/linux/calibration.stable.source" && ! -e "$payload/render-capture/linux/calibration" ]] || {
+  echo "FAIL provenance or legacy calibration was deployed"; exit 1;
+}
+printf '{"calibration":99}\n' > "$tmp/operator-record"
+export COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE="$tmp/operator-record"
+expect "an extra operator source stages beside committed records" skipped built 4
+unset COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE
+expect "removing the extra source retires its staged record" skipped built 3
+[[ ! -e "$payload/render-capture/linux/calibration.0-operator" ]] || { echo "FAIL operator record remains"; exit 1; }
 
 rm "$couch/.sts2/render-capture/linux/librender_stream_net.so"
 expect "a missing staged file rebuilds the capture (same bytes: nothing to redeploy)" skipped built 0

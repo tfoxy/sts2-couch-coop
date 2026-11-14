@@ -51,7 +51,8 @@ internal static class MacOsReleaseArchiveTests
             "Microsoft.Extensions.Logging.Abstractions.dll", "System.Diagnostics.DiagnosticSource.dll", "YamlDotNet.dll",
             // The streaming seat's render capture, per OS (scripts/verify-release-archive.sh holds the full rules).
             "render-capture/linux/librender_stream_capture.so", "render-capture/linux/render_stream_capture.gdextension",
-            "render-capture/linux/calibration", "render-capture/linux/librender_stream_net.so",
+            "render-capture/linux/librender_stream_net.so", "render-capture/linux/calibration.stable",
+            "render-capture/linux/calibration.public-beta", "render-capture/linux/calibration.beta-v113",
             "render-capture/windows/render_stream_capture.dll", "render-capture/windows/render_stream_capture.gdextension",
             "render-capture/windows/render_stream_net.dll", "render-capture/windows/calibration.stable",
             "render-capture/windows/calibration.public-beta"

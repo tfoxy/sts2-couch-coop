@@ -57,9 +57,6 @@ if [[ "$target" == windows ]]; then
     cp "$record" "$out/calibration.$(basename "$record" .json)"
   done
 else
-  [[ -n "$calibration_src" && -s "$calibration_src" ]] || {
-    echo "no committed capture calibration record under $repo_root/eng/render-capture/" >&2; exit 1;
-  }
   "$cmake_bin" -S "$capture_src" -B "$build_dir" -DCMAKE_BUILD_TYPE=RelWithDebInfo
   "$cmake_bin" --build "$build_dir" --target render_stream_capture -j"$(nproc)"
   cp "$build_dir/librender_stream_capture.so" "$out/librender_stream_capture.so"
@@ -67,7 +64,7 @@ else
   sed 's#^linux.x86_64 = .*#linux.x86_64 = "librender_stream_capture.so"#' \
     "$build_dir/render_stream_capture.gdextension" > "$out/render_stream_capture.gdextension"
   grep -qx 'linux.x86_64 = "librender_stream_capture.so"' "$out/render_stream_capture.gdextension"
-  cp "$calibration_src" "$out/calibration"
+  render_capture_stage_linux_records "$repo_root" "$out" "$calibration_src"
   bash "$net_build" --no-test
   cp "$capture_src/build/librender_stream_net.so" "$out/librender_stream_net.so"
 fi

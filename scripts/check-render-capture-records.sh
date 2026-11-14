@@ -38,6 +38,35 @@ try:
         record = json.loads(path.read_text())
         require(record['engine']['platform'] == 'linux-x86_64', 'Linux record platform')
         require(record['calibrator']['version'] == version, 'Linux calibrator version')
+    linux = root / 'eng/render-capture/linux'
+    linux_records = set()
+    for path in sorted(linux.glob('*.source.json')):
+        require(path.with_name(path.name.replace('.source.json', '.json')).is_file(), 'Linux orphan source record')
+    for path in sorted(linux.glob('*.json')):
+        if path.name.endswith('.source.json'): continue
+        lane = path.stem
+        require(lane in lanes, f'Linux unknown lane: {lane}')
+        record = json.loads(path.read_text())
+        source = json.loads(path.with_suffix('.source.json').read_text())
+        require(source['schema'] == 'couchcoop-render-capture-record-source/1', f'Linux {lane}: source schema')
+        require(source['lane'] == lane, f'Linux {lane}: source lane')
+        require(source['gameBuild'] == lanes[lane], f'Linux {lane}: stale gameBuild')
+        require(sha(path) == source['recordSha256'], f'Linux {lane}: record sha256')
+        engine = record['engine']
+        require(engine['sha256'] == source['exeSha256'], f'Linux {lane}: exe sha256')
+        require(engine['platform'] == source['platform'] == 'linux-x86_64', f'Linux {lane}: platform')
+        build_id = engine['build_id']
+        require(isinstance(build_id, str) and re.fullmatch(r'[0-9a-f]+', build_id) is not None
+                and len(build_id) % 2 == 0, f'Linux {lane}: invalid GNU build-id')
+        require(source['elfIdentity']['build_id'] == build_id, f'Linux {lane}: GNU build-id')
+        require(record['calibrator']['version'] == source['calibrator']['version'] == version,
+                f'Linux {lane}: calibrator version')
+        require(record['calibrator']['header_sha256'] == source['calibrator']['headerSha256'],
+                f'Linux {lane}: calibrator header sha256')
+        linux_records.add(lane)
+        print(f'Linux capture record: {lane} ok')
+    for lane in lanes.keys() - linux_records:
+        print(f'Linux capture record: {lane} absent; streaming unavailable for this engine')
     windows = root / 'eng/render-capture/windows'
     for path in sorted(windows.glob('*.source.json')):
         require(path.with_name(path.name.replace('.source.json', '.json')).is_file(), 'orphan source record')

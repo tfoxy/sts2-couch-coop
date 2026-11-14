@@ -50,12 +50,12 @@ internal static class StreamingSeatLaunch
     internal const double MinAspect = 0.25;
     internal const double MaxAspect = 5.0;
 
-    /// <summary>The calibration record's file name next to the extension when no calibration variable is set.</summary>
+    /// <summary>The legacy dev calibration file name; its engine identity must match.</summary>
     internal const string DefaultCalibrationFileName = "calibration.json";
 
     /// <summary>
-    /// The calibration record's file name next to a PACKAGED capture. It has no extension because STS2 scans every
-    /// <c>*.json</c> under a mod's folder as a mod manifest (scripts/build-render-capture.sh writes it).
+    /// The legacy packaged calibration file name. Records use <c>calibration.&lt;lane&gt;</c> because STS2 scans every
+    /// <c>*.json</c> under a mod's folder as a mod manifest.
     /// </summary>
     internal const string PackagedCalibrationFileName = "calibration";
 
@@ -176,7 +176,7 @@ internal static class StreamingSeatLaunch
     internal static ConfigResult ResolveConfig(string? extension, string? calibration, Func<string, bool> fileExists)
     {
         return ResolveConfig(extension, calibration, fileExists, null,
-            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity);
+            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity, ReadHostBuildId);
     }
 
     internal static string HostOs => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux";
@@ -196,6 +196,18 @@ internal static class StreamingSeatLaunch
             if (exe is null) return null;
             using var stream = File.Open(exe, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             return RenderCaptureAvailability.ReadPeIdentity(stream);
+        }
+        catch { return null; }
+    }
+
+    private static string? ReadHostBuildId()
+    {
+        if (!OperatingSystem.IsLinux()) return null;
+        try
+        {
+            // The kernel resolves this to the executing binary, including launches through a symlink.
+            using var stream = File.OpenRead("/proc/self/exe");
+            return RenderCaptureAvailability.ReadElfBuildId(stream);
         }
         catch { return null; }
     }
@@ -225,13 +237,14 @@ internal static class StreamingSeatLaunch
         string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory)
     {
         return ResolveConfig(extension, calibration, fileExists, assemblyDirectory,
-            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity);
+            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity, ReadHostBuildId);
     }
 
     internal static ConfigResult ResolveConfig(
         string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory,
         Func<string, string> readFile, string os, string arch,
-        Func<string, IEnumerable<string>> listFiles, Func<RenderCaptureAvailability.PeIdentity?> readIdentity)
+        Func<string, IEnumerable<string>> listFiles, Func<RenderCaptureAvailability.PeIdentity?> readIdentity,
+        Func<string?>? readBuildId = null)
     {
         ArgumentNullException.ThrowIfNull(fileExists);
         if (string.IsNullOrWhiteSpace(extension) && assemblyDirectory is not null)
@@ -242,7 +255,7 @@ internal static class StreamingSeatLaunch
         }
 
         return RenderCaptureAvailability.Resolve(extension, calibration, os, arch,
-            readFile, fileExists, listFiles, readIdentity);
+            readFile, fileExists, listFiles, readIdentity, readBuildId);
     }
 
     /// <summary>
