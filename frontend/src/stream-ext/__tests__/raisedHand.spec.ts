@@ -4,6 +4,8 @@ import type { Affine2D, ExtensionFrame, ItemMeta, ItemMetaBatch, ItemQuery, Over
 
 import { creatureHudMeasure } from "@/mirror/raise/creatureHud";
 import { parseSceneDelta } from "@/mirror/sceneTree";
+import { createMirrorSettings } from "@/mirror/mirrorSettings";
+import { buildStreamExtensions } from "@/stream-ext/extensions";
 
 import {
   computeRaisePlan,
@@ -102,14 +104,14 @@ class FakeOverrides implements OverrideTable {
   }
   setGlobal(): void { this.writes++; }
   freeze(): void { this.writes++; }
-  clear(id: number): void { this.cleared.push(id); }
+  clear(id: number): void { this.cleared.push(id); this.values.delete(id); }
   clearAll(): void { this.writes++; }
   get(): null { return null; }
   effective(): Affine2D { return [1, 0, 0, 1, 0, 0]; }
   size = 0;
 }
 
-function fakeQuery(overrides: Record<number, { parent?: number | null; y?: number; visible?: boolean; rect?: Rect | null }>): ItemQuery {
+function fakeQuery(overrides: Record<number, { parent?: number | null; x?: number; y?: number; visible?: boolean; rect?: Rect | null }>): ItemQuery {
   const children = (id: number) => Uint32Array.from(Object.keys(overrides).map(Number).filter((child) => overrides[child].parent === id));
   const rect = (id: number): Rect | null => {
     const o = overrides[id];
@@ -129,7 +131,7 @@ function fakeQuery(overrides: Record<number, { parent?: number | null; y?: numbe
     transform: (id) => {
       const o = overrides[id];
       if (o === undefined || o.y === undefined) return null;
-      return [1, 0, 0, 1, 0, o.y];
+      return [1, 0, 0, 1, o.x ?? 0, o.y];
     },
     rect,
     subtreeRect,
@@ -151,18 +153,70 @@ function frame(seq: number | null): ExtensionFrame {
 }
 
 describe("raisedHand — extension glue", () => {
-  it.each(["health first", "intents first"])("matches the old HUD measurement with draw-less groups (%s)", (order) => {
+  it.each([1920, 2340].flatMap((width) => [
+    { kind: "ally", scene: "multiplayer_player_intent.tscn", height: 68, reticleTop: -284.95, intentY: 410, barDy: -350, intentDy: -102 },
+    { kind: "enemy", scene: "intent.tscn", height: 64, reticleTop: -149.65, intentY: 540, barDy: -215, intentDy: -93 }
+  ].map((fixture) => ({ ...fixture, width }))))(
+    "matches the old $kind HUD offsets at $width", ({ width, scene, height, reticleTop, intentY, barDy, intentDy }) => {
+    metas.clear();
+    overrides = new FakeOverrides();
+    const rootY = 740;
+    query = fakeQuery({
+      1: { x: width * 0.75, y: rootY, rect: null },
+      20: { parent: 1, y: 747, rect: null },
+      21: { parent: 1, y: intentY, rect: null },
+      22: { parent: 1, y: rootY + reticleTop, rect: null },
+      23: { parent: 20, y: 747 + 18, rect: null },
+      25: { parent: 21, y: intentY, rect: null }
+    });
+    const items = [
+      meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"),
+      meta(21, [RS_GROUP_CREATURE_HUD], "Intents"),
+      meta(22, [RS_GROUP_CREATURE_RETICLE], "SelectionReticle"),
+      meta(23, [RS_GROUP_CREATURE_POWER], "PowerContainer"),
+      { ...meta(25, [], "."), scene: `res://scenes/combat/${scene}` }
+    ];
+    for (const m of items) metas.set(m.id, m);
+
+    const at = (y: number) => ({ xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x: 0, y } });
+    const nodes = parseSceneDelta({ type: "scene-delta", upserts: [
+      { id: "1", name: "Creature", transform: at(rootY) },
+      { id: "20", parentId: "1", name: "HealthBar", transform: at(7) },
+      { id: "21", parentId: "1", name: "Intents", transform: at(intentY - rootY), localRect: { position: { x: 0, y: 0 }, size: { x: 1000, y: height } } },
+      { id: "22", parentId: "1", name: "SelectionReticle", transform: at(reticleTop) },
+      { id: "23", parentId: "20", name: "PowerContainer", transform: at(18) }
+    ] })!.upserts;
+    const reference = creatureHudMeasure(new Map(nodes.map((n) => [n.id, n])),
+      (id) => nodes.filter((n) => n.parentId === id).map((n) => n.id), "1");
+    expect(Math.round(reference.healthBar)).toBe(barDy);
+    expect(Math.round(reference.intents)).toBe(intentDy);
+
+    const settings = createMirrorSettings(undefined, "", { storage: null });
+    settings.raiseHandCards = true;
+    const built = buildStreamExtensions({ settings, presentationWidth: width, interactive: true });
+    const ext = built.extensions.find((e) => e.id === "couchcoop.raisedHand")!;
+    ext.onItemMeta!(batch(items));
+    ext.beforeDraw!(frame(1));
+    expect(overrides.values.get(20)?.transform[5]).toBe(barDy);
+    expect(overrides.values.get(21)?.transform[5]).toBe(intentDy);
+    for (const extension of built.extensions) extension.dispose?.();
+  });
+
+  it.each([1920, 2340].flatMap((width) => ["health first", "intents first"].map((order) => ({ width, order }))))(
+    "matches the old HUD measurement with draw-less groups at $width ($order)", ({ width, order }) => {
     metas.clear();
     overrides = new FakeOverrides();
     const rootY = 600;
     query = fakeQuery({
-      1: { y: rootY, rect: null },
+      1: { x: width * 0.75, y: rootY, rect: null },
       20: { parent: 1, y: rootY + 7, rect: null },
       21: { parent: 1, y: rootY - 310, rect: null },
       22: { parent: 1, y: rootY - 278, rect: null },
       23: { parent: 20, y: rootY + 39, rect: null },
-      24: { parent: 22, rect: { x: 0, y: rootY - 278, w: 252, h: 178 } },
-      25: { parent: 21, rect: { x: 0, y: rootY - 310, w: 100, h: 26 } },
+      // The reticle painting overshoots its control origin; the old rule uses the origin.
+      24: { parent: 22, rect: { x: 0, y: rootY - 288, w: 252, h: 178 } },
+      25: { parent: 21, y: rootY - 310, rect: null },
+      27: { parent: 25, rect: { x: 0, y: rootY - 316, w: 64, h: 26 } },
       // Drawn health labels can overshoot the display's own origin; they must not define displayTop.
       26: { parent: 20, rect: { x: 0, y: rootY - 6, w: 258, h: 26 } }
     });
@@ -171,7 +225,8 @@ describe("raisedHand — extension glue", () => {
     const items = [
       ...(order === "health first" ? [health, intents] : [intents, health]),
       meta(22, [RS_GROUP_CREATURE_RETICLE], "SelectionReticle"),
-      meta(23, [RS_GROUP_CREATURE_POWER], "PowerContainer")
+      meta(23, [RS_GROUP_CREATURE_POWER], "PowerContainer"),
+      { ...meta(25, [], "."), scene: "res://scenes/combat/intent.tscn" }
     ];
     for (const m of items) metas.set(m.id, m);
 
@@ -180,23 +235,35 @@ describe("raisedHand — extension glue", () => {
     const nodes = parseSceneDelta({ type: "scene-delta", upserts: [
       { id: "1", name: "Creature", transform: at(rootY) },
       { id: "20", parentId: "1", name: "HealthBar", transform: at(7) },
-      { id: "21", parentId: "1", name: "Intents", transform: at(-310), localRect: { position: { x: 0, y: 0 }, size: { x: 100, y: 40 } } },
+      { id: "21", parentId: "1", name: "Intents", transform: at(-310), localRect: { position: { x: 0, y: 0 }, size: { x: 1000, y: 64 } } },
       { id: "22", parentId: "1", name: "SelectionReticle", transform: at(-278) },
       { id: "23", parentId: "20", name: "PowerContainer", transform: at(32) }
     ] })!.upserts;
     const reference = creatureHudMeasure(new Map(nodes.map((n) => [n.id, n])),
       (id) => nodes.filter((n) => n.parentId === id).map((n) => n.id), "1");
     expect(reference.healthBar).toBe(-357);
-    expect(reference.intents).toBe(-101);
+    expect(reference.intents).toBe(-125);
 
-    const ext = createRaisedHandExtension();
+    const settings = createMirrorSettings(undefined, "", { storage: null });
+    settings.raiseHandCards = true;
+    const built = buildStreamExtensions({ settings, presentationWidth: width, interactive: true });
+    const ext = built.extensions.find((e) => e.id === "couchcoop.raisedHand")!;
     ext.onItemMeta!(batch(items));
     ext.beforeDraw!(frame(1));
     expect(query.rect(22)).toBeNull();
-    expect(query.subtreeRect(22)?.y).toBe(rootY - 278);
-    expect(overrides.values.get(20)?.transform[5]).toBe(reference.healthBar);
-    expect(overrides.values.get(21)?.transform[5]).toBe(reference.intents);
-    ext.dispose!();
+    expect(query.subtreeRect(22)?.y).toBe(rootY - 288);
+    const barDy = overrides.values.get(20)!.transform[5];
+    const intentDy = overrides.values.get(21)!.transform[5];
+    expect(barDy).toBe(reference.healthBar);
+    expect(intentDy).toBe(reference.intents);
+    // The shifted row bottom keeps the old 21px gap above the shifted display origin.
+    expect(rootY + 7 + barDy - (rootY - 310 + 64 + intentDy)).toBe(21);
+    settings.raiseHandCards = false;
+    const read = vi.spyOn(query, "transform");
+    ext.beforeDraw!(frame(null));
+    expect(overrides.values.size).toBe(0);
+    expect(read).not.toHaveBeenCalled();
+    for (const extension of built.extensions) extension.dispose?.();
   });
 
   it("preserves the intent lift while drawn children bob across transactions", () => {
@@ -206,17 +273,20 @@ describe("raisedHand — extension glue", () => {
       1: { y: 600, rect: null },
       20: { parent: 1, y: 607, rect: null },
       21: { parent: 1, y: 290, rect: null },
-      25: { parent: 21, y: 284, rect: { x: 0, y: 284, w: 100, h: 26 } }
+      25: { parent: 21, y: 290, rect: null },
+      26: { parent: 25, y: 284, rect: { x: 0, y: 284, w: 100, h: 26 } }
     };
     query = fakeQuery(geometry);
-    const items = [meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), meta(21, [RS_GROUP_CREATURE_HUD], "Intents")];
+    const items = [meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), meta(21, [RS_GROUP_CREATURE_HUD], "Intents"),
+      { ...meta(25, [], "."), scene: "res://scenes/combat/intent.tscn" }];
     for (const m of items) metas.set(m.id, m);
     const ext = createRaisedHandExtension();
     ext.onItemMeta!(batch(items));
     ext.beforeDraw!(frame(1));
     const lift = overrides.values.get(21)!.transform[5];
-    geometry[25].y += 12;
-    geometry[25].rect.y += 12;
+    expect(lift).toBe(-12);
+    geometry[26].y += 12;
+    geometry[26].rect.y += 12;
     ext.beforeDraw!(frame(2));
     expect(overrides.values.get(21)!.transform[5]).toBe(lift);
     ext.dispose!();
@@ -240,20 +310,20 @@ describe("raisedHand — extension glue", () => {
     ext.dispose!();
   });
 
-  it("uses the reticle fallback when its subtree has no known bounds", () => {
+  it.each([true, false])("uses the reticle origin without drawn bounds, falling back only without a transform (%s)", (known) => {
     metas.clear();
     overrides = new FakeOverrides();
     query = fakeQuery({
       1: { y: 600 },
       20: { parent: 1, y: 607, rect: null },
-      22: { parent: 1, y: 322, rect: null }
+      22: { parent: 1, y: known ? 322 : undefined, rect: null }
     });
     const items = [meta(20, [RS_GROUP_CREATURE_HUD], "HealthBar"), meta(22, [RS_GROUP_CREATURE_RETICLE])];
     for (const m of items) metas.set(m.id, m);
     const ext = createRaisedHandExtension();
     ext.onItemMeta!(batch(items));
     ext.beforeDraw!(frame(1));
-    expect(overrides.values.get(20)?.transform[5]).toBe(-244);
+    expect(overrides.values.get(20)?.transform[5]).toBe(known ? -343 : -244);
     ext.dispose!();
   });
 
@@ -327,9 +397,9 @@ describe("raisedHand — extension glue", () => {
 });
 
 describe("raisedHand — off is empty", () => {
-  it("asks for the mod's groups and a path, and nothing else", () => {
+  it("asks for the mod's groups and scene/path identity", () => {
     const ext = createRaisedHandExtension();
-    expect(ext.wants?.fields).toEqual(["path"]);
+    expect(ext.wants?.fields).toEqual(["scene", "path"]);
     expect([...(ext.wants?.groups ?? [])].sort()).toEqual([...RAISE_GROUPS].slice().sort());
   });
 });

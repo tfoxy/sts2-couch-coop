@@ -14,7 +14,7 @@
 //     modulate in the query is a GSW change, out of scope for this couch increment.
 //   * View-only: there is no held-card input, so "dragging" is only the game's own reparent of a holder onto the hand
 //     root (the same signal the old mirror used for a drag it did not originate).
-//   * The creature geometry is read as global-rect-minus-root-origin, exact while the creature's ancestors are
+//   * The creature geometry is read as global-transform-minus-root-origin, exact while the creature's ancestors are
 //     identity-scale (the common case); a scaled creature reads its geometry scaled by its own factor, which the old
 //     mirror avoided by reading parent-relative transforms the stream query does not expose.
 //
@@ -47,8 +47,14 @@ import {
   RS_GROUP_TARGETING_ARROW
 } from "@/stream-ext/groups";
 
-/** The intent row's authored box; drawn children can bob independently inside it. */
+/** The empty intent row's minimum height; drawn children can bob independently inside it. */
 const INTENT_ROW_HEIGHT = 40;
+// ItemQuery exposes drawn bounds, not layout boxes. Use stable row heights for enemy intents and an ally's
+// planned-action indicator so their animated painting does not change the gap above the health bar.
+const INTENT_ROW_HEIGHTS = [
+  ["combat/intent.tscn", 64],
+  ["combat/multiplayer_player_intent.tscn", 68]
+] as const;
 
 /** A holder's pose, read from the frame. */
 export interface HolderPose {
@@ -194,11 +200,6 @@ function readFacts(q: ItemQuery, id: number): PoseFacts {
   };
 }
 
-/** The top of `id` in `rootT`'s local space: its global rect top minus the root's global origin. */
-function topInLocal(rect: { y: number } | null, rootT: readonly number[]): number | null {
-  return rect === null ? null : rect.y - rootT[5];
-}
-
 /**
  * The raised-hand extension. Enabled is the viewer's `mirrorSettings.raiseHandCards`; when false the module is not
  * created at all, so a viewer who never turned it on sends an empty extension list and a byte-identical hello.
@@ -249,7 +250,7 @@ export function createRaisedHandExtension(): RenderStreamExtension {
 
   return {
     id: "couchcoop.raisedHand",
-    wants: { fields: ["path"], groups: [...RAISE_GROUPS] },
+    wants: { fields: ["scene", "path"], groups: [...RAISE_GROUPS] },
     onItemMeta: (b) => {
       if (b.form === "full") {
         holders.clear();
@@ -337,7 +338,7 @@ export function createRaisedHandExtension(): RenderStreamExtension {
           kind,
           rootId,
           top: facts.transform === null ? null : facts.transform[5] - rootT[5],
-          height: kind === "Intents" ? INTENT_ROW_HEIGHT : 0,
+          height: kind === "Intents" ? intentRowHeight(q, id) : 0,
           powerTop: kind === "HealthBar" ? powerTopFor(q, id, rootT, powers) : null,
           reticleTop: reticleTopFor(q, rootId, rootT, reticles)
         });
@@ -376,9 +377,22 @@ export function createRaisedHandExtension(): RenderStreamExtension {
 
 function reticleTopFor(q: ItemQuery, rootId: number, rootT: readonly number[], reticles: ReadonlySet<number>): number | null {
   for (const childId of q.children(rootId)) {
-    if (reticles.has(childId)) return topInLocal(q.subtreeRect(childId), rootT);
+    if (reticles.has(childId)) {
+      const t = q.transform(childId);
+      return t === null ? null : t[5] - rootT[5];
+    }
   }
   return null;
+}
+
+function intentRowHeight(q: ItemQuery, id: number): number {
+  for (const childId of q.children(id)) {
+    const scene = q.meta(childId)?.scene;
+    for (const [suffix, height] of INTENT_ROW_HEIGHTS) {
+      if (scene?.endsWith(suffix)) return height;
+    }
+  }
+  return INTENT_ROW_HEIGHT;
 }
 
 function powerTopFor(q: ItemQuery, healthBarId: number, rootT: readonly number[], powers: ReadonlySet<number>): number | null {
