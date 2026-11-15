@@ -534,7 +534,7 @@ jq -n \
   --arg spirectl "$spirectl_commit" \
   --arg godotSceneWeb "$godot_scene_web_commit" \
   --argjson sts2References "$sts2_references" \
-  --argjson captureRecords "$(jq -s 'map({key: .lane, value: {gameBuild, exeSha256, recordSha256}}) | from_entries' "${capture_sources[@]}")" \
+  --argjson captureRecords "$(jq -s 'map({key: .engineId, value: {gameBuildsSeen, exeSha256, recordSha256}}) | from_entries' "${capture_sources[@]}")" \
   --argjson llvmMingw "$(cat "$repo_root/.sts2/render-capture/windows/toolchain.json")" \
   --arg rustc "$(rustc --version)" \
   --arg dotnet "$(dotnet --version)" --arg node "$(node --version)" --arg pnpm "$(corepack pnpm --version)" \

@@ -1,9 +1,14 @@
 {
-  "schema": "couchcoop-render-capture-record-source/1",
-  "lane": "stable",
+  "schema": "couchcoop-render-capture-record-source/2",
+  "engineId": "megadot-4.5.1-m12-9a404dfe",
+  "gameBuildsSeen": [
+    {
+      "gameBuild": "v0.107.1",
+      "steamBuildId": "unknown: not recorded with the original calibration",
+      "basis": "Preserved release_info.json; the same game build is assigned to this lane in scripts/lib/release-lanes.sh at the import commit."
+    }
+  ],
   "platform": "linux-x86_64",
-  "gameBuild": "v0.107.1",
-  "steamBuildId": "unknown: not recorded with the original calibration",
   "exeSha256": "0c21999e14b9ea44b7fa2cea38d3f27bbf63a784393d7932e2fa68a0819aa69a",
   "elfIdentity": {
     "build_id": "9a404dfede6a1778b7348d0087804ae48a233e38"

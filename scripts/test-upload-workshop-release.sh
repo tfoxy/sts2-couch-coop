@@ -87,8 +87,8 @@ done
 for file in librender_stream_capture.so librender_stream_net.so; do
   printf '\177ELFfixture\n' > "$payload/render-capture/linux/$file"
 done
-for lane in "${lanes[@]}"; do
-  printf 'fixture\n' > "$payload/render-capture/linux/calibration.$lane"
+for engine_id in megadot-4.5.1-m12-9a404dfe megadot-4.5.1-m14-d5fc2677; do
+  printf 'fixture\n' > "$payload/render-capture/linux/calibration.$engine_id"
 done
 for file in render_stream_capture.dll render_stream_net.dll; do
   printf 'MZfixture\n' > "$payload/render-capture/windows/$file"

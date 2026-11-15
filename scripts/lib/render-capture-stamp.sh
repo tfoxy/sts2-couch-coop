@@ -67,7 +67,7 @@ render_capture_calibration_source() {
   printf '%s\n' "${COUCHCOOP_RENDER_CAPTURE_CALIBRATION_SOURCE:-}"
 }
 
-# STS2 treats *.json as manifests, so candidates have extensionless lane names.
+# STS2 treats *.json as manifests, so candidates have extensionless engine IDs.
 render_capture_stage_linux_records() {
   local repo_root="$1" out="$2" calibration="$3" record count=0
   if [[ -n "$calibration" && ! -s "$calibration" ]]; then

@@ -15,9 +15,9 @@ payload="$tmp/payload"
 mkdir -p "$couch/scripts/lib" "$couch/eng/render-capture/linux" "$couch/.sts2" "$payload"
 cp "$here/build-render-stream.sh" "$couch/scripts/"
 cp "$here/lib/render-capture-stamp.sh" "$couch/scripts/lib/"
-printf '{"calibration":1}\n' > "$couch/eng/render-capture/linux/stable.json"
-printf '{"calibration":14}\n' > "$couch/eng/render-capture/linux/public-beta.json"
-printf '{"source":1}\n' > "$couch/eng/render-capture/linux/stable.source.json"
+printf '{"calibration":1}\n' > "$couch/eng/render-capture/linux/megadot-4.5.1-m12-9a404dfe.json"
+printf '{"calibration":14}\n' > "$couch/eng/render-capture/linux/megadot-4.5.1-m14-d5fc2677.json"
+printf '{"source":1}\n' > "$couch/eng/render-capture/linux/megadot-4.5.1-m12-9a404dfe.source.json"
 
 # Stubs: count the run, then write what the real script writes (the capture stub stamps exactly as the real one).
 cat > "$couch/scripts/build-render-stream-client.sh" <<'EOF'
@@ -84,7 +84,7 @@ for name in librender_stream_capture.so render_stream_capture.gdextension calibr
 done
 expect "first run builds both and deploys all records" built built 5
 expect "second run skips both and replaces nothing" skipped skipped 0
-for name in librender_stream_capture.so render_stream_capture.gdextension calibration.stable calibration.public-beta librender_stream_net.so; do
+for name in librender_stream_capture.so render_stream_capture.gdextension calibration.megadot-4.5.1-m12-9a404dfe calibration.megadot-4.5.1-m14-d5fc2677 librender_stream_net.so; do
   [[ -s "$payload/render-capture/linux/$name" ]] || { echo "FAIL payload lacks render-capture/$name" >&2; failures=$((failures + 1)); }
 done
 
@@ -92,7 +92,7 @@ for name in librender_stream_capture.so render_stream_capture.gdextension calibr
   [[ ! -e "$payload/render-capture/$name" ]] || { echo "FAIL old flat file remains"; exit 1; }
 done
 mkdir -p "$couch/eng/render-capture/windows"
-printf 'windows\n' > "$couch/eng/render-capture/windows/stable.json"
+printf 'windows\n' > "$couch/eng/render-capture/windows/megadot-4.5.1-m12-e6ebf95c.json"
 expect "Windows records do not invalidate the Linux stamp" skipped skipped 0
 
 printf 'edit\n' >> "$gsw/experiments/render-stream/capture/file.txt"
@@ -112,20 +112,20 @@ git -C "$gsw" -c user.email=t@t -c user.name=t commit -qam core
 expect "committed: core rebuilt once" built skipped 0
 expect "then fresh" skipped skipped 0
 
-printf '{"calibration":2}\n' > "$couch/eng/render-capture/linux/beta-v113.json"
+printf '{"calibration":2}\n' > "$couch/eng/render-capture/linux/megadot-4.5.1-m15-1234abcd.json"
 expect "an added Linux record rebuilds the capture" skipped built 4
-printf '{"calibration":3}\n' > "$couch/eng/render-capture/linux/stable.json"
+printf '{"calibration":3}\n' > "$couch/eng/render-capture/linux/megadot-4.5.1-m12-9a404dfe.json"
 expect "editing an older Linux record rebuilds the capture" skipped built 4
-printf '{"source":2}\n' > "$couch/eng/render-capture/linux/stable.source.json"
+printf '{"source":2}\n' > "$couch/eng/render-capture/linux/megadot-4.5.1-m12-9a404dfe.source.json"
 expect "Linux provenance changes invalidate the stamp" skipped built 3
-rm "$couch/.sts2/render-capture/linux/calibration.stable"
+rm "$couch/.sts2/render-capture/linux/calibration.megadot-4.5.1-m12-9a404dfe"
 expect "a missing staged record rebuilds the capture" skipped built 0
-rm "$couch/eng/render-capture/linux/beta-v113.json"
+rm "$couch/eng/render-capture/linux/megadot-4.5.1-m15-1234abcd.json"
 expect "retiring a Linux record rebuilds the capture" skipped built 3
-[[ ! -e "$payload/render-capture/linux/calibration.beta-v113" && ! -e "$couch/.sts2/render-capture/linux/calibration.beta-v113" ]] || {
+[[ ! -e "$payload/render-capture/linux/calibration.megadot-4.5.1-m15-1234abcd" && ! -e "$couch/.sts2/render-capture/linux/calibration.megadot-4.5.1-m15-1234abcd" ]] || {
   echo "FAIL retired Linux record remains"; exit 1;
 }
-[[ ! -e "$payload/render-capture/linux/calibration.stable.source" && ! -e "$payload/render-capture/linux/calibration" ]] || {
+[[ ! -e "$payload/render-capture/linux/calibration.megadot-4.5.1-m12-9a404dfe.source" && ! -e "$payload/render-capture/linux/calibration" ]] || {
   echo "FAIL provenance or legacy calibration was deployed"; exit 1;
 }
 printf '{"calibration":99}\n' > "$tmp/operator-record"
@@ -158,7 +158,7 @@ source "$couch/scripts/lib/render-capture-stamp.sh"
 calibration="$(render_capture_calibration_source "$couch")"
 windows_stamp() { render_capture_stamp "$gsw" "$couch" "$calibration" windows; }
 linux_stamp() { render_capture_stamp "$gsw" "$couch" "$calibration" linux; }
-for input in "$couch/eng/render-capture/windows/stable.json" \
+for input in "$couch/eng/render-capture/windows/megadot-4.5.1-m12-e6ebf95c.json" \
   "$gsw/experiments/render-stream/scripts/lib/llvm-mingw.sh" \
   "$gsw/experiments/render-stream/scripts/w-imports.py"; do
   before_windows="$(windows_stamp)"; before_linux="$(linux_stamp)"

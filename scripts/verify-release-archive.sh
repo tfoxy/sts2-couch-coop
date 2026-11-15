@@ -68,14 +68,9 @@ is_allowed_payload_file() {
     licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
     # Capture records are extensionless: STS2 scans every *.json as a mod manifest.
     render-capture/linux/librender_stream_capture.so|render-capture/linux/render_stream_capture.gdextension|render-capture/linux/librender_stream_net.so|render-capture/windows/render_stream_capture.dll|render-capture/windows/render_stream_capture.gdextension|render-capture/windows/render_stream_net.dll) return 0 ;;
-    render-capture/linux/calibration.*)
-      leaf="${path#render-capture/linux/calibration.}"
-      release_lane_is_known "$leaf"
-      return
-      ;;
-    render-capture/windows/calibration.*)
-      leaf="${path#render-capture/windows/calibration.}"
-      release_lane_is_known "$leaf"
+    render-capture/linux/calibration.*|render-capture/windows/calibration.*)
+      # Archive verification is self-contained; accept the engine naming contract without a checkout.
+      [[ "$path" =~ ^render-capture/(linux|windows)/calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}$ ]]
       return
       ;;
     licenses/render-capture/windows/llvm-mingw-LICENSE.txt|licenses/render-capture/windows/mingw-w64-runtime-COPYING.txt|licenses/render-capture/windows/rust-std-MIT.txt) return 0 ;;

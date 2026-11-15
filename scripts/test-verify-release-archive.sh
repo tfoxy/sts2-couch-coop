@@ -129,8 +129,8 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   for file in librender_stream_capture.so librender_stream_net.so; do
     printf '\177ELFfixture\n' > "$root/render-capture/linux/$file"
   done
-  for lane in "${known_lanes[@]}"; do
-    printf 'fixture\n' > "$root/render-capture/linux/calibration.$lane"
+  for engine_id in megadot-4.5.1-m12-9a404dfe megadot-4.5.1-m14-d5fc2677; do
+    printf 'fixture\n' > "$root/render-capture/linux/calibration.$engine_id"
   done
   for file in render_stream_capture.dll render_stream_net.dll; do
     printf 'MZfixture\n' > "$root/render-capture/windows/$file"
@@ -588,9 +588,15 @@ expect_reject traversal "$verifier" --archive "$traversal_archive"
 
 for path in render-capture/librender_stream_capture.so render-capture/linux/calibration \
   render-capture/linux/calibration.nightly render-capture/linux/calibration.0-operator \
-  render-capture/windows/calibration.nightly \
-  render-capture/windows/calibration.stable.json render-capture/windows/toolchain.json render-capture/windows/source-stamp; do
+  render-capture/windows/calibration.nightly render-capture/linux/calibration.stable \
+  render-capture/windows/calibration.stable render-capture/linux/calibration.megadot-4.5.1-m12-9a404df \
+  render-capture/linux/calibration.megadot-4.5.1-m12-9A404DFE \
+  render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c.source \
+  render-capture/linux/calibration.extra/calibration.megadot-4.5.1-m12-9a404dfe \
+  render-capture/linux/calibration.render-capture/windows/calibration.megadot-4.5.1-m12-9a404dfe \
+  render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c.json render-capture/windows/toolchain.json render-capture/windows/source-stamp; do
   bad="$(clone_payload "capture-${path//\//-}")"
+  mkdir -p "$(dirname "$bad/$path")"
   printf 'fixture\n' > "$bad/$path"
   expect_reject "forbidden-${path//\//-}" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
 done
@@ -598,10 +604,10 @@ bad="$(clone_payload missing-linux-records)"
 rm "$bad"/render-capture/linux/calibration.*
 expect_reject_saying missing-linux-records 'release payload is missing Linux capture calibration records' \
   "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
-for lane in "${known_lanes[@]}"; do
-  one_record="$(clone_payload "linux-record-$lane")"
+for engine_id in megadot-4.5.1-m12-9a404dfe megadot-4.5.1-m14-d5fc2677 megadot-4.6.0-m1-1234abcd; do
+  one_record="$(clone_payload "linux-record-$engine_id")"
   rm "$one_record"/render-capture/linux/calibration.*
-  printf 'fixture\n' > "$one_record/render-capture/linux/calibration.$lane"
+  printf 'fixture\n' > "$one_record/render-capture/linux/calibration.$engine_id"
   "$verifier" --payload "$one_record" --version 1.2.3 "${all_lane_args[@]}" >/dev/null
 done
 bad="$(clone_payload missing-windows-net)"
@@ -618,6 +624,6 @@ for lib in linux/librender_stream_capture.so linux/librender_stream_net.so windo
   expect_reject "wrong-magic-${lib//\//-}" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
 done
 valid_record="$(clone_payload valid-windows-record)"
-printf 'fixture\n' > "$valid_record/render-capture/windows/calibration.stable"
+printf 'fixture\n' > "$valid_record/render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c"
 "$verifier" --payload "$valid_record" --version 1.2.3 "${all_lane_args[@]}"
 echo "test-verify-release-archive: ok"

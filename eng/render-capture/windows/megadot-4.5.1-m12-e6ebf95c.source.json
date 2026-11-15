@@ -1,9 +1,14 @@
 {
-  "schema": "couchcoop-render-capture-record-source/1",
-  "lane": "stable",
+  "schema": "couchcoop-render-capture-record-source/2",
+  "engineId": "megadot-4.5.1-m12-e6ebf95c",
+  "gameBuildsSeen": [
+    {
+      "gameBuild": "v0.107.1",
+      "steamBuildId": "23811903",
+      "basis": "Existing committed capture-record source."
+    }
+  ],
   "platform": "windows-x86_64",
-  "gameBuild": "v0.107.1",
-  "steamBuildId": "23811903",
   "exeSha256": "59c3e86e43e8388cb2b03e40544cca7309c7d34519498bed91d88595e766bf82",
   "peIdentity": {
     "size_of_image": 896749568,
