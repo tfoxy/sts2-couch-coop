@@ -100,12 +100,11 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(group.get(".settings-item").text()).toContain("Use new renderer (Beta)");
   });
 
-  it("is hidden from viewers until its game integration ships", () => {
+  it("is shown to viewers: no ancestor of the checkbox is hidden", () => {
     available();
     mountPanel();
-    const section = wrapper!.get('[data-testid="mirror-renderer-section"]');
-    expect((section.element as HTMLElement).style.display).toBe("none");
-    expect(section.find('[data-testid="mirror-renderer"]').exists()).toBe(true);
+    let node: HTMLElement | null = wrapper!.get('[data-testid="mirror-renderer"]').element as HTMLElement;
+    for (; node; node = node.parentElement) expect(node.style.display).not.toBe("none");
   });
 
   it("while checked, disables every forced row and shows its forced value; supported rows stay the viewer's", async () => {
