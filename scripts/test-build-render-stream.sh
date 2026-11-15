@@ -42,6 +42,7 @@ for name in librender_stream_capture.so render_stream_capture.gdextension libren
   printf '%s %s\n' "$name" "$stamp" > "$out/$name"
 done
 render_capture_stage_linux_records "$repo_root" "$out" "$calibration"
+render_capture_stage_abi_tables "$COUCHCOOP_GSW_ROOT" "$out"
 printf '%s\n' "$stamp" > "$out/source-stamp"
 EOF
 chmod +x "$couch/scripts/"*.sh
@@ -137,6 +138,26 @@ expect "removing the extra source retires its staged record" skipped built 3
 
 rm "$couch/.sts2/render-capture/linux/librender_stream_net.so"
 expect "a missing staged file rebuilds the capture (same bytes: nothing to redeploy)" skipped built 0
+
+# Godot ABI tables: optional in godot-scene-web, staged extensionless, deployed and retired like the records.
+abi="$gsw/experiments/render-stream/calibration/abi"
+mkdir -p "$abi"
+printf '{"abi":1}\n' > "$abi/godot-4.5.1-rendering-server.json"
+git -C "$gsw" add -A
+git -C "$gsw" -c user.email=t@t -c user.name=t commit -qm abi
+expect "an added ABI table rebuilds the capture and deploys the table" skipped built 4
+cmp -s "$abi/godot-4.5.1-rendering-server.json" "$payload/render-capture/linux/abi-table.godot-4.5.1-rendering-server" \
+  && [[ ! -e "$payload/render-capture/linux/abi-table.godot-4.5.1-rendering-server.json" ]] || {
+  echo "FAIL the ABI table was not deployed extensionless"; exit 1;
+}
+rm "$couch/.sts2/render-capture/linux/abi-table.godot-4.5.1-rendering-server"
+expect "a missing staged ABI table rebuilds the capture" skipped built 0
+git -C "$gsw" rm -q -r "experiments/render-stream/calibration"
+git -C "$gsw" -c user.email=t@t -c user.name=t commit -qm "retire abi"
+expect "retiring the ABI table rebuilds the capture" skipped built 3
+[[ ! -e "$payload/render-capture/linux/abi-table.godot-4.5.1-rendering-server" ]] || {
+  echo "FAIL retired ABI table remains in the payload"; exit 1;
+}
 
 ino_before="$(stat -c %i "$payload/render-capture/linux/librender_stream_capture.so")"
 printf 'edit\n' >> "$gsw/experiments/render-stream/third_party/basis_universal/file.txt"

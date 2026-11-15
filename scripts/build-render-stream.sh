@@ -13,7 +13,7 @@
 #            (scripts/lib/render-capture-stamp.sh: GSW tree ids plus uncommitted content, this repo's script and
 #            calibration).
 #
-# --payload <dir> then copies render-capture/ (capture, .gdextension, calibration, net module) into <dir>, where
+# --payload <dir> then copies render-capture/ (capture, .gdextension, calibration, ABI tables, net module) into <dir>, where
 # StreamingSeatLaunch finds it with no operator variable. A file whose bytes are unchanged is left alone; a changed
 # one is replaced by rename, never rewritten in place, so a running seat that mapped the old library keeps it.
 #
@@ -94,6 +94,10 @@ done
 if [[ -n "$calibration" ]]; then
   cmp -s "$calibration" "$capture_dir/calibration.0-operator" || capture_complete=0
 fi
+for table in "$gsw_root"/experiments/render-stream/calibration/abi/*.json; do
+  [[ -f "$table" ]] || continue
+  cmp -s "$table" "$capture_dir/abi-table.$(basename "$table" .json)" || capture_complete=0
+done
 if [[ "$capture_complete" == 1 && -n "$want_stamp" && "$have_stamp" == "$want_stamp" ]]; then
   capture_action=skipped
   echo "render-stream: capture and net module fresh (${want_stamp#* }), not rebuilt" >&2
@@ -118,11 +122,13 @@ if [[ -n "$payload" ]]; then
   target="$payload/render-capture/linux"
   mkdir -p "$target"
   rm -f "$target/calibration"
-  for record in "$target"/calibration.*; do
+  # Records and ABI tables retired from the staging leave the payload too.
+  for record in "$target"/calibration.* "$target"/abi-table.*; do
     [[ -f "$record" && ! -f "$capture_dir/$(basename "$record")" ]] && rm -f "$record"
   done
   for file in "$capture_dir/librender_stream_capture.so" "$capture_dir/render_stream_capture.gdextension" \
-    "$capture_dir/librender_stream_net.so" "$capture_dir"/calibration.*; do
+    "$capture_dir/librender_stream_net.so" "$capture_dir"/calibration.* "$capture_dir"/abi-table.*; do
+    [[ -f "$file" ]] || continue
     name="$(basename "$file")"
     if ! cmp -s "$capture_dir/$name" "$target/$name"; then
       cp "$capture_dir/$name" "$target/.$name.tmp.$$"

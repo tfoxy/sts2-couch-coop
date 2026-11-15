@@ -96,8 +96,20 @@ internal static class RenderCaptureAvailability
                     }
                     catch (Exception) { /* An invalid record cannot identify an engine. */ }
                 }
-                if (matching is null) return new(null, $"no capture calibration matches the host executable ({identity.Value})",
-                    Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
+                if (matching is null)
+                {
+                    // Same fallback as Linux: never for an operator's record, and the capture refuses on its own when
+                    // the engine does not match the table.
+                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, listFiles, fileExists) : null;
+                    if (table is not null)
+                    {
+                        var derivedNet = Path.Combine(directory, "render_stream_net.dll");
+                        return new(new StreamingSeatLaunch.Config(request.Path, "", NetModule: fileExists(derivedNet) ? derivedNet : null,
+                            AbiTable: table), null);
+                    }
+                    return new(null, $"no capture calibration matches the host executable ({identity.Value})",
+                        Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
+                }
                 calibrationPath = matching;
             }
             else if (os == "linux")
@@ -121,8 +133,20 @@ internal static class RenderCaptureAvailability
                     }
                     catch (Exception) { /* An invalid record cannot identify an engine. */ }
                 }
-                if (matching is null) return new(null, $"no capture calibration matches the host executable (build_id={buildId})",
-                    Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
+                if (matching is null)
+                {
+                    // An operator's record never falls back; otherwise an unrecorded executable may still stream through
+                    // the capture's live derivation, which refuses on its own if the engine does not match the table.
+                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, listFiles, fileExists) : null;
+                    if (table is not null)
+                    {
+                        var derivedNet = Path.Combine(directory, "librender_stream_net.so");
+                        return new(new StreamingSeatLaunch.Config(request.Path, "", NetModule: fileExists(derivedNet) ? derivedNet : null,
+                            AbiTable: table), null);
+                    }
+                    return new(null, $"no capture calibration matches the host executable (build_id={buildId})",
+                        Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
+                }
                 calibrationPath = matching;
             }
             else if (string.IsNullOrWhiteSpace(calibration) && !fileExists(calibrationPath))
@@ -138,6 +162,12 @@ internal static class RenderCaptureAvailability
             return new(null, $"capture availability could not be read: {exception.GetType().Name}", Reason: UnavailableReason.Unknown);
         }
     }
+
+    /// <summary>The staged Godot ABI table (<c>abi-table.*</c>, extensionless), the ordinal first when several are staged.</summary>
+    private static string? FindAbiTable(string directory, Func<string, IEnumerable<string>> listFiles, Func<string, bool> fileExists)
+        => listFiles(directory)
+            .Where(path => Path.GetFileName(path).StartsWith("abi-table.", StringComparison.Ordinal) && fileExists(path))
+            .OrderBy(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault();
 
     /// <summary>Reads GNU build-id from ELF64 x86_64 program notes, including stripped executables.</summary>
     internal static string? ReadElfBuildId(Stream stream)

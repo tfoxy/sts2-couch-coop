@@ -555,7 +555,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         if (streaming.Warning is { } warning) CouchCoopLog.Warn($"streaming seat: {warning}");
         if (streaming.Config is { } config)
         {
-            CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.Calibration} "
+            CouchCoopLog.Info($"streaming seat available: capture={config.Extension} calibration={config.CalibrationDescription} "
                 + $"maxWidth={config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "
                 + $"carriers={(config.NetModule is null ? "ws" : "ws,wt")}");
         }

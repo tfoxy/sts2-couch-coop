@@ -51,6 +51,13 @@ internal static class RenderCaptureAvailabilityTests
         Check(Resolve().Config is null, "unparseable record");
         files.Remove("/capture/calibration.a"); files.Remove("/capture/calibration.b");
         Check(Resolve().Config is null, "empty candidate set");
+        files["/capture/abi-table.godot-4.5.1-rendering-server"] = "{}";
+        Check(Resolve().Config is { Calibration: "", AbiTable: "/capture/abi-table.godot-4.5.1-rendering-server" },
+            "Windows: an unrecorded executable derives from the staged ABI table");
+        Check(Resolve(record: "/capture/calibration.b").Config is null, "Windows: an operator record never falls back to derivation");
+        Check(Resolve(identity: () => null).Reason == RenderCaptureAvailability.UnavailableReason.IdentityUnreadable,
+            "Windows: unreadable identity does not derive");
+        files.Remove("/capture/abi-table.godot-4.5.1-rendering-server");
         Check(Resolve().Refusal?.Contains("size_of_image=8192, time_date_stamp=1234, codeview_id=" + Identity.CodeViewId) == true,
             "refusal names all identity fields");
         files["/capture/calibration.b"] = Record(Identity with { CodeViewId = null });
@@ -115,6 +122,28 @@ internal static class RenderCaptureAvailabilityTests
         Check(Resolve().Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "Linux requires matching platform");
         files["/capture/calibration.public-beta"] = "{\"engine\":{\"platform\":\"linux-x86_64\"}}";
         Check(Resolve().Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "record missing build-id is skipped");
+        // Derived calibration: an unrecorded executable streams through a staged Godot ABI table.
+        files["/capture/abi-table.godot-4.5.1-rendering-server"] = "{}";
+        var derived = Resolve("abcdef");
+        Check(derived.Config is { Calibration: "", AbiTable: "/capture/abi-table.godot-4.5.1-rendering-server" },
+            "unknown build-id derives from the staged ABI table: " + derived.Refusal);
+        Check(derived.Config?.CalibrationDescription == "derived abiTable=/capture/abi-table.godot-4.5.1-rendering-server",
+            "derived calibration is named in the operator log");
+        Check(Resolve(record: "/capture/calibration.stable").Reason == RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch,
+            "an operator record never falls back to derivation");
+        Check(Resolve(null).Reason == RenderCaptureAvailability.UnavailableReason.IdentityUnreadable,
+            "unreadable identity does not derive");
+        files["/capture/abi-table.godot-4.5.0-rendering-server"] = "{}";
+        Check(Resolve("abcdef").Config?.AbiTable == "/capture/abi-table.godot-4.5.0-rendering-server",
+            "several tables pick the ordinal first");
+        files["/capture/calibration.matching"] = RecordFor("abcdef");
+        Check(Resolve("abcdef").Config is { AbiTable: null, Calibration: "/capture/calibration.matching" },
+            "a matching record always wins over derivation");
+        files.Remove("/capture/calibration.matching");
+        files.Remove("/capture/abi-table.godot-4.5.0-rendering-server");
+        files.Remove("/capture/abi-table.godot-4.5.1-rendering-server");
+        Check(Resolve("abcdef").Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord,
+            "no staged table keeps the typed refusal");
     }
 
     private static void ElfNotes()

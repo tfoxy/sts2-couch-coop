@@ -73,6 +73,11 @@ is_allowed_payload_file() {
       [[ "$path" =~ ^render-capture/(linux|windows)/calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}$ ]]
       return
       ;;
+    # Godot ABI tables for the capture's derived-calibration fallback, extensionless like the records.
+    render-capture/linux/abi-table.*|render-capture/windows/abi-table.*)
+      [[ "$path" =~ ^render-capture/(linux|windows)/abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-rendering-server$ ]]
+      return
+      ;;
     licenses/render-capture/windows/llvm-mingw-LICENSE.txt|licenses/render-capture/windows/mingw-w64-runtime-COPYING.txt|licenses/render-capture/windows/rust-std-MIT.txt) return 0 ;;
     licenses/render-capture/Godot-gdextension-LICENSE.txt|licenses/render-capture/zlib-LICENSE|licenses/render-capture/zstd-LICENSE|licenses/render-capture/basis_universal-LICENSE) return 0 ;;
     # The new renderer's client core, emitted by the frontend build (renderStreamClientAssets). build.json is

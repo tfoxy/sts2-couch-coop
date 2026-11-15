@@ -18,6 +18,13 @@ render_capture_gsw_paths=(
   experiments/render-stream/scripts/build-rs-net.sh
 )
 
+# The Godot ABI tables the capture can derive a calibration from when no record matches the executable
+# (render_capture_stage_abi_tables). Optional: an older godot-scene-web checkout has none, and the stamp
+# then records the path as absent instead of failing.
+render_capture_gsw_optional_paths=(
+  experiments/render-stream/calibration/abi
+)
+
 # render_capture_stamp <gsw_root> <couch_repo_root> <calibration_file>: prints `render-capture-stamp/1 <sha256>`,
 # or fails when the GSW checkout's git state cannot be read (the caller then rebuilds).
 render_capture_stamp() {
@@ -37,6 +44,14 @@ render_capture_stamp_inputs() {
   for path in "${paths[@]}"; do
     id="$(git -C "$gsw_root" rev-parse "HEAD:$path")" || return 1
     printf '%s %s\n' "$id" "$path"
+  done
+  for path in "${render_capture_gsw_optional_paths[@]}"; do
+    if id="$(git -C "$gsw_root" rev-parse -q --verify "HEAD:$path" 2>/dev/null)"; then
+      printf '%s %s\n' "$id" "$path"
+    else
+      printf 'absent %s\n' "$path"
+    fi
+    paths+=("$path")
   done
   diff_hash="$(set -o pipefail; git -C "$gsw_root" diff HEAD --binary -- "${paths[@]}" | sha256sum)" || return 1
   printf 'diff %s\n' "${diff_hash%% *}"
@@ -81,4 +96,16 @@ render_capture_stage_linux_records() {
   done
   [[ "$count" -gt 0 ]] || { echo 'no committed Linux capture records' >&2; return 1; }
   if [[ -n "$calibration" ]]; then cp "$calibration" "$out/calibration.0-operator"; fi
+}
+
+# Godot ABI tables, staged extensionless like the records (STS2 scans every *.json as a manifest). The
+# seat hands one to the capture only when no record matches the host executable; with none staged, an
+# unknown executable stays unsupported.
+render_capture_stage_abi_tables() {
+  local gsw_root="$1" out="$2" table
+  rm -f "$out"/abi-table.*
+  for table in "$gsw_root"/experiments/render-stream/calibration/abi/*.json; do
+    [[ -f "$table" ]] || continue
+    cp "$table" "$out/abi-table.$(basename "$table" .json)"
+  done
 }

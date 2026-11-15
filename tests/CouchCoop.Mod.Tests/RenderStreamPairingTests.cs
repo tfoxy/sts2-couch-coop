@@ -191,6 +191,13 @@ internal static class RenderStreamPairingTests
         Assert(!env.ContainsKey("GRC_VALIDATION_LOG"), "the capture uses its default validation logging");
         Assert(!env.ContainsKey("GRC_RESOURCE_STORE_DIR") && !env.ContainsKey("GRC_STREAM_PATCH_OUT"),
             "a live-only seat writes no recording and no store to disk");
+        var derived = StreamingSeatLaunch.Environment(
+            new StreamingSeatLaunch.Config(Extension, "", AbiTable: "/opt/capture/abi-table.godot-4.5.1-rendering-server"),
+            StreamingSeatLaunch.HubPortForSlot(2), "/ev", StreamingSeatLaunch.AllowedOrigins(13337, null));
+        Assert(!derived.ContainsKey("GRC_CALIBRATION")
+               && derived["GRC_ABI_TABLE"] == "/opt/capture/abi-table.godot-4.5.1-rendering-server"
+               && derived.Count == env.Count,
+            "a derived calibration hands the capture its ABI table in place of a record");
         Assert(StreamingSeatLaunch.HubPortForSlot(3) == HeadlessClientManager.SlotToPort(3) + 9
                && StreamingSeatLaunch.HubPortForSlot(3) < HeadlessClientManager.SlotToPort(4),
             "the hub port is the last of the slot's own band, stable per slot");

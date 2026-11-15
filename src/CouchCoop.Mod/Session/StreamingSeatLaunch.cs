@@ -102,8 +102,15 @@ internal static class StreamingSeatLaunch
     /// </summary>
     /// <param name="NetModule">The net module beside the capture (<see cref="NetModuleFileName"/>), or null: the seat then
     /// serves WebSocket only.</param>
+    /// <param name="AbiTable">A Godot ABI table the capture derives its calibration from, set only when no record matches
+    /// the host executable (<see cref="RenderCaptureAvailability"/>); <paramref name="Calibration"/> is then empty.</param>
     internal sealed record Config(
-        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null);
+        string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null,
+        string? AbiTable = null)
+    {
+        /// <summary>The calibration as the operator log names it: the record, or the table a derivation starts from.</summary>
+        internal string CalibrationDescription => AbiTable is null ? Calibration : "derived abiTable=" + AbiTable;
+    }
 
     /// <summary>
     /// A LAN launch (<see cref="StreamingSeatLan"/>): the hub on every interface, and wss through this PEM pair when the
@@ -307,7 +314,6 @@ internal static class StreamingSeatLaunch
             ["GRC_MODE"] = "standby",
             ["GRC_HEADLESS_TEXTURE_RELEASE"] = "always",
             [MaxPresentationWidthEnvironmentVariable] = config.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture),
-            ["GRC_CALIBRATION"] = config.Calibration,
             ["GRC_LIVE_LISTEN"] = hub,
             // The carriers the hub serves (see the remarks): WebSocket always, WebTransport with the net module.
             ["GRC_LIVE_CARRIERS"] = config.NetModule is null ? "ws" : "ws,wt",
@@ -341,6 +347,10 @@ internal static class StreamingSeatLaunch
             // Custom metadata is category-granted; the client requests only the CouchCoop tip owner keys.
             ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter,meta",
         };
+        // A record, or (no record matching the executable) the ABI table the capture derives one from. The capture
+        // takes the table only while GRC_CALIBRATION is unset, and inherited GRC_* variables are cleared (ClearInherited).
+        if (config.AbiTable is null) environment["GRC_CALIBRATION"] = config.Calibration;
+        else environment["GRC_ABI_TABLE"] = config.AbiTable;
         if (config.NetModule is { } netModule)
         {
             environment["GRC_LIVE_NET_MODULE"] = netModule;

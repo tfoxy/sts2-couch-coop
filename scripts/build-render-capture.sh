@@ -56,6 +56,7 @@ if [[ "$target" == windows ]]; then
     [[ -f "$record" && "$record" != *.source.json ]] || continue
     cp "$record" "$out/calibration.$(basename "$record" .json)"
   done
+  render_capture_stage_abi_tables "$gsw_root" "$out"
 else
   "$cmake_bin" -S "$capture_src" -B "$build_dir" -DCMAKE_BUILD_TYPE=RelWithDebInfo
   "$cmake_bin" --build "$build_dir" --target render_stream_capture -j"$(nproc)"
@@ -65,6 +66,7 @@ else
     "$build_dir/render_stream_capture.gdextension" > "$out/render_stream_capture.gdextension"
   grep -qx 'linux.x86_64 = "librender_stream_capture.so"' "$out/render_stream_capture.gdextension"
   render_capture_stage_linux_records "$repo_root" "$out" "$calibration_src"
+  render_capture_stage_abi_tables "$gsw_root" "$out"
   bash "$net_build" --no-test
   cp "$capture_src/build/librender_stream_net.so" "$out/librender_stream_net.so"
 fi

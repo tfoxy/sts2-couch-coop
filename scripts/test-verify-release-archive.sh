@@ -132,6 +132,7 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   for engine_id in megadot-4.5.1-m12-9a404dfe megadot-4.5.1-m14-d5fc2677; do
     printf 'fixture\n' > "$root/render-capture/linux/calibration.$engine_id"
   done
+  printf 'fixture\n' > "$root/render-capture/linux/abi-table.godot-4.5.1-rendering-server"
   for file in render_stream_capture.dll render_stream_net.dll; do
     printf 'MZfixture\n' > "$root/render-capture/windows/$file"
   done
@@ -594,7 +595,9 @@ for path in render-capture/librender_stream_capture.so render-capture/linux/cali
   render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c.source \
   render-capture/linux/calibration.extra/calibration.megadot-4.5.1-m12-9a404dfe \
   render-capture/linux/calibration.render-capture/windows/calibration.megadot-4.5.1-m12-9a404dfe \
-  render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c.json render-capture/windows/toolchain.json render-capture/windows/source-stamp; do
+  render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c.json render-capture/windows/toolchain.json render-capture/windows/source-stamp \
+  render-capture/linux/abi-table.godot-4.5.1-rendering-server.json render-capture/linux/abi-table.godot-4.5-rendering-server \
+  render-capture/windows/abi-table.nightly render-capture/abi-table.godot-4.5.1-rendering-server; do
   bad="$(clone_payload "capture-${path//\//-}")"
   mkdir -p "$(dirname "$bad/$path")"
   printf 'fixture\n' > "$bad/$path"
