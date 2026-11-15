@@ -49,10 +49,13 @@ internal static class StreamCreaturePlacementPatch
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly
             | (binding.IsStatic ? BindingFlags.Static : BindingFlags.Instance), binding.Parameters);
 
+    // The companion placement entry points exist from the v113 lane on; earlier lanes carry none.
     internal static IReadOnlyList<Binding> CompanionBindings { get; } =
     [
+#if STS2_API_V113
         new(nameof(NCreature.ScaleAndPositionOsty), [typeof(float), typeof(double)]),
         new(nameof(NCreature.PositionWuppy), [typeof(bool)]),
+#endif
     ];
 
     internal static MethodInfo? ResolveCompanion(Binding binding)
@@ -96,6 +99,8 @@ internal static class StreamCreaturePlacementPatch
                     $"{binding.Method}: {exception.GetType().Name}: {exception.Message}", costsCoop: false);
             }
         }
+        // The tween hooks only act inside a companion scope, so a lane without companion targets needs neither.
+        if (CompanionBindings.Count == 0) return;
         try
         {
             StreamPositionTweenPatch.Register(HandleTween);

@@ -54,6 +54,13 @@ internal static class StreamCreaturePlacementTests
                 && method.GetParameters().Select(p => p.ParameterType).SequenceEqual(binding.Parameters),
                 $"{binding.Method} resolves with its complete typed signature");
         }
+#if STS2_API_V113
+        const int companionTargets = 2;
+#else
+        const int companionTargets = 0;
+#endif
+        Assert(StreamCreaturePlacementPatch.CompanionBindings.Count == companionTargets,
+            "the lane carries exactly its companion placement targets");
         foreach (var binding in StreamCreaturePlacementPatch.CompanionBindings)
         {
             var method = StreamCreaturePlacementPatch.ResolveCompanion(binding);
