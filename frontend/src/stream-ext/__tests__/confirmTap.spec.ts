@@ -273,6 +273,35 @@ describe("confirmTap — choice parity", () => {
     expect(controller.commit()).toBe(false);
   });
 
+  it("reads visibility per frame only for selection screens and event options", () => {
+    const plain = Array.from({ length: 50 }, (_, i) => meta(100 + i, []));
+    const { extension, controller, query, draw } = setup([...plain, option(1), option(2)], { 3: 1 });
+    const asked: number[] = [];
+    const visible = query.visible;
+    query.visible = (id) => {
+      asked.push(id);
+      return visible(id);
+    };
+    draw();
+    expect(asked.sort()).toEqual([1, 2]);
+    expect(controller.classify(3)).toEqual({ id: 1, kind: "event" });
+
+    // A delta that turns a plain item into a selection screen starts watching it; one that turns it back stops.
+    extension.onItemMeta!({ form: "delta", items: [{ ...meta(100, []), class: "NCardGridSelectionScreen" }] });
+    draw();
+    expect(controller.classify(3)).toBeNull();
+    extension.onItemMeta!({ form: "delta", items: [meta(100, [])] });
+    draw();
+    expect(controller.classify(3)).toEqual({ id: 1, kind: "event" });
+
+    // A removed option no longer counts: the remaining one is lone and releases immediately.
+    extension.onItemsRemoved!(Uint32Array.of(2));
+    asked.length = 0;
+    draw();
+    expect(asked).toEqual([1]);
+    expect(controller.classify(3)).toBeNull();
+  });
+
   it("keeps a failed shop purchase confirmable", () => {
     const { controller } = setup([shop("NMerchantRelic")]);
     controller.show(1, "shop");

@@ -83,9 +83,16 @@ export function confirmKindFor(meta: Pick<ItemMeta, "groups" | "path">): Confirm
   return null;
 }
 
+function isEventOption(meta: ItemMeta): boolean {
+  return meta.groups.includes(RS_GROUP_EVENT_OPTION) || itemTypes(meta).includes("NEventOptionButton");
+}
+
 export function createConfirmTapExtension(): { extension: RenderStreamExtension; controller: ConfirmTapController } {
   // id → kind, from the last full/delta item_meta table (static identity).
   const items = new Map<number, ItemMeta>();
+  // The only items the per-frame scan reads: card-selection screens and event options. `items` holds every streamed
+  // item (the requested fields cover the whole scene), and a visibility read costs a core query per id.
+  const watched = new Set<number>();
   let selectionActive = false;
   let visibleOptions = 0;
   let confirmedRelic: number | null = null;
@@ -200,6 +207,7 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
     },
     dispose() {
       items.clear();
+      watched.clear();
       confirmedRelic = null;
       query = null;
       state.targetId = null;
@@ -214,12 +222,22 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
     id: "couchcoop.confirmTap",
     wants: { fields: ["path", "class", "script", "scene", "mouse_filter"], groups: [...CONFIRM_TAP_GROUPS] },
     onItemMeta: (b) => {
-      if (b.form === "full") items.clear();
-      for (const m of b.items) items.set(m.id, m);
+      if (b.form === "full") {
+        items.clear();
+        watched.clear();
+      }
+      for (const m of b.items) {
+        items.set(m.id, m);
+        if (isCardSelection(m) || isEventOption(m)) watched.add(m.id);
+        else watched.delete(m.id);
+      }
       if (confirmedRelic !== null && !items.has(confirmedRelic)) confirmedRelic = null;
     },
     onItemsRemoved: (ids) => {
-      for (const id of ids) items.delete(id);
+      for (const id of ids) {
+        items.delete(id);
+        watched.delete(id);
+      }
       if (confirmedRelic !== null && !items.has(confirmedRelic)) confirmedRelic = null;
       if (state.targetId !== null && !items.has(state.targetId)) controller.hide();
     },
@@ -227,10 +245,11 @@ export function createConfirmTapExtension(): { extension: RenderStreamExtension;
       query = f.query;
       selectionActive = false;
       visibleOptions = 0;
-      for (const [id, m] of items) {
-        if (!query.visible(id)) continue;
+      for (const id of watched) {
+        const m = items.get(id);
+        if (m === undefined || !query.visible(id)) continue;
         if (isCardSelection(m)) selectionActive = true;
-        if (m.groups.includes(RS_GROUP_EVENT_OPTION) || itemTypes(m).includes("NEventOptionButton")) visibleOptions++;
+        if (isEventOption(m)) visibleOptions++;
       }
       if (state.targetId !== null && eligibleHit(state.targetId) === null) controller.hide();
       // While the button is up, follow the widget (its focus growth, a shop shelf sliding in): the rect is re-read
