@@ -254,7 +254,7 @@ public sealed partial class HeadlessClientManager
             LogFirstContact(owned, status);
             var member = _membershipProbe(SlotToNetId(slot));
             // NOT ONE WORD from this process, well past the point where our own guard says hello, and the
-            // remaining 40 seconds of the readiness deadline buy nothing. WHICH failure that is turns first on
+            // rest of the readiness deadline buys nothing. WHICH failure that is turns first on
             // whether the host's lobby has this seat, so the membership probe above moved ahead of it:
             //   * a member — CouchCoop DID run: only CommandLineOverridePatch could have made it join, and the
             //     cloud isolation guard runs before that patch and exits on failure, so the saves are provably

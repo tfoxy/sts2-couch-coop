@@ -622,7 +622,7 @@ public sealed class HeadlessConnectionReporter : IDisposable
             // computer is filtering — or refusing on Windows, which takes ~2 s to say so — always loses that race.
             // This catch used to exclude it, so exactly the seat the fallback exists for had no record on disk and
             // no line in godot.log until the live reporter's first heartbeat, a hundred lines further down mod init
-            // — and a host that has heard nothing at 35 s calls that seat one with no CouchCoop in it.
+            // — and a host that has heard nothing by its contact deadline calls that seat one with no CouchCoop in it.
             Report(endpoint, "control-status-failed",
                 cancellationToken.IsCancellationRequested ? "no answer before this report's deadline" : Describe(exception),
                 started);

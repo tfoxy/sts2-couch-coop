@@ -21,7 +21,7 @@ public sealed class ConnectionAttemptLogs
         => new(new(hostPath, null), new(clientPath, null));
 
     public Task<IReadOnlyList<ConnectionLogExcerpt>> ReadErrorsAsync()
-        => Task.Run<IReadOnlyList<ConnectionLogExcerpt>>(() => [Read("host", _host), Read("client", _client)]);
+        => Task.Run<IReadOnlyList<ConnectionLogExcerpt>>(() => [Read("host", _host, seat: false), Read("client", _client, seat: true)]);
 
     private static LogStart Capture(string? path)
     {
@@ -37,20 +37,24 @@ public sealed class ConnectionAttemptLogs
         }
     }
 
-    private static ConnectionLogExcerpt Read(string source, LogStart start)
+    private static ConnectionLogExcerpt Read(string source, LogStart start, bool seat)
     {
         if (start.Path is null) return new(source, "unavailable", "No log path was configured.");
         var result = new GodotLogReader().Read(new GodotLogReadRequest(start.Path, MaxBytes: GodotLogReader.HardMaximumBytes, Checkpoint: start.Checkpoint, ReadTail: true));
         if (result.Unavailable) return new(source, "unavailable", "The log could not be read.");
-        var kept = result.Entries.Where(entry => entry.IsError || IsHandshakeLine(entry.Text)).ToArray();
+        var kept = result.Entries
+            .Where(entry => entry.IsError || IsHandshakeLine(entry.Text) || (seat && IsSeatStartupLine(entry.Text)))
+            .ToArray();
         var errors = kept.Count(entry => entry.IsError);
-        var handshake = kept.Length > errors;
+        var handshake = kept.Any(entry => !entry.IsError && IsHandshakeLine(entry.Text));
+        var startup = kept.Any(entry => !entry.IsError && !IsHandshakeLine(entry.Text));
         var status = string.Join(", ", new[]
         {
             result.Rotated ? "rotated" : null,
             result.Truncated ? "truncated" : null,
             errors == 0 ? "no-errors" : "errors",
             handshake ? "handshake" : null,
+            startup ? "startup" : null,
         }.Where(value => value is not null));
         var text = kept.Length == 0
             ? result.Rotated || result.Truncated ? "No complete post-attempt error context was available." : "No post-attempt errors found."
@@ -68,6 +72,32 @@ public sealed class ConnectionAttemptLogs
         => line.Contains(HandshakeLogToken, StringComparison.Ordinal);
 
     private const string HandshakeLogToken = "HandshakeManager";
+
+    /// <summary>
+    /// Whether a player's-game line marks how far that game's own startup got: Steam, which mods it loaded or
+    /// skipped, and CouchCoop's loader checkpoints. None of them is an error, but a seat that is stopped before it
+    /// says anything to the host leaves no other trace, and these lines are what tell its three explanations apart:
+    /// a game still booting when the deadline came, a game that skipped CouchCoop, and a game where CouchCoop
+    /// loaded and then went quiet. Seat logs only; the host's own log is past its startup by the time a player
+    /// joins.
+    /// </summary>
+    internal static bool IsSeatStartupLine(string line)
+    {
+        foreach (var token in SeatStartupLogTokens)
+            if (line.Contains(token, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private static readonly string[] SeatStartupLogTokens =
+    [
+        "Steamworks initialization",
+        "Skipping loading mod",
+        "Loading assembly DLL",
+        "RUNNING MODDED",
+        "[couchcoop] loader-",
+        "[couchcoop] mod-init",
+        "[couchcoop] harmony-probe-complete",
+    ];
 
     private sealed record LogStart(string? Path, GodotLogCheckpoint? Checkpoint);
 }

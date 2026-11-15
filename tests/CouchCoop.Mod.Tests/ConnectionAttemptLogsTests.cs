@@ -38,6 +38,37 @@ internal static class ConnectionAttemptLogsTests
                 "…and nothing else that is not an error does");
             Assert(seatResult.Status == "no-errors, handshake",
                 $"…and the status says the excerpt holds handshake lines and no errors (got '{seatResult.Status}')");
+
+            // A seat stopped before it said anything to the host: its startup milestones are the only record of
+            // how far it got (still booting, CouchCoop skipped, or CouchCoop loaded and went quiet), so the
+            // player's-game excerpt keeps them. The host's excerpt does not — the same lines there are noise.
+            var silent = Path.Combine(root, "silent.log");
+            var hostSide = Path.Combine(root, "host-side.log");
+            File.WriteAllText(silent, "previous seat\n");
+            File.WriteAllText(hostSide, "previous host\n");
+            var silentLogs = ConnectionAttemptLogs.CaptureStart(hostSide, silent);
+            const string Startup =
+                "[INFO] Steamworks initialization succeeded!\n"
+                + "[INFO] some unrelated startup line\n"
+                + "[INFO] Loading assembly DLL /mods/couchcoop/couchcoop.dll\n"
+                + "[INFO] [couchcoop] loader-entry\n"
+                + "[INFO] [couchcoop] mod-init\n";
+            File.AppendAllText(silent, Startup);
+            File.AppendAllText(hostSide, Startup);
+            var silentRead = await silentLogs.ReadErrorsAsync();
+            var silentSeat = silentRead.Single(log => log.Source == "client");
+            foreach (var line in new[] { "Steamworks initialization succeeded!", "Loading assembly DLL", "[couchcoop] loader-entry", "[couchcoop] mod-init" })
+                Assert(silentSeat.Text.Contains(line, StringComparison.Ordinal), $"seat startup milestone '{line}' reaches the excerpt");
+            Assert(!silentSeat.Text.Contains("unrelated startup line", StringComparison.Ordinal),
+                "…and an unrelated startup line does not");
+            Assert(silentSeat.Status == "no-errors, startup",
+                $"…and the status names the startup lines (got '{silentSeat.Status}')");
+            var silentHost = silentRead.Single(log => log.Source == "host");
+            Assert(silentHost.Status == "no-errors" && !silentHost.Text.Contains("loader-entry", StringComparison.Ordinal),
+                $"the host's excerpt keeps none of them (got '{silentHost.Status}')");
+            Assert(ConnectionAttemptLogs.IsSeatStartupLine("[INFO] Skipping loading mod couchcoop, it is disabled")
+                    && ConnectionAttemptLogs.IsSeatStartupLine("[INFO]  --- RUNNING MODDED! --- Loaded 1 mods (1 total)"),
+                "a skipped CouchCoop and the loaded-mod count are milestones too");
         }
         finally { Directory.Delete(root, true); }
     }

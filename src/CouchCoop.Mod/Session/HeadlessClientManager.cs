@@ -144,13 +144,13 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// How long a spawned seat gets to say ANYTHING to the host before it is killed — as opposed to
     /// <see cref="DefaultSeatReadyTimeoutSeconds"/>, which is how long it gets to become usable.
     /// <para>
-    /// 35s, and unlike the readiness deadline this one is not measured against the browser's patience. What makes
+    /// 60s, and unlike the readiness deadline this one is not measured against the browser's patience. What makes
     /// it safe is that a seat says hello from <see cref="HeadlessSeatCloudIsolationGuard"/> — the first patch-time
     /// thing in mod init — rather than from the connection reporter a hundred lines below it. So the only work
     /// inside this window is the game's own boot up to mod init, NOT the 20-30s asset preload that dominates a
     /// cold start and that a 15W handheld can run well past while starting perfectly normally. So silence past
-    /// this buys nothing, and the host stops the seat rather than spending the remaining 40 seconds of the
-    /// readiness deadline finding out whether it will ever serve a browser.
+    /// this buys nothing, and the host stops the seat rather than spending the rest of the readiness deadline
+    /// finding out whether it will ever serve a browser.
     /// </para>
     /// <para>
     /// WHAT the silence MEANS is decided elsewhere — see <c>ClassifySilentSeat</c>. A member is a seat CouchCoop
@@ -162,20 +162,24 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// nothing installed to keep it out — the exposure this deadline exists to cut short.
     /// </para>
     /// <para>
-    /// 35 AND NOT 20. On a desktop with the host on the default profile, first contact arrives within a few
-    /// seconds on an idle machine, and roughly <b>twice that with every core saturated</b>. The loaded figure is
-    /// the one this default has to survive — a host is never idle at the moment it spawns a seat — and 20 would
-    /// leave only a ~2x margin there and less than that on a 15W handheld. The asymmetry that picked the safe
-    /// direction has not changed either: killing a HEALTHY seat breaks a join that works today, while waiting
-    /// longer to kill an unmodded one costs almost nothing, because by the paragraph below that seat has already
-    /// written. Every seat's figure is logged once as <c>seat first contact slot=N afterMs=…</c> — stderr only,
+    /// 60 AND NOT 35. The window is the game's own boot, and that boot is not the same on every platform: on a
+    /// Linux desktop first contact arrives within a few seconds idle and roughly twice that with every core
+    /// saturated, but a Mac seat boots several times slower than that while the host game is running, so 35
+    /// left a loaded Mac under a 2x margin and an older one none at all — healthy Mac seats were stopped with
+    /// "could not promise to leave your Steam Cloud saves alone". The loaded figure on the slowest machine we
+    /// support is the one this default has to survive — a host is never idle at the moment it spawns a seat.
+    /// It stays well short of <see cref="DefaultSeatReadyTimeoutSeconds"/>, so a seat that only just made
+    /// contact still has time to become usable. The asymmetry that picks the safe direction is unchanged:
+    /// killing a HEALTHY seat breaks a join that would have worked, while waiting longer to kill an unmodded one
+    /// costs almost nothing, because by the paragraph below that seat has already written. Every seat's figure
+    /// is logged once as <c>seat first contact slot=N afterMs=…</c> — stderr only,
     /// so it is in the host's stdio capture and never in <c>godot.log</c> — so an operator can read it off a
     /// live run. An operator can still raise it for their own machine with the env var, which is why this is a
     /// default and not a constant.
     /// </para>
     /// <para>
     /// SAID PLAINLY: this SHRINKS the window, it does not close it. An unmodded game runs its own startup cloud
-    /// sync at its normal startup time, which is INSIDE these 35 seconds — so a seat killed here may already have
+    /// sync at its normal startup time, which is INSIDE these 60 seconds — so a seat killed here may already have
     /// written. The window is also wider than this number: a process with none of our code in it cannot answer
     /// the graceful stop either, so it lives for this deadline PLUS the five-second shutdown deadline before the
     /// forced exit (the cleanup report shows:
@@ -184,7 +188,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     /// exist. Do not read this deadline as a guarantee.
     /// </para>
     /// </summary>
-    internal const double DefaultSeatContactTimeoutSeconds = 35.0;
+    internal const double DefaultSeatContactTimeoutSeconds = 60.0;
 
 
     // Guards the slot bookkeeping below. ORDERING RULE: nothing may block on the game's main thread while holding
