@@ -96,7 +96,10 @@ mv "$manifest.tmp" "$manifest"
 
 # The sibling checkouts are live working trees for a dev build, not pinned commits, so record what is
 # actually checked out next door — including whether it is dirty, because an unpushed sibling edit is
-# live in this deploy with no build step (see AGENTS.md "Architecture Rules").
+# live in this deploy with no build step (see AGENTS.md "Architecture Rules"). godot-scene-web is read
+# from COUCHCOOP_GSW_ROOT when it is set, the same checkout scripts/build-local-mod.sh built the
+# frontend and the render stream from; otherwise the record names a sibling this deploy never used.
+gsw_root="${COUCHCOOP_GSW_ROOT:-$repo_root/../godot-scene-web}"
 sibling_commit() { # sibling_commit <path>
   local path="$1" commit
   [[ -d "$path/.git" || -f "$path/.git" ]] || { printf 'unavailable'; return; }
@@ -136,7 +139,7 @@ jq -n \
   --arg configuration "$configuration" \
   --arg builtAtUtc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg spirectl "$(sibling_commit "$repo_root/../spirectl")" \
-  --arg godotSceneWeb "$(sibling_commit "$repo_root/../godot-scene-web")" \
+  --arg godotSceneWeb "$(sibling_commit "$gsw_root")" \
   --arg sts2Lane "${lane:-unknown}" \
   --arg sts2GameVersion "${game_version:-unknown}" \
   --arg dotnet "$(dotnet --version 2>/dev/null || echo unknown)" \

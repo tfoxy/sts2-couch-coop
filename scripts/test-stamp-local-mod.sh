@@ -147,6 +147,23 @@ eq "a second stamp's build-info reports the version it found" "$v1" "$(jq -r '.m
 eq "affects_gameplay survives a re-stamp" "false" "$(jq -r '.affects_gameplay' "$D1/couchcoop.json")"
 
 # ---------------------------------------------------------------------------------------------
+# 6b. COUCHCOOP_GSW_ROOT names the godot-scene-web checkout the build used, so build-info records
+#     THAT commit, not the default sibling's.
+# ---------------------------------------------------------------------------------------------
+GSW="$TMP/gsw-worktree"
+git init -q "$GSW" && git -C "$GSW" -c user.name=t -c user.email=t@example.invalid \
+  commit -q --allow-empty -m gsw || exit 1
+gsw_head="$(git -C "$GSW" rev-parse HEAD)"
+D3="$TMP/deploy-gsw-override"
+make_deploy "$D3" "0.0.0-snapshot.d71b0a1ea465" || exit 1
+COUCHCOOP_GSW_ROOT="$GSW" "$STAMP" --output "$D3" >/dev/null 2>&1
+eq "COUCHCOOP_GSW_ROOT selects the godot-scene-web commit build-info records" \
+  "$gsw_head" "$(jq -r '.dependencies.godotSceneWeb' "$D3/build-info.txt")"
+env -u COUCHCOOP_GSW_ROOT "$STAMP" --output "$D3" >/dev/null 2>&1
+ok "without the override build-info falls back to the default sibling" \
+  test "$(jq -r '.dependencies.godotSceneWeb' "$D3/build-info.txt")" != "$gsw_head"
+
+# ---------------------------------------------------------------------------------------------
 # 7. Refusals: no directory, no manifest.
 # ---------------------------------------------------------------------------------------------
 no "a missing output directory is refused" "$STAMP" --output "$TMP/does-not-exist"
