@@ -9,6 +9,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-16
+
+### Fixed
+
+- Let browsers play single player with Couch play.
+- Display the new renderer checkbox in the mirror settings.
+- Fix many glitches of mirror settings not working correctly in the new renderer. Now it behaves more like the old renderer.
+- Keep the new renderer running when an asset cannot be downloaded.
+- Renderer switching keeps the screen aligned, and streaming uses the browser address.
+- Give slow Mac seats time to start before stopping them
+
+### Changed
+
+- The new renderer uses less CPU on phones and browsers, especially on busy screens
+
 ## [0.6.0] - 2026-11-13
 
 ### Added
@@ -276,7 +291,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.7.0
 [0.6.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.6.0
 [0.5.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.3
 [0.5.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.2
