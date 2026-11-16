@@ -276,4 +276,6 @@ public sealed record BrowserRenderStreamWebTransportDto(
     IReadOnlyList<string>? CertificateHashes = null);
 
 // A headless seat's renderer state; a failure may also explain why streaming is unavailable.
-public sealed record BrowserRendererStateDto(string State, string? Reason = null, bool RestoreComplete = true);
+public sealed record BrowserRendererStateDto(string State, string? Reason = null, bool RestoreComplete = true,
+    long PresentationEpoch = 0, bool PresentationReady = true,
+    int PresentationWidth = 1920, int PresentationHeight = 1080);

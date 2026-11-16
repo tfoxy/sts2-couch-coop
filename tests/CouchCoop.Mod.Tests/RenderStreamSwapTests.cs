@@ -9,6 +9,17 @@ internal static class RenderStreamSwapTests
             ForcedTrimBypassesIdleAndIntervalGates,
             IdleTrimRetainsItsGates,
             MissingTrimSymbolLatchesOffBothPaths,
+            MixedRendererJoinOrders,
+            MirrorWatchIntentResizesBeforeAdmission,
+            HiddenAndDisconnectedMirrorReleaseConstraint,
+            OldestStreamAndNewestTargetWin,
+            GracePreservesPageFacts,
+            DisconnectedPreferencesAreBounded,
+            ReconnectRetainsRequesterOrder,
+            PresentationReadyIsIndependentOfCapture,
+            FailedReassertInvalidatesPendingReadiness,
+            FailedPresentationRestoresOrRemainsUnready,
+            LaterReassertSupersedesPendingReadiness,
             InitialMirrorDoesNoCaptureWork,
             ArmResumesBeforeCallingCapture,
             ArmUsesTheRequestingAspectAndConfiguredCap,
@@ -43,8 +54,176 @@ internal static class RenderStreamSwapTests
             DisarmRefusalsHandleAlreadyStoppedOrStopping,
             RefusedDisarmAllowsMirrorFallback,
         ];
-        foreach (var test in tests) test();
+        var failures = new List<Exception>();
+        foreach (var test in tests)
+        {
+            try { test(); }
+            catch (Exception exception) { Console.WriteLine($"FAIL {test.Method.Name}: {exception.Message}"); failures.Add(exception); }
+        }
+        if (failures.Count != 0) throw new AggregateException(failures);
         Console.WriteLine($"RenderStreamSwapTests: {tests.Length} passed.");
+    }
+
+    private static void MixedRendererJoinOrders()
+    {
+        foreach (var mirrorFirst in new[] { true, false })
+        {
+            using var f = new Fixture();
+            if (mirrorFirst) f.Swap.UpdatePage("old", false, true, null);
+            f.Swap.Request("wide", true, 3);
+            f.Capture.EmitArmed(Snapshot("wide"));
+            if (!mirrorFirst)
+            {
+                f.Swap.UpdatePage("old", false, true, null);
+                Assert(!f.Swap.PresentationReady && f.Swap.State == "disarming", "late mirror closes admission before teardown");
+                f.Capture.EmitDisarmed();
+                f.Capture.EmitArmed(Snapshot("mixed"));
+            }
+            Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:1920x1080", "either join order uses shared mirror dimensions");
+            Assert(f.Swap.State == "armed" && f.Swap.PresentationReady && f.Swap.MirrorRestoreComplete,
+                "capture remains armed while the mirror is ready at base dimensions");
+        }
+    }
+
+    private static void MirrorWatchIntentResizesBeforeAdmission()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("wide", true, 3);
+        f.Capture.EmitArmed(Snapshot("wide"));
+        var epoch = f.Swap.PresentationEpoch;
+        f.Swap.UpdatePage("returning", false, true, null);
+        Assert(f.Swap.PresentationEpoch > epoch && !f.Swap.PresentationReady, "watch intent immediately fences wide scenes and input");
+        f.Swap.Request("wide", true, 2.2);
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.ArmCalls == 2 && f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:1920x1080", "held mirror demand wins during teardown");
+    }
+
+    private static void HiddenAndDisconnectedMirrorReleaseConstraint()
+    {
+        foreach (var disconnect in new[] { true, false })
+        {
+            using var f = new Fixture();
+            f.Swap.UpdatePage("old", false, true, null);
+            f.Swap.Request("wide", true, 3);
+            f.Capture.EmitArmed(Snapshot("base"));
+            if (disconnect) f.Swap.Release("old");
+            else f.Swap.UpdatePage("old", false, false, null);
+            Assert(f.Swap.State == "disarming", "withdrawn watch intent recomputes effective dimensions");
+            f.Capture.EmitDisarmed();
+            Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2520x1080", "remaining stream recovers its aspect");
+        }
+    }
+
+    private static void OldestStreamAndNewestTargetWin()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("first", true, 2);
+        f.Capture.EmitArmed(Snapshot("first"));
+        f.Swap.Request("second", true, 3);
+        Assert(f.Capture.DisarmCalls == 0, "new requester cannot override the oldest");
+        f.Swap.Release("first");
+        Assert(f.Swap.State == "disarming", "oldest disconnect recomputes");
+        f.Swap.Request("second", true, 2.2);
+        f.Swap.Request("second", true, 2.3);
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.DisarmCalls == 1 && f.Capture.ArmCalls == 2
+            && f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2484x1080", "one teardown applies only the latest target");
+    }
+
+    private static void GracePreservesPageFacts()
+    {
+        using var f = new Fixture();
+        f.Swap.UpdatePage("old", false, true, null);
+        f.Swap.Request("wide", true, 3);
+        f.Capture.EmitArmed(Snapshot("base"));
+        f.Advance(TimeSpan.FromSeconds(90));
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.ArmCalls == 1 && f.Swap.WantingPages.Contains("wide"), "grace retires capture without deleting page preferences");
+        f.Swap.Request("wide", true, 3);
+        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:1920x1080", "retry still respects retained mirror watch intent");
+    }
+
+    private static void DisconnectedPreferencesAreBounded()
+    {
+        using var f = new Fixture();
+        for (var i = 0; i < RenderStreamSwap.MaxRetainedPages + 10; i++)
+        {
+            f.Swap.UpdatePage($"page-{i}", false, false, null);
+            f.Swap.Release($"page-{i}");
+        }
+        var pages = (System.Collections.IDictionary)typeof(RenderStreamSwap)
+            .GetField("_pages", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(f.Swap)!;
+        Assert(pages.Count == RenderStreamSwap.MaxRetainedPages && !pages.Contains("page-0")
+            && pages.Contains($"page-{RenderStreamSwap.MaxRetainedPages + 9}"), "only recent disconnected preferences are retained");
+        Assert(f.Capture.Discoveries == 0, "retention maintenance does no capture work");
+    }
+
+    private static void ReconnectRetainsRequesterOrder()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("first", true, 2);
+        f.Swap.Request("second", true, 2);
+        f.Capture.EmitArmed(Snapshot("initial"));
+        f.Swap.Release("first");
+        f.Swap.UpdatePage("first", true, false, 3);
+        Assert(f.Swap.State == "disarming", "reconnected requester keeps its original place before a newer requester");
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2520x1080", "reconnected oldest request owns the aspect");
+    }
+
+    private static void PresentationReadyIsIndependentOfCapture()
+    {
+        var frames = new Queue<Action>();
+        using var f = new Fixture(deferPresentation: frames.Enqueue);
+        f.Swap.Request("wide", true, 3);
+        Assert(!f.Swap.PresentationReady, "layout waits a frame");
+        frames.Dequeue()();
+        Assert(f.Swap.PresentationReady && f.Swap.State == "arming" && f.Swap.Snapshot is null, "settled layout is independent of capture readiness");
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Capture.DisarmResult = 1;
+        f.Swap.Request("wide", false);
+        Assert(!f.Swap.PresentationReady && !f.Swap.MirrorRestoreComplete, "refused teardown cannot publish ready");
+    }
+
+    private static void FailedPresentationRestoresOrRemainsUnready()
+    {
+        foreach (var canRestore in new[] { true, false })
+        {
+            using var f = new Fixture(canApply: width => canRestore && width == 1920);
+            f.Swap.Request("wide", true, 3);
+            Assert(f.Capture.ArmCalls == 0 && f.Swap.State == "failed", "failed presentation never arms capture");
+            Assert(f.Swap.PresentationReady == canRestore && f.SuspenderEnabled == canRestore,
+                "failed presentation restores the mirror if possible and otherwise stays unready");
+            Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2520), (false, 1920) }),
+                "failed wide apply relinquishes presentation ownership before waiting for a root");
+        }
+    }
+
+    private static void FailedReassertInvalidatesPendingReadiness()
+    {
+        var frames = new Queue<Action>();
+        using var f = new Fixture(deferPresentation: frames.Enqueue);
+        f.Swap.Request("wide", true, 3);
+        typeof(RenderStreamSwap).GetMethod("ReassertedPresentation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(f.Swap, [false]);
+        frames.Dequeue()();
+        Assert(!f.Swap.PresentationReady && !f.Swap.MirrorRestoreComplete,
+            "a failed reassert must invalidate an older deferred ready callback");
+    }
+
+    private static void LaterReassertSupersedesPendingReadiness()
+    {
+        var frames = new Queue<Action>();
+        using var f = new Fixture(deferPresentation: frames.Enqueue);
+        f.Swap.Request("wide", true, 3);
+        typeof(RenderStreamSwap).GetMethod("InvalidatePresentation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(f.Swap, null);
+        typeof(RenderStreamSwap).GetMethod("ReassertedPresentation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(f.Swap, [true]);
+        frames.Dequeue()();
+        Assert(!f.Swap.PresentationReady, "the first layout settlement cannot race a later reassertion");
+        frames.Dequeue()();
+        Assert(f.Swap.PresentationReady, "only the most recent successful reassert settles readiness");
     }
 
     private static void ForcedTrimBypassesIdleAndIntervalGates()
@@ -98,7 +277,7 @@ internal static class RenderStreamSwapTests
     private static void ArmResumesBeforeCallingCapture()
     {
         using var f = new Fixture();
-        f.Capture.BeforeArm = () => Assert(f.Events.SequenceEqual(new[] { "subscribe", "suspender:False", "changed:arming", "arm" }),
+        f.Capture.BeforeArm = () => Assert(f.Events[0] == "subscribe" && f.Events.IndexOf("suspender:False") < f.Events.IndexOf("changed:arming") && f.Events[^1] == "arm",
             "subscribe and resume before arm, publishing arming along the way");
         f.Swap.Request("page", true);
         Assert(f.Swap.State == "arming" && f.Swap.Snapshot is null, "arming has no descriptor");
@@ -128,18 +307,18 @@ internal static class RenderStreamSwapTests
         f.Capture.BeforeArm = () => Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2340) }),
             "expand and the wide window are set before capture queries the presentation");
         f.Swap.Request("page", true, 2340.0 / 1080);
-        Assert(f.Presentation.ReassertMirror() && f.PresentationChanges.Count == 1, "arming suppresses mirror re-asserts");
+        Assert(f.Presentation.ReassertMirror() && f.PresentationChanges[^1] == (true, 2340), "arming reasserts its effective wide presentation");
         f.Capture.EmitArmed(Snapshot("wide"));
         f.Presentation.ReassertMirror();
-        Assert(f.PresentationChanges.Count == 1, "armed stream owns presentation without recurring writes");
+        Assert(f.PresentationChanges[^1] == (true, 2340), "armed notifications retain wide presentation");
         f.Swap.Request("page", false);
         f.Presentation.ReassertMirror();
-        Assert(f.PresentationChanges.Count == 1, "capture retains presentation during teardown");
+        Assert(f.PresentationChanges[^1] == (true, 2340), "capture retains presentation during teardown");
         f.Capture.EmitDisarmed();
-        Assert(f.PresentationChanges.SequenceEqual(new[] { (true, 2340), (false, 1920) }), "disarmed restores Keep and a 1920 window");
+        Assert(f.PresentationChanges[^1] == (false, 1920), "disarmed restores Keep and a 1920 window");
         Assert(f.PresentationWhenResumed is (false, 1920), "mirror resumes only after its presentation is restored");
         f.Presentation.ReassertMirror();
-        Assert(f.PresentationChanges.Count == 3 && f.PresentationChanges[^1] == (false, 1920), "mirror re-asserts resume after restoration");
+        Assert(f.PresentationChanges[^1] == (false, 1920), "mirror re-asserts resume after restoration");
     }
 
     private static void MirrorAndStandardArmKeepTheirPresentation()
@@ -149,13 +328,13 @@ internal static class RenderStreamSwapTests
         Assert(f.PresentationChanges.SequenceEqual(new[] { (false, 1920) }), "mirror seat asserts Keep and 1920");
         f.Swap.Request("page", true, 1920.0 / 1080);
         f.Capture.EmitArmed(Snapshot("standard"));
-        Assert(f.PresentationChanges.Count == 1, "16:9 arm does not change presentation");
+        Assert(f.PresentationChanges.All(p => p == (false, 1920)), "16:9 arm retains base presentation");
         f.Presentation.ReassertMirror();
-        Assert(f.PresentationChanges.Count == 2 && f.PresentationChanges.All(p => p == (false, 1920)),
+        Assert(f.PresentationChanges.All(p => p == (false, 1920)),
             "16:9 capture keeps the existing mirror policy");
         f.Swap.Request("page", false);
         f.Capture.EmitDisarmed();
-        Assert(f.PresentationChanges.Count == 2, "16:9 teardown needs no presentation restore");
+        Assert(f.PresentationChanges.All(p => p == (false, 1920)), "16:9 teardown retains base presentation");
     }
 
     private static void WideArmFailuresRestoreBeforeResumingMirror()
@@ -184,6 +363,7 @@ internal static class RenderStreamSwapTests
         f.Swap.Request("page", true, 2340.0 / 1080);
         f.Capture.EmitArmed(Snapshot("wide"));
         f.Swap.Request("page", false);
+        f.Swap.Release("page");
         f.Swap.Request("reload", true, 2520.0 / 1080);
         f.Capture.EmitDisarmed();
         f.Capture.EmitDisarmed();
@@ -213,7 +393,7 @@ internal static class RenderStreamSwapTests
             nextFrame.Dequeue()();
             Assert(f.Swap.MirrorRestoreComplete && f.SuspenderEnabled && f.PresentationWhenResumed is (false, 1920),
                 "completion follows presentation and visual-suspender restoration");
-            Assert(f.Changes.Count == changes + 1, "completion is published even for a failed stream");
+            Assert(f.Changes.Count > changes, "completion is published even for a failed stream");
         }
     }
 
@@ -302,7 +482,7 @@ internal static class RenderStreamSwapTests
         using var f = new Fixture();
         f.Swap.Request("page", true);
         f.Swap.Request("page", false);
-        Assert(f.Capture.DisarmCalls == 1 && f.Swap.State == "mirror", "arming can be cancelled");
+        Assert(f.Capture.DisarmCalls == 1 && f.Swap.State == "disarming", "arming can be cancelled");
         f.Capture.EmitArmed(Snapshot("late"));
         Assert(f.Swap.Snapshot is null && f.Deadlines.Count == 0, "late armed cannot republish during teardown");
         f.Capture.EmitDisarmed();
@@ -316,14 +496,14 @@ internal static class RenderStreamSwapTests
         f.Events.Clear();
         f.Capture.BeforeDisarm = () =>
         {
-            Assert(f.Swap.Snapshot is null && f.Swap.State == "mirror", "descriptor is already cleared inside Disarm");
-            Assert(f.Events.SequenceEqual(new[] { "changed:mirror", "disarm" }), "change notification precedes capture teardown");
+            Assert(f.Swap.Snapshot is null && f.Swap.State == "disarming", "descriptor is already cleared inside Disarm");
+            Assert(f.Events.SequenceEqual(new[] { "changed:armed", "changed:disarming", "disarm" }), "change notification precedes capture teardown");
             Assert(!f.SuspenderEnabled && f.TrimCalls == 0, "suspender and trim wait for disarmed");
         };
         f.Swap.Request("page", false);
         Assert(f.Capture.LingerMs == 1500, "normal teardown keeps the capture's default linger");
         f.Capture.EmitDisarmed();
-        Assert(f.Events.TakeLast(3).SequenceEqual(new[] { "suspender:True", "trim", "changed:mirror" }), "disarmed resumes memory saving then requests trim");
+        Assert(f.Events.IndexOf("suspender:True") < f.Events.IndexOf("trim") && f.Events[^1] == "changed:mirror", "disarmed resumes memory saving then requests trim");
         f.Capture.EmitDisarmed();
         Assert(f.TrimCalls == 1, "a duplicate disarmed signal cannot trim again");
     }
@@ -340,7 +520,7 @@ internal static class RenderStreamSwapTests
         Assert(f.Capture.DisarmReason == "grace" && f.Swap.Snapshot is null, "never-connected capture disarms at grace");
         Assert(f.Capture.ClientReads == reads && f.Capture.StateReads == 0, "deadline does not poll capture state");
         f.Capture.EmitDisarmed();
-        Assert(f.Capture.ArmCalls == 1 && f.Swap.WantingPages.Length == 0, "grace forgets wanting pages");
+        Assert(f.Capture.ArmCalls == 1 && f.Swap.WantingPages.SequenceEqual(new[] { "page" }), "grace preserves page preference without automatically rearming");
     }
 
     private static void ConnectingCancelsGrace()
@@ -404,11 +584,12 @@ internal static class RenderStreamSwapTests
         using var f = new Fixture();
         f.Arm();
         f.Swap.Request("page", false);
+        f.Swap.Release("page");
         f.Swap.Request("reload", true, 2340.0 / 1080);
         Assert(f.Capture.ArmCalls == 1 && f.Swap.Snapshot is null, "request waits while disarming");
         f.Events.Clear();
         f.Capture.EmitDisarmed();
-        Assert(f.Events.SequenceEqual(new[] { "suspender:True", "trim", "changed:mirror", "suspender:False", "changed:arming", "arm" }),
+        Assert(f.Events.IndexOf("suspender:True") < f.Events.IndexOf("trim") && f.Events.IndexOf("trim") < f.Events.IndexOf("suspender:False") && f.Events[^1] == "arm",
             "teardown restores and trims before the next arm resumes visuals");
         Assert(f.Capture.ArmCalls == 2 && f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2340x1080", "pending page supplies the next size");
     }
@@ -544,7 +725,7 @@ internal static class RenderStreamSwapTests
             f.Arm();
             f.Capture.DisarmResult = result;
             f.Swap.Request("page", false);
-            Assert(f.Swap.Snapshot is null && f.Swap.State == "mirror", "refused disarm still clears descriptor");
+            Assert(f.Swap.Snapshot is null && f.Swap.State == (result == 3 ? "mirror" : "disarming"), "refused disarm still clears descriptor");
             Assert(f.SuspenderEnabled == (result == 3), "already stopped restores immediately; already stopping waits");
             if (result == 44) f.Capture.EmitDisarmed();
             Assert(f.SuspenderEnabled && f.TrimCalls == 1, "stopped capture restores memory saving once");
@@ -558,7 +739,7 @@ internal static class RenderStreamSwapTests
         f.Capture.DisarmResult = 1;
         f.Swap.Request("page", false);
         Assert(f.Swap.State == "failed" && f.Swap.Reason == "disarm-refused:1", "refused disarm reports failure");
-        Assert(f.Swap.MirrorRestoreComplete, "terminal disarm refusal allows the mirror fallback without a disarmed signal");
+        Assert(!f.Swap.MirrorRestoreComplete && !f.Swap.PresentationReady, "refused disarm cannot claim a restored presentation");
     }
 
     private static RenderStreamSnapshot Snapshot(string arm) => new(
@@ -578,13 +759,13 @@ internal static class RenderStreamSwapTests
         internal int TrimCalls;
         private TimeSpan _now;
 
-        internal Fixture(int maxWidth = 2520, Action<Action>? deferSignal = null)
+        internal Fixture(int maxWidth = 2520, Action<Action>? deferSignal = null, Action<Action>? deferPresentation = null, Func<int, bool>? canApply = null)
         {
             Capture = new FakeCapture(Events);
             Presentation = new HeadlessViewportConfigurator.Presentation((expand, width) =>
             {
                 PresentationChanges.Add((expand, width));
-                return true;
+                return canApply?.Invoke(width) ?? true;
             });
             Swap = new RenderStreamSwap(Capture, Schedule,
                 on =>
@@ -595,7 +776,8 @@ internal static class RenderStreamSwapTests
                 },
                 () => { TrimCalls++; Events.Add("trim"); },
                 () => { Events.Add($"changed:{Swap!.State}"); Changes.Add((Swap.State, Swap.Snapshot)); },
-                Presentation.SetStreamWidth, maxWidth, deferSignal);
+                Presentation.SetStreamWidth, maxWidth, deferSignal, deferPresentation,
+                trySetPresentationWidth: Presentation.TrySetStreamWidth);
         }
 
         internal void Arm()

@@ -47,6 +47,7 @@ internal sealed partial class BrowserServerRouteTests
         start.Environment["GRC_STREAM_VERSION"] = "13";
         start.Environment["GRC_LIVE_AUTH"] = "token";
         start.Environment["GRC_LIVE_CARRIERS"] = "ws,wt";
+        start.Environment["COUCHCOOP_RENDER_STREAM_DIRECT"] = "1";
         start.Environment["GRC_ROOT_SIZE"] = "presentation:1920x1080";
         // The browser server's own Origin-vs-Host check (CouchCoopWebOrigin) is not what is under test, and this
         // rig cannot be reached at a LAN or `localhost` Host for every Origin it sends; the descriptor gate is.
@@ -107,7 +108,7 @@ internal sealed partial class BrowserServerRouteTests
             // Credentials belong only to pages that explicitly ask, even while the seat is already armed.
             using var second = await seat.ConnectAsync(AllowedPageOrigin);
             using (var current = await ReadSessionAsync(second)) ExpectRenderer(current.RootElement, "armed");
-            await SendRendererAsync(second, "stream");
+            await SendRendererAsync(second, "stream", "2.1666666666666665");
             using (var current = await ReadRendererAsync(second, "armed")) ExpectDescriptor(current.RootElement, "shared arm", 2340);
             Expect(seat.Capture.ArmCalls == 1, "a second page shares this arm without rearming");
             await SendRendererAsync(second, "mirror");
@@ -115,14 +116,14 @@ internal sealed partial class BrowserServerRouteTests
             Expect(seat.Capture.DisarmCalls == 0, "one page's mirror choice keeps the other page streaming");
             await SendControlAsync(socket, "{\"type\":\"session-refresh\"}");
             using (var current = await ReadSessionAsync(socket)) ExpectDescriptor(current.RootElement, "remaining wanting page", 2340);
-            await SendRendererAsync(second, "stream");
+            await SendRendererAsync(second, "stream", "2.1666666666666665");
             using (var current = await ReadRendererAsync(second, "armed")) ExpectDescriptor(current.RootElement, "asking again", 2340);
             seat.DemandHost!.Released = new(TaskCreationOptions.RunContinuationsAsynchronously);
             await CloseWebSocketSilentlyAsync(socket);
             await seat.DemandHost.Released.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Expect(seat.Capture.DisarmCalls == 0, "closing a wanting page does not disarm");
             await SendRendererAsync(second, "mirror");
-            using (var mirror = await ReadRendererAsync(second, "mirror")) ExpectRenderer(mirror.RootElement, "mirror");
+            using (var mirror = await ReadRendererAsync(second, "disarming")) ExpectRenderer(mirror.RootElement, "disarming");
             GameMainThread.Invoke(() => true);
             Expect(seat.Capture.DisarmCalls == 1, "socket close released the first page's demand");
             seat.Disarmed();
@@ -178,12 +179,68 @@ internal sealed partial class BrowserServerRouteTests
             using (var current = await ReadRendererAsync(afterReload, "armed")) ExpectDescriptor(current.RootElement, "replacement generation");
             Expect(hotSeat.DemandHost.Subscribers == 1, "the replacement hot generation subscribes once");
             await SendRendererAsync(afterReload, "mirror");
-            using (var mirror = await ReadRendererAsync(afterReload, "mirror")) ExpectRenderer(mirror.RootElement, "mirror");
+            using (var mirror = await ReadRendererAsync(afterReload, "disarming")) ExpectRenderer(mirror.RootElement, "disarming");
             GameMainThread.Invoke(() => true);
             Expect(hotSeat.Capture!.Subscriptions == 1 && hotSeat.Capture.ArmCalls == 1 && hotSeat.Capture.DisarmCalls == 1,
                 "controller demand and subscriptions survive a real hot-generation replacement");
             hotSeat.Disarmed();
             await CloseWebSocketSilentlyAsync(afterReload);
+            await using var leaseSeat = await RelayedSeat.StartAsync(withCapture: true);
+            var persistent = leaseSeat.Host!;
+            persistent.ClaimPresentationPage("page", "old");
+            Expect(persistent.IsPresentationPageOwner("page", "old") && !persistent.IsPresentationPageOwner("missing", "old"),
+                "only a claimed page has an input owner");
+            persistent.UpdatePresentationPage("page", "old", true, true, 3);
+            persistent.ClaimPresentationPage("page", "new");
+            persistent.UpdatePresentationPage("page", "old", false, false, null);
+            persistent.ReleasePresentationPage("page", "old");
+            Expect(persistent.IsPresentationPageOwner("page", "new") && !persistent.IsPresentationPageOwner("page", "old"),
+                "replacement retires the old input owner even when its release arrives late");
+            Expect(persistent.WantsRenderStream("page") && leaseSeat.Capture!.DisarmCalls == 0,
+                "retired generation callbacks and releases cannot overwrite a replacement lease");
+            persistent.UpdatePresentationPage("page", "new", true, null, null);
+            Expect(persistent.WantsRenderStream("page"), "replacement retains renderer preference without resending a choice");
+            persistent.ClaimPresentationPage("mirror", "watcher");
+            persistent.UpdatePresentationPage("mirror", "watcher", true, false, null);
+            Expect(!persistent.PresentationStatus.Ready && leaseSeat.Capture!.DisarmCalls == 1,
+                "persistent mirror watch intent closes admission before teardown");
+            leaseSeat.Disarmed();
+            Expect(leaseSeat.Capture!.Options!["GRC_ROOT_SIZE"] == "presentation:1920x1080",
+                "replacement and mirror demand share settled base presentation");
+            persistent.ReleasePresentationPage("page", "new");
+            Expect(!persistent.IsPresentationPageOwner("page", "new"), "release closes input ownership immediately");
+            persistent.UpdatePresentationPage("page", "new", true, true, 3);
+            Expect(!persistent.WantsRenderStream("page"), "released owner cannot resurrect its page without a new claim");
+            for (var i = 0; i < RenderStreamSwap.MaxRetainedPages + 10; i++)
+            {
+                persistent.ClaimPresentationPage($"retired-{i}", "owner");
+                persistent.ReleasePresentationPage($"retired-{i}", "owner");
+            }
+            var retained = (System.Collections.IDictionary)typeof(HotReloadableBrowserServerHost)
+                .GetField("_presentationPages", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(persistent)!;
+            Expect(retained.Count == RenderStreamSwap.MaxRetainedPages + 1 && retained.Contains("mirror")
+                && !retained.Contains("retired-0"), "retention bounds disconnected page facts without evicting an active lease");
+            await using var identitySeat = await RelayedSeat.StartAsync(withCapture: true);
+            var identityHost = identitySeat.Host!;
+            const string pageIdentity = "abcdef0123456789abcdef0123456789";
+            using var oldPageSocket = await identitySeat.ConnectAsync(AllowedPageOrigin, pageIdentity.ToUpperInvariant());
+            using (var initial = await ReadSessionAsync(oldPageSocket)) ExpectRenderer(initial.RootElement, "mirror");
+            using var replacementSocket = await identitySeat.ConnectAsync(AllowedPageOrigin, pageIdentity);
+            using (var initial = await ReadSessionAsync(replacementSocket)) ExpectRenderer(initial.RootElement, "mirror");
+            identitySeat.DemandHost!.Released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            await CloseWebSocketSilentlyAsync(oldPageSocket);
+            await identitySeat.DemandHost.Released.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await SendRendererAsync(replacementSocket, "stream");
+            using (var arming = await ReadRendererAsync(replacementSocket, "arming")) ExpectRenderer(arming.RootElement, "arming");
+            Expect(identityHost.WantsRenderStream(pageIdentity), "normalized rendererPage leases survive a stale connection's release");
+            using var anonymous = await identitySeat.ConnectAsync(AllowedPageOrigin);
+            using (var initial = await ReadSessionAsync(anonymous)) ExpectRenderer(initial.RootElement, "arming");
+            using var malformed = await identitySeat.ConnectAsync(AllowedPageOrigin, "invalid");
+            using (var initial = await ReadSessionAsync(malformed)) ExpectRenderer(initial.RootElement, "arming");
+            var identityPages = (System.Collections.IDictionary)typeof(HotReloadableBrowserServerHost)
+                .GetField("_presentationPages", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(identityHost)!;
+            Expect(identityPages.Count == 3 && !identityPages.Contains("invalid"),
+                "missing and malformed page identities fall back to separate connection leases");
             return 0;
         }
         catch (Exception error)
@@ -204,7 +261,7 @@ internal sealed partial class BrowserServerRouteTests
         seat.Armed(RenderStreamSeatToken);
         using (var armed = await ReadRendererAsync(socket, "armed")) ExpectDescriptor(armed.RootElement, "return test", 2340);
         await SendRendererAsync(socket, "mirror");
-        using (var fallback = await ReadRendererAsync(socket, "mirror"))
+        using (var fallback = await ReadRendererAsync(socket, "disarming"))
             Expect(!fallback.RootElement.GetProperty("rendererState").GetProperty("restoreComplete").GetBoolean(),
                 "early fallback explicitly has not restored the presentation");
         await SendControlAsync(socket, "{\"type\":\"watch\",\"on\":true}");
@@ -254,7 +311,7 @@ internal sealed partial class BrowserServerRouteTests
         => socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, CancellationToken.None);
 
     private static Task SendRendererAsync(ClientWebSocket socket, string renderer, string? aspect = null)
-        => SendControlAsync(socket, "{\"type\":\"renderer\",\"renderer\":\"" + renderer + "\""
+        => SendControlAsync(socket, "{\"type\":\"renderer\",\"rendererProtocol\":2,\"renderer\":\"" + renderer + "\""
             + (aspect is null ? "" : ",\"aspect\":" + aspect) + "}");
 
     private static async Task<JsonDocument> ReadRendererAsync(ClientWebSocket socket, string state)
@@ -380,12 +437,13 @@ internal sealed partial class BrowserServerRouteTests
             return seat;
         }
 
-        public async Task<ClientWebSocket> ConnectAsync(string? origin)
+        public async Task<ClientWebSocket> ConnectAsync(string? origin, string? rendererPage = null)
         {
             var socket = new ClientWebSocket();
             if (origin is not null) socket.Options.SetRequestHeader("Origin", origin);
             var port = ((IPEndPoint)_host.LocalEndpoint).Port;
-            await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws?seat=rs&{GatedQuery}"), CancellationToken.None);
+            var pageQuery = rendererPage is null ? "" : "&rendererPage=" + Uri.EscapeDataString(rendererPage);
+            await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws?seat=rs&{GatedQuery}{pageQuery}"), CancellationToken.None);
             return socket;
         }
 
@@ -476,7 +534,7 @@ internal sealed partial class BrowserServerRouteTests
         }
     }
 
-    private sealed class TrackingRendererHost(HotReloadableBrowserServerHost host) : IHotRendererSwapHost, IHotServerHost, IHotBrowserDemandHost
+    private sealed class TrackingRendererHost(HotReloadableBrowserServerHost host) : IHotRendererSwapHost, IHotPresentationHost, IHotServerHost, IHotBrowserDemandHost
     {
         public object RuntimeHost => host.RuntimeHost;
         public object? HeadlessManager => host.HeadlessManager;
@@ -490,6 +548,16 @@ internal sealed partial class BrowserServerRouteTests
         public (string State, string? Reason,
             (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
             => host.RendererStatus;
+        public (long Epoch, bool Ready, int Width, int Height) PresentationStatus => host.PresentationStatus;
+        public void ClaimPresentationPage(string pageId, string owner) => host.ClaimPresentationPage(pageId, owner);
+        public bool IsPresentationPageOwner(string pageId, string owner) => host.IsPresentationPageOwner(pageId, owner);
+        public void UpdatePresentationPage(string pageId, string owner, bool watch, bool? stream, double? aspect)
+            => host.UpdatePresentationPage(pageId, owner, watch, stream, aspect);
+        public void ReleasePresentationPage(string pageId, string owner)
+        {
+            host.ReleasePresentationPage(pageId, owner);
+            Released.TrySetResult();
+        }
         public bool MirrorRestoreComplete => host.MirrorRestoreComplete;
         public bool WantsRenderStream(string pageId) => host.WantsRenderStream(pageId);
         public void RequestRenderer(string pageId, bool wantsStream, double? aspect) => host.RequestRenderer(pageId, wantsStream, aspect);

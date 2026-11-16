@@ -541,7 +541,7 @@ internal static class BrowserSceneDeltaMessageTests
             "\"transform\":{\"xAxis\":{\"x\":1,\"y\":0},\"yAxis\":{\"x\":0,\"y\":1},\"origin\":{\"x\":960.5,\"y\":540}}," +
             "\"localRect\":{\"position\":{\"x\":0,\"y\":0},\"size\":{\"x\":100,\"y\":16}}," +
             "\"zIndex\":3,\"visible\":false,\"opacity\":0.5,\"scaleY\":2}]," +
-            "\"removedIds\":[],\"type\":\"scene-delta\"}";
+            "\"removedIds\":[],\"presentationEpoch\":0,\"type\":\"scene-delta\"}";
         Assert(json == expected, $"golden node bytes; got:\n{json}\nexpected:\n{expected}");
     }
 

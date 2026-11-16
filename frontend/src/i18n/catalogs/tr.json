@@ -110,6 +110,7 @@
   "settings.newRendererCoreLoadFailed": "Yeni işleyici bu sayfada yüklenemedi.",
   "settings.newRendererNoWebgl2": "Bu tarayıcı yeni işleyiciyi çalıştıramıyor.",
   "settings.newRendererHostView": "Sunucunun kendi oyununu izlerken kullanılamaz.",
+  "settings.newRendererHostUpdate": "Yeni işleyiciyi kullanmak için sunucunun modunu güncelleyin.",
   "settings.newRendererNeedsProxy": "Bu sayfa, sunucunun yeni işleyici yayınını çalıştıramıyor. Sunucunun HTTPS bağlantısını Chrome veya Edge'de ya da aynayı sunucu bilgisayarında açın.",
   "settings.newRendererSwitching": "Değiştiriliyor…",
   "settings.newRendererFailed": "Yeni işleyici başlatılamadı.",

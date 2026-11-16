@@ -127,35 +127,29 @@ network attack. Files and networks outside the configured service boundaries rem
 
 ## New renderer over the LAN
 
-The new renderer's stream (godot-scene-web's render-stream hub, inside a player's seat process) listens on every
-interface, on the seat's hub port (TCP and UDP), as the browser server and the player sockets do
-([configuration.md](configuration.md)). Every seat loads the capture idle, with no listener. A seat's hub listens only
-while that seat is streaming: from the moment one of its pages asks for "Use new renderer (Beta)" until the last such
-page switches back, or 90 seconds after the last stream connection closes. What it adds:
+Normal new-renderer traffic enters through CouchCoop's existing browser endpoint. The host resolves an opaque
+seat route to a live player instance and forwards the permitted stream and resource requests over its authenticated
+private seat connection. The capture listener binds to loopback by default; a browser does not need direct access
+to a separate capture port. Direct capture exposure is reserved for explicit QA configuration.
 
-- **Who can connect.** Anyone on the reachable network can reach the port. A stream session needs the seat's 64-hex
-  token (32 random bytes, regenerated each time the seat starts streaming), which the seat hands only to a browser
-  connection whose `Origin` is one of the host's own page origins, which already holds that player's seat socket and
-  which has asked for the new renderer. Without it a
-  hello gets `unauthorized` and a resource request 401. A page from any other site is refused by the origin list. At
-  most two sessions per seat are admitted.
-- **What a session gives.** The stream is view-only: it carries what the seat's game draws, and the browser sends only
-  its hello and flow-control acknowledgements on it. Input still travels on the player's own couch socket, under the
-  same rules as before. A stolen token shows that player's screen until the seat stops streaming; it does not drive the game.
-- **Confidentiality.** WebTransport is always encrypted (TLS 1.3, a per-process self-signed certificate pinned by hash
-  in the descriptor). wss uses a certificate the host already has (its Direct-IP HTTPS leaf, else the published
-  secure-origin certificate); the seat receives a PEM copy in its private evidence directory, written owner-only on
-  Unix and never logged. Plain WebSocket is also served on the LAN, beside wss on the same port
-  (godot-scene-web's `GRC_LIVE_LAN_PLAINTEXT=allow`), for the host's plain-http LAN page: there token and frames
-  cross unencrypted, as that page's own couch socket does. A page on the host's https link is described wss or
-  WebTransport, never plain WebSocket.
-- **New parsers on the LAN.** The capture's WebSocket/HTTP parser and godot-scene-web's net module (QUIC, HTTP/3 and
-  TLS in Rust: wtransport, quinn, rustls) are reachable from the LAN while a seat is streaming. They run in the seat
-  process, not the host's; a fault there stops that carrier, not the game.
-- **Not the public website.** The pages.dev bootstrap page cannot be allowed (its origin carries no port, and the
-  stream's allow-list takes only exact `scheme://host:port` entries), and Chrome puts WebTransport and wss from a
-  public origin to a private address behind its Local Network Access permission
-  ([local-network-access.md](local-network-access.md)).
+- **Authorization.** CouchCoop validates the browser origin before forwarding. Route resolution uses server-owned
+  seat state and rejects expired or unavailable seats; the routes cannot select arbitrary upstream addresses or
+  paths. The capture still validates its per-arm token, delivered only over the authorized control connection to
+  pages requesting the new renderer. Tokens are not placed in URLs or logs.
+- **Resources.** Resource routes preserve bearer authentication, conditional requests, compression and private
+  caching. The relay translates the capture's internal-origin CORS response into a grant for the original validated
+  browser origin. Failed requests are not turned into reusable cached resources.
+- **Input.** Rendering traffic and resources use the relay; gameplay input continues over the player's CouchCoop
+  control socket. Input is tied to the presentation actually displayed and rejected when its presentation epoch
+  is stale. A renderer transition cancels held input before changing the coordinate space.
+- **Confidentiality.** The external transport matches the selected host endpoint: HTTPS uses secure WebSocket and
+  HTTPS resource requests; HTTP uses unencrypted WebSocket and HTTP. The relay does not add encryption to an HTTP
+  connection or bypass browser mixed-content and Local Network Access restrictions.
+- **Failure isolation.** A refused or timed-out rendering request is handled as a request failure rather than proof
+  that the player's game instance has failed. The browser can return to a restored old-renderer presentation.
+
+The public Website bootstrap uses the selected host endpoint under the same browser restrictions as its control
+connection; see [local-network-access.md](local-network-access.md).
 
 ## Direct-IP HTTPS trust
 

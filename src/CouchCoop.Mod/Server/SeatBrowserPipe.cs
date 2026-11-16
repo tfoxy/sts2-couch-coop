@@ -13,6 +13,7 @@ namespace CouchCoop.Mod.Server;
 /// <summary>A private, full-duplex browser stream for a headless seat. No TCP port is bound.</summary>
 internal sealed class SeatBrowserPipe : IAsyncDisposable
 {
+    internal const string RouteEnvironmentVariable = "COUCHCOOP_SEAT_BROWSER_ROUTE";
     internal const string NameEnvironmentVariable = "COUCHCOOP_SEAT_BROWSER_PIPE";
     internal const string TokenEnvironmentVariable = "COUCHCOOP_SEAT_BROWSER_PIPE_TOKEN";
 
@@ -176,6 +177,21 @@ internal sealed class SeatBrowserPipe : IAsyncDisposable
                 CouchCoopLog.Stderr($"seat browser pipe connection failed: {error.GetType().Name}: {error.Message}");
             }
         }
+    }
+
+    internal static async Task RelayRenderAsync(string name, string token, Stream browser,
+        CouchCoopHttpRequest request, ReadOnlyMemory<byte> requestHeader, IPAddress remoteAddress, bool isSecure,
+        CancellationToken cancellationToken)
+    {
+        using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        await pipe.ConnectAsync(2000, cancellationToken).ConfigureAwait(false);
+        var prelude = JsonSerializer.SerializeToUtf8Bytes(new Prelude(token, remoteAddress.ToString(), isSecure));
+        var sizeBytes = new byte[4];
+        BinaryPrimitives.WriteInt32BigEndian(sizeBytes, prelude.Length);
+        await pipe.WriteAsync(sizeBytes, cancellationToken).ConfigureAwait(false);
+        await pipe.WriteAsync(prelude, cancellationToken).ConfigureAwait(false);
+        await RenderStreamRelay.ForwardAsync(pipe, browser, request, requestHeader, cancellationToken).ConfigureAwait(false);
     }
 
     internal static async Task RelayAsync(string name, string token, Stream browser,

@@ -57,6 +57,11 @@ More expensive visual effects can be represented by static frames or rendered at
 
 Each browser seat still requires a headless game process. The host therefore trades the cost of multiple rendered video streams for the CPU and memory cost of multiple game clients. Network delays and missed or late scene updates can also produce visual differences that would not occur in a native client.
 
+Browsers sharing a player also share its game viewport. An active old-renderer viewer keeps that viewport at
+1920×1080; stream-only viewers may use a wider presentation. Renderer transitions retain the last compatible
+scene with input disabled until the replacement presentation is ready, and presentation epochs fence stale
+scene updates and gameplay input.
+
 ## Touch adaptation
 
 The browser translates touch gestures into the same classes of input expected by the game while adding safeguards for a small screen:

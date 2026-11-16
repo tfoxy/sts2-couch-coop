@@ -30,6 +30,7 @@ import { publishAssetVersion } from "@/join/assetVersion";
 import { hostWsUrl } from "@/join/hostBase";
 import { hostUrl } from "@/join/hostBase";
 import { readVisitId } from "@/join/visitId";
+import { rendererPageId } from "@/join/rendererPage";
 import {
   lifecycleEvent,
   lifecycleSocketRole,
@@ -55,6 +56,7 @@ export interface MirrorInputMessage {
   // `pad` is the BROWSER GAMEPAD leg (keyPadInput.ts): a device-neutral controller token in `input` plus the
   // `pressed` edge, and nothing else — no coordinate, because a pad press is not a place on the stage. The host
   // names the game's own abstract controller input from the token, so the seat enters native controller mode.
+  presentationEpoch?: number;
   kind: "hover" | "click" | "key" | "pad";
   button?: "left" | "right" | "middle" | "wheel-up" | "wheel-down";
   coordX?: number;
@@ -193,6 +195,9 @@ export interface MirrorClient {
   hostAccess: BrowserHostAccess;
   /** Access generation whose fresh full scene has been accepted, not necessarily presented yet. */
   sceneGeneration: number | null;
+  scenePresentationEpoch: number | null;
+  /** Hold queued FULLs as well as partials while another presentation owns the seat. */
+  setSceneAdmission(on: boolean): void;
   status: MirrorClientStatus;
   state: MirrorState;
   latency: MirrorLatency;
@@ -211,7 +216,7 @@ export interface MirrorClient {
   // socket is its own headless game; a direct-view socket is the host's game). Fire-and-forget — the host answers
   // with an `action-result` this client ignores (a refused vote simply doesn't travel, as a dead click didn't).
   //
-  // Returns the `requestId` the send went out under, or null when the socket was not open. Every caller
+  // Returns the `requestId` the send went out under, or null when input admission or the socket is closed. Every caller
   // but one throws it away; scroll authority needs it, because the absolute-scroll ack is only meaningful when it
   // can be matched to the send it answers (see MirrorScrollAck).
   sendAction(message: MirrorActionMessage): string | null;
@@ -354,6 +359,8 @@ export function connectMirrorClient(options: {
   const client: MirrorClient = {
     hostAccess: normalizeHostAccess(null),
     sceneGeneration: null,
+    scenePresentationEpoch: null,
+    setSceneAdmission,
     status: "connecting",
     state,
     latency,
@@ -574,11 +581,32 @@ export function connectMirrorClient(options: {
     }
   }
 
+  let sceneAdmission = true;
+  let presentationEpoch: number | null = null;
+  let presentationReady = true;
+  let mirrorCompatible = true;
+
+  function retireScene(): void {
+    awaitingFullScene = true;
+    client.sceneGeneration = null;
+    client.scenePresentationEpoch = null;
+    deltasSinceAck = 0;
+    state.pendingHints.length = 0;
+    state.pendingCardFlights.length = 0;
+  }
+
+  function setSceneAdmission(on: boolean): void {
+    if (sceneAdmission === on) return;
+    sceneAdmission = on;
+    retireScene();
+  }
+
   function sendInput(message: MirrorInputMessage): void {
     // Gated on hostAccess.allowed (the viewer is authorized to control this seat), NOT on `watching`: the old
     // mirror only controlled while it pulled the node-geometry scene, but the new renderer (INP2) controls the
     // same seat through the stream while `watch` is off, and a receive-only page has no `sendInput` wired.
-    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
+    if (!client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN
+      || (presentationEpoch !== null && (!presentationReady || message.presentationEpoch !== presentationEpoch))) {
       return;
     }
     inputSequence += 1;
@@ -590,7 +618,9 @@ export function connectMirrorClient(options: {
   }
 
   function sendAction(message: MirrorActionMessage): string | null {
-    if (!watching || !client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN) {
+    if (!watching || !sceneAdmission || !client.hostAccess.allowed || socket.readyState !== WebSocketCtor.OPEN
+      || (presentationEpoch !== null && (!presentationReady || awaitingFullScene
+        || client.scenePresentationEpoch !== presentationEpoch || message.presentationEpoch !== presentationEpoch))) {
       return null;
     }
     actionSequence += 1;
@@ -600,6 +630,7 @@ export function connectMirrorClient(options: {
         type: "action",
         requestId,
         semanticActionId: message.semanticActionId,
+        ...(message.presentationEpoch !== undefined ? { presentationEpoch: message.presentationEpoch } : {}),
         // Omitted (not sent as an empty object) when there are no args, so the envelope stays minimal.
         ...(message.args && Object.keys(message.args).length ? { args: message.args } : {})
       }));
@@ -697,6 +728,7 @@ export function connectMirrorClient(options: {
     if (on !== watching) {
       awaitingFullScene = true;
       client.sceneGeneration = null;
+      client.scenePresentationEpoch = null;
       deltasSinceAck = 0;
       state.pendingHints.length = 0;
       state.pendingCardFlights.length = 0;
@@ -722,7 +754,7 @@ export function connectMirrorClient(options: {
   function sendRenderer(renderer: "stream" | "mirror", aspect?: number): void {
     if (socket.readyState !== WebSocketCtor.OPEN) return;
     try {
-      socket.send(JSON.stringify({ type: "renderer", renderer,
+      socket.send(JSON.stringify({ type: "renderer", rendererProtocol: 2, renderer,
         ...(renderer === "stream" && finiteAspect(aspect) ? { aspect } : {}) }));
     } catch {
       // Racing close — drop it; a reconnect applies the saved choice after its first session.
@@ -741,6 +773,7 @@ export function connectMirrorClient(options: {
     try {
       socket.send(JSON.stringify({
         type: "join",
+        rendererProtocol: 2,
         requestId,
         name: name.trim(),
         // Omitted (not null) when there is no picked seat, so a free-text join's bytes are exactly as before.
@@ -818,6 +851,7 @@ export function connectMirrorClient(options: {
       state.pendingCardFlights.length = 0;
       awaitingFullScene = true;
       client.sceneGeneration = null;
+      client.scenePresentationEpoch = null;
       deltasSinceAck = 0;
     }
     client.hostAccess = access;
@@ -952,6 +986,22 @@ export function connectMirrorClient(options: {
           // Legacy replies may omit ids. Once an attempt is retired they cannot reopen it; an active
           // join still accepts these replies, as does initial unsolicited direct-view bootstrap.
           if (!envelope.requestId && hasJoinDirective && !joinPending && joinSequence > 0) return;
+          const presentation = envelope.rendererState;
+          if (presentationEpoch !== null && presentation?.presentationEpoch !== undefined
+            && presentation.presentationEpoch < presentationEpoch) return;
+          if (presentation?.presentationEpoch !== undefined) {
+            const ready = presentation.presentationReady === true;
+            const compatible = presentation.presentationWidth === 1920 && presentation.presentationHeight === 1080;
+            if (presentationEpoch !== presentation.presentationEpoch || presentationReady !== ready || mirrorCompatible !== compatible) {
+              retireScene();
+            }
+            presentationEpoch = presentation.presentationEpoch;
+            presentationReady = ready;
+            mirrorCompatible = compatible;
+          } else if (presentationEpoch !== null) {
+            presentationReady = false;
+            retireScene();
+          }
           parsed = envelope;
           updateHostAccess(envelope.hostAccess ?? normalizeHostAccess(null));
           client.session = { ...envelope, hostAccess: client.hostAccess };
@@ -999,9 +1049,10 @@ export function connectMirrorClient(options: {
 
     // Stream gate: while off the host sends no scene-delta at all — drop any in-flight straggler rather than
     // parsing/applying it, so a gated viewer schedules NO mirror render work (and never acks a frame).
-    if (!watching || !client.hostAccess.allowed) {
+    if (!watching || !sceneAdmission || !presentationReady || !mirrorCompatible || !client.hostAccess.allowed) {
       return;
     }
+    if (presentationEpoch !== null && (raw as { presentationEpoch?: unknown })?.presentationEpoch !== presentationEpoch) return;
 
     let delta;
     try {
@@ -1015,6 +1066,7 @@ export function connectMirrorClient(options: {
       if (awaitingFullScene && !delta.full) return;
       awaitingFullScene = false;
       client.sceneGeneration = client.hostAccess.generation;
+      client.scenePresentationEpoch = presentationEpoch;
       sceneCheckpoint("scene-received");
       wirePhase("apply-scene-delta", () => applySceneDelta(state, delta));
       sceneAblationRuntime.noteSceneDelta(data);
@@ -1179,6 +1231,8 @@ export function buildSeatMirrorWebSocketUrl(
   wsUrl.searchParams.set("handTween", "1");
   wsUrl.searchParams.set("trailDrive", trailDrive ? "1" : "0");
   if (visit) wsUrl.searchParams.set("visit", visit);
+  const pageId = rendererPageId();
+  if (pageId) wsUrl.searchParams.set("rendererPage", pageId);
   const diagnosticVisit = lifecycleVisitNonce();
   if (diagnosticVisit) wsUrl.searchParams.set("diagnosticVisit", diagnosticVisit);
   return wsUrl.toString();
@@ -1212,6 +1266,7 @@ export function buildAudioSeatWebSocketUrl(
   url.searchParams.delete("cardFlight");
   url.searchParams.delete("handTween");
   url.searchParams.delete("trailDrive");
+  url.searchParams.delete("rendererPage");
   return url.toString();
 }
 

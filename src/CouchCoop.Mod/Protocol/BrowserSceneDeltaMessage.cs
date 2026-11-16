@@ -19,10 +19,10 @@ public static class BrowserSceneDeltaMessage
     // Throws when a value has no JSON form (a non-finite double outside the Vector2/colour converters); the drain and
     // keyframe paths go through SceneDeltaSafeSerializer instead, which isolates the node responsible. Resets the
     // SceneWireNonFinite count first, so the count read after a return covers exactly this frame.
-    public static byte[] Serialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch = null)
+    public static byte[] Serialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch = null, long presentationEpoch = 0)
     {
         SceneWireNonFinite.Reset();
-        var wire = WireSceneDelta.FromDelta(delta, orderPatch);
+        var wire = WireSceneDelta.FromDelta(delta, orderPatch) with { PresentationEpoch = presentationEpoch };
         var result = JsonSerializer.SerializeToUtf8Bytes(wire, SceneDeltaJsonContext.Default.WireSceneDelta);
         // S9 instrument (disarmed by default — one volatile read): per-frame wire bytes + upsert/removal counts,
         // measured on the bytes that were just produced. Never changes what is sent.

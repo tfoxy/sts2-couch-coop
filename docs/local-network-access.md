@@ -29,10 +29,11 @@ public origin with a normal certificate, and the host addressed by its literal I
   connection may not be initiated from a page loaded over HTTPS"), before any network request and regardless of
   the permission. Loopback (`ws://127.0.0.1`) and `wss://` always construct. On a browser that throws, the Website
   link boots the app and then cannot open the game socket.
-- WebTransport and `wss://` from a public page to a private address are also in Local Network Access scope. The new
-  renderer's stream additionally cannot serve the Website origin at all: its origin allow-list takes exact
-  `scheme://host:port` entries, and the Website origin has no port. The host's own HTTPS link (Direct address
-  (HTTPS) or the secure origin) is a private-address page, so no LNA check applies there and both carriers open.
+- Secure WebSocket from a public page to a private address is also in Local Network Access scope. The new
+  renderer's default stream and resources use the same selected host endpoint as the control connection. The
+  browser server handles their origin authorization; the capture's internal origin list does not exclude the
+  Website bootstrap. Relaying does not remove mixed-content or Local Network Access restrictions. The host's own
+  HTTPS link (Direct address (HTTPS) or the secure origin) remains a private-address page.
 
 **Service workers are the exception.** Inside a service worker the private-IP exemption does not apply: a worker's
 `fetch()` of `http://<private IP>` is hard-blocked as mixed content. Two consequences shape

@@ -107,6 +107,12 @@ public sealed class CouchCoopWebSocketConnection
     private readonly BoundedInputQueue _inputQueue = new(256);
     private bool _inputPumpRunning;
     private Task _inputPumpTask = Task.CompletedTask;
+    private sealed record QueuedGameplayAction(BrowserActionRequestEnvelope Request, long Generation, long WatchEpoch,
+        CancellationToken CancellationToken);
+    private readonly Channel<QueuedGameplayAction> _actionQueue = Channel.CreateBounded<QueuedGameplayAction>(256);
+    private readonly object _actionLock = new();
+    private bool _actionPumpRunning;
+    private Task _actionPumpTask = Task.CompletedTask;
     private readonly ConnectionJoinOperation _joinOperation;
     private readonly MainThreadPingGate _mainThreadPingGate = new();
     // Outbound SEAT NOTICES, chained. The hub calls us on the seat monitor's 250 ms loop, which must never block
@@ -123,6 +129,30 @@ public sealed class CouchCoopWebSocketConnection
     private readonly bool _isHeadlessClient;
     private string? _requestOrigin;
     private readonly IHotRendererSwapHost? _rendererSwapHost;
+    private string? _rendererPageReason;
+    private bool _rendererProtocol2;
+    private string? _presentationPageId;
+    private long _legacyPresentationEpoch;
+    private long _fullPresentationEpoch = -1;
+    private IHotPresentationHost? PresentationHost => _rendererSwapHost as IHotPresentationHost;
+    private (long Epoch, bool Ready, int Width, int Height) Presentation => PresentationHost?.PresentationStatus ?? (0, true, 1920, 1080);
+    private string RendererPageId => _presentationPageId ?? _id.ToString("N");
+    private bool LegacyPresentationValid => _rendererProtocol2 || Presentation.Epoch == _legacyPresentationEpoch;
+    private bool AllowsPresentationInput(long? epoch)
+    {
+        if (!_isHeadlessClient) return true;
+        var p = Presentation;
+        if (_closing || !p.Ready || !LegacyPresentationValid || (_rendererProtocol2 && epoch is null)
+            || (epoch ?? _legacyPresentationEpoch) != p.Epoch) return false;
+        if (PresentationHost is { } host && !host.IsPresentationPageOwner(RendererPageId, _id.ToString("N"))) return false;
+        if (_rendererSwapHost?.WantsRenderStream(RendererPageId) == true)
+            return _rendererSwapHost.RendererStatus.Snapshot is not null;
+        return p.Width == 1920 && p.Height == 1080 && _watchRequested && Interlocked.Read(ref _fullPresentationEpoch) == p.Epoch;
+    }
+
+    private bool AllowsPresentationWork(long generation, long watchEpoch, long? epoch)
+        => generation == Presentation.Epoch && watchEpoch == Interlocked.Read(ref _watchEpoch)
+            && AllowsPresentationInput(epoch);
     private BrowserRendererStateDto _fallbackRendererState = new("mirror");
     private readonly IHostBrowserAccess? _hostAccess;
     private volatile bool _watchRequested;
@@ -138,9 +168,10 @@ public sealed class CouchCoopWebSocketConnection
     private static readonly HostBrowserAccessState SeatAccess = new(true, "allowed", 0);
     private static readonly HostBrowserAccessState UnavailableAccess = new(false, "unavailable", 0);
     private HostBrowserAccessState AccessState => _isHeadlessClient
-        ? SeatAccess : _hostAccess?.State ?? UnavailableAccess;
+        ? new(true, "allowed", Presentation.Epoch) : _hostAccess?.State ?? UnavailableAccess;
     private bool AllowsAccess(long generation) => _isHeadlessClient
-        || (!_closing && _watchRequested && _hostAccess?.IsAllowed(generation) == true);
+        ? !_closing && Presentation is { Ready: true, Width: 1920, Height: 1080 } p && p.Epoch == generation && LegacyPresentationValid
+        : (!_closing && _watchRequested && _hostAccess?.IsAllowed(generation) == true);
     private bool AllowsWork(long generation, long watchEpoch)
         => watchEpoch == Interlocked.Read(ref _watchEpoch) && AllowsAccess(generation);
     // TRUE when this browser arrived over TLS. A direct-port seat needs its own TLS-ready port for a wss
@@ -358,6 +389,11 @@ public sealed class CouchCoopWebSocketConnection
         // A seat's connect URL carries the visit id the host's page minted (the host's own does not — that one
         // arrives on the `join` message below), so a seat can bind its arrival to this socket immediately.
         PromoteVisit(session, request.QueryValues.GetValueOrDefault(CouchCoopBrowserServer.MirrorVisitSelector));
+        var rendererPage = request.QueryValues.GetValueOrDefault("rendererPage");
+        _presentationPageId = rendererPage is { Length: 32 } && rendererPage.All(Uri.IsHexDigit)
+            ? rendererPage.ToLowerInvariant() : _id.ToString("N");
+        _legacyPresentationEpoch = Presentation.Epoch;
+        if (_isHeadlessClient) PresentationHost?.ClaimPresentationPage(RendererPageId, _id.ToString("N"));
         _connections[_id] = this;
         try
         {
@@ -386,7 +422,30 @@ public sealed class CouchCoopWebSocketConnection
         finally
         {
             _closing = true;
-            if (_isHeadlessClient) _rendererSwapHost?.ReleaseRenderer(_id.ToString("N"));
+            if (_isHeadlessClient)
+            {
+                // Check ownership and cancel before releasing the lease in the same game-thread operation.
+                // A replacement may claim the page while this teardown is waiting for the game thread.
+                try
+                {
+                    GameMainThread.Invoke(() =>
+                    {
+                        var presentation = PresentationHost;
+                        try
+                        {
+                            if (presentation is null || presentation.IsPresentationPageOwner(RendererPageId, _id.ToString("N")))
+                                _envelopeFactory.RuntimeHost.CancelInjectedInput();
+                        }
+                        finally
+                        {
+                            if (presentation is not null) presentation.ReleasePresentationPage(RendererPageId, _id.ToString("N"));
+                            else _rendererSwapHost?.ReleaseRenderer(RendererPageId);
+                        }
+                        return true;
+                    });
+                }
+                catch (Exception exception) { MessageDiagnostics.Write("input-cancel-failed", $"seat input cancellation failed: {exception.GetType().Name}"); }
+            }
             SetWatchRequested(false);
             await _joinOperation.CancelAndWaitAsync().ConfigureAwait(false);
             _joinOperation.Dispose();
@@ -401,11 +460,13 @@ public sealed class CouchCoopWebSocketConnection
                 if (_headlessManager is not null) await _headlessManager.FinishReportedFailureAsync(session.Id).ConfigureAwait(false);
                 ConnectionRegistry.Shared.Disconnected(session.Id);
             }
-            // Closing retires the host watch epoch. Drain accepted work so the worker exits; host input
-            // is rejected while separate player instances still deliver their accepted release edges.
+            // Closing retires the watch epoch. Drain rejected work so the worker exits.
             Task inputDrain;
             lock (_inputLock) inputDrain = _inputPumpTask;
             try { await inputDrain.ConfigureAwait(false); } catch { }
+            Task actionDrain;
+            lock (_actionLock) actionDrain = _actionPumpTask;
+            try { await actionDrain.ConfigureAwait(false); } catch { }
             _connections.TryRemove(_id, out _);
             // Give the streaming count back BEFORE the connection count so the server sees a consistent
             // (streaming <= mirror) pair on every RefreshObserversLocked pass. Idempotent: a connection that was
@@ -556,6 +617,7 @@ public sealed class CouchCoopWebSocketConnection
     private async Task RunJoinAsync(BrowserSessionHandle session, BrowserJoinRequestEnvelope join, CancellationToken cancellationToken)
     {
         var requestId = string.IsNullOrWhiteSpace(join.RequestId) ? Guid.NewGuid().ToString("N") : join.RequestId;
+        _rendererProtocol2 = join.RendererProtocol == 2;
         _viewerName = join.Name;
         var connectionAttemptId = ConnectionRegistry.Shared.BeginAttempt(session.Id);
         ConnectionRegistry.Shared.SetDisplayName(session.Id, join.Name);
@@ -1023,8 +1085,17 @@ public sealed class CouchCoopWebSocketConnection
                         && renderer.GetString() is "stream" or "mirror")
                     {
                         var wantsStream = renderer.GetString() == "stream";
+                        _rendererProtocol2 = document.RootElement.TryGetProperty("rendererProtocol", out var protocol)
+                            && protocol.ValueKind == JsonValueKind.Number && protocol.TryGetInt32(out var version) && version == 2;
+                        _rendererPageReason = wantsStream && !_rendererProtocol2 ? "renderer-update-required" : null;
+                        if (wantsStream && _rendererPageReason is not null)
+                        {
+                            RequestPageRenderer(false, null);
+                            await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
                         var aspect = document.RootElement.TryGetProperty("aspect", out var value) ? BrowserAspect.Read(value) : null;
-                        if (_rendererSwapHost is { } swap) swap.RequestRenderer(_id.ToString("N"), wantsStream, aspect);
+                        if (_rendererSwapHost is not null) RequestPageRenderer(wantsStream, aspect);
                         else
                         {
                             _fallbackRendererState = wantsStream ? new("failed", "no-capture") : new("mirror");
@@ -1148,8 +1219,13 @@ public sealed class CouchCoopWebSocketConnection
                 {
                     // Every connection here is a MIRROR connection: it holds no bound browser identity (see the executor's
                     // note), and the game process this socket serves IS its seat.
-                    var generation = AccessState.Generation;
-                    response = ExecuteWithAccess(generation, Interlocked.Read(ref _watchEpoch),
+                    if (_isHeadlessClient)
+                    {
+                        // Keep receiving watch changes and EOF while actions wait for the game thread.
+                        await QueueGameplayActionAsync(action, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                    response = ExecuteWithAccess(AccessState.Generation, Interlocked.Read(ref _watchEpoch),
                         () => _actionExecutor.ExecuteAsync(action, cancellationToken).GetAwaiter().GetResult(),
                         AccessDenied(action.RequestId, "action-result"));
                 }
@@ -1203,8 +1279,7 @@ public sealed class CouchCoopWebSocketConnection
 
     private T ExecuteWithAccess<T>(long generation, long watchEpoch, Func<T> action, T denied)
     {
-        // Separate player instances retain their accepted-input drain on disconnect. They do not expose
-        // the host process and must still deliver an already accepted release edge.
+        // Saved seat settings are independent of presentation readiness and host privacy.
         if (_isHeadlessClient) return GameMainThread.Invoke(action);
         if (!AllowsWork(generation, watchEpoch)) return denied;
         // Admission and execution share one game-thread turn. In particular, a queued click must never use
@@ -1212,12 +1287,71 @@ public sealed class CouchCoopWebSocketConnection
         return GameMainThread.Invoke(() => AllowsWork(generation, watchEpoch) ? action() : denied);
     }
 
+    private async Task QueueGameplayActionAsync(BrowserActionRequestEnvelope action, CancellationToken cancellationToken)
+    {
+        var generation = AccessState.Generation;
+        var watchEpoch = Interlocked.Read(ref _watchEpoch);
+        if (!AllowsPresentationWork(generation, watchEpoch, action.PresentationEpoch))
+        {
+            await SendResultAsync(AccessDenied(action.RequestId, "action-result")).ConfigureAwait(false);
+            return;
+        }
+        await _actionQueue.Writer.WriteAsync(new(action, generation, watchEpoch, cancellationToken), cancellationToken).ConfigureAwait(false);
+        lock (_actionLock)
+        {
+            if (_actionPumpRunning) return;
+            _actionPumpRunning = true;
+            _actionPumpTask = Task.Run(DrainGameplayActionsAsync, CancellationToken.None);
+        }
+    }
+
+    private async Task DrainGameplayActionsAsync()
+    {
+        while (true)
+        {
+            QueuedGameplayAction? queued;
+            lock (_actionLock)
+            {
+                if (!_actionQueue.Reader.TryRead(out queued))
+                {
+                    _actionPumpRunning = false;
+                    return;
+                }
+            }
+            try
+            {
+                if (!ConnectionInputAvailability.IsAvailable) continue;
+                var action = queued.Request;
+                var result = GameMainThread.Invoke(() => AllowsPresentationWork(queued.Generation, queued.WatchEpoch, action.PresentationEpoch)
+                    ? _actionExecutor.ExecuteAsync(action, queued.CancellationToken).GetAwaiter().GetResult()
+                    : AccessDenied(action.RequestId, "action-result"));
+                await SendResultAsync(result).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                MessageDiagnostics.Write("invalid-message", $"websocket action failed: {exception}");
+                try { await SendResultAsync(InvalidMessage(queued.Request.RequestId, "The game could not process this message.")).ConfigureAwait(false); }
+                catch { }
+            }
+        }
+    }
+
+    private void RequestPageRenderer(bool stream, double? aspect)
+    {
+        if (PresentationHost is { } presentation)
+            presentation.UpdatePresentationPage(RendererPageId, _id.ToString("N"), _watchRequested, stream, aspect);
+        else _rendererSwapHost?.RequestRenderer(RendererPageId, stream, aspect);
+    }
+
     private void SetWatchRequested(bool requested)
     {
+        if (_isHeadlessClient && !_closing)
+            PresentationHost?.UpdatePresentationPage(RendererPageId, _id.ToString("N"), requested, null, null);
         if (_watchRequested != requested || _watchCounted != requested)
         {
             // Fence work immediately, before starting/stopping demand or waiting on a send.
             Interlocked.Increment(ref _watchEpoch);
+            Interlocked.Exchange(ref _fullPresentationEpoch, -1);
             _watchRequested = requested;
         }
         if (_watchCounted == requested) return;
@@ -1246,8 +1380,9 @@ public sealed class CouchCoopWebSocketConnection
         if (_accessReady && !_closing) _ = Task.Run(() => RefreshHostAccessAsync(rendererChanged: true));
     }
 
-    private bool MirrorRestorePending => _isHeadlessClient && _rendererSwapHost is { } swap
-        && swap.RendererStatus.State is "mirror" or "failed" && !swap.MirrorRestoreComplete;
+    private bool MirrorRestorePending => _isHeadlessClient && (PresentationHost is not null
+        ? !LegacyPresentationValid || Presentation is not { Ready: true, Width: 1920, Height: 1080 }
+        : _rendererSwapHost is { MirrorRestoreComplete: false } swap && swap.RendererStatus.State is "mirror" or "failed");
 
     private async Task RefreshHostAccessAsync(bool rendererChanged = false, bool granted = false)
     {
@@ -1472,7 +1607,7 @@ public sealed class CouchCoopWebSocketConnection
     {
         var startPump = false;
         var access = AccessState;
-        if (!AllowsAccess(access.Generation))
+        if ((_isHeadlessClient ? !AllowsPresentationInput(input.PresentationEpoch) : !AllowsAccess(access.Generation)))
         {
             await SendResultAsync(AccessDenied(input.RequestId, "input-result")).ConfigureAwait(false);
             return;
@@ -1519,8 +1654,11 @@ public sealed class CouchCoopWebSocketConnection
                 // The slow part (game-thread injection) runs here, OFF the receive loop. Fire-and-forget on
                 // success; surface an injection failure as an input-result so a controller can diagnose.
                 if (!ConnectionInputAvailability.IsAvailable) continue;
-                var inputResult = ExecuteWithAccess(input.AccessGeneration, input.WatchEpoch, () => _inputExecutor.Execute(input),
-                    AccessDenied(input.RequestId, "input-result"));
+                var inputResult = _isHeadlessClient
+                    ? GameMainThread.Invoke(() => AllowsPresentationWork(input.AccessGeneration, input.WatchEpoch, input.PresentationEpoch)
+                        ? _inputExecutor.Execute(input) : AccessDenied(input.RequestId, "input-result"))
+                    : ExecuteWithAccess(input.AccessGeneration, input.WatchEpoch, () => _inputExecutor.Execute(input),
+                        AccessDenied(input.RequestId, "input-result"));
                 if (inputResult is not null)
                 {
                     await SendResultAsync(inputResult).ConfigureAwait(false);
@@ -1673,7 +1811,7 @@ public sealed class CouchCoopWebSocketConnection
     // and EnableScenePump never ran, so a viewer reconnecting while it existed got no stream at all.
     private async Task SendSceneKeyframeAsync(RuntimeSceneDelta keyframe, long generation, long watchEpoch)
     {
-        var result = SceneDeltaSafeSerializer.Serialize(keyframe);
+        var result = SceneDeltaSafeSerializer.Serialize(keyframe, presentationEpoch: _isHeadlessClient ? generation : 0);
         ReportSceneSerializeFaults(result, keyframe: true);
         if (result.HasRequeue)
         {
@@ -1689,7 +1827,7 @@ public sealed class CouchCoopWebSocketConnection
 
         if (result.Bytes is not null)
         {
-            await SendBytesAsync(result.Bytes, CancellationToken.None, sceneGeneration: generation, sceneWatchEpoch: watchEpoch).ConfigureAwait(false);
+            await SendBytesAsync(result.Bytes, CancellationToken.None, sceneGeneration: generation, sceneWatchEpoch: watchEpoch, sceneFull: keyframe.Full).ConfigureAwait(false);
         }
     }
 
@@ -1812,7 +1950,7 @@ public sealed class CouchCoopWebSocketConnection
                 // Take has already cleared these ids and spent the credit, so a frame that cannot be serialized
                 // must give both back rather than drop them: the quarantining serializer sends what it can and
                 // names the nodes it could not carry, which go back into the coalescer.
-                var result = SceneDeltaSafeSerializer.Serialize(toSend.Delta, toSend.OrderPatch);
+                var result = SceneDeltaSafeSerializer.Serialize(toSend.Delta, toSend.OrderPatch, _isHeadlessClient ? generation : 0);
                 ReportSceneSerializeFaults(result, toSend.Delta.Full);
                 if (result.HasFaults || result.Bytes is null)
                 {
@@ -1861,7 +1999,7 @@ public sealed class CouchCoopWebSocketConnection
                     continue;
                 }
 
-                await SendBytesAsync(bytes, CancellationToken.None, sceneGeneration: generation, sceneWatchEpoch: watchEpoch).ConfigureAwait(false);
+                await SendBytesAsync(bytes, CancellationToken.None, sceneGeneration: generation, sceneWatchEpoch: watchEpoch, sceneFull: toSend.Delta.Full).ConfigureAwait(false);
                 lock (_sceneLock)
                 {
                     if (generation == _streamAccessGeneration && watchEpoch == _streamWatchEpoch)
@@ -1925,21 +2063,35 @@ public sealed class CouchCoopWebSocketConnection
     private Task SendEnvelopeAsync(BrowserEnvelope envelope)
         => SendBytesAsync([], CancellationToken.None, sessionEnvelope: WithRenderStream(envelope));
 
-    // Every page gets the seat state; only wanting pages get credentials, subject to the hub's origin gate.
+    // Every admitted page gets the seat state; only negotiated, requesting pages get credentials.
     private BrowserEnvelope WithRenderStream(BrowserEnvelope envelope)
     {
         if (!string.Equals(envelope.Type, "session", StringComparison.Ordinal)) return envelope;
         if (!_isHeadlessClient) return WithRenderStreamLan(envelope);
         if (_rendererSwapHost is not { } swap) return envelope with { RendererState = _fallbackRendererState };
         var status = swap.RendererStatus;
+        if (_rendererPageReason is { } pageReason)
+            return envelope with { RendererState = RendererState("failed", pageReason, swap.MirrorRestoreComplete) };
+        var relay = swap as IHotRenderStreamRelayHost;
         return envelope with
         {
-            RenderStream = swap.WantsRenderStream(_id.ToString("N"))
-                ? StreamingSeatDescriptor.Build(status.Snapshot, _requestOrigin,
-                    Environment.GetEnvironmentVariable, StreamingSeatDescriptor.CertificateCovers)
+            RenderStream = swap.WantsRenderStream(RendererPageId)
+                ? Environment.GetEnvironmentVariable(StreamingSeatDescriptor.DirectEnvironmentVariable) == "1"
+                    ? StreamingSeatDescriptor.Build(status.Snapshot, _requestOrigin,
+                        Environment.GetEnvironmentVariable, StreamingSeatDescriptor.CertificateCovers)
+                    : relay is { SupportsRenderStreamRelay: true } && _rendererProtocol2
+                        ? StreamingSeatDescriptor.BuildRelayed(status.Snapshot, relay.RenderStreamSeatRoute)
+                        : null
                 : null,
-            RendererState = new(status.State, status.Reason, swap.MirrorRestoreComplete),
+            RendererState = RendererState(status.State, status.Reason, swap.MirrorRestoreComplete),
         };
+    }
+
+    private BrowserRendererStateDto RendererState(string state, string? reason, bool restored)
+    {
+        var p = Presentation;
+        return new(state, !LegacyPresentationValid ? "renderer-reconnect-required" : reason,
+            restored, p.Epoch, p.Ready, p.Width, p.Height);
     }
 
     // On the HOST, every session carries the LAN streaming offer while a capture is configured (CAR7b): before a join
@@ -1950,7 +2102,8 @@ public sealed class CouchCoopWebSocketConnection
         var offer = manager.RenderStreamLanOffer(_requestOrigin);
         return envelope with
         {
-            RenderStreamLan = offer is { } lan ? new BrowserRenderStreamLanDto(lan.WebTransport, lan.Tls, lan.Ws) : null,
+            RenderStreamLan = offer is { } lan ? new BrowserRenderStreamLanDto(lan.WebTransport, lan.Tls, lan.Ws,
+                (_rendererSwapHost as IHotRenderStreamRelayHost)?.SupportsRenderStreamRelay == true ? true : null) : null,
             RenderStreamUnavailableReason = manager.RenderStreamUnavailableReason,
         };
     }
@@ -1962,7 +2115,7 @@ public sealed class CouchCoopWebSocketConnection
         => SendBytesAsync(bytes, CancellationToken.None);
 
     private async Task SendBytesAsync(byte[] bytes, CancellationToken cancellationToken,
-        long? sceneGeneration = null, long? sceneWatchEpoch = null, BrowserEnvelope? sessionEnvelope = null, bool accessUpdate = false)
+        long? sceneGeneration = null, long? sceneWatchEpoch = null, BrowserEnvelope? sessionEnvelope = null, bool accessUpdate = false, bool sceneFull = false)
     {
         var socket = _socket;
         if (socket is null || socket.State != WebSocketState.Open)
@@ -1981,7 +2134,7 @@ public sealed class CouchCoopWebSocketConnection
                 var state = AccessState;
                 var access = new BrowserHostAccess(state.Allowed, state.Reason, state.Generation, state.SceneResetGeneration);
                 bytes = sessionEnvelope is not null
-                    ? Encoding.UTF8.GetBytes(BrowserJson.Serialize(sessionEnvelope with { HostAccess = access }))
+                    ? Encoding.UTF8.GetBytes(BrowserJson.Serialize(WithRenderStream(sessionEnvelope) with { HostAccess = access }))
                     : Encoding.UTF8.GetBytes(BrowserJson.Serialize(new BrowserHostAccessEnvelope("host-access", access)));
             }
             if (socket.State == WebSocketState.Open)
@@ -2007,6 +2160,8 @@ public sealed class CouchCoopWebSocketConnection
                     }
                 }
             }
+            if (sceneFull && sceneGeneration is { } fullEpoch && AllowsWork(fullEpoch, sceneWatchEpoch ?? -1))
+                Interlocked.Exchange(ref _fullPresentationEpoch, fullEpoch);
         }
         finally
         {

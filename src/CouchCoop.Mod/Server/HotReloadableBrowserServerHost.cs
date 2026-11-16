@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using CouchCoop.Mod.Contracts;
@@ -7,7 +8,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
-public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IHotRendererSwapHost, IAsyncDisposable
+public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IHotRendererSwapHost, IHotRenderStreamRelayHost, IHotPresentationHost, IAsyncDisposable
 {
     private readonly CouchCoopRuntimeHost _runtime;
     private readonly IPAddress _bindAddress;
@@ -68,7 +69,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         _generation = new BuiltInBrowserServerGeneration(this);
     }
 
-    private sealed record RendererPublication(string State, string? Reason, RenderStreamSnapshot? Snapshot, string[] WantingPages, bool MirrorRestoreComplete);
+    private sealed record RendererPublication(string State, string? Reason, RenderStreamSnapshot? Snapshot, string[] WantingPages, bool MirrorRestoreComplete, long Epoch = 0, bool Ready = true, int Width = 1920);
     private RendererPublication _rendererPublication = new("mirror", null, null, [], true);
     private RenderStreamSwap? _rendererSwap;
     private volatile bool _rendererDisposed;
@@ -85,6 +86,70 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
             return (published.State, published.Reason, snapshot is null ? null
                 : (snapshot.Listen, snapshot.Token, snapshot.CertificateHash, snapshot.RootSize, snapshot.StreamVersion));
         }
+    }
+
+    public bool SupportsRenderStreamRelay => true;
+    public string? RenderStreamSeatRoute => IsHeadlessClient
+        ? Environment.GetEnvironmentVariable(SeatBrowserPipe.RouteEnvironmentVariable) : null;
+
+    private sealed record PresentationPage(string? Owner, bool Watch, bool Stream, double? Aspect, long ReleasedOrder = 0);
+    private long _presentationReleaseOrder;
+    private readonly ConcurrentDictionary<string, PresentationPage> _presentationPages = new(StringComparer.Ordinal);
+    public (long Epoch, bool Ready, int Width, int Height) PresentationStatus
+    {
+        get { var p = Volatile.Read(ref _rendererPublication); return (p.Epoch, p.Ready, p.Width, 1080); }
+    }
+
+    public void ClaimPresentationPage(string pageId, string owner)
+    {
+        if (!IsHeadlessClient || _rendererDisposed) return;
+        GameMainThread.Invoke(() =>
+        {
+            if (_rendererDisposed) return false;
+            if (_presentationPages.TryGetValue(pageId, out var prior))
+                _presentationPages[pageId] = prior with { Owner = owner, ReleasedOrder = 0 };
+            else _presentationPages[pageId] = new(owner, false, false, null);
+            return true;
+        });
+    }
+
+    public bool IsPresentationPageOwner(string pageId, string owner)
+        => !_rendererDisposed && _presentationPages.TryGetValue(pageId, out var page) && page.Owner == owner;
+
+    public void UpdatePresentationPage(string pageId, string owner, bool watch, bool? stream, double? aspect)
+    {
+        if (!IsHeadlessClient || _rendererDisposed) return;
+        GameMainThread.Invoke(() =>
+        {
+            if (_rendererDisposed) return false;
+            _presentationPages.TryGetValue(pageId, out var prior);
+            // A new connection claims the page with a null choice; stale callbacks cannot claim it back.
+            if (prior is null || prior.Owner != owner) return false;
+            var page = new PresentationPage(owner, watch, stream ?? prior?.Stream ?? false,
+                stream is null ? prior?.Aspect : aspect);
+            _presentationPages[pageId] = page;
+            _rendererSwap ??= CreateRendererSwap(PublishRenderer);
+            _rendererSwap.UpdatePage(pageId, page.Stream, page.Watch, page.Aspect, stream is not null);
+            return true;
+        });
+    }
+
+    public void ReleasePresentationPage(string pageId, string owner)
+    {
+        if (!IsHeadlessClient || _rendererDisposed) return;
+        GameMainThread.Invoke(() =>
+        {
+            if (_presentationPages.TryGetValue(pageId, out var page) && page.Owner == owner)
+            {
+                _presentationPages[pageId] = page with { Owner = null, Watch = false, ReleasedOrder = ++_presentationReleaseOrder };
+                _rendererSwap?.Release(pageId);
+                // Keep recent reconnect preferences without retaining every page for the seat's lifetime.
+                var retired = _presentationPages.Where(p => p.Value.Owner is null).OrderByDescending(p => p.Value.ReleasedOrder)
+                    .Skip(RenderStreamSwap.MaxRetainedPages).Select(p => p.Key).ToArray();
+                foreach (var id in retired) _presentationPages.TryRemove(id, out _);
+            }
+            return true;
+        });
     }
 
     public bool MirrorRestoreComplete => Volatile.Read(ref _rendererPublication).MirrorRestoreComplete;
@@ -113,7 +178,12 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     private void PublishRenderer()
     {
         var swap = _rendererSwap!;
-        Volatile.Write(ref _rendererPublication, new(swap.State, swap.Reason, swap.Snapshot, swap.WantingPages, swap.MirrorRestoreComplete));
+        if (swap.PresentationEpoch != _rendererPublication.Epoch)
+        {
+            try { _runtime.CancelInjectedInput(); }
+            catch (Exception exception) { _log($"presentation input cancellation failed: {exception.GetType().Name}"); }
+        }
+        Volatile.Write(ref _rendererPublication, new(swap.State, swap.Reason, swap.Snapshot, swap.WantingPages, swap.MirrorRestoreComplete, swap.PresentationEpoch, swap.PresentationReady, swap.PresentationWidth));
         RendererChanged?.Invoke();
     }
 

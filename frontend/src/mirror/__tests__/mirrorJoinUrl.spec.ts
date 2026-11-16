@@ -875,6 +875,26 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(window.history.length).toBe(before);
   });
 
+  it("removes a mounted solo view when an unjoined viewer returns to the multiplayer picker", async () => {
+    mountAt("", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: spCharSelect, players: [] }));
+    await settle();
+    socket.emit(sessionMessage({ screen: spCharSelect, players: [], directView: true }));
+    socket.emit({ type: "scene-delta", full: true, screenType: "lobby",
+      upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+      removedIds: [], orderedIds: ["root"] });
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    expect(app!.find('[data-testid="player-picker"]').exists()).toBe(true);
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(watchOnTheWire(socket)).toBe(false);
+  });
+
   it("re-arms the host-row join when solo admission is answered on a multiplayer screen", async () => {
     mountAt("?name=", true);
     await settle();

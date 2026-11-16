@@ -12,6 +12,7 @@ namespace CouchCoop.MirrorProtocol.Envelopes;
     NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals)]
 [JsonSerializable(typeof(JoinMessage))]
 [JsonSerializable(typeof(InputMessage))]
+[JsonSerializable(typeof(ActionMessage))]
 [JsonSerializable(typeof(SceneAckMessage))]
 [JsonSerializable(typeof(WatchMessage))]
 [JsonSerializable(typeof(PingMessage))]
@@ -41,6 +42,9 @@ public static class ProtocolJson
     public static byte[] SerializeToUtf8Bytes(InputMessage message) =>
         JsonSerializer.SerializeToUtf8Bytes(message, ProtocolJsonContext.Default.InputMessage);
 
+    public static byte[] SerializeToUtf8Bytes(ActionMessage message) =>
+        JsonSerializer.SerializeToUtf8Bytes(message, ProtocolJsonContext.Default.ActionMessage);
+
     public static byte[] SerializeToUtf8Bytes(SceneAckMessage message) =>
         JsonSerializer.SerializeToUtf8Bytes(message, ProtocolJsonContext.Default.SceneAckMessage);
 
@@ -58,6 +62,9 @@ public static class ProtocolJson
 
     public static string Serialize(InputMessage message) =>
         JsonSerializer.Serialize(message, ProtocolJsonContext.Default.InputMessage);
+
+    public static string Serialize(ActionMessage message) =>
+        JsonSerializer.Serialize(message, ProtocolJsonContext.Default.ActionMessage);
 
     public static string Serialize(SceneAckMessage message) =>
         JsonSerializer.Serialize(message, ProtocolJsonContext.Default.SceneAckMessage);

@@ -470,6 +470,11 @@ function onFirstSceneFramePresented(attemptId: string): void {
     startClientVitals();
   }
 }
+function onStreamFrameReset(): void {
+  if (!showStream.value) return;
+  renderStreamContext.firstFrame = false;
+  holdMirrorForStream.value = hasScene();
+}
 // The new renderer's first drawn frame completes the join exactly as MirrorView's does: "the browser displays the
 // game" (the host's LoadingView step waits for it), credited to the attempt this view was bound for.
 function onStreamFirstFrame(): void {
@@ -556,6 +561,9 @@ function adoptTextEffects(c: MirrorClient): void {
 function seedHostPerf(c: MirrorClient): void {
   adoptTextEffects(c);
   if (hostPerfSeeded.has(c)) return;
+  // Capture reports effective suspension, not the viewer's preference.
+  const renderer = c.session?.rendererState;
+  if (renderer?.restoreComplete === false || ["arming", "disarming", "armed"].includes(renderer?.state ?? "")) return;
   // Only a reported state counts as seeded; an unavailable measurement leaves the local defaults in place and stays
   // eligible, so a later reported state still wins.
   if (seedServerSettingsFromSession(mirrorSettings, c.session)) {
@@ -603,7 +611,6 @@ function syncHostStaticBg(): void {
 }
 
 function makeClient(url?: string, watchStream = false): MirrorClient {
-  let rendererSessionSeen = false;
   if (!sceneAblation.streamsScene) watchStream = false;
   // Seat redirects carry an explicit watched URL; a gate (the app-shell ablation, or the new renderer, which shows
   // no node-geometry scene) must cover the first handshake too, or the seat ships a connect keyframe nobody draws.
@@ -753,17 +760,6 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
       // "nothing frozen" landing on an instance that freezes by default) until the seeded re-push corrected it.
       if ((joined.value || directView.value) && c.status === "connected" && c.session && !settingsPushed.has(c)) {
         if (pushServerSettings(c)) settingsPushed.add(c);
-      }
-      // A new seat socket applies the saved choice once, after its own first session. Later status changes must
-      // not re-arm a stream another viewer stopped or one the seat failed to start.
-      if (c.status === "connected" && c.session && !rendererSessionSeen) {
-        rendererSessionSeen = true;
-        const state = c.session.rendererState?.state;
-        // An already streaming shared seat withholds its descriptor until this page opts in too.
-        if (mirrorSettings.renderer === "stream" && !c.session.renderStream
-          && (state === "mirror" || state === "arming" || state === "armed")) {
-          requestSeatRenderer(c, "stream");
-        }
       }
       // ESCALATION RULE (b): the reconnect SUCCEEDED (live socket + a fresh roster) but the host still refuses the
       // seat we're reclaiming (`offline` mid-run / `stuck`). No number of further attempts can fix that — the host
@@ -995,15 +991,14 @@ const joinMode = computed(() =>
 
 // ---- "Use new renderer (Beta)" -------------------------------------------------------------------------------
 //
-// A mirror already on screen stays mounted and watching while a hidden stream stage draws its first frame.
-// Then the mirror and its input capture unmount, and the node producer idles (`watch:false`). The seat socket
-// keeps carrying session, settings, input and audio throughout the handover.
+// Retain compatible mirror geometry while the stream warms up, with admission and input closed before the
+// request. The seat socket keeps carrying session, settings, input and audio throughout the handover.
 const streamRendererOn = computed(() => mirrorSettings.runtimeRenderer === "stream");
+const mirrorRequestPending = ref(false);
 const mirrorView = shallowRef<InstanceType<typeof MirrorView> | null>(null);
 const holdMirrorForStream = ref(false);
-const mirrorReturnAwaitingScene = ref(false);
-watch(streamRendererOn, (on, wasOn) => {
-  if (wasOn && !on && renderStreamContext.firstFrame) mirrorReturnAwaitingScene.value = true;
+const seatRendererDemand = ref<"stream" | "mirror">("mirror");
+watch(streamRendererOn, (on) => {
   holdMirrorForStream.value = on && mirrorView.value !== null;
   renderStreamContext.firstFrame = false;
 }, { flush: "sync" });
@@ -1022,7 +1017,7 @@ function loadRenderStreamStage(attempt: number): Promise<Component> {
       clearTimeout(timer);
       // Only this attempt's own failure counts: a stopped stream (any reason) or a newer attempt owns the state.
       if (!unmounted && attempt === stageAttempt.value && renderStreamContext.stopped === null) {
-        stopRenderStream(`stage-load-failed: ${detail}`, mirrorSettings);
+        onRenderStreamFailed(`stage-load-failed: ${detail}`, attempt);
       }
       resolve(inertStage);
     };
@@ -1047,6 +1042,14 @@ const inertStage: Component = { render: () => null };
 const stageAttempt = ref(0);
 const streamStageReady = ref(false);
 watch(stageAttempt, () => { streamStageReady.value = false; }, { flush: "sync" });
+const streamCallbacks = computed(() => {
+  const attempt = stageAttempt.value;
+  return {
+    failed: (reason: string) => onRenderStreamFailed(reason, attempt),
+    frameReset: () => { if (!unmounted && attempt === stageAttempt.value) onStreamFrameReset(); },
+    firstFrame: () => { if (attempt === stageAttempt.value) onStreamFirstFrame(); }
+  };
+});
 const RenderStreamStage = computed(() => {
   const attempt = stageAttempt.value;
   return defineAsyncComponent(() => loadRenderStreamStage(attempt));
@@ -1058,23 +1061,40 @@ const renderStreamEndpoint = computed(() => {
   const availability = renderStreamAvailability.value;
   return availability.available ? availability.endpoint : null;
 });
+// Only the displayed endpoint owns first-frame history; a QA override ignores session descriptor changes.
+watch(() => JSON.stringify(renderStreamEndpoint.value), () => {
+  renderStreamContext.firstFrame = false;
+  if (renderStreamEndpoint.value !== null) holdMirrorForStream.value = hasScene();
+}, { flush: "sync" });
+const rendererRequests = new WeakMap<MirrorClient, {
+  renderer: "stream" | "mirror"; retry: number; descriptorReceived: boolean;
+}>();
 // Availability's facts that live here: whether this view is the host's own game, and the descriptor in THIS
 // viewer's own seat envelope (MIR-3 sends it; absent means "not streaming"). Only a joined seat's session counts.
 watch(directView, (on) => { renderStreamContext.directView = on; }, { immediate: true });
 watch(
   () => (joined.value ? joinSession.value : null),
   (session) => {
+    if (session !== null) mirrorRequestPending.value = false;
     const next = sessionRenderStreamEndpoint(session?.renderStream);
     const state = session?.rendererState ?? null;
+    const request = rendererRequests.get(activeClient);
+    if (next !== null && request?.renderer === "stream") request.descriptorReceived = true;
     if (state?.state === "failed" && mirrorSettings.renderer === "stream") {
-      stopRenderStream(state.reason ?? t("settings.newRendererFailed"), mirrorSettings);
-    } else if (next === null && joined.value && renderStreamContext.sessionEndpoint !== null
-      && mirrorSettings.runtimeRenderer === "stream" && renderStreamAvailability.value.source === "session"
-      && state?.state !== "mirror") {
-      stopRenderStream("descriptor gone", mirrorSettings);
+      onRenderStreamFailed(state.reason ?? t("settings.newRendererFailed"));
+    } else if (next === null && joined.value && seatRendererDemand.value === "stream"
+      && mirrorSettings.renderStreamUrl === null
+      && request?.renderer === "stream" && request.descriptorReceived
+      && !(state?.presentationReady === false && ["arming", "disarming", "armed"].includes(state.state))) {
+      onRenderStreamFailed("descriptor gone");
     }
     if (session === null || (state?.state === "mirror" && next === null)) {
       renderStreamContext.returningToMirror = false;
+    }
+    const previousEpoch = renderStreamContext.rendererState?.presentationEpoch;
+    if (previousEpoch !== state?.presentationEpoch) {
+      renderStreamContext.firstFrame = false;
+      if (renderStreamEndpoint.value !== null) holdMirrorForStream.value = hasScene();
     }
     renderStreamContext.rendererState = state;
     renderStreamContext.sessionEndpoint = next;
@@ -1106,23 +1126,52 @@ function onRenderStreamRefresh(): void {
 function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"): void {
   if (client === hostClient || !joined.value || directView.value || client.status !== "connected" || !client.session
     || mirrorSettings.renderStreamUrl !== null) return;
-  if (renderer === "stream" && currentSeatRendererRequestFor("stream", mirrorSettings) !== "stream") return;
+  if (renderer === "stream" && (renderStreamContext.stopped !== null
+    || currentSeatRendererRequestFor("stream", mirrorSettings) !== "stream")) return;
+  const previous = rendererRequests.get(client);
+  if (!client.hostAccess.allowed && (renderer === "stream" || previous?.renderer !== "stream")) return;
+  const retry = renderStreamContext.retryRequest;
+  if (previous?.renderer === renderer && (renderer === "mirror" || previous.retry === retry)) return;
+  // A ready shared seat may still be awaiting this page's opt-in. Only a descriptor acknowledged on this
+  // connection and request can later be withdrawn. An initial descriptor may already acknowledge the page;
+  // subsequent attempts must receive a new session rather than inherit their predecessor's descriptor.
+  rendererRequests.set(client, { renderer, retry, descriptorReceived: renderer === "stream"
+    && previous === undefined && sessionRenderStreamEndpoint(client.session.renderStream) !== null });
+  // Close admission synchronously, before the request can resize the shared seat.
+  client.setSceneAdmission(false);
+  seatRendererDemand.value = renderer;
+  if (renderer === "stream") {
+    holdMirrorForStream.value = mirrorView.value !== null;
+    renderStreamContext.firstFrame = false;
+  } else if (previous?.renderer === "stream") {
+    mirrorRequestPending.value = true;
+  }
   renderStreamContext.returningToMirror = renderer === "mirror";
   syncRuntimeRenderer(mirrorSettings);
   client.sendRenderer(renderer, renderer === "stream" ? streamSeatAspect(mirrorSettings) : undefined);
+  if (renderer === "mirror" && mirrorReturnRestored.value) client.setSceneAdmission(true);
 }
 
-watch(() => mirrorSettings.renderer, (renderer) => requestSeatRenderer(activeClient, renderer));
-watch(() => renderStreamContext.retryRequest, () => requestSeatRenderer(activeClient, "stream"));
+// Capability can arrive after the first connected session. Only an admitted, changed request spends a slot.
+watch(
+  [joined, directView, status, joinSession, hostSession, () => mirrorSettings.renderer,
+    () => currentSeatRendererRequestFor("stream", mirrorSettings), () => renderStreamContext.retryRequest,
+    () => renderStreamContext.stopped],
+  () => requestSeatRenderer(activeClient, mirrorSettings.renderer === "stream"
+    && renderStreamContext.stopped === null && currentSeatRendererRequestFor("stream", mirrorSettings) === "stream"
+    ? "stream" : "mirror")
+);
 
 // Host-only screens request a watch without choosing a seat. Authorization remains server-owned.
-// Multiplayer pickers and pending joins stay coordination-only. The mirror watches until the handover.
+// Multiplayer pickers and pending joins stay coordination-only. Watch intent registers mirror demand even
+// while presentation readiness holds scene admission; retaining old visuals for a stream never adds demand.
 const wantsHostStream = computed(() =>
   sceneAblation.streamsScene && shouldWatchHostStream(
     joinInfo.value, pendingName.value, mirrorScreen.value, joined.value, directView.value, urlSeatIntent.value
   ) && (joined.value || directView.value || isHostOnlyMirrorMode(mirrorScreen.value))
-    && (!streamRendererOn.value || holdMirrorForStream.value)
-    && (!mirrorReturnAwaitingScene.value || mirrorReturnRestored.value)
+    && (mirrorSettings.renderStreamUrl !== null
+      ? !streamRendererOn.value || holdMirrorForStream.value
+      : seatRendererDemand.value === "mirror")
 );
 // The stream shows where the scene would: on a granted view, once it has somewhere to connect.
 const showStream = computed(() =>
@@ -1146,27 +1195,34 @@ const showHostAccessNotice = computed(() =>
   && !joined.value && !pendingName.value && !joinMessage.value && !seatNotice.value
   && hostAccessBlocked.value && hostAccess.value?.reason !== "transitioning"
 );
-// A returning seat must acknowledge restoration before watch:on can request a fresh full scene.
-// A shared seat still streaming for another page keeps its existing behavior.
-const mirrorReturnRestored = computed(() => mirrorSettings.renderStreamUrl !== null || directView.value
-  || (joinSession.value?.renderStream == null && joinSession.value?.rendererState?.restoreComplete !== false)
-  || (joinSession.value?.renderStream == null && joinSession.value?.rendererState?.state === "armed"));
+// Watch intent can request restoration while scene admission waits for a settled mirror presentation.
+const mirrorReturnRestored = computed(() => {
+  if (mirrorRequestPending.value) return false;
+  const state = joinSession.value?.rendererState;
+  if (state?.presentationEpoch !== undefined) return state.presentationReady === true
+    && state.presentationWidth === 1920 && state.presentationHeight === 1080;
+  return mirrorSettings.renderStreamUrl !== null || directView.value
+    || state?.restoreComplete !== false;
+});
+const mirrorAdmissionAllowed = computed(() => mirrorReturnRestored.value
+  && (mirrorSettings.renderStreamUrl !== null ? !streamRendererOn.value : seatRendererDemand.value === "mirror"));
+watch([mirrorAdmissionAllowed, joinSession], ([on]) => activeClient.setSceneAdmission(on), { flush: "sync" });
 const mirrorSceneReady = computed(() => {
-  // Scene admission updates on the client notification/revision, including full scenes with no nodes.
   void revision.value;
-  return !hostAccessBlocked.value && activeClient.sceneGeneration === hostAccess.value?.generation;
+  const epoch = joinSession.value?.rendererState?.presentationEpoch;
+  return mirrorAdmissionAllowed.value && !hostAccessBlocked.value
+    && activeClient.sceneGeneration === hostAccess.value?.generation
+    && (epoch === undefined || activeClient.scenePresentationEpoch === epoch);
 });
-watch([mirrorSceneReady, revision], ([ready]) => {
-  if (ready && mirrorReturnRestored.value) mirrorReturnAwaitingScene.value = false;
-});
-const showScene = computed(() =>
-  sceneAblation.rendersScene && revision.value >= 0 && hasScene() && wantsHostStream.value
-    && (!mirrorReturnAwaitingScene.value || (mirrorReturnRestored.value && mirrorSceneReady.value))
+const mountMirrorScene = computed(() =>
+  sceneAblation.rendersScene && revision.value >= 0 && hasScene()
+  && (joined.value || directView.value || wantsHostStream.value)
 );
+const showScene = computed(() => mountMirrorScene.value && (!showStream.value || !renderStreamContext.firstFrame));
 
 // DROP THE SURFACE GRADIENT WHILE IT IS COVERED (see `.game-surface.surface-covered` in @/styles.css for the
 // mechanism and the measurement). `showScene` is the whole condition on purpose: it is the SAME expression that
-// mounts MirrorView, whose root `.mirror-frame` is the opaque `#000` full-bleed fill doing the covering, so the
+// shows MirrorView, whose root `.mirror-frame` is the opaque `#000` full-bleed fill doing the covering, so the
 // class and the cover it depends on can never be one render apart. Nothing here is backend-specific — the DOM arm
 // is covered by that same frame.
 //
@@ -1215,12 +1271,13 @@ watch(
   { immediate: true }
 );
 // A stopped stream (failed, ended, refused) falls back to the old renderer for the session; `renderer` stays saved.
-function onRenderStreamFailed(reason: string): void {
+function onRenderStreamFailed(reason: string, attempt = stageAttempt.value): void {
+  if (unmounted || attempt !== stageAttempt.value || renderStreamContext.stopped !== null) return;
   stopRenderStream(reason, mirrorSettings);
   requestSeatRenderer(activeClient, "mirror");
 }
 
-// Push the requested watch state to the active connection after admission.
+// Watch intent is independent of whether a compatible scene can be admitted yet.
 watch(wantsHostStream, (on) => activeClient.sendWatch(on), { immediate: true });
 // The pre-game LIFECYCLE state (rules + copy in @/mirror/loadingState): "Connecting…" / "Reconnecting…" /
 // "Joining…" / "Loading…", or null when the screen is steady. Non-null also means the picker shows a spinner,
@@ -1300,18 +1357,26 @@ function onControlHost(): void {
 // A renderer's callbacks belong to the access generation that mounted it. Its asynchronous teardown
 // may run after permission resumes; old callbacks must never send input or credit into the new scene.
 const viewControls = computed(() => {
+  void revision.value;
   const generation = hostAccess.value?.generation;
+  const displayingStream = streamRendererOn.value;
   const state = mirrorState.value;
   const client = activeClient;
+  const epoch = displayingStream ? joinSession.value?.rendererState?.presentationEpoch
+    : client.scenePresentationEpoch ?? undefined;
   const current = () => client === activeClient && state === mirrorState.value
     && client.hostAccess.allowed && generation === client.hostAccess.generation
-    && (streamRendererOn.value || !mirrorReturnAwaitingScene.value
-      || (mirrorReturnRestored.value && mirrorSceneReady.value));
+    && epoch === client.session?.rendererState?.presentationEpoch
+    && (epoch === undefined || client.session?.rendererState?.presentationReady === true)
+    && (displayingStream ? renderStreamContext.firstFrame : mirrorSceneReady.value);
   return {
-    sendInput: (message: MirrorInputMessage) => { if (current()) client.sendInput(message); },
-    sendAction: (message: MirrorActionMessage) => { if (current()) client.sendAction(message); },
+    sendInput: (message: MirrorInputMessage) => { if (current() && (message.presentationEpoch === undefined
+      || message.presentationEpoch === epoch)) client.sendInput({ ...message, ...(epoch !== undefined ? { presentationEpoch: epoch } : {}) }); },
+    sendAction: (message: MirrorActionMessage) => { if (current() && (message.presentationEpoch === undefined
+      || message.presentationEpoch === epoch)) client.sendAction({ ...message, ...(epoch !== undefined ? { presentationEpoch: epoch } : {}) }); },
     sendScroll: (elementId: string, offsetY: number): string | null => current()
       ? client.sendAction({ semanticActionId: SET_SCROLL_OFFSET_ACTION_ID,
+        ...(epoch !== undefined ? { presentationEpoch: epoch } : {}),
         args: { [SCROLL_ELEMENT_ID_ARG]: elementId, [SCROLL_OFFSET_ARG]: offsetY } }) : null,
     sendSceneAck: () => {
       if (!current()) return;
@@ -1729,10 +1794,14 @@ if (latencyEnabled && typeof window !== "undefined") {
 }
 
 // Expose a send-input hook for automated tests and browser-console debugging.
-// Sends an input message to the currently active mirror client (host until redirect, headless after).
+// Protocol-2 callers must supply the epoch of the displayed scene/frame used to choose their coordinates.
+// The same readiness gate as captured input prevents a latest-session epoch from admitting unseen geometry.
 if (typeof window !== "undefined") {
   (window as unknown as { __mirrorSendInput?: (msg: MirrorInputMessage) => void }).__mirrorSendInput =
-    (msg: MirrorInputMessage) => activeClient.sendInput(msg);
+    (msg: MirrorInputMessage) => {
+      if (joinSession.value?.rendererState?.presentationEpoch !== undefined && msg.presentationEpoch === undefined) return;
+      viewControls.value.sendInput(msg);
+    };
 }
 
 onBeforeUnmount(() => {
@@ -1771,84 +1840,93 @@ onBeforeUnmount(() => {
     :class="{ 'surface-covered': surfaceCovered }"
     data-testid="mirror-surface"
   >
-    <MirrorView
-      v-if="showScene"
-      ref="mirrorView"
-      :key="`${rendererComparisonViewRevision}:${hostAccess?.sceneResetGeneration ?? 0}`"
-      :state="mirrorState"
-      :revision="revision"
-      :access-generation="hostAccess?.generation"
-      :scene-ready="mirrorSceneReady"
-      :send-input="viewControls.sendInput"
-      :send-action="viewControls.sendAction"
-      :send-scroll="viewControls.sendScroll"
-      :scroll-ack="scrollAck"
-      :on-scene-rendered="viewControls.sendSceneAck"
-      :connection-attempt-id="presentationTarget?.attemptId"
-      :connected="status === 'connected'"
-      :on-first-scene-frame-presented="onFirstSceneFramePresented"
-      :on-scene-render-error="onSceneRenderError"
+    <!-- Keep compatible geometry mounted through streaming; sceneReady holds reconciliation and input. -->
+    <div
+      v-if="mountMirrorScene"
+      class="mirror-scene-shell"
+      :class="{ 'mirror-scene-hidden': !showScene }"
+      :inert="!showScene || !mirrorSceneReady || undefined"
+      :aria-hidden="!showScene || undefined"
+      data-testid="mirror-scene-shell"
     >
-      <!-- STAGE-A "Static background": the host-rendered combat bg image. Beneath everything via its own
-           most-negative z-index (slot DOM order is NOT stable — the reconciler's full-walk reorder moves the
-           mirror roots ahead of all foreign stage children, e.g. on a resize/fullscreen toggle).
-           Descriptor = `stageBackground`: the serving connection's own session envelope on the host socket; for
-           a SEAT view, the HOST's descriptor admitted against the scene the seat has mounted (the seat's own URL
-           is never shown — the host's `/bg/` route does not render it). A seat view is also host-authoritative:
-           no wire-minted URL, and a wire/descriptor disagreement leaves the stage blank.
-           IN THE `underlay` SLOT, which is the one piece of stage content that has to paint UNDER the game rather
-           than over it: on the canvas arm MirrorView renders that slot in its own design-space layer below the
-           stage canvas, and on the DOM arm it renders it in the stage exactly where it has always been. -->
-      <template #underlay>
-        <StaticBackground
-          :descriptor="stageBackground"
-          :host-authoritative="joined"
-          :state="mirrorState"
-          :revision="revision"
-        />
-      </template>
-      <!-- Browser-client controls injected into the design-space stage so they scale with the game and sit
-           inside the game's own TopBar. The GEAR owns the exact horizontal centre; fullscreen is offset to its
-           right (see `.mirror-topbar-gear` / `.mirror-topbar-fullscreen`) — deliberately NOT centred as a pair,
-           so the settings button lands on the same spot on every screen.
-           LANDSCAPE ONLY: in portrait the same pair renders as fixed browser chrome below (see showFixedChrome),
-           because an 80px design button inside a letterboxed portrait stage is both tiny and mobile.
-           Stop pointer events here so inputCapture.onPointerDown (which calls preventDefault,
-           killing the click event) never sees presses on these buttons. -->
-      <div
-        v-if="showStageChrome"
-        class="mirror-topbar-btn mirror-topbar-gear"
-        @pointermove.stop
-        @pointerdown.stop
-        @pointerup.stop
-        @pointercancel.stop
+      <MirrorView
+        ref="mirrorView"
+        :key="`${rendererComparisonViewRevision}:${hostAccess?.sceneResetGeneration ?? 0}`"
+        :state="mirrorState"
+        :revision="revision"
+        :access-generation="hostAccess?.generation"
+        :scene-ready="mirrorSceneReady"
+        :send-input="viewControls.sendInput"
+        :send-action="viewControls.sendAction"
+        :send-scroll="viewControls.sendScroll"
+        :scroll-ack="scrollAck"
+        :on-scene-rendered="viewControls.sendSceneAck"
+        :connection-attempt-id="presentationTarget?.attemptId"
+        :connected="status === 'connected'"
+        :on-first-scene-frame-presented="onFirstSceneFramePresented"
+        :on-scene-render-error="onSceneRenderError"
       >
-        <SettingsGearButton />
-      </div>
-      <div
-        v-if="showStageChrome"
-        class="mirror-topbar-btn mirror-topbar-fullscreen"
-        @pointermove.stop
-        @pointerdown.stop
-        @pointerup.stop
-        @pointercancel.stop
-      >
-        <!-- Mutually exclusive by construction (one needs element fullscreen, the other its absence) — never
-             both at once, so sharing this slot never doubles up. -->
-        <FullscreenButton />
-        <IosInstallButton @open="iosInstallOpenTick++" />
-      </div>
-      <!-- CONFIRM TAP: the client-side confirm button for choices a tap cannot take back (see confirmTap.ts). In
-           the design-space stage like the chrome above, because it has to land on the game's own authored slot and
-           scale with it — but unlike the chrome it decides its own stacking, since it must sit UNDER the game's
-           modal overlays. Renders nothing at all unless a tap has focused one of those choices. -->
-      <MirrorConfirmButton />
-      <!-- READABLE-HAND MODE: the client-side toggle that raises the whole hand so every card can be read at a
-           glance (see mirrorRenderer's hand-raise pass). In the design-space stage like the chrome above, because
-           it sits on the game's own bottom-right HUD grid and has to scale and re-anchor with it. Renders only
-           while a combat hand is on screen. -->
-      <MirrorHandRaiseButton />
-    </MirrorView>
+        <!-- STAGE-A "Static background": the host-rendered combat bg image. Beneath everything via its own
+             most-negative z-index (slot DOM order is NOT stable — the reconciler's full-walk reorder moves the
+             mirror roots ahead of all foreign stage children, e.g. on a resize/fullscreen toggle).
+             Descriptor = `stageBackground`: the serving connection's own session envelope on the host socket; for
+             a SEAT view, the HOST's descriptor admitted against the scene the seat has mounted (the seat's own URL
+             is never shown — the host's `/bg/` route does not render it). A seat view is also host-authoritative:
+             no wire-minted URL, and a wire/descriptor disagreement leaves the stage blank.
+             IN THE `underlay` SLOT, which is the one piece of stage content that has to paint UNDER the game rather
+             than over it: on the canvas arm MirrorView renders that slot in its own design-space layer below the
+             stage canvas, and on the DOM arm it renders it in the stage exactly where it has always been. -->
+        <template #underlay>
+          <StaticBackground
+            :descriptor="stageBackground"
+            :host-authoritative="joined"
+            :state="mirrorState"
+            :revision="revision"
+          />
+        </template>
+        <!-- Browser-client controls injected into the design-space stage so they scale with the game and sit
+             inside the game's own TopBar. The GEAR owns the exact horizontal centre; fullscreen is offset to its
+             right (see `.mirror-topbar-gear` / `.mirror-topbar-fullscreen`) — deliberately NOT centred as a pair,
+             so the settings button lands on the same spot on every screen.
+             LANDSCAPE ONLY: in portrait the same pair renders as fixed browser chrome below (see showFixedChrome),
+             because an 80px design button inside a letterboxed portrait stage is both tiny and mobile.
+             Stop pointer events here so inputCapture.onPointerDown (which calls preventDefault,
+             killing the click event) never sees presses on these buttons. -->
+        <div
+          v-if="showStageChrome"
+          class="mirror-topbar-btn mirror-topbar-gear"
+          @pointermove.stop
+          @pointerdown.stop
+          @pointerup.stop
+          @pointercancel.stop
+        >
+          <SettingsGearButton />
+        </div>
+        <div
+          v-if="showStageChrome"
+          class="mirror-topbar-btn mirror-topbar-fullscreen"
+          @pointermove.stop
+          @pointerdown.stop
+          @pointerup.stop
+          @pointercancel.stop
+        >
+          <!-- Mutually exclusive by construction (one needs element fullscreen, the other its absence) — never
+               both at once, so sharing this slot never doubles up. -->
+          <FullscreenButton />
+          <IosInstallButton @open="iosInstallOpenTick++" />
+        </div>
+        <!-- CONFIRM TAP: the client-side confirm button for choices a tap cannot take back (see confirmTap.ts). In
+             the design-space stage like the chrome above, because it has to land on the game's own authored slot and
+             scale with it — but unlike the chrome it decides its own stacking, since it must sit UNDER the game's
+             modal overlays. Renders nothing at all unless a tap has focused one of those choices. -->
+        <MirrorConfirmButton />
+        <!-- READABLE-HAND MODE: the client-side toggle that raises the whole hand so every card can be read at a
+             glance (see mirrorRenderer's hand-raise pass). In the design-space stage like the chrome above, because
+             it sits on the game's own bottom-right HUD grid and has to scale and re-anchor with it. Renders only
+             while a combat hand is on screen. -->
+        <MirrorHandRaiseButton />
+      </MirrorView>
+    </div>
     <!-- "Use new renderer (Beta)": the game's own draw calls through the render-stream client. With the INP2 input
          channel, pointer input maps through INP1 and rides the same seat socket as MirrorView's inputCapture, and so do
          the keyboard and gamepad (keyPadInput.ts, the same pair MirrorView creates). Landscape chrome follows the
@@ -1865,12 +1943,14 @@ onBeforeUnmount(() => {
         :endpoint="renderStreamEndpoint"
         :core="renderStreamCore"
         :send-input="viewControls.sendInput"
-        :input-enabled="!holdMirrorForStream"
+        :input-enabled="renderStreamContext.firstFrame && !hostAccessBlocked && joinSession?.rendererState?.presentationReady !== false"
+        :presentation-epoch="joinSession?.rendererState?.presentationEpoch"
         :show-chrome="showStreamChrome"
         :access-generation="hostAccess?.generation"
-        @failed="onRenderStreamFailed"
+        @failed="streamCallbacks.failed"
         @chrome-ready="streamStageReady = true"
-        @first-frame="onStreamFirstFrame"
+        @frame-reset="streamCallbacks.frameReset"
+        @first-frame="streamCallbacks.firstFrame"
         @refresh-endpoint="onRenderStreamRefresh"
         @open-ios-install="iosInstallOpenTick++"
       />
@@ -1970,13 +2050,15 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-/* CouchCoop's handover shell keeps the hidden stage laid out at its final size for the first frame. */
+/* CouchCoop's handover shells retain each view's layout while it is hidden. */
+.mirror-scene-shell,
 .mirror-stream-shell {
   position: absolute;
   inset: 0;
 }
 
-.mirror-stream-pending {
+.mirror-stream-pending,
+.mirror-scene-hidden {
   visibility: hidden;
   pointer-events: none;
 }

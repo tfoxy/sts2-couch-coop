@@ -22,6 +22,7 @@ import MirrorApp from "@/mirror/MirrorApp.vue";
 
 const surfaceCss = readFileSync(join(process.cwd(), "src/styles.css"), "utf8");
 const mirrorViewSource = readFileSync(join(process.cwd(), "src/mirror/MirrorView.vue"), "utf8");
+const mirrorAppSource = readFileSync(join(process.cwd(), "src/mirror/MirrorApp.vue"), "utf8");
 
 class MockWebSocket extends EventTarget {
   static OPEN = 1;
@@ -175,8 +176,13 @@ describe("MirrorApp — the gradient is dropped exactly while it is covered", ()
   it("drops it once a scene is mounted, and the cover is really there", async () => {
     const wrapper = await mountWithScene();
 
-    // The surface is the frame's containing block and supplies its safe-area variables.
-    expect(wrapper.find('[data-testid="mirror-surface"] > .mirror-frame').exists()).toBe(true);
+    // The shell fills the surface's padding box and passes its safe-area variables through to the frame.
+    expect(wrapper.find('[data-testid="mirror-surface"] > .mirror-scene-shell > .mirror-frame').exists()).toBe(true);
+    const shell = /\.mirror-scene-shell,\s*\.mirror-stream-shell\s*\{([^}]*)\}/.exec(mirrorAppSource)![1];
+    expect(shell).toMatch(/position:\s*absolute/);
+    expect(shell).toMatch(/inset:\s*0\s*;/);
+    expect(shell).not.toMatch(/--surface-inset-/);
+    expect(/\.game-surface\s*\{([^}]*)\}/.exec(surfaceCss)![1]).toMatch(/position:\s*relative/);
     expect(surface(wrapper).classes()).toContain("surface-covered");
   });
 

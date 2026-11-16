@@ -244,7 +244,8 @@ public sealed record WireSceneDelta(
     // ONE array, BOTH kinds: an entry's optional `Kind`/`Rot0` say whether it is the shuffle sweep (no key at all,
     // the legacy bytes) or the hand→discard fly. Carried unchanged from the shared DTO rather than re-declared
     // here, so a client that does not know a kind still gets a replayable flight instead of a dropped one.
-    IReadOnlyList<CardFlightHintDelta>? CardFlights)
+    IReadOnlyList<CardFlightHintDelta>? CardFlights,
+    long PresentationEpoch = 0)
 {
     // Keep the discriminator last so the one-pass serializer remains byte-for-byte compatible with the former
     // suffix splice and with checked-in browser fixtures.

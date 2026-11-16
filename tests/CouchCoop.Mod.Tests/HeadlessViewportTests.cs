@@ -70,7 +70,7 @@ internal static class HeadlessViewportTests
         var applies = fixture.Applies;
         var writes = fixture.Window.Writes;
         fixture.RunNext();
-        Assert(fixture.Applies == applies && fixture.Window.Writes == writes,
+        Assert(fixture.Applies == applies + 1 && fixture.Window.Writes == writes,
             "ownership is checked at execution even when acquired after scheduling");
         Assert(fixture.Window.ContentScaleAspect == Window.ContentScaleAspectEnum.Expand
             && fixture.Window.Size == new Vector2I(2340, 1080), "wide presentation stays Expand at W");
@@ -85,9 +85,10 @@ internal static class HeadlessViewportTests
         {
             HeadlessViewportPatch.AfterGameReady();
             HeadlessViewportPatch.AfterPresentationChanged();
+            fixture.Window.Drift();
             fixture.RunNext();
         });
-        Assert(fixture.Applies == applies && fixture.Window.Size == new Vector2I(2520, 1080),
+        Assert(fixture.Applies == applies + 1 && fixture.Window.Size == new Vector2I(2520, 1080),
             "startup and display notifications cannot take ownership from a wide stream");
     }
 

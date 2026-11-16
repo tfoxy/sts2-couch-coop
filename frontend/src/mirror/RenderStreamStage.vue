@@ -74,6 +74,7 @@ const props = withDefaults(defineProps<{
    * control still held from before.
    */
   accessGeneration?: number;
+  presentationEpoch?: number;
   hiddenDisposeMs?: number;
   /** How long an `unauthorized` stream waits for the seat's current descriptor before it stops. */
   refreshTimeoutMs?: number;
@@ -83,6 +84,7 @@ const props = withDefaults(defineProps<{
   inputEnabled: true,
   showChrome: false,
   accessGeneration: undefined,
+  presentationEpoch: undefined,
   hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
   refreshTimeoutMs: 10_000
 });
@@ -91,9 +93,11 @@ const emit = defineEmits<{
   /** The stream stopped for good this session (`<reason>: <detail>`, or `ended`). */
   failed: [reason: string];
   status: [status: RenderStreamStatus];
+  /** The current client was retired or created; its replacement must draw before owning input. */
+  "frame-reset": [];
   /** The canvas has a measured box, so the app can hand over the landscape controls. */
   "chrome-ready": [];
-  /** The stream drew its first frame: the join's "the browser displays the game" step. Once per mount. */
+  /** The stream drew its first frame: the join's "the browser displays the game" step. Once per client. */
   "first-frame": [];
   /** The hub refused our token: send the seat's current descriptor (a new `endpoint` prop), once. */
   "refresh-endpoint": [];
@@ -141,8 +145,9 @@ let layoutObserver: ResizeObserver | null = null;
 let mountedExtensionsKey: string | null = null;
 let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
 let stopped = false;
-// Whether this mount has told the app it drew (`first-frame`): the join completes on the first frame, not every one.
+// Whether the current client has drawn a frame; replacements must report their own first frame.
 let firstFrameReported = false;
+let clientEpoch = 0;
 // The `unauthorized` refresh: asked at most once per stream (re-armed by a drawn frame), and while it is pending
 // the descriptor the client was refused with and the timer that gives up on a new one.
 let refreshAsked = false;
@@ -184,7 +189,9 @@ watch([() => props.showChrome, () => mirrorSettings.panelOpen, chromeGeometry], 
 }, { flush: "post" });
 
 function sameDescriptor(a: RenderStreamEndpoint, b: RenderStreamEndpoint): boolean {
-  return a.url === b.url && a.resourceBase === b.resourceBase && a.token === b.token && a.protocol === b.protocol;
+  return a.url === b.url && a.resourceBase === b.resourceBase && a.token === b.token && a.protocol === b.protocol
+    && JSON.stringify(a.presentation) === JSON.stringify(b.presentation)
+    && JSON.stringify(a.webTransport) === JSON.stringify(b.webTransport);
 }
 
 const overlayText = computed(() => {
@@ -244,6 +251,10 @@ function onStatus(status: RenderStreamStatus): void {
         refreshAsked = false;
         if (!firstFrameReported) {
           firstFrameReported = true;
+          if (props.inputEnabled && streamInput === null && keyPadInput === null) {
+            attachStreamInput();
+            attachKeyPad(true);
+          }
           emit("first-frame");
         }
       }
@@ -301,15 +312,18 @@ function stop(reason: string): void {
   }
 }
 
-// Only the presentation width and input capability change the installed extension list or its design space.
+// A changed presentation or input capability needs fresh extensions and captures.
 function extensionsKey(): string {
-  return [presentation.value[0], props.sendInput !== undefined].join("|");
+  return [presentation.value.join("x"), props.presentationEpoch, props.sendInput !== undefined].join("|");
 }
 
 function mountClient(): void {
   const canvas = canvasEl.value;
   if (!canvas || client || stopped) return;
   mountedExtensionsKey = extensionsKey();
+  firstFrameReported = false;
+  const epoch = ++clientEpoch;
+  emit("frame-reset");
   const built = buildStreamExtensions({
     settings: mirrorSettings,
     presentationWidth: presentation.value[0],
@@ -331,7 +345,7 @@ function mountClient(): void {
       extensions: built.extensions,
       creditWindow: 2,
       carrier: mirrorSettings.renderStreamCarrier,
-      onStatus
+      onStatus: (status) => { if (epoch === clientEpoch && !stopped) onStatus(status); }
     });
   } catch (error) {
     for (const extension of built.extensions) extension.dispose?.();
@@ -339,7 +353,7 @@ function mountClient(): void {
     return;
   }
   inputModules = { heldCard: built.heldCard, confirmTap: built.confirmTap, pointerTargets: built.pointerTargets };
-  if (props.sendInput && props.inputEnabled) {
+  if (props.sendInput && props.inputEnabled && (props.presentationEpoch === undefined || firstFrameReported)) {
     attachStreamInput();
     attachKeyPad(false);
   }
@@ -362,11 +376,13 @@ function attachStreamInput(): void {
   const canvas = canvasEl.value;
   if (!props.sendInput || canvas === null || client === null) return;
   const epoch = streamInputEpoch;
+  const presentationEpoch = props.presentationEpoch;
   streamInput = createStreamInput({
     stage: canvas,
     getClient: () => client,
     send: (message) => {
-      if (epoch === streamInputEpoch) props.sendInput?.(message);
+      if (epoch === streamInputEpoch) props.sendInput?.({ ...message,
+        ...(presentationEpoch !== undefined ? { presentationEpoch } : {}) });
     },
     tapToFocus: () => mirrorSettings.tapToFocus,
     touchPolicy: inputModules?.pointerTargets ?? undefined,
@@ -393,9 +409,11 @@ function detachStreamInput(silent: boolean): void {
 function attachKeyPad(neutralizeHeldOnStart: boolean): void {
   if (!props.sendInput) return;
   const epoch = keyPadEpoch;
+  const presentationEpoch = props.presentationEpoch;
   keyPadInput = createKeyPadInput({
     send: (message) => {
-      if (epoch === keyPadEpoch) props.sendInput?.(message);
+      if (epoch === keyPadEpoch) props.sendInput?.({ ...message,
+        ...(presentationEpoch !== undefined ? { presentationEpoch } : {}) });
     },
     keyboard: () => mirrorSettings.keyboard,
     gamepad: () => mirrorSettings.gamepad,
@@ -411,8 +429,10 @@ function detachKeyPad(silent: boolean): void {
 }
 
 function disposeClient(): void {
-  detachStreamInput(false);
-  detachKeyPad(false);
+  clientEpoch += 1;
+  firstFrameReported = false;
+  detachStreamInput(true);
+  detachKeyPad(true);
   inputModules = null;
   handPresent.value = false;
   handCovered.value = false;
@@ -422,6 +442,7 @@ function disposeClient(): void {
   const current = client;
   client = null;
   if (current) {
+    emit("frame-reset");
     canvasGeneration.value += 1;
     current.dispose();
   }
@@ -466,9 +487,9 @@ watch(extensionsKey, remountIfStale);
 
 watch(() => props.inputEnabled, (enabled) => {
   if (!enabled) {
-    detachStreamInput(false);
-    detachKeyPad(false);
-  } else if (client && !stopped) {
+    detachStreamInput(true);
+    detachKeyPad(true);
+  } else if (client && !stopped && (props.presentationEpoch === undefined || firstFrameReported)) {
     attachStreamInput();
     attachKeyPad(true);
   }
@@ -498,7 +519,7 @@ watch(() => props.accessGeneration, () => {
 // A later descriptor (a seat restarted with a new port or token) reconnects in place. While an `unauthorized` refresh
 // is pending, the next descriptor is its answer: a different one reconnects (the failed client starts a fresh
 // session on `connect()`), the same one means the token really is refused.
-watch(() => props.endpoint, (endpoint) => {
+watch(() => props.endpoint, (endpoint, previous) => {
   if (refreshPending !== null) {
     const refused = refreshPending.refused;
     clearRefresh();
@@ -506,28 +527,11 @@ watch(() => props.endpoint, (endpoint) => {
       stop(UNAUTHORIZED);
       return;
     }
-    // A new presentation width needs new extensions: the remount connects the fresh client on this descriptor.
-    if (client !== null && mountedExtensionsKey !== extensionsKey()) {
-      remountIfStale();
-      return;
-    }
-    try {
-      client?.setEndpoint(endpoint);
-      client?.connect();
-    } catch (error) {
-      stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    return;
-  }
-  if (client !== null && mountedExtensionsKey !== extensionsKey()) {
-    remountIfStale();
-    return;
-  }
-  try {
-    client?.setEndpoint(endpoint);
-  } catch (error) {
-    stop(`receiver-error: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  } else if (previous && sameDescriptor(endpoint, previous)) return;
+  // A replacement owns new callbacks and captures even when only its token or carrier changed.
+  disposeClient();
+  phase.value = "connecting";
+  void nextTick(mountClient);
 });
 
 function bumpLayout(): void {

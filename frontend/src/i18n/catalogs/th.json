@@ -110,6 +110,7 @@
   "settings.newRendererCoreLoadFailed": "โหลดตัวเรนเดอร์ใหม่ในหน้านี้ไม่ได้",
   "settings.newRendererNoWebgl2": "เบราว์เซอร์นี้ใช้ตัวเรนเดอร์ใหม่ไม่ได้",
   "settings.newRendererHostView": "ใช้ไม่ได้ขณะดูเกมของโฮสต์เอง",
+  "settings.newRendererHostUpdate": "อัปเดตม็อดของโฮสต์เพื่อใช้ตัวเรนเดอร์ใหม่",
   "settings.newRendererNeedsProxy": "หน้านี้เล่นสตรีมตัวเรนเดอร์ใหม่ของโฮสต์ไม่ได้ เปิดลิงก์ HTTPS ของโฮสต์ใน Chrome หรือ Edge หรือเปิดมิเรอร์บนคอมพิวเตอร์โฮสต์",
   "settings.newRendererSwitching": "กำลังสลับ…",
   "settings.newRendererFailed": "ไม่สามารถเริ่มตัวเรนเดอร์ใหม่ได้",

@@ -19,7 +19,7 @@ using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Server;
 
-public sealed class CouchCoopBrowserServer(
+public sealed partial class CouchCoopBrowserServer(
     StaticSpaFileProvider staticFiles,
     ICouchCoopAssetHttpAdapter assets,
     BrowserStateEnvelopeFactory? envelopeFactory = null,
@@ -461,8 +461,9 @@ public sealed class CouchCoopBrowserServer(
     private void RefreshObserversLocked()
     {
         var access = HostBrowserAccess?.State;
-        var accessGeneration = access?.Generation ?? 0;
-        var sceneAllowed = _isHeadlessClient || access is { Allowed: true };
+        var presentation = (rendererSwapHost as IHotPresentationHost)?.PresentationStatus;
+        var accessGeneration = _isHeadlessClient ? presentation?.Epoch ?? 0 : access?.Generation ?? 0;
+        var sceneAllowed = _isHeadlessClient ? presentation is null or { Ready: true, Width: 1920, Height: 1080 } : access is { Allowed: true };
         // Multiple viewers can stop and restart at different times, keeping demand above zero throughout
         // a revoke/resume. Retained scene and hints still belong to the old permission generation.
         if (!sceneAllowed || _sceneAccessGeneration != accessGeneration)
@@ -1530,7 +1531,8 @@ public sealed class CouchCoopBrowserServer(
         try
         {
             requestRead = await CouchCoopHttpRequest.TryReadWithPrefixAsync(stream,
-                candidate => candidate.Path == "/ws" && candidate.QueryValues.ContainsKey("seat"),
+                candidate => candidate.Path == "/ws" && candidate.QueryValues.ContainsKey("seat")
+                    || candidate.Path.StartsWith("/render-stream/", StringComparison.Ordinal),
                 cancellationToken).ConfigureAwait(false);
             request = requestRead?.Request;
             var requestStream = requestRead?.Stream ?? stream;
@@ -1550,6 +1552,12 @@ public sealed class CouchCoopBrowserServer(
 
             using (webSocketLease)
             {
+                if (request?.Path.StartsWith("/render-stream/", StringComparison.Ordinal) == true)
+                {
+                    await HandleRenderStreamAsync(requestStream, request, requestRead!.RawHeader,
+                        isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
                 if (_headlessManager is not null && request?.Path == "/ws"
                     && request.QueryValues.TryGetValue("seat", out var seatRoute))
                 {

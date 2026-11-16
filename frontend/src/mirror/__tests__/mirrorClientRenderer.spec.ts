@@ -38,9 +38,9 @@ describe("mirrorClient — renderer requests", () => {
     client.sendRenderer("stream", 2340 / 1080);
     client.sendRenderer("mirror", 2340 / 1080);
     expect(socket.sent).toEqual([
-      { type: "join", requestId: "join:1", name: "Alice", playerId: "p:1003" },
-      { type: "renderer", renderer: "stream", aspect: 2340 / 1080 },
-      { type: "renderer", renderer: "mirror" }
+      { type: "join", rendererProtocol: 2, requestId: "join:1", name: "Alice", playerId: "p:1003" },
+      { type: "renderer", rendererProtocol: 2, renderer: "stream", aspect: 2340 / 1080 },
+      { type: "renderer", rendererProtocol: 2, renderer: "mirror" }
     ]);
     client.close();
   });
@@ -48,7 +48,7 @@ describe("mirrorClient — renderer requests", () => {
   it.each([undefined, NaN, Infinity, -Infinity, 0, -1])("omits an unusable aspect (%s)", (aspect) => {
     const { client, socket } = connect();
     client.sendRenderer("stream", aspect);
-    expect(socket.sent).toEqual([{ type: "renderer", renderer: "stream" }]);
+    expect(socket.sent).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
     client.close();
   });
 

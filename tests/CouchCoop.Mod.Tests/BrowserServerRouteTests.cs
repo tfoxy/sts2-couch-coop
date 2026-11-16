@@ -235,6 +235,7 @@ if (args is ["render-stream-tagger", ..])
 if (args is [RenderStreamPairingTests.Verb, ..])
 {
     await RenderStreamPairingTests.RunAsync();
+    await BrowserServerRouteTests.RunRenderRelayRoutesAsync();
     await BrowserServerRouteTests.RunRenderStreamDescriptorRoutesAsync();
     Console.WriteLine("render-stream pairing: ok");
     return;
@@ -637,6 +638,9 @@ if (args is ["stream-card-reward", ..])
 if (args is ["renderer-swap", ..])
 {
     RenderStreamSwapTests.Run();
+    await BrowserServerRouteTests.RunPresentationFencesAsync();
+    await BrowserServerRouteTests.RunPresentationTeardownAsync();
+    await BrowserServerRouteTests.RunGameplayActionFencesAsync();
     HeadlessViewportTests.Run();
     StreamDesignPlacementTests.Run();
     StreamMapDrawingToolsTests.Run();
@@ -644,6 +648,12 @@ if (args is ["renderer-swap", ..])
     StreamCardRewardPlacementTests.Run();
     StreamCreaturePlacementTests.Run();
     StreamEnergyPlacementTests.Run();
+    return;
+}
+
+if (args is ["gameplay-action-dto", ..])
+{
+    BrowserServerRouteTests.RunGameplayActionDtos();
     return;
 }
 
@@ -1015,6 +1025,9 @@ WindowsSeatLifetimeTests.Run();
 HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();
 RenderStreamSwapTests.Run();
+await BrowserServerRouteTests.RunPresentationTeardownAsync();
+await BrowserServerRouteTests.RunGameplayActionFencesAsync();
+BrowserServerRouteTests.RunGameplayActionDtos();
 HeadlessViewportTests.Run();
 StreamDesignPlacementTests.Run();
 StreamMapDrawingToolsTests.Run();
@@ -5534,7 +5547,7 @@ internal sealed partial class BrowserServerRouteTests
         SingleplayerSafe
     }
 
-    internal sealed class RecordingSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource
+    internal sealed class RecordingSpirectlRuntime : IRuntimeCapabilitySource, IRuntimeAssetSource, IAnimationHintSource, IRuntimeSceneDeltaSource, IGameModelSource, ISpineCatalogSource, ISpineGeoClipBaker, ISemanticActionSource, IRuntimeSceneWatchControlSource, IInjectedInputControlSource
     {
         public IRuntimeSceneWatchControls SceneWatchControls => Spirectl.Sts2.Live.Sts2RuntimeSceneWatchControls.Instance;
         private readonly RecordingAssetProvider _assets;
@@ -5615,6 +5628,9 @@ internal sealed partial class BrowserServerRouteTests
                 readSessionFacts: SessionFactsFor);
 
         public ManualResetEventSlim? ExecuteActionGate { get; set; }
+        private int _inputCancellations;
+        public int InputCancellations => Volatile.Read(ref _inputCancellations);
+        public void CancelInjectedInput() => Interlocked.Increment(ref _inputCancellations);
         public EmbeddableActionRequest? LastActionRequest { get; private set; }
         public EmbeddableAssetRequest? LastAssetRequest { get; set; }
 

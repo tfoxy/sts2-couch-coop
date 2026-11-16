@@ -110,6 +110,7 @@
   "settings.newRendererCoreLoadFailed": "Nie udało się wczytać nowego renderera na tej stronie.",
   "settings.newRendererNoWebgl2": "Ta przeglądarka nie może uruchomić nowego renderera.",
   "settings.newRendererHostView": "Niedostępne podczas oglądania gry samego hosta.",
+  "settings.newRendererHostUpdate": "Zaktualizuj mod gospodarza, aby używać nowego renderera.",
   "settings.newRendererNeedsProxy": "Ta strona nie może odtworzyć transmisji nowego renderera z hosta. Otwórz link HTTPS hosta w Chrome lub Edge albo lustro na komputerze hosta.",
   "settings.newRendererSwitching": "Przełączanie…",
   "settings.newRendererFailed": "Nie udało się uruchomić nowego renderera.",

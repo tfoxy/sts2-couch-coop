@@ -230,20 +230,33 @@ export interface BrowserStaticBackgroundDescriptor {
 }
 
 export interface BrowserRendererState {
-  state: "mirror" | "arming" | "armed" | "failed";
+  state: "mirror" | "arming" | "disarming" | "armed" | "failed";
+  presentationEpoch?: number;
+  presentationReady?: boolean;
+  presentationWidth?: number;
+  presentationHeight?: number;
   reason?: string;
   restoreComplete?: boolean;
 }
 
 function normalizeRendererState(raw: unknown): BrowserRendererState | undefined {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-  const value = raw as { state?: unknown; reason?: unknown; restoreComplete?: unknown };
-  if (value.state !== "mirror" && value.state !== "arming" && value.state !== "armed" && value.state !== "failed") {
+  const value = raw as Record<string, unknown>;
+  if (value.state !== "mirror" && value.state !== "arming" && value.state !== "disarming" && value.state !== "armed" && value.state !== "failed") {
     return undefined;
   }
   if (value.reason !== undefined && typeof value.reason !== "string") return undefined;
   if (value.restoreComplete !== undefined && typeof value.restoreComplete !== "boolean") return undefined;
-  return { state: value.state, ...(value.reason !== undefined ? { reason: value.reason } : {}),
+  for (const key of ["presentationEpoch", "presentationWidth", "presentationHeight"] as const) {
+    if (value[key] !== undefined && (!Number.isSafeInteger(value[key]) || (value[key] as number) < 0)) return undefined;
+  }
+  if (value.presentationReady !== undefined && typeof value.presentationReady !== "boolean") return undefined;
+  return { state: value.state,
+    ...(typeof value.presentationEpoch === "number" ? { presentationEpoch: value.presentationEpoch } : {}),
+    ...(typeof value.presentationReady === "boolean" ? { presentationReady: value.presentationReady } : {}),
+    ...(typeof value.presentationWidth === "number" ? { presentationWidth: value.presentationWidth } : {}),
+    ...(typeof value.presentationHeight === "number" ? { presentationHeight: value.presentationHeight } : {}),
+    ...(value.reason !== undefined ? { reason: value.reason } : {}),
     ...(value.restoreComplete !== undefined ? { restoreComplete: value.restoreComplete } : {}) };
 }
 
@@ -497,6 +510,7 @@ export interface BrowserJoinRequestEnvelope {
   // "Use new renderer (Beta)": ask for this viewer's seat to be launched as the host's streaming seat. Omitted
   // otherwise (MIR-3).
   renderer?: "stream";
+  rendererProtocol?: 2;
 }
 
 export interface BrowserValidationErrorEnvelope {
@@ -665,6 +679,7 @@ export function buildBrowserJoinRequest(input: {
 }): BrowserJoinRequestEnvelope {
   return {
     type: "join",
+    rendererProtocol: 2,
     requestId: input.requestId,
     name: input.name.trim(),
     // Omitted entirely (not sent as null) when there is no picked seat, so a free-text join remains compact.

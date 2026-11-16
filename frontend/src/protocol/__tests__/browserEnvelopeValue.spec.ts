@@ -117,11 +117,26 @@ describe("parseBrowserEnvelopeValue — the string and object entry points agree
       .toBeNull();
   });
 
-  it.each(["mirror", "arming", "armed", "failed"])("parses the seat's %s renderer state", (state) => {
+  it.each(["mirror", "arming", "disarming", "armed", "failed"])("parses the seat's %s renderer state", (state) => {
     const parsed = parseBrowserEnvelopeValue({ ...SESSION, rendererState: { state } });
     expect(parsed).toMatchObject({ rendererState: { state } });
     const withReason = parseBrowserEnvelope(JSON.stringify({ ...SESSION, rendererState: { state, reason: "no-capture" } }));
     expect(withReason).toMatchObject({ rendererState: { state, reason: "no-capture" } });
+  });
+
+  it("preserves presentation readiness separately from capture state", () => {
+    const rendererState = { state: "armed", presentationEpoch: 2, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080, restoreComplete: false };
+    expect(parseBrowserEnvelopeValue({ ...SESSION, rendererState })).toMatchObject({ rendererState });
+  });
+
+  it.each([
+    { presentationEpoch: -1 }, { presentationEpoch: 1.5 }, { presentationEpoch: "2" },
+    { presentationEpoch: Number.MAX_SAFE_INTEGER + 1 }, { presentationReady: "true" },
+    { presentationWidth: -1 }, { presentationHeight: 1080.5 }
+  ])("refuses malformed presentation fields (%j)", (fields) => {
+    expect(parseBrowserEnvelopeValue({ ...SESSION, rendererState: { state: "armed", ...fields } }))
+      .not.toHaveProperty("rendererState", expect.anything());
   });
 
   it.each([

@@ -11,6 +11,7 @@ internal static class SceneDeltaQuarantineTests
 {
     public static void Run()
     {
+        PresentationEpochSurvivesQuarantine();
         NonFiniteTransformAndColourSerializeAsZero();
         CleanSerializeResetsTheSanitizeSignal();
         ThrowingUpsertIsQuarantinedAndTheRestIsSent();
@@ -26,6 +27,19 @@ internal static class SceneDeltaQuarantineTests
         RequestKeyframeMakesTheNextTakeAKeyframe();
         DiagnosticsRateLimitPerNodeWithSuppressedCount();
         DescribeNodePathWalksTheRetainedParents();
+    }
+
+    private static void PresentationEpochSurvivesQuarantine()
+    {
+        foreach (var full in new[] { true, false })
+        foreach (var epoch in new long[] { 0, 17 })
+        {
+            var delta = Incremental([Node("good"), Throwing("bad")]) with { Full = full };
+            var result = SceneDeltaSafeSerializer.Serialize(delta, presentationEpoch: epoch);
+            Assert(result.Quarantined.Count == 1, "test reaches the quarantine retry path");
+            Assert(Parse(result.Bytes).GetProperty("presentationEpoch").GetInt64() == epoch,
+                "quarantine preserves the producer epoch, including zero");
+        }
     }
 
     private static RuntimeSceneNodeDelta Node(string id, string? parentId = null) => new(

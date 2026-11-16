@@ -111,6 +111,7 @@ const NEW_RENDERER_REASON_KEYS: Record<RenderStreamUnavailableReason, import("@/
   "core-build": "settings.newRendererCoreLoadFailed",
   "no-webgl2": "settings.newRendererNoWebgl2",
   "host-view": "settings.newRendererHostView",
+  "host-update": "settings.newRendererHostUpdate",
   "host-unavailable": "settings.newRendererHostUnavailable",
   "needs-proxy": "settings.newRendererNeedsProxy",
   // Refined below for a choosable stream before a join.

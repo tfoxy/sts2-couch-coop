@@ -46,6 +46,13 @@ public interface IHotRendererSwapHost
     IDisposable SubscribeRendererChanged(Action handler);
 }
 
+// Optional capability. Route identity belongs to the persistent seat host, across hot generations.
+public interface IHotRenderStreamRelayHost
+{
+    bool SupportsRenderStreamRelay { get; }
+    string? RenderStreamSeatRoute { get; }
+}
+
 // Optional capability; all arguments are shared BCL types across reload assembly boundaries.
 public interface IHotDirectIpHttpsHost
 {
@@ -62,3 +69,14 @@ public sealed record HotReloadActivationContext(
 public sealed record HotReloadShutdownContext(
     string Reason,
     int NewGeneration);
+
+// Optional presentation contract; page leases and demand survive hot generation replacement.
+public interface IHotPresentationHost
+{
+    (long Epoch, bool Ready, int Width, int Height) PresentationStatus { get; }
+    void ClaimPresentationPage(string pageId, string owner);
+    void UpdatePresentationPage(string pageId, string owner, bool watch, bool? stream, double? aspect);
+    void ReleasePresentationPage(string pageId, string owner);
+    // Older hosts cannot validate a replacement connection's lease; fail closed until reloaded.
+    bool IsPresentationPageOwner(string pageId, string owner) => false;
+}

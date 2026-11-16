@@ -13,7 +13,8 @@ public sealed record BrowserActionRequestEnvelope(
     string? ScreenType = null,
     // CEL-resolved action arguments (camelCase keys, e.g. { "characterId": "ironclad" }) forwarded by
     // the browser. The executor coerces these onto the EmbeddableActionRequest's named fields + Values.
-    Dictionary<string, JsonElement>? Args = null);
+    Dictionary<string, JsonElement>? Args = null,
+    long? PresentationEpoch = null);
 
 public sealed record BrowserJoinRequestEnvelope(
     string Type,
@@ -34,7 +35,8 @@ public sealed record BrowserJoinRequestEnvelope(
     string? Visit = null,
     // Legacy join hints remain parseable. Runtime renderer messages choose the renderer and arm size.
     string? Renderer = null,
-    JsonElement? Aspect = null);
+    JsonElement? Aspect = null,
+    int? RendererProtocol = null);
 
 /// <summary>
 /// The <c>aspect</c> a page sends with its renderer request: a finite JSON
@@ -97,7 +99,8 @@ public sealed record BrowserInputRequestEnvelope(
     double? LocalX = null,
     double? LocalY = null,
     // Decimal Godot instance id; when present it is authoritative over scene/path.
-    string? TargetInstance = null)
+    string? TargetInstance = null,
+    long? PresentationEpoch = null)
 {
     // Stamped at receipt. A peer cannot revive input admitted before host access was revoked.
     [System.Text.Json.Serialization.JsonIgnore]

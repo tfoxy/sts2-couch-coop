@@ -97,7 +97,7 @@ public sealed record BrowserEnvelope(
 // certificate of this host's (Direct-IP HTTPS or the secure origin) that names THIS page's host. `ws`: the seat serves
 // plain ws to LAN pages, which it always does (beside wss when the host has a certificate). A page reading a host
 // without `ws` (before CAR9) takes `tls: false` as plain ws.
-public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls, bool Ws);
+public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls, bool Ws, bool? Relay = null);
 
 // The wire shape Stage B also consumes: { "scenePath": "res://scenes/backgrounds/<id>/<id>_background.tscn",
 // "url": "/bg/<id>?layers=<digest>&v=1" } (camelCased by BrowserJson).

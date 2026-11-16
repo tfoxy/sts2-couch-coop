@@ -2360,9 +2360,12 @@ public sealed partial class HeadlessClientManager : IDisposable
         var hostPort = _controlPort?.Invoke() ?? 0;
         var origins = StreamingSeatLaunch.AllowedOrigins(
             hostPort, Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable));
-        var (lan, lanTls) = PrepareStreamingSeatLanLocked(evidence, hostPort, ref origins);
+        StreamingSeatLaunch.LanLaunch? lan = null;
+        var lanTls = "none";
+        if (Environment.GetEnvironmentVariable(Protocol.StreamingSeatDescriptor.DirectEnvironmentVariable) == "1")
+            (lan, lanTls) = PrepareStreamingSeatLanLocked(evidence, hostPort, ref origins);
         StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, lan));
-        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub=0.0.0.0:{hubPort.ToString(CultureInfo.InvariantCulture)} "
+        CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub={(lan is null ? "127.0.0.1" : "0.0.0.0")}:{hubPort.ToString(CultureInfo.InvariantCulture)} "
             + $"tls={lanTls} "
             + $"mode=standby root_size={StreamingSeatLaunch.RootSize(StreamingSeatLaunch.PresentationBaseWidth)} "
             + $"cap={_streamingConfig!.MaxPresentationWidth.ToString(CultureInfo.InvariantCulture)} "

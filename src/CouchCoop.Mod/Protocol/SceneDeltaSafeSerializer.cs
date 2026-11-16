@@ -48,12 +48,12 @@ internal sealed class SceneDeltaSerializeResult
 // still gets a keyframe and a running pump.
 internal static class SceneDeltaSafeSerializer
 {
-    public static SceneDeltaSerializeResult Serialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch = null)
+    public static SceneDeltaSerializeResult Serialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch = null, long presentationEpoch = 0)
     {
         Exception failure;
         try
         {
-            var bytes = BrowserSceneDeltaMessage.Serialize(delta, orderPatch);
+            var bytes = BrowserSceneDeltaMessage.Serialize(delta, orderPatch, presentationEpoch);
             if (SceneWireNonFinite.Count == 0)
             {
                 return new SceneDeltaSerializeResult { Bytes = bytes };
@@ -76,13 +76,13 @@ internal static class SceneDeltaSafeSerializer
             failure = exception;
         }
 
-        return SerializeIsolating(delta, orderPatch, failure);
+        return SerializeIsolating(delta, orderPatch, failure, presentationEpoch);
     }
 
     private static SceneDeltaSerializeResult SerializeIsolating(
         RuntimeSceneDelta delta,
         SceneOrderPatch? orderPatch,
-        Exception failure)
+        Exception failure, long presentationEpoch)
     {
         var kept = new List<RuntimeSceneNodeDelta>(delta.Upserts.Count);
         var quarantined = new List<QuarantinedSceneNode>();
@@ -111,7 +111,7 @@ internal static class SceneDeltaSafeSerializer
             return Result(null, null);
         }
 
-        var bytes = TrySerialize(rebuilt, orderPatch, ref failure);
+        var bytes = TrySerialize(rebuilt, orderPatch, ref failure, presentationEpoch);
         if (bytes is null)
         {
             // No upsert throws alone, or the rest still throws: the one-shot hints are the remaining carriers of
@@ -126,7 +126,7 @@ internal static class SceneDeltaSafeSerializer
                 return Result(null, null);
             }
 
-            bytes = TrySerialize(rebuilt, orderPatch, ref failure);
+            bytes = TrySerialize(rebuilt, orderPatch, ref failure, presentationEpoch);
         }
 
         return Result(bytes, bytes is null ? failure : null);
@@ -232,11 +232,11 @@ internal static class SceneDeltaSafeSerializer
         return kept;
     }
 
-    private static byte[]? TrySerialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch, ref Exception failure)
+    private static byte[]? TrySerialize(RuntimeSceneDelta delta, SceneOrderPatch? orderPatch, ref Exception failure, long presentationEpoch)
     {
         try
         {
-            return BrowserSceneDeltaMessage.Serialize(delta, orderPatch);
+            return BrowserSceneDeltaMessage.Serialize(delta, orderPatch, presentationEpoch);
         }
         catch (Exception exception)
         {

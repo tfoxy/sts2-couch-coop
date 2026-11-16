@@ -461,48 +461,31 @@ is not truncated.
 
 ## Streaming the new renderer over the LAN
 
-"Use new renderer (Beta)" streams a player's game from that player's seat (a hidden game instance the host
-launches) to their browser, on the host computer and on phones and computers on the host's network alike. A player
-can turn it on or off at any time in the settings panel, without the seat restarting: the seat starts streaming when
-one of its pages asks, and stops when the last one switches back or 90 seconds after the last stream connection
-closes. Each seat has its own stream, and any number of seats may stream at once. There is nothing to turn on for
-the network: while a seat streams, its stream listens on the LAN as the browser page and the player sockets already
-do. The host launches each seat with:
+"Use new renderer (Beta)" streams a player's game from that player's hidden game instance to the browser.
+The stream and its rendering resources use the same host endpoint as the page's game connection: WebSocket
+for HTTP hosts and secure WebSocket for HTTPS hosts. Normal viewing does not require exposing separate capture
+ports or enabling UDP. The host forwards these requests through its private seat connection to a capture
+listener on loopback. Explicit direct capture endpoints remain available for QA.
+To enable that direct QA mode, set `COUCHCOOP_RENDER_STREAM_DIRECT=1` before launching the host; normal viewing
+does not require it.
 
-- the stream listening on every interface (`0.0.0.0`, as the browser server does) at the seat's hub port (the seat's
-  port band + 9: 13366 for the first seat), TCP for WebSocket and UDP for WebTransport, so a firewall must allow
-  both, as it already allows the browser port;
-- the token it always uses (a new one each time the seat starts streaming), which godot-scene-web's LAN exposure
-  also requires;
-- an origin allow-list of the host's own pages: its loopback page, `http://` and `https://` on each LAN address and on
-  the `<machine>.local` name, and `https://` on each secure-origin host name (`192-168-0-5.my.local-ip.co`), all on
-  the host's browser port;
-- WebTransport with the capture's own self-signed certificate, pinned by its hash, which works from any https page in
-  Chrome and Edge (and from the host's loopback page);
-- wss through a certificate the host already has for its LAN pages: the Direct-IP HTTPS leaf when "Direct address
-  (HTTPS)" has been prepared, else the cached secure-origin certificate. The seat gets a copy of that PEM pair in its
-  private evidence directory;
-- plain WebSocket for the host's plain-http LAN pages, with or without a certificate (beside wss on the same port).
+Players can switch renderers without restarting their game instance. When browsers using different renderers
+watch the same player, the game viewport stays at 1920×1080 so the old renderer receives compatible geometry.
+Its Widescreen stretch setting still controls its browser-side layout. When only new-renderer viewers remain,
+the game can return to the wider presentation requested by the oldest active streaming viewer. A background
+page that still requests old-renderer updates counts as a viewer.
 
-On Windows, allow inbound TCP **and** UDP for `SlayTheSpire2.exe` to stream over the LAN. A program-scoped rule
-covers every seat's hub port (13366, 13376, …); answering a firewall prompt for TCP need not cover UDP. From an
-elevated prompt, using your game's executable path:
+During a switch, the browser retains its last compatible scene with input disabled until the replacement is
+ready. Some animations may continue on that retained scene. Each player has an independent capture lifetime;
+the existing idle grace period allows a stream connection to reconnect without immediately discarding capture.
 
-```
-netsh advfirewall firewall add rule name="STS2 Couch Co-op stream TCP" dir=in action=allow protocol=TCP program="C:\Path\To\SlayTheSpire2.exe"
-netsh advfirewall firewall add rule name="STS2 Couch Co-op stream UDP" dir=in action=allow protocol=UDP program="C:\Path\To\SlayTheSpire2.exe"
-```
+After updating from a build without shared-endpoint streaming, restart the host and reload open browser pages.
+Pages that do not support shared-endpoint streaming use the old renderer. Reload them after updating or if
+a renderer transition requires reconnection.
+The Website bootstrap still follows the browser's mixed-content and Local Network Access rules described in
+[local-network-access.md](local-network-access.md). Relaying does not bypass those rules.
 
-Loopback-only streaming needs no firewall rule. The mod cannot add these rules itself because that requires admin.
-
-Which page streams how: the host's https link (Direct address (HTTPS) or the secure origin) over WebTransport, or over
-wss when the host's certificate names that link's host; the host's plain-http link over plain WebSocket (unencrypted,
-like that page's own connection to the host; WebTransport needs a secure page, so never there). The public website
-link (`sts2-couch.pages.dev`) cannot: its origin carries no port, which the stream's origin allow-list cannot express,
-and Chrome's Local Network Access checks apply to it ([local-network-access.md](local-network-access.md)). A page that no offered
-carrier can serve says so in the settings panel.
-
-The exposure this adds is described in [security.md](security.md) ("New renderer over the LAN").
+See [security.md](security.md#new-renderer-over-the-lan) for authorization and transport boundaries.
 
 ## Seat lifetime when the host exits
 

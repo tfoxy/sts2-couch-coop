@@ -411,7 +411,7 @@ describe("RenderStreamStage", () => {
     const unauthorized: RenderStreamStatus = { kind: "failed", reason: "live-connect-failed", detail: "unauthorized" };
     const fresh = { ...endpoint, url: "ws://127.0.0.1:11/render-stream", token: "b".repeat(64) };
 
-    it("asks once, then reconnects the same client with a different descriptor", async () => {
+    it("asks once, then replaces the client with a different descriptor", async () => {
       mountStage();
       clients[0].emit(unauthorized);
       await nextTick();
@@ -421,12 +421,14 @@ describe("RenderStreamStage", () => {
       expect(status().text()).toBe("Connecting…");
 
       await wrapper!.setProps({ endpoint: fresh });
-      expect(clients[0].setEndpoint).toHaveBeenCalledWith(fresh);
-      expect(clients[0].connects).toBe(2);
-      expect(clients).toHaveLength(1);
+      await nextTick();
+      expect(clients[0].disposed).toBe(true);
+      expect(clients[1].options.endpoint).toEqual(fresh);
+      expect(clients[1].connects).toBe(1);
+      expect(clients).toHaveLength(2);
 
       // Asked once: a second refusal before anything drew is a stop.
-      clients[0].emit(unauthorized);
+      clients[1].emit(unauthorized);
       await nextTick();
       expect(wrapper!.emitted("refresh-endpoint")).toHaveLength(1);
       expect(wrapper!.emitted("failed")).toEqual([["live-connect-failed: unauthorized"]]);
@@ -456,8 +458,9 @@ describe("RenderStreamStage", () => {
       mountStage();
       clients[0].emit(unauthorized);
       await wrapper!.setProps({ endpoint: fresh });
-      clients[0].emit({ kind: "streaming", firstFrame: true });
-      clients[0].emit(unauthorized);
+      await nextTick();
+      clients[1].emit({ kind: "streaming", firstFrame: true });
+      clients[1].emit(unauthorized);
       await nextTick();
       expect(wrapper!.emitted("refresh-endpoint")).toHaveLength(2);
       expect(wrapper!.emitted("failed")).toBeUndefined();
@@ -627,7 +630,9 @@ describe("RenderStreamStage", () => {
     mountStage();
     const next = { ...endpoint, url: "ws://127.0.0.1:10/render-stream" };
     await wrapper!.setProps({ endpoint: next });
-    expect(clients[0].setEndpoint).toHaveBeenCalledWith(next);
+    await nextTick();
+    expect(clients[0].disposed).toBe(true);
+    expect(clients[1].options.endpoint).toEqual(next);
   });
 
   // C2: the pointer channel (streamInput.ts) sends through `props.sendInput` read live, so a new access generation's
@@ -765,10 +770,10 @@ describe("RenderStreamStage", () => {
       const count = sent.length;
       key("keydown", "KeyA");
       expect(sent).toHaveLength(count);
-      expect(padEdges(sent)).toEqual(["faceSouth:down", "faceSouth:up"]);
+      expect(padEdges(sent)).toEqual(["faceSouth:down"]);
     });
 
-    it("releases a held key on unmount, on the hidden tab, and on a presentation remount", async () => {
+    it("retires held keys silently on a presentation replacement", async () => {
       vi.useFakeTimers();
       const sent: MirrorInputMessage[] = [];
       mountStage({ sendInput: (m: MirrorInputMessage) => sent.push(m) });
@@ -786,16 +791,16 @@ describe("RenderStreamStage", () => {
       await nextTick();
       await nextTick();
       expect(clients).toHaveLength(3);
-      expect(keys(sent)).toEqual(["KeyD:down", "KeyD:up"]);
+      expect(keys(sent)).toEqual(["KeyD:down"]);
       key("keyup", "KeyD"); // the new capture never latched it: no second release
       key("keydown", "KeyW");
-      expect(keys(sent)).toEqual(["KeyD:down", "KeyD:up", "KeyW:down"]);
+      expect(keys(sent)).toEqual(["KeyD:down", "KeyW:down"]);
 
       wrapper!.unmount();
       wrapper = null;
-      expect(keys(sent)).toEqual(["KeyD:down", "KeyD:up", "KeyW:down", "KeyW:up"]);
+      expect(keys(sent)).toEqual(["KeyD:down", "KeyW:down"]);
       key("keydown", "KeyE");
-      expect(sent).toHaveLength(4);
+      expect(sent).toHaveLength(2);
     });
 
     it("releases what is held when a setting goes off, and listens again when it comes back", async () => {
@@ -1064,5 +1069,82 @@ describe("stream hand-raise button", () => {
     expect(sent).toEqual([]);
     expect(clients).toHaveLength(1);
     expect(clients[0].disposed).toBe(false);
+  });
+});
+
+describe("presentation replacement", () => {
+  it("waits for the current client's frame when input is enabled before it draws", async () => {
+    const sent: MirrorInputMessage[] = [];
+    mountStage({ presentationEpoch: 7, inputEnabled: false,
+      sendInput: (m: MirrorInputMessage) => sent.push(m) });
+    const press = () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyQ" }));
+      window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyQ" }));
+    };
+    await wrapper!.setProps({ inputEnabled: true });
+    press();
+    expect(sent).toEqual([]);
+
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    press();
+    expect(sent).toMatchObject([
+      { kind: "key", key: "KeyQ", pressed: true, presentationEpoch: 7 },
+      { kind: "key", key: "KeyQ", pressed: false, presentationEpoch: 7 }
+    ]);
+  });
+
+  it("stamps displayed epochs and silently retires held input on replacement", async () => {
+    const sent: MirrorInputMessage[] = [];
+    mountStage({ presentationEpoch: 3, sendInput: (m: MirrorInputMessage) => sent.push(m) });
+    const key = (type: string, code = "KeyE") => window.dispatchEvent(new KeyboardEvent(type, { code }));
+    key("keydown");
+    expect(sent).toEqual([]);
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    key("keydown");
+    expect(sent).toMatchObject([{ kind: "key", key: "KeyE", pressed: true, presentationEpoch: 3 }]);
+    sent.length = 0;
+    await wrapper!.setProps({ presentationEpoch: 4 });
+    await nextTick();
+    key("keyup");
+    expect(sent).toEqual([]);
+    clients[1].emit({ kind: "streaming", firstFrame: true });
+    key("keydown", "KeyQ");
+    key("keyup", "KeyQ");
+    expect(sent).toMatchObject([
+      { kind: "key", key: "KeyQ", pressed: true, presentationEpoch: 4 },
+      { kind: "key", key: "KeyQ", pressed: false, presentationEpoch: 4 }
+    ]);
+  });
+
+  it("reports a first frame for each client and ignores retired status callbacks", async () => {
+    mountStage({ presentationEpoch: 1 });
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    expect(wrapper!.emitted("first-frame")).toHaveLength(1);
+    await wrapper!.setProps({ presentationEpoch: 2 });
+    await nextTick();
+    expect(clients).toHaveLength(2);
+    clients[0].emit({ kind: "streaming", firstFrame: true });
+    clients[0].emit({ kind: "ended" });
+    expect(wrapper!.emitted("failed")).toBeUndefined();
+    expect(wrapper!.emitted("first-frame")).toHaveLength(1);
+    clients[1].emit({ kind: "streaming", firstFrame: true });
+    expect(wrapper!.emitted("first-frame")).toHaveLength(2);
+  });
+
+  it("treats presentation and carrier changes as a new unauthorized descriptor", async () => {
+    mountStage();
+    clients[0].emit({ kind: "failed", reason: "live-connect-failed", detail: "unauthorized" });
+    await wrapper!.setProps({ endpoint: { ...endpoint, webTransport: {
+      url: "https://localhost:9/render-stream", certificateHashes: ["a".repeat(64)]
+    } } });
+    await nextTick();
+    expect(clients).toHaveLength(2);
+    expect(wrapper!.emitted("failed")).toBeUndefined();
+    clients[1].emit({ kind: "streaming", firstFrame: true });
+    clients[1].emit({ kind: "failed", reason: "live-connect-failed", detail: "unauthorized" });
+    await wrapper!.setProps({ endpoint: { ...endpoint, presentation: [2340, 1080] } });
+    await nextTick();
+    expect(clients).toHaveLength(3);
+    expect(wrapper!.emitted("failed")).toBeUndefined();
   });
 });

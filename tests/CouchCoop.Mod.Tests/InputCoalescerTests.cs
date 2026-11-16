@@ -14,6 +14,14 @@ internal static class InputCoalescerTests
         NonHoverNeverDrops();
         EmptyTakeIsNull();
         GenerationsAndWatchEpochsNeverCoalesce();
+        foreach (var sample in new[] { Hover(1), Wheel("wheel-down") })
+        {
+            var epochs = new InputCoalescer();
+            epochs.Enqueue(sample with { PresentationEpoch = 1 });
+            Assert(!epochs.WouldCoalesce(sample with { PresentationEpoch = 2 }), "presentation epochs cannot merge");
+            epochs.Enqueue(sample with { PresentationEpoch = 2 });
+            Assert(epochs.Count == 2, "displayed epochs stay distinct");
+        }
         // Coalesced wheel runs.
         AdjacentSameDirectionWheelTicksMerge();
         OppositeWheelDirectionsNeverMerge();

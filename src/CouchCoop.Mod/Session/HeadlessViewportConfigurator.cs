@@ -17,7 +17,10 @@ public static class HeadlessViewportConfigurator
 
     private static readonly Vector2I TargetSize = new(1920, 1080);
     private static readonly Presentation PresentationOwner = new(ApplyPresentation, OnOwnershipChanged);
-    internal static Reassertion Updates { get; set; } = new(PresentationOwner, Defer, AttachRoot);
+    internal static event Action? PresentationInvalidated;
+    internal static event Action<bool>? PresentationReasserted;
+    internal static Reassertion Updates { get; set; } = new(PresentationOwner, Defer, AttachRoot,
+        () => PresentationInvalidated?.Invoke(), ok => PresentationReasserted?.Invoke(ok));
 
     private static void OnOwnershipChanged(bool wide)
     {
@@ -30,6 +33,7 @@ public static class HeadlessViewportConfigurator
 
     // Main-thread only, shared with the swap so the existing mirror re-assert cannot fight capture sizing.
     internal static void SetStreamPresentationWidth(int width) => PresentationOwner.SetStreamWidth(width);
+    internal static bool TrySetStreamPresentationWidth(int width) => PresentationOwner.TrySetStreamWidth(width);
     internal static bool StreamOwnsPresentation => PresentationOwner.StreamOwnsPresentation;
 
     internal static Vector2 ResolveStreamPlacement(Vector2 target, float anchorLeft)
@@ -43,7 +47,7 @@ public static class HeadlessViewportConfigurator
         internal bool StreamOwnsPresentation => _streamOwnsPresentation;
         internal int StreamWidth => _streamWidth;
 
-        internal bool ReassertMirror() => _streamOwnsPresentation || apply(false, 1920);
+        internal bool ReassertMirror() => apply(_streamOwnsPresentation, _streamOwnsPresentation ? _streamWidth : 1920);
 
         // Preserve the design-space placement, carried across the extra width by the control's anchor.
         // A mirror or 16:9 stream returns the original target exactly, including throughout swap-back.
@@ -52,22 +56,27 @@ public static class HeadlessViewportConfigurator
                 ? new Vector2(target.X * 1920 / _streamWidth + anchorLeft * (_streamWidth - 1920), target.Y)
                 : target;
 
-        internal void SetStreamWidth(int width)
+        internal void SetStreamWidth(int width) => TrySetStreamWidth(width);
+
+        internal bool TrySetStreamWidth(int width)
         {
+            var success = true;
             if (width > 1920)
             {
                 _streamWidth = width;
                 _streamOwnsPresentation = true;
-                apply(true, width);
+                success = apply(true, width);
                 onOwnershipChanged?.Invoke(true);
             }
             else if (_streamOwnsPresentation)
             {
                 onOwnershipChanged?.Invoke(false);
-                apply(false, 1920);
+                success = apply(false, 1920);
                 _streamOwnsPresentation = false;
                 _streamWidth = 1920;
             }
+            else success = apply(false, 1920);
+            return success;
         }
     }
 
@@ -104,7 +113,8 @@ public static class HeadlessViewportConfigurator
     }
 
     // The callbacks enqueue only; root reads and the ownership check happen after synchronous handlers finish.
-    internal sealed class Reassertion(Presentation presentation, Action<Action> defer, Func<bool> attachRoot)
+    internal sealed class Reassertion(Presentation presentation, Action<Action> defer, Func<bool> attachRoot,
+        Action? invalidated = null, Action<bool>? reasserted = null)
     {
         private int _pending;
         private bool _attached;
@@ -117,6 +127,7 @@ public static class HeadlessViewportConfigurator
         internal void Request()
         {
             if (Interlocked.Exchange(ref _pending, 1) != 0) return;
+            invalidated?.Invoke();
             try
             {
                 defer(Run);
@@ -140,7 +151,8 @@ public static class HeadlessViewportConfigurator
                     _attached = true;
                 }
                 using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.WindowlessViewport);
-                presentation.ReassertMirror();
+                var success = presentation.ReassertMirror();
+                reasserted?.Invoke(success);
             }
             catch (Exception exception)
             {

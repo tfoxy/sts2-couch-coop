@@ -75,7 +75,8 @@ beforeEach(() => {
   Object.assign(renderStreamContext, {
     directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false,
     coreLoadFailed: false, stopped: null, hostUnavailableReason: null,
-    coreProblem: null, webgl2: true, pageLoopback: true
+    coreProblem: null, webgl2: true, pageLoopback: true,
+    lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
   });
 });
 
@@ -219,15 +220,16 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     ["needs-proxy", () => {
       mirrorSettings.renderStreamUrl = null;
       renderStreamContext.pageLoopback = false;
-      renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
+      renderStreamContext.lanOffer = { relay: true, webTransport: false, tls: false, ws: true };
       renderStreamContext.page = { https: true, secureContext: true, webTransport: false };
     }, "This page can't run the host's new-renderer stream. Open the host's HTTPS link in Chrome or Edge, or the mirror "
       + "on the host computer."],
-    ["not-streaming (a LAN page on a host with no capture)", () => {
+    ["host-update (an older host without relay capability)", () => {
       mirrorSettings.renderStreamUrl = null;
       renderStreamContext.pageLoopback = false;
+      renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
       renderStreamContext.page = { https: false, secureContext: false, webTransport: false };
-    }, "This host isn't set up to stream the new renderer."]
+    }, "Update the host mod to use the new renderer."]
   ])("shows the %s reason and disables the checkbox", async (_name, arrange, text) => {
     available();
     arrange();
@@ -302,13 +304,14 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(mirrorSettings.renderer).toBe("mirror");
   });
 
-  it("can be switched on from a plain-http LAN page once the host offers the stream (CAR9)", async () => {
+  it("can be switched on from a plain-http LAN page once the host offers the relay", async () => {
+    renderStreamContext.lanOffer = null;
     renderStreamContext.pageLoopback = false;
     renderStreamContext.page = { https: false, secureContext: false, webTransport: false };
     mountPanel();
     await nextTick();
     expect(el("mirror-renderer").disabled).toBe(true);
-    renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
+    renderStreamContext.lanOffer = { relay: true, webTransport: false, tls: false, ws: true };
     await nextTick();
     expect(el("mirror-renderer").disabled).toBe(false);
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);

@@ -110,6 +110,7 @@
   "settings.newRendererCoreLoadFailed": "このページでは新しいレンダラーを読み込めませんでした。",
   "settings.newRendererNoWebgl2": "このブラウザでは新しいレンダラーを実行できません。",
   "settings.newRendererHostView": "ホスト自身のゲームを見ているときは使用できません。",
+  "settings.newRendererHostUpdate": "新しいレンダラーを使うにはホストのMODを更新してください。",
   "settings.newRendererNeedsProxy": "このページではホストの新しいレンダラーの配信を再生できません。Chrome か Edge でホストの HTTPS リンクを開くか、ホストのコンピューターでミラーを開いてください。",
   "settings.newRendererSwitching": "切り替え中…",
   "settings.newRendererFailed": "新しいレンダラーを起動できませんでした。",

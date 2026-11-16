@@ -40,6 +40,7 @@ export const SELECT_MAP_NODE_ACTION_ID = "select-map-node";
 export interface MirrorActionMessage {
   semanticActionId: string;
   args?: Record<string, unknown>;
+  presentationEpoch?: number;
 }
 
 export interface MapNodeTapRouter {

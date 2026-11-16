@@ -105,7 +105,7 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(at("?rsProtocol=14").renderStreamProtocol).toBe(14);
   });
 
-  it("overlays the server payload under the stream: freezes, static background and tween replay off, the rest as saved", () => {
+  it("preserves saved freezes under the stream while disabling static background and tween replay", () => {
     const settings = createMirrorSettings(undefined, "", { storage: null });
     Object.assign(settings, { refreshRate: 40, tweenReplay: true, freezeParticles: true, freezeSpines: true,
       freezeDecor: true, staticBgEnabled: true, runtimeStage: "canvas" });
@@ -114,7 +114,7 @@ describe("mirrorSettings — the renderer keys", () => {
 
     settings.runtimeRenderer = "stream";
     expect(serverSettingsPayload(settings)).toEqual({
-      refreshRate: 40, freezeParticles: false, freezeSpines: false, freezeDecor: false, tweenReplay: false,
+      refreshRate: 40, freezeParticles: true, freezeSpines: true, freezeDecor: true, tweenReplay: false,
       staticBg: false, trailDrive: true
     });
     expect(staticBgWireValue(settings)).toBe(false);
@@ -211,7 +211,7 @@ describe("renderStreamAvailability", () => {
   const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://127.0.0.1:14861/render-stream", renderStreamProtocol: 12 });
   const base: RenderStreamAvailabilityInputs = {
     coreProblem: null, coreLoadFailed: false, webgl2: true, directView: false, qaEndpoint: null,
-    sessionEndpoint: null, pageLoopback: true
+    sessionEndpoint: null, pageLoopback: true, lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
   };
 
   it("derives the QA descriptor: the hub's origin, no token, 1920x1080", () => {
@@ -230,9 +230,9 @@ describe("renderStreamAvailability", () => {
     expect(reason({ webgl2: false, directView: true })).toBe("no-webgl2");
     expect(reason({ directView: true })).toBe("host-view");
     // A LAN page on a host with no capture (no offer): its seat cannot stream either.
-    expect(reason({ qaEndpoint: null, pageLoopback: false })).toBe("not-streaming");
+    expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: null })).toBe("host-update");
     expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: { webTransport: false, tls: false, ws: true },
-      page: { https: true, secureContext: true, webTransport: true } })).toBe("needs-proxy");
+      page: { https: true, secureContext: true, webTransport: true } })).toBe("host-update");
     expect(reason({ qaEndpoint: null })).toBe("not-streaming");
     expect(reason({})).toBeNull();
   });
@@ -245,7 +245,7 @@ describe("renderStreamAvailability", () => {
       mirrorSettings.renderer = "mirror";
       // A plain-http LAN page, before the host's offer arrives (or on a host with no capture): nothing to ask for.
       expect(renderStreamChoosable.value).toBe(false);
-      renderStreamContext.lanOffer = { webTransport: true, tls: false, ws: true };
+      renderStreamContext.lanOffer = { relay: true, webTransport: true, tls: false, ws: true };
       // The saved choice is off; the checkbox asks whether this page could request the stream.
       expect(renderStreamChoosable.value).toBe(true);
       renderStreamContext.directView = true;
@@ -330,9 +330,9 @@ describe("renderStreamAvailability", () => {
     it.each(matrix)("a %s page with a %s offer: a usable carrier=%s", (page, offer, usable) => {
       expect(lanCarrierUsable(offers[offer], pages[page])).toBe(usable);
       const at = computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: offers[offer], page: pages[page] });
-      expect(at.reason).toBe(usable ? "not-streaming" : "needs-proxy");
+      expect(at.reason).toBe("host-update");
       expect(seatRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
-        pageLoopback: false, qaEndpoint: null, lanOffer: offers[offer], page: pages[page] })).toBe(usable ? "stream" : undefined);
+        pageLoopback: false, qaEndpoint: null, lanOffer: offers[offer], page: pages[page] })).toBeUndefined();
     });
 
     it("streams a plain-http LAN page over the seat's ws, never WebTransport (CAR9)", () => {
@@ -355,7 +355,7 @@ describe("renderStreamAvailability", () => {
 
     it("says not-streaming, not needs-proxy, on a host with no capture (no offer), and asks for no streaming seat", () => {
       for (const page of Object.values(pages)) {
-        expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: null, page }).reason).toBe("not-streaming");
+        expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, lanOffer: null, page }).reason).toBe("host-update");
         expect(seatRendererRequest({ renderer: "stream", coreProblem: null, coreLoadFailed: false, webgl2: true,
           pageLoopback: false, qaEndpoint: null, lanOffer: null, page })).toBeUndefined();
       }
@@ -401,14 +401,14 @@ describe("renderStreamAvailability", () => {
 
   it("asks the seat to stream only when the viewer chose it and this page can draw it", () => {
     const ask = { renderer: "stream" as const, coreProblem: null, coreLoadFailed: false, webgl2: true, pageLoopback: true,
-      qaEndpoint: null };
+      qaEndpoint: null, lanOffer: { relay: true, webTransport: false, tls: false, ws: true } };
     expect(seatRendererRequest(ask)).toBe("stream");
     expect(seatRendererRequest({ ...ask, renderer: "mirror" })).toBeUndefined();
     expect(seatRendererRequest({ ...ask, coreProblem: "missing" })).toBeUndefined();
     expect(seatRendererRequest({ ...ask, coreLoadFailed: true })).toBeUndefined();
     expect(seatRendererRequest({ ...ask, webgl2: false })).toBeUndefined();
     // A LAN or HTTPS page cannot reach a loopback hub: the seat would stream for nobody.
-    expect(seatRendererRequest({ ...ask, pageLoopback: false })).toBeUndefined();
+    expect(seatRendererRequest({ ...ask, pageLoopback: false, lanOffer: null })).toBeUndefined();
     // A QA endpoint brings its own hub.
     expect(seatRendererRequest({ ...ask, qaEndpoint: qa })).toBeUndefined();
   });
@@ -484,5 +484,28 @@ describe("renderStreamAvailability", () => {
       Object.assign(mirrorSettings, { renderer: saved.renderer, renderStreamUrl: saved.url, runtimeRenderer: "mirror" });
       Object.assign(renderStreamContext, { coreLoadFailed: false, stopped: null });
     }
+  });
+});
+
+describe("relay protocol2", () => {
+  it("normalizes relay paths on the host before validating carriers, preserving resource prefixes", () => {
+    const raw = { url: "/render-stream/seat-1/ws", resourceBase: "/render-stream/seat-1",
+      token: null, protocol: 13, presentation: [2340, 1080] };
+    const endpoint = sessionRenderStreamEndpoint(raw, "https://host.example");
+    expect(endpoint).toMatchObject({ url: "wss://host.example/render-stream/seat-1/ws",
+      resourceBase: "https://host.example/render-stream/seat-1", presentation: [2340, 1080] });
+    expect(endpointCarrierUsable(endpoint!, { https: true, secureContext: true, webTransport: false })).toBe(true);
+    expect(sessionRenderStreamEndpoint({ ...raw, resourceBase: "" }, "http://host.example"))
+      .toMatchObject({ resourceBase: "http://host.example", url: "ws://host.example/render-stream/seat-1/ws" });
+  });
+
+  it("requires relay capability even on loopback, while keeping direct QA overrides usable", () => {
+    const inputs: RenderStreamAvailabilityInputs = { coreProblem: null, coreLoadFailed: false,
+      webgl2: true, directView: false, qaEndpoint: null, sessionEndpoint: null, pageLoopback: true };
+    expect(computeRenderStreamAvailability(inputs).reason).toBe("host-update");
+    expect(seatRendererRequest({ ...inputs, renderer: "stream" })).toBeUndefined();
+    const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://localhost:9/render-stream", renderStreamProtocol: 13 });
+    expect(computeRenderStreamAvailability({ ...inputs, qaEndpoint: qa }).available).toBe(true);
+    expect(parseLanOffer({ relay: true, webTransport: false, tls: false, ws: true })?.relay).toBe(true);
   });
 });

@@ -5,9 +5,8 @@ import { nextTick } from "vue";
 import type { RenderStreamClientOptions, RenderStreamStatus } from "@godot-scene-web/render-stream-client";
 
 // MirrorApp's stream branch with a fake render-stream client: the switch
-// pushes the server overlay and then gates the node-geometry scene off (`watch:false`), mounts the stage instead of
-// MirrorView, never sends input, and falls back to the old renderer — watching again, saved choice kept — when the
-// stream fails.
+// pushes settings and gates node-geometry admission (`watch:false`), retains a compatible mirror beneath the
+// stage, and falls back to the old renderer — watching again, saved choice kept — when the stream fails.
 
 const fake = vi.hoisted(() => ({
   clientFactory: null as null | ((options: RenderStreamClientOptions) => import("@godot-scene-web/render-stream-client").RenderStreamClient),
@@ -99,6 +98,7 @@ function sessionMessage(over: Record<string, unknown> = {}) {
   });
   return {
     type: "session",
+    renderStreamLan: { relay: true, webTransport: false, tls: false, ws: true },
     session: { name: null, status: "unassigned", joined: false, playerId: null, connectionCount: 0 },
     players: [player("p:1", "Hosty", true), player("p:1003", "Alice", false)],
     screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
@@ -168,6 +168,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete globalThis.__couchCoopHostBase;
   app?.unmount();
   app = null;
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
@@ -191,7 +192,7 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     const kinds = seat.sent.map((m) => m.type);
     expect(kinds).toEqual(["settings", "watch"]);
-    expect(seat.sent[0]).toMatchObject({ freezeParticles: false, freezeSpines: false, freezeDecor: false, staticBg: false,
+    expect(seat.sent[0]).toMatchObject({ freezeParticles: true, freezeSpines: true, freezeDecor: true, staticBg: false,
       refreshRate: DEFAULT_REFRESH_RATE });
     expect(seat.sent[1]).toEqual({ type: "watch", on: false });
 
@@ -203,6 +204,150 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     // jsdom has no canvas layout: the fixed pair stays until the stage can measure its controls.
     expect(app!.find(".render-stream-gear").exists()).toBe(false);
     expect(app!.find(".mirror-chrome-gear").exists()).toBe(true);
+  });
+
+  it.each([undefined, 7])("keeps QA stream input across descriptor-less sessions (epoch %s)", async (epoch) => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    const rendererState = epoch === undefined ? { state: "mirror" } : {
+      state: "mirror", presentationEpoch: epoch, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080
+    };
+    const seat = await joinSeat({ rendererState });
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const client = fake.clients.at(-1)!;
+    const send = (window as unknown as { __mirrorSendInput: (msg: import("@/mirror/mirrorClient").MirrorInputMessage) => void }).__mirrorSendInput;
+    const input = { kind: "click" as const, coordX: 100, coordY: 200,
+      ...(epoch !== undefined ? { presentationEpoch: epoch } : {}) };
+    for (let i = 0; i < 2; i += 1) {
+      seat.emit(sessionMessage({ rendererState }));
+      await settle();
+      expect(renderStreamContext.firstFrame).toBe(true);
+      send(input);
+    }
+    expect(fake.clients.at(-1)).toBe(client);
+    expect(client.disposed).toBe(false);
+    expect(seat.ofType("input")).toEqual([
+      expect.objectContaining(input), expect.objectContaining(input)
+    ]);
+  });
+
+  it("recovers QA stream input when the same presentation becomes ready again", async () => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    const rendererState = { state: "mirror", presentationEpoch: 7, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080 };
+    const seat = await joinSeat({ rendererState });
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const client = fake.clients.at(-1)!;
+    const send = (window as unknown as { __mirrorSendInput: (msg: import("@/mirror/mirrorClient").MirrorInputMessage) => void }).__mirrorSendInput;
+    const input = { kind: "click" as const, coordX: 100, coordY: 200, presentationEpoch: 7 };
+    seat.emit(sessionMessage({ rendererState: { ...rendererState, presentationReady: false } }));
+    await settle();
+    send(input);
+    expect(seat.ofType("input")).toEqual([]);
+    seat.emit(sessionMessage({ rendererState }));
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    send(input);
+    expect(seat.ofType("input")).toEqual([expect.objectContaining(input)]);
+    expect(fake.clients.at(-1)).toBe(client);
+  });
+
+  it.each([undefined, 7])("waits for a hidden-tab replacement's own frame before sending Couch input (epoch %s)", async (epoch) => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    const keyboard = mirrorSettings.keyboard;
+    mirrorSettings.keyboard = true;
+    const rendererState = epoch === undefined ? { state: "mirror" } : {
+      state: "mirror", presentationEpoch: epoch, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080
+    };
+    let visibility: DocumentVisibilityState = "visible";
+    const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const press = () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyQ" }));
+      window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyQ" }));
+    };
+    try {
+      const seat = await joinSeat({ rendererState });
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      press();
+      expect(seat.ofType("input")).toMatchObject([
+        { kind: "key", key: "KeyQ", pressed: true }, { kind: "key", key: "KeyQ", pressed: false }
+      ]);
+      const old = fake.clients.at(-1)!;
+      const count = fake.clients.length;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      visibility = "hidden";
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(old.disposed).toBe(true);
+      expect(renderStreamContext.firstFrame).toBe(false);
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      await settle();
+      expect(fake.clients).toHaveLength(count + 1);
+      const replacement = fake.clients.at(-1)!;
+      old.options.onStatus?.({ kind: "streaming", firstFrame: true });
+      old.options.onStatus?.({ kind: "ended" });
+      replacement.options.onStatus?.({ kind: "streaming", firstFrame: false });
+      seat.emit(sessionMessage({ rendererState: { ...rendererState, presentationReady: false } }));
+      await settle();
+      seat.emit(sessionMessage({ rendererState }));
+      await settle();
+      seat.sent.length = 0;
+      press();
+      expect(seat.ofType("input")).toEqual([]);
+      expect(renderStreamContext.firstFrame).toBe(false);
+      expect(replacement.disposed).toBe(false);
+
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      expect(renderStreamContext.firstFrame).toBe(true);
+      press();
+      expect(seat.ofType("input")).toMatchObject([
+        { kind: "key", key: "KeyQ", pressed: true,
+          ...(epoch !== undefined ? { presentationEpoch: epoch } : {}) },
+        { kind: "key", key: "KeyQ", pressed: false,
+          ...(epoch !== undefined ? { presentationEpoch: epoch } : {}) }
+      ]);
+      expect(fake.clients.at(-1)).toBe(replacement);
+    } finally {
+      mirrorSettings.keyboard = keyboard;
+      vi.useRealTimers();
+      visibilitySpy.mockRestore();
+    }
+  });
+
+  it.each(["endpoint", "presentation"])("waits for a new QA frame after %s replacement", async (replacement) => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    const rendererState = { state: "mirror", presentationEpoch: 7, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080 };
+    const seat = await joinSeat({ rendererState });
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const old = fake.clients.at(-1)!;
+    const epoch = replacement === "presentation" ? 8 : 7;
+    if (replacement === "endpoint") mirrorSettings.renderStreamUrl = "ws://127.0.0.1:14862/render-stream";
+    else seat.emit(sessionMessage({ rendererState: { ...rendererState, presentationEpoch: epoch } }));
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(false);
+    old.options.onStatus?.({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(false);
+    const send = (window as unknown as { __mirrorSendInput: (msg: import("@/mirror/mirrorClient").MirrorInputMessage) => void }).__mirrorSendInput;
+    const input = { kind: "click" as const, coordX: 100, coordY: 200, presentationEpoch: epoch };
+    send(input);
+    expect(seat.ofType("input")).toEqual([]);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    send(input);
+    expect(seat.ofType("input")).toEqual([expect.objectContaining(input)]);
   });
 
   it("never sends input while the stream draws", async () => {
@@ -230,7 +375,7 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(new URL(seat.url).searchParams.get("watch")).toBe("0");
     expect(seat.ofType("watch").filter((m) => m.on === true)).toHaveLength(0);
-    expect(seat.ofType("settings")[0]).toMatchObject({ freezeParticles: false, staticBg: false });
+    expect(seat.ofType("settings")[0]).toMatchObject({ freezeParticles: true, staticBg: false });
     expect(fake.clients).toHaveLength(1);
   });
 
@@ -311,7 +456,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     return seat;
   }
 
-  // The host's LoadingView step completes on `client-frame-presented`; MirrorView is unmounted under the stream, so
+  // The host's LoadingView step completes on `client-frame-presented`; MirrorView is held under the stream, so
   // the stage's first drawn frame has to send it, for the attempt the join was answered with, on the host socket.
   it("completes the join on the stream's first drawn frame", async () => {
     canStream();
@@ -349,7 +494,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(host.ofType("join")[0]).not.toHaveProperty("renderer");
     expect(host.ofType("join")[0]).not.toHaveProperty("aspect");
     expect(host.ofType("renderer")).toEqual([]);
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
 
     seat.emit(seatSession());
     seat.emit(seatSession({ rendererState: { state: "arming" } }));
@@ -361,25 +506,130 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
   it.each(["arming", "armed"])("requests this page's descriptor once when the shared seat is already %s", async (state) => {
     canStream();
     mirrorSettings.renderer = "stream";
-    const seat = await joinSeat({ rendererState: { state } });
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
-    seat.emit(seatSession({ rendererState: { state } }));
-    await settle();
+    const rendererState = { state, presentationEpoch: 10, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080, restoreComplete: true };
+    const seat = await joinSeat({ rendererState });
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+    for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+      seat.emit(seatSession({ rendererState }));
+      await settle();
+    }
     expect(seat.ofType("renderer")).toHaveLength(1);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(fake.clients).toHaveLength(0);
+    seat.emit(seatSession({ rendererState, renderStream: descriptor }));
+    await settle();
+    expect(fake.clients).toHaveLength(1);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
   });
 
-  it("does not request a descriptor already supplied on the first session", async () => {
+  it.each(["checkbox", "retry"])("waits for a new descriptor after a previous stream attempt (%s)", async (restart) => {
     const seat = await joinStreamingSeat();
-    expect(seat.ofType("renderer")).toEqual([]);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    if (restart === "checkbox") mirrorSettings.renderer = "mirror";
+    else fail({ kind: "ended" });
+    await settle();
+    const rendererState = { state: "armed", presentationEpoch: 10, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080, restoreComplete: true };
+    seat.sent.length = 0;
+    // The previous attempt's descriptor is still in the latest session when the new request is sent.
+    if (restart === "checkbox") mirrorSettings.renderer = "stream";
+    else retryRenderStream();
+    await settle();
+    for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+      seat.emit(seatSession({ rendererState }));
+      await settle();
+    }
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+    seat.emit(seatSession({ rendererState, renderStream: descriptor }));
+    await settle();
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    seat.emit(seatSession({ rendererState }));
+    await settle();
+    seat.emit(seatSession({ rendererState }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe("descriptor gone");
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "mirror"]);
   });
 
-  it.each(["failed", undefined])("does not auto-apply when the first seat state is %s", async (state) => {
+  it("registers this page even when the first session already supplies a descriptor", async () => {
+    const seat = await joinStreamingSeat();
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+  });
+
+  it("requests the saved stream once when capability arrives after admission", async () => {
     canStream();
     mirrorSettings.renderer = "stream";
-    const seat = await joinSeat({ rendererState: state ? { state } : undefined });
+    renderStreamContext.webgl2 = false;
+    const seat = await joinSeat();
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+    renderStreamContext.webgl2 = true;
+    await settle();
+    seat.emit(seatSession({ rendererState: { state: "arming" } }));
+    await settle();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["mirror", "stream"]);
+  });
+
+  it("reconsiders an initially unsupported host when its relay offer arrives", async () => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage({ renderStreamLan: { webTransport: true, tls: false, ws: true } }));
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, renderStreamLan: null }));
+    await settle();
+    const seat = latest();
     seat.emit(seatSession());
     await settle();
+    expect(renderStreamAvailability.value.reason).toBe("host-update");
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["mirror"]);
+    host.emit(sessionMessage());
+    await settle();
+    host.emit(sessionMessage());
+    await settle();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["mirror", "stream"]);
+    expect(host.ofType("renderer")).toEqual([]);
+  });
+
+  it("registers an explicit mirror choice only after control admission", async () => {
+    canStream();
+    const seat = await joinSeat({ hostAccess: { allowed: false, reason: "transitioning", generation: 0 } });
     expect(seat.ofType("renderer")).toEqual([]);
+    seat.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 0 } });
+    await settle();
+    seat.emit(seatSession());
+    await settle();
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+  });
+
+  it.each(["arming", "disarming", "armed"])("keeps saved freeze preferences when %s reports effective false values", async (state) => {
+    canStream();
+    const seat = await joinSeat({ rendererState: { state }, freezeParticles: false, freezeSpines: false, freezeDecor: false });
+    expect(mirrorSettings).toMatchObject(HEADLESS_FREEZES);
+    expect(seat.ofType("settings").at(-1)).toMatchObject(HEADLESS_FREEZES);
+  });
+
+  it("does not seed effective freezes while failed teardown is still unrestored", async () => {
+    canStream();
+    const seat = await joinSeat({ rendererState: { state: "failed", restoreComplete: false },
+      freezeParticles: false, freezeSpines: false, freezeDecor: false });
+    expect(mirrorSettings).toMatchObject(HEADLESS_FREEZES);
+    expect(seat.ofType("settings").at(-1)).toMatchObject(HEADLESS_FREEZES);
+  });
+
+  it("withdraws this page's demand when the first seat state is failed", async () => {
+    canStream();
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat({ rendererState: { state: "failed" } });
+    expect(seat.ofType("renderer").at(-1)).toMatchObject({ renderer: "mirror", rendererProtocol: 2 });
+    expect(renderStreamContext.stopped).not.toBeNull();
   });
 
   it.each(["webgl2", "core", "carrier"])("does not request streaming when this page cannot draw it (%s)", async (missing) => {
@@ -392,7 +642,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     }
     mirrorSettings.renderer = "stream";
     const seat = await joinSeat();
-    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
     mirrorSettings.renderer = "mirror";
     await settle();
     mirrorSettings.renderer = "stream";
@@ -450,7 +700,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
       canStream();
       mirrorSettings.renderer = "stream";
       const seat = await joinSeat();
-      expect(seat.ofType("renderer")[0]).toEqual({ type: "renderer", renderer: "stream" });
+      expect(seat.ofType("renderer")[0]).toEqual({ type: "renderer", rendererProtocol: 2, renderer: "stream" });
     });
   });
 
@@ -507,10 +757,11 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
   it("requests each saved-choice change on the joined seat socket", async () => {
     const { host, seat } = await joinNormalSeat();
     expect(renderStreamContext.seatJoined).toBe(true);
-    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+    seat.sent.length = 0;
     mirrorSettings.renderer = "stream";
     await settle();
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
     expect(host.ofType("join")).toHaveLength(1);
     expect(seat.ofType("join")).toHaveLength(0);
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
@@ -519,7 +770,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     mirrorSettings.renderer = "mirror";
     await settle();
     expect(seat.ofType("renderer")).toEqual([
-      { type: "renderer", renderer: "stream" }, { type: "renderer", renderer: "mirror" }
+      { type: "renderer", rendererProtocol: 2, renderer: "stream" }, { type: "renderer", rendererProtocol: 2, renderer: "mirror" }
     ]);
   });
 
@@ -564,7 +815,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     seat.emit(seatSession());
     await settle();
     expect(renderStreamContext.hostUnavailableReason).toBe("no-matching-record");
-    expect(seat.ofType("renderer")).not.toContainEqual({ type: "renderer", renderer: "stream" });
+    expect(seat.ofType("renderer")).not.toContainEqual({ type: "renderer", rendererProtocol: 2, renderer: "stream" });
     expect(fake.clients).toHaveLength(0);
   });
 
@@ -578,12 +829,12 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     app = mount(MirrorApp);
     await settle();
     const host = latest();
-    host.emit(sessionMessage(offer ? { renderStreamLan: offer } : {}));
+    host.emit(sessionMessage({ renderStreamLan: offer }));
     await settle();
     await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
     await settle();
     expect(host.ofType("renderer")).toEqual([]);
-    host.emit(sessionMessage({ headlessMirrorPort: 14000, ...(offer ? { renderStreamLan: offer } : {}) }));
+    host.emit(sessionMessage({ headlessMirrorPort: 14000, renderStreamLan: offer }));
     await settle();
     const seat = latest();
     seat.emit(seatSession());
@@ -592,36 +843,37 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
   }
 
   it("on an https LAN page, reads the host's offer before the join and asks its seat for the stream", async () => {
+    globalThis.__couchCoopHostBase = "https://relay.example";
     const seat = await joinFromLanPage({ https: true, secureContext: true, webTransport: true },
-      { webTransport: true, tls: true, ws: true });
-    expect(renderStreamContext.lanOffer).toEqual({ webTransport: true, tls: true, ws: true });
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+      { relay: true, webTransport: true, tls: true, ws: true });
+    expect(renderStreamContext.lanOffer).toEqual({ relay: true, webTransport: true, tls: true, ws: true });
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
   });
 
   it("on a LAN page of a host with no capture (no offer), asks for no streaming seat", async () => {
     const seat = await joinFromLanPage({ https: true, secureContext: true, webTransport: true }, null);
     expect(renderStreamContext.lanOffer).toBeNull();
-    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
   });
 
   it("on a plain-http LAN page, asks for the stream over the seat's plain ws (CAR9)", async () => {
     const seat = await joinFromLanPage({ https: false, secureContext: false, webTransport: false },
-      { webTransport: true, tls: false, ws: true });
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+      { relay: true, webTransport: true, tls: false, ws: true });
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
   });
 
   it("on an https LAN page with no carrier it can open, says needs-proxy and asks for nothing", async () => {
     const seat = await joinFromLanPage({ https: true, secureContext: true, webTransport: false },
-      { webTransport: true, tls: false, ws: true });
+      { relay: true, webTransport: true, tls: false, ws: true });
     expect(renderStreamAvailability.value.reason).toBe("needs-proxy");
-    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
   });
 
-  it("returns normally to the mirror when the seat withdraws the descriptor with state mirror", async () => {
+  it("falls back when the seat unexpectedly withdraws the descriptor with state mirror", async () => {
     const seat = await joinStreamingSeat();
     seat.emit(seatSession());
     await settle();
-    expect(renderStreamContext.stopped).toBeNull();
+    expect(renderStreamContext.stopped).toBe("descriptor gone");
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
     expect(mirrorSettings.renderer).toBe("stream");
     expect(fake.clients[0].disposed).toBe(true);
@@ -648,7 +900,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     retryRenderStream();
     await settle();
     expect(mirrorSettings.renderer).toBe("mirror");
-    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
     expect(seat.ofType("watch")).not.toContainEqual({ type: "watch", on: false });
   });
 
@@ -670,7 +922,9 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     await settle();
     expect(renderStreamContext.stopped).toBeNull();
     expect(seat.ofType("renderer")).toEqual([
-      { type: "renderer", renderer: "stream" }, { type: "renderer", renderer: "stream" }
+      { type: "renderer", rendererProtocol: 2, renderer: "stream" },
+      { type: "renderer", rendererProtocol: 2, renderer: "mirror" },
+      { type: "renderer", rendererProtocol: 2, renderer: "stream" }
     ]);
     mirrorSettings.panelOpen = false;
   });
@@ -705,11 +959,20 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     host.emit(sessionMessage({ headlessMirrorPort: 14000 }));
     await settle();
     const seat = latest();
-    seat.emit(seatSession());
+    const pageId = new URL(seat.url).searchParams.get("rendererPage");
+    expect(pageId).toMatch(/^[0-9a-f]{32}$/);
+    expect(new URL(host.url).searchParams.has("rendererPage")).toBe(false);
+    const presentation = { presentationEpoch: 9, presentationReady: true,
+      presentationWidth: 1920, presentationHeight: 1080, restoreComplete: true };
+    seat.emit(seatSession({ renderStream: descriptor, rendererState: { ...presentation, state: "armed" } }));
     await settle();
     expect(renderStreamContext.seatJoined).toBe(true);
 
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+
+    expect(fake.clients).toHaveLength(1);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
 
     // The re-join: the seat socket drops, the page falls back to a fresh host socket and re-joins by the seat it was
     // granted. The host reuses that seat (a second device with the same name gets the same instance, not a new one),
@@ -725,16 +988,33 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     expect(rejoined.ofType("join")[0]).toMatchObject({ playerId: "p:1003" });
     rejoined.emit(sessionMessage({ headlessMirrorPort: 14000 }));
     await settle();
-    latest().emit(seatSession({ rendererState: { state } }));
+    expect(new URL(latest().url).searchParams.get("rendererPage")).toBe(pageId);
+    expect(new URL(rejoined.url).searchParams.has("rendererPage")).toBe(false);
+    const replacement = latest();
+    const rendererState = { ...presentation, presentationEpoch: 10, state };
+    replacement.emit(seatSession({ rendererState }));
     await settle();
     expect(renderStreamContext.seatJoined).toBe(true);
 
-    expect(latest().ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
-    latest().emit(seatSession());
-    await settle();
-    expect(latest().ofType("renderer")).toHaveLength(1);
+    expect(latest().ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+    for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+      replacement.emit(seatSession({ rendererState }));
+      await settle();
+    }
+    expect(replacement.ofType("renderer")).toHaveLength(1);
+    expect(renderStreamContext.stopped).toBeNull();
     expect(rejoined.ofType("renderer")).toEqual([]);
     expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    replacement.emit(seatSession({ renderStream: descriptor, rendererState: { ...rendererState, state: "armed" } }));
+    await settle();
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(renderStreamContext.stopped).toBeNull();
+    replacement.emit(seatSession({ rendererState: { ...rendererState, state: "armed" } }));
+    await settle();
+    replacement.emit(seatSession({ rendererState: { ...rendererState, state: "armed" } }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe("descriptor gone");
+    expect(replacement.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "mirror"]);
   });
 
   it("draws the descriptor when the reused seat streams", async () => {
@@ -748,8 +1028,11 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
 
     mirrorSettings.renderer = "stream";
     await settle();
-    // This viewer's seat is the streaming seat, so the page connects to it.
-    expect(latest().ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    // This viewer registers each explicit choice on the shared seat.
+    expect(latest().ofType("renderer")).toEqual([
+      { type: "renderer", rendererProtocol: 2, renderer: "mirror" },
+      { type: "renderer", rendererProtocol: 2, renderer: "stream" }
+    ]);
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(fake.clients).toHaveLength(1);
   });
@@ -793,7 +1076,7 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
   async function startStream(seat: MockWebSocket): Promise<void> {
     await app!.get('[data-testid="mirror-renderer"]').setValue(true);
     await settle();
-    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "stream" }]);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "arming" } }));
     await settle();
     expect(app!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
@@ -801,6 +1084,232 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     seat.emit(seatSession());
     await settle();
   }
+
+  it("requires an explicit displayed epoch on QA input and waits for the matching FULL", async () => {
+    const seat = await showMirror();
+    const presentation = (epoch: number) => ({ state: "mirror", presentationEpoch: epoch,
+      presentationReady: true, presentationWidth: 1920, presentationHeight: 1080 });
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(1) }));
+    seat.emit({ ...sceneDelta, presentationEpoch: 1 });
+    await settle();
+    const send = (window as unknown as { __mirrorSendInput: (msg: import("@/mirror/mirrorClient").MirrorInputMessage) => void }).__mirrorSendInput;
+    const input = { kind: "click" as const, coordX: 100, coordY: 200, pressed: true };
+    send(input);
+    expect(seat.ofType("input")).toEqual([]);
+    send({ ...input, presentationEpoch: 1 });
+    expect(seat.ofType("input")).toEqual([expect.objectContaining({ type: "input", ...input, presentationEpoch: 1 })]);
+    seat.sent.length = 0;
+
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(2) }));
+    await settle();
+    send({ ...input, presentationEpoch: 2 });
+    expect(seat.ofType("input")).toEqual([]);
+    seat.emit({ ...sceneDelta, presentationEpoch: 2 });
+    await settle();
+    send({ ...input, presentationEpoch: 1 });
+    send(input);
+    expect(seat.ofType("input")).toEqual([]);
+    send({ ...input, presentationEpoch: 2 });
+    expect(seat.ofType("input")).toEqual([expect.objectContaining({ type: "input", ...input, presentationEpoch: 2 })]);
+  });
+
+  it("stamps map and scroll actions with the displayed FULL epoch and retires old senders", async () => {
+    const seat = await showMirror();
+    const presentation = (epoch: number, ready = true) => ({ state: "mirror", presentationEpoch: epoch,
+      presentationReady: ready, presentationWidth: 1920, presentationHeight: 1080 });
+    const senders = () => app!.getComponent(MirrorView).props();
+    const map = { semanticActionId: "select-map-node", args: { elementId: "42" } };
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(1) }));
+    seat.emit({ ...sceneDelta, presentationEpoch: 1 });
+    await settle();
+    const old = { ...senders() };
+    old.sendAction!(map);
+    expect(old.sendScroll!("scroll", -100)).toBe("action:2");
+    expect(seat.ofType("action")).toEqual([
+      { type: "action", requestId: "action:1", ...map, presentationEpoch: 1 },
+      { type: "action", requestId: "action:2", semanticActionId: "set-scroll-offset",
+        args: { elementId: "scroll", offsetY: -100 }, presentationEpoch: 1 }
+    ]);
+    seat.sent.length = 0;
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(2, false) }));
+    await settle();
+    old.sendAction!(map);
+    expect(old.sendScroll!("scroll", -200)).toBeNull();
+    senders().sendAction!(map);
+    expect(senders().sendScroll!("scroll", -200)).toBeNull();
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(2) }));
+    await settle();
+    senders().sendAction!(map);
+    expect(senders().sendScroll!("scroll", -200)).toBeNull();
+    seat.emit({ ...sceneDelta, presentationEpoch: 1 });
+    seat.emit({ ...sceneDelta, presentationEpoch: 2, full: false });
+    await settle();
+    senders().sendAction!(map);
+    expect(seat.ofType("action")).toEqual([]);
+    seat.emit({ ...sceneDelta, presentationEpoch: 2 });
+    await settle();
+    old.sendAction!(map);
+    expect(old.sendScroll!("scroll", -200)).toBeNull();
+    senders().sendAction!({ ...map, presentationEpoch: 1 });
+    expect(seat.ofType("action")).toEqual([]);
+    senders().sendAction!(map);
+    expect(senders().sendScroll!("scroll", -200)).toBe("action:4");
+    expect(seat.ofType("action").map(m => m.presentationEpoch)).toEqual([2, 2]);
+    seat.sent.length = 0;
+    mirrorSettings.renderer = "stream";
+    await settle();
+    senders().sendAction!(map);
+    expect(senders().sendScroll!("scroll", -300)).toBeNull();
+    expect(seat.ofType("action")).toEqual([]);
+  });
+
+  it("holds QA input until the stream has drawn its presentation", async () => {
+    const seat = await showMirror();
+    await app!.get('[data-testid="mirror-renderer"]').setValue(true);
+    seat.emit(seatSession({ rendererState: { state: "armed", presentationEpoch: 2,
+      presentationReady: true, presentationWidth: 1920, presentationHeight: 1080 } }));
+    await settle();
+    const send = (window as unknown as { __mirrorSendInput: (msg: import("@/mirror/mirrorClient").MirrorInputMessage) => void }).__mirrorSendInput;
+    const input = { kind: "click" as const, coordX: 100, coordY: 200, presentationEpoch: 2 };
+    send(input);
+    expect(seat.ofType("input")).toEqual([]);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    send(input);
+    expect(seat.ofType("input")).toEqual([expect.objectContaining({ type: "input", ...input })]);
+  });
+
+  it("holds scene and input admission through a wide stream and a ready 1920 return", async () => {
+    const seat = await showMirror();
+    const presentation = (epoch: number, ready: boolean, width: number) => ({
+      state: "armed", presentationEpoch: epoch, presentationReady: ready,
+      presentationWidth: width, presentationHeight: 1080
+    });
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(1, true, 1920) }));
+    await settle();
+    seat.emit({ ...sceneDelta, presentationEpoch: 1 });
+    await settle();
+    const view = app!.getComponent(MirrorView);
+    const retainedState = view.props("state");
+    const revision = retainedState.revision;
+    const oldSend = view.props("sendInput")!;
+    oldSend({ kind: "key", key: "KeyE", pressed: true });
+    expect(seat.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 1 });
+    seat.sent.length = 0;
+
+    // A FULL delivered synchronously by the request must already be fenced, before Vue renders the hold.
+    const send = seat.send.bind(seat);
+    const spy = vi.spyOn(seat, "send").mockImplementation((data: string) => {
+      if (JSON.parse(data).type === "renderer" && JSON.parse(data).renderer === "stream") {
+        seat.emit({ ...sceneDelta, presentationEpoch: 1 });
+        oldSend({ kind: "key", key: "KeyE", pressed: false });
+        expect(retainedState.revision).toBe(revision);
+      }
+      send(data);
+    });
+    await app!.get('[data-testid="mirror-renderer"]').setValue(true);
+    spy.mockRestore();
+    expect(view.props("sceneReady")).toBe(false);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }]);
+    expect(seat.ofType("input")).toEqual([]);
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(2, false, 2340) }));
+    seat.emit({ ...sceneDelta, presentationEpoch: 2 });
+    await settle();
+    expect(retainedState.revision).toBe(revision);
+    expect(app!.getComponent(MirrorView).element).toBe(view.element);
+    seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: presentation(2, true, 2340) }));
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const stage = app!.getComponent((await realStageImport()).default);
+    expect(app!.getComponent(MirrorView).element).toBe(view.element);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).toContain("mirror-scene-hidden");
+    const streamSend = stage.props("sendInput")!;
+    streamSend({ kind: "key", key: "KeyE", pressed: true });
+    expect(seat.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 2 });
+    seat.sent.length = 0;
+
+    await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
+    streamSend({ kind: "key", key: "KeyE", pressed: false });
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(3, false, 1920) }));
+    seat.emit({ ...sceneDelta, presentationEpoch: 3 });
+    await settle();
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(retainedState.revision).toBe(revision);
+    seat.emit(seatSession({ renderStream: null, rendererState: presentation(3, true, 1920) }));
+    await settle();
+    for (const frame of [{ ...sceneDelta, presentationEpoch: 1 },
+      { ...sceneDelta, presentationEpoch: 3, full: false }]) seat.emit(frame);
+    await settle();
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(seat.ofType("input")).toEqual([]);
+    seat.emit({ ...sceneDelta, presentationEpoch: 3 });
+    await settle();
+    const restored = app!.getComponent(MirrorView);
+    expect(restored.element).toBe(view.element);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).not.toContain("mirror-scene-hidden");
+    expect(app!.get('[data-testid="mirror-scene-shell"]').attributes("inert")).toBeUndefined();
+    expect(restored.props("sceneReady")).toBe(true);
+    oldSend({ kind: "key", key: "KeyE", pressed: false });
+    expect(seat.ofType("input")).toEqual([]);
+    restored.props("sendInput")!({ kind: "key", key: "KeyE", pressed: true });
+    expect(seat.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 3 });
+  });
+
+  it.each(["arming", "disarming", "armed"])("does not fail a deliberate %s presentation rearm", async (state) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const old = fake.clients[0];
+    seat.emit(seatSession({ renderStream: null, rendererState: { state, presentationEpoch: 2,
+      presentationReady: false, presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+    old.options.onStatus?.({ kind: "ended" });
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    expect(app!.get('[data-testid="mirror-stream-shell"]').classes()).toContain("mirror-stream-pending");
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+  });
+
+  it.each([false, true])("falls back once when a ready armed seat loses its descriptor after rearm=%s", async (rearm) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const rendererState = { state: "armed", presentationEpoch: 2, presentationReady: true,
+      presentationWidth: 2340, presentationHeight: 1080 };
+    seat.sent.length = 0;
+    if (rearm) {
+      seat.emit(seatSession({ renderStream: null, rendererState: { ...rendererState, presentationReady: false } }));
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(seat.ofType("renderer")).toEqual([]);
+    }
+    seat.emit(seatSession({ renderStream: null, rendererState }));
+    await settle();
+    seat.emit(seatSession({ renderStream: null, rendererState }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe("descriptor gone");
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+  });
 
   it.each([404, 410, 503])("keeps the stream and input alive after a resource GET returns %i", async (httpStatus) => {
     const seat = await showMirror();
@@ -828,7 +1337,8 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await settle();
 
     expect(app!.getComponent((await realStageImport()).default).get("canvas").element).toBe(canvas);
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).toContain("mirror-scene-hidden");
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(renderStreamContext.stopped).toBeNull();
     expect(fake.clients).toHaveLength(1);
@@ -891,7 +1401,7 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     expect(app!.get('[data-testid="render-stream-status"]').text()).toBe("Connecting…");
   });
 
-  it("keeps the same mirror visible and watching until the hidden stage draws its first frame", async () => {
+  it("holds the same mirror geometry without mirror demand until the hidden stage draws its first frame", async () => {
     const seat = await showMirror();
     const mirror = app!.getComponent(MirrorView).element;
     await startStream(seat);
@@ -900,28 +1410,33 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     expect(shell().attributes("aria-hidden")).toBe("true");
     expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(true);
     expect(app!.getComponent(MirrorView).element).toBe(mirror);
-    expect(seat.ofType("watch")).toEqual([]);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }]);
     expect(fake.clients).toHaveLength(1);
     fail({ kind: "streaming", firstFrame: false });
     await settle();
     expect(app!.getComponent(MirrorView).element).toBe(mirror);
     expect(shell().classes()).toContain("mirror-stream-pending");
-    expect(seat.ofType("watch")).toEqual([]);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }]);
 
     fail({ kind: "streaming", firstFrame: true });
     await settle();
     expect(shell().classes()).not.toContain("mirror-stream-pending");
     expect(shell().attributes("aria-hidden")).toBeUndefined();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).toContain("mirror-scene-hidden");
+    expect(app!.get('[data-testid="mirror-scene-shell"]').attributes("aria-hidden")).toBe("true");
+    expect(app!.get('[data-testid="mirror-scene-shell"]').attributes("inert")).toBeDefined();
     expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }]);
     expect(fake.clients).toHaveLength(1); // enabling input must keep the drawn client
     expect(fake.clients[0].disposed).toBe(false);
     expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
     seat.emit(seatSession({ renderStream: { ...descriptor, token: "b".repeat(64) } }));
     await settle();
-    expect(renderStreamContext.firstFrame).toBe(true);
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
-    expect(app!.find('[data-testid="mirror-renderer-reason"]').exists()).toBe(false);
+    expect(renderStreamContext.firstFrame).toBe(false);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(app!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
   });
 
   it("keeps one pair and the open panel anchored through mirror, pending, stream and portrait", async () => {
@@ -1015,7 +1530,7 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await settle();
     expect(app!.getComponent(MirrorView).element).toBe(mirror);
     expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
-    expect(seat.ofType("watch")).toEqual([]);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }, { type: "watch", on: true }]);
     expect(renderStreamContext.stopped).toBe(kind === "ended" ? "ended" : "host-error: capture stopped");
     expect(app!.get('[data-testid="mirror-renderer-stopped"]').text()).toContain(renderStreamContext.stopped);
     expect(fake.clients[0].disposed).toBe(true);
@@ -1023,46 +1538,48 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
 
   it.each(["withdrawal", "checkbox", "failure"])("loads a fresh restored scene after %s", async (cause) => {
     const seat = await showMirror();
+    const mirror = app!.getComponent(MirrorView).element;
     await startStream(seat);
     fail({ kind: "streaming", firstFrame: true });
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.getComponent(MirrorView).element).toBe(mirror);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).toContain("mirror-scene-hidden");
     seat.sent.length = 0;
     if (cause === "failure") {
       fail({ kind: "ended" });
       await settle();
-      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "mirror" }]);
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
     } else if (cause === "checkbox") {
       await app!.get('[data-testid="mirror-renderer"]').setValue(false);
-      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", renderer: "mirror" }]);
-      // An in-flight armed session cannot reopen the watch or remount the retained warm-up scene.
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+      // Mirror demand resumes immediately, while an in-flight armed session cannot reopen admission.
       seat.emit(seatSession({ rendererState: { state: "armed", restoreComplete: false } }));
       await settle();
-      expect(seat.ofType("watch")).toEqual([]);
+      expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
     }
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
     expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
-    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
-    expect(seat.ofType("watch")).toEqual([]);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
     // Even a full scene sent before restoration is a straggler, not this return's baseline.
     seat.emit(sceneDelta);
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: true } }));
     await settle();
     expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
-    expect(app!.find('.mirror-join-stack').exists()).toBe(true);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
     seat.emit({ ...sceneDelta, full: false });
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
     seat.emit(sceneDelta);
     await settle();
     expect(app!.findComponent(MirrorView).exists()).toBe(true);
     expect(app!.find('.mirror-join-stack').exists()).toBe(false);
-    expect(renderStreamContext.stopped).toBe(cause === "failure" ? "ended" : null);
+    expect(renderStreamContext.stopped).toBe(cause === "failure" ? "ended" : cause === "withdrawal" ? "descriptor gone" : null);
     expect(fake.clients[0].disposed).toBe(true);
     if (cause === "checkbox") {
       const mirror = app!.getComponent(MirrorView).element;
@@ -1084,8 +1601,8 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await app!.get('[data-testid="mirror-renderer"]').setValue(false);
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
-    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
     seat.sent.length = 0;
 
     await app!.get('[data-testid="mirror-renderer"]').setValue(true);
@@ -1110,8 +1627,8 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await app!.get('[data-testid="mirror-renderer"]').setValue(false);
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
-    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
     seat.sent.length = 0;
 
     await app!.get('[data-testid="mirror-renderer"]').setValue(true);
@@ -1123,14 +1640,14 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await app!.get('[data-testid="mirror-renderer"]').setValue(false);
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: false } }));
     await settle();
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
-    expect(app!.get('[data-testid="mirror-status"]').text()).toContain("Loading");
-    expect(seat.ofType("watch")).toEqual([]);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
+    expect(app!.getComponent(MirrorView).props("sceneReady")).toBe(false);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }, { type: "watch", on: true }]);
 
     seat.emit(seatSession({ renderStream: null, rendererState: { state: "mirror", restoreComplete: true } }));
     await settle();
-    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: true }]);
-    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }, { type: "watch", on: true }]);
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
     seat.emit(sceneDelta);
     await settle();
     expect(app!.findComponent(MirrorView).exists()).toBe(true);
@@ -1142,7 +1659,7 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     fake.stageImport = () => Promise.reject(new Error("chunk unavailable"));
     await startStream(seat);
     expect(app!.getComponent(MirrorView).element).toBe(mirror);
-    expect(seat.ofType("watch")).toEqual([]);
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }, { type: "watch", on: true }]);
     expect(renderStreamContext.stopped).toBe("stage-load-failed: chunk unavailable");
   });
 
@@ -1274,6 +1791,8 @@ describe("MirrorApp — the stage chunk fails to load", () => {
     expect(stageMounted()).toBe(false);
     expect(fake.clients).toHaveLength(0);
 
+    seat.emit({ ...seatSession(), renderStream: null, rendererState: { state: "mirror", restoreComplete: true } });
+    await settle();
     seat.emit(sceneDelta);
     await settle();
     expect(app!.findComponent(MirrorView).exists()).toBe(true);
@@ -1305,6 +1824,8 @@ describe("MirrorApp — the stage chunk fails to load", () => {
   it("completes the join from MirrorView's first frame for the join's attempt after the fallback", async () => {
     fake.stageImport = () => Promise.reject(new Error("chunk 404"));
     const { host, seat } = await joinStreamingSeat();
+    seat.emit({ ...seatSession(), renderStream: null, rendererState: { state: "mirror", restoreComplete: true } });
+    await settle();
     seat.emit(sceneDelta);
     await settle();
 

@@ -210,7 +210,10 @@ describe("buildHeadlessMirrorWebSocketUrl", () => {
   // The redirected connection carries the same complete selector set.
   it("mints the same complete selector set for a redirected client", () => {
     const base = buildHeadlessMirrorWebSocketUrl(13347, { href: "http://host:13337/", protocol: "http:" });
-    expect(base).toBe("ws://host:13347/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0");
+    const parsed = new URL(base);
+    expect(parsed.searchParams.get("rendererPage")).toMatch(/^[0-9a-f]{32}$/);
+    parsed.searchParams.delete("rendererPage");
+    expect(parsed.toString()).toBe("ws://host:13347/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0");
     const on = buildHeadlessMirrorWebSocketUrl(13347, { href: "http://host:13337/", protocol: "http:" }, true);
     expect(new URL(on).searchParams.get("staticBg")).toBe("1");
     expect(new URL(on).port).toBe("13347");
@@ -221,7 +224,9 @@ describe("buildHeadlessMirrorWebSocketUrl", () => {
     const location = { href: "http://host:13337/", protocol: "http:" };
     expect(new URL(buildHeadlessMirrorWebSocketUrl(13347, location, true, true)).searchParams.get("trailDrive"))
       .toBe("1");
-    expect(buildHeadlessMirrorWebSocketUrl(13347, location, false, false)).toBe("ws://host:13347/ws?watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0");
+    const off = new URL(buildHeadlessMirrorWebSocketUrl(13347, location, false, false));
+    expect(off.searchParams.get("trailDrive")).toBe("0");
+    expect(off.searchParams.get("rendererPage")).toMatch(/^[0-9a-f]{32}$/);
   });
 });
 
@@ -460,5 +465,115 @@ describe("scene-ack flow control", () => {
     socket.readyState = MockWebSocket.OPEN;
     client.sendSceneAck();
     expect(socket.sentOfType("scene-ack")).toHaveLength(1);
+  });
+});
+
+describe("presentation admission", () => {
+  const session = (epoch: number, ready = true, width = 1920) => ({
+    type: "session",
+    session: { name: "Alice", status: "assigned", joined: true, playerId: "p:1003", connectionCount: 1 },
+    players: [], screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "mp-run" },
+    hostName: "host", scrollAction: true,
+    hostAccess: { allowed: true, reason: "allowed", generation: 0 },
+    rendererState: { state: "armed", presentationEpoch: epoch, presentationReady: ready,
+      presentationWidth: width, presentationHeight: 1080 }
+  });
+
+  it("retains compatible geometry but holds queued FULLs until a ready matching epoch FULL", () => {
+    const { client, socket } = connect(true);
+    socket.emit(session(1));
+    socket.emit({ ...keyframe, presentationEpoch: 1 });
+    const revision = client.state.revision;
+    expect(client.scenePresentationEpoch).toBe(1);
+    client.setSceneAdmission(false);
+    socket.emit({ ...keyframe, presentationEpoch: 1 });
+    expect(client.state.revision).toBe(revision);
+    expect(client.state.nodes.size).toBe(1);
+    expect(client.sceneGeneration).toBeNull();
+    socket.emit(session(2, false, 2340));
+    client.setSceneAdmission(true);
+    socket.emit({ ...keyframe, presentationEpoch: 2 });
+    socket.emit(session(2, true, 2340));
+    socket.emit({ ...keyframe, presentationEpoch: 2 });
+    expect(client.state.revision).toBe(revision);
+    socket.emit(session(3));
+    for (const frame of [keyframe, { ...keyframe, presentationEpoch: 1 },
+      { ...keyframe, presentationEpoch: 3, full: false }]) socket.emit(frame);
+    expect(client.state.revision).toBe(revision);
+    socket.emit({ ...keyframe, presentationEpoch: 3 });
+    expect(client.state.revision).toBe(revision + 1);
+    expect(client.scenePresentationEpoch).toBe(3);
+    client.close();
+  });
+
+  it.each(["select-map-node", "set-scroll-offset"])("fences %s by admission and a matching ready FULL", (semanticActionId) => {
+    const { client, socket } = connect(true);
+    const action = { semanticActionId, args: { elementId: "42" } };
+    socket.emit(session(7));
+    expect(client.sendAction({ ...action, presentationEpoch: 7 })).toBeNull();
+    socket.emit({ ...keyframe, presentationEpoch: 7, full: false });
+    expect(client.sendAction({ ...action, presentationEpoch: 7 })).toBeNull();
+    socket.emit({ ...keyframe, presentationEpoch: 7 });
+    expect(client.sendAction(action)).toBeNull();
+    expect(client.sendAction({ ...action, presentationEpoch: 6 })).toBeNull();
+    expect(client.sendAction({ ...action, presentationEpoch: 7 })).toBe("action:1");
+    expect(socket.sentOfType("action")).toEqual([
+      { type: "action", requestId: "action:1", ...action, presentationEpoch: 7 }
+    ]);
+    client.setSceneAdmission(false);
+    expect(client.sendAction({ ...action, presentationEpoch: 7 })).toBeNull();
+    socket.emit({ ...keyframe, presentationEpoch: 7 });
+    client.setSceneAdmission(true);
+    expect(client.sendAction({ ...action, presentationEpoch: 7 })).toBeNull();
+    socket.emit(session(8, false));
+    socket.emit({ ...keyframe, presentationEpoch: 8 });
+    expect(client.sendAction({ ...action, presentationEpoch: 8 })).toBeNull();
+    socket.emit(session(8));
+    for (const frame of [keyframe, { ...keyframe, presentationEpoch: 7 },
+      { ...keyframe, presentationEpoch: 8, full: false }]) socket.emit(frame);
+    expect(client.sendAction({ ...action, presentationEpoch: 8 })).toBeNull();
+    socket.emit({ ...keyframe, presentationEpoch: 8 });
+    expect(client.sendAction(action)).toBeNull();
+    expect(client.sendAction({ ...action, presentationEpoch: 7 })).toBeNull();
+    expect(client.sendAction({ ...action, presentationEpoch: 8 })).toBe("action:2");
+    expect(socket.sentOfType("action").map(m => m.presentationEpoch)).toEqual([7, 8]);
+    socket.emit({ ...session(8), rendererState: undefined });
+    expect(client.sendAction({ ...action, presentationEpoch: 8 })).toBeNull();
+    socket.emit(session(8));
+    expect(client.sendAction({ ...action, presentationEpoch: 8 })).toBeNull();
+    socket.emit({ ...keyframe, presentationEpoch: 8 });
+    expect(client.sendAction({ ...action, presentationEpoch: 8 })).toBe("action:3");
+    client.close();
+  });
+
+  it("holds legacy actions during explicit scene admission closure", () => {
+    const { client, socket } = connect(true);
+    socket.emit(keyframe);
+    client.setSceneAdmission(false);
+    expect(client.sendAction({ semanticActionId: "select-map-node" })).toBeNull();
+    expect(socket.sentOfType("action")).toEqual([]);
+    client.setSceneAdmission(true);
+    socket.emit(keyframe);
+    expect(client.sendAction({ semanticActionId: "select-map-node" })).toBe("action:1");
+    expect(socket.sentOfType("action")[0]).not.toHaveProperty("presentationEpoch");
+    client.close();
+  });
+
+  it("fences input by displayed epoch even with scene watching off and unchanged access", () => {
+    const { client, socket } = connect(false);
+    const key = { kind: "key", key: "KeyE", pressed: true } as const;
+    socket.emit(session(7));
+    client.sendInput(key);
+    client.sendInput({ ...key, presentationEpoch: 6 });
+    client.sendInput({ ...key, presentationEpoch: 7 });
+    expect(socket.sentOfType("input")).toHaveLength(1);
+    socket.emit(session(8, false));
+    client.sendInput({ ...key, presentationEpoch: 8 });
+    socket.emit(session(8));
+    socket.emit(session(7)); // delayed session cannot roll the presentation back
+    client.sendInput({ ...key, presentationEpoch: 7 });
+    client.sendInput({ ...key, presentationEpoch: 8 });
+    expect(socket.sentOfType("input").map(m => m.presentationEpoch)).toEqual([7, 8]);
+    client.close();
   });
 });

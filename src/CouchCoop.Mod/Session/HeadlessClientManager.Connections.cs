@@ -578,11 +578,13 @@ public sealed partial class HeadlessClientManager
         start.Environment["COUCHCOOP_HEADLESS_CONTROL_GENERATION"] = owned.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (owned.RouteMode == SeatBrowserRouteMode.Shared)
         {
+            start.Environment[SeatBrowserPipe.RouteEnvironmentVariable] = owned.RouteId;
             start.Environment[SeatBrowserPipe.NameEnvironmentVariable] = owned.PipeName;
             start.Environment[SeatBrowserPipe.TokenEnvironmentVariable] = owned.Token;
         }
         else
         {
+            start.Environment.Remove(SeatBrowserPipe.RouteEnvironmentVariable);
             start.Environment.Remove(SeatBrowserPipe.NameEnvironmentVariable);
             start.Environment.Remove(SeatBrowserPipe.TokenEnvironmentVariable);
         }

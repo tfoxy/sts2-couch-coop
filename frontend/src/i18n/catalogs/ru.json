@@ -110,6 +110,7 @@
   "settings.newRendererCoreLoadFailed": "Не удалось загрузить новый рендерер на этой странице.",
   "settings.newRendererNoWebgl2": "Этот браузер не может запустить новый рендерер.",
   "settings.newRendererHostView": "Недоступно при просмотре игры самого хоста.",
+  "settings.newRendererHostUpdate": "Обновите мод хоста, чтобы использовать новый рендерер.",
   "settings.newRendererNeedsProxy": "Эта страница не может воспроизвести трансляцию нового рендерера хоста. Откройте HTTPS-ссылку хоста в Chrome или Edge либо зеркало на компьютере хоста.",
   "settings.newRendererSwitching": "Переключение…",
   "settings.newRendererFailed": "Не удалось запустить новый рендерер.",

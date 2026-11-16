@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — a .mjs sibling of the harness; there are no types for the scripts tree.
-import { CORRECTION_PX, findRest, scoreCorrections } from "../../../../scripts/lib/handLandingScore.mjs";
+import { CORRECTION_PX, findRest, freshLandingRows, scoreCorrections } from "../../../../scripts/lib/handLandingScore.mjs";
 
 interface Row {
   t: number;
@@ -582,5 +582,57 @@ describe("cancellation follows its event, not an earlier natural expiry", () => 
 
   it("fails incomplete cancellation evidence instead of silently dropping its obligation", () => {
     expect(score(rows.slice(0, 6)).invalidCancellations[0].restMissing).toBe(true);
+  });
+});
+
+
+describe("H12 closed-row selection", () => {
+  const landing = (seq: number, armAt = seq * 100, id = "holder", distPx = 0) =>
+    ({ seq, armAt, id, distPx });
+
+  it("retains a new wrong prediction when a full ring evicts its oldest row", () => {
+    const before = Array.from({ length: 200 }, (_, i) => landing(i + 1));
+    const offender = landing(201, 20100, "holder", 8);
+    const after = [...before.slice(1), offender];
+    expect(after).toHaveLength(before.length);
+    expect(freshLandingRows(before, after)).toEqual([offender]);
+    expect(freshLandingRows(before, after)[0].distPx).toBe(8);
+  });
+
+  it("returns no rows for an unchanged full ring read through a new snapshot", () => {
+    const before = Array.from({ length: 200 }, (_, i) => landing(i + 1));
+    expect(freshLandingRows(before, before.map((row) => ({ ...row })))).toEqual([]);
+  });
+
+  it("selects appended rows while the ring is not full", () => {
+    const before = [landing(1), landing(2)];
+    const next = landing(3);
+    expect(freshLandingRows(before, [...before, next])).toEqual([next]);
+  });
+
+  it("selects rows after a clear leaves a shorter ring", () => {
+    const before = [landing(10), landing(11), landing(12)];
+    const next = landing(13);
+    expect(freshLandingRows(before, [next])).toEqual([next]);
+  });
+
+  it("distinguishes a reused sequence after renderer replacement by its arm time", () => {
+    const before = [landing(1, 100)];
+    const next = landing(1, 200);
+    expect(freshLandingRows(before, [next])).toEqual([next]);
+  });
+
+  it("selects newly closed rows even when their arm sequence precedes a retained row", () => {
+    const before = [landing(10), landing(8)];
+    const earlierArm = landing(9);
+    const laterArm = landing(11);
+    expect(freshLandingRows(before, [before[1], laterArm, earlierArm]))
+      .toEqual([laterArm, earlierArm]);
+  });
+
+  it("includes the holder identity in a row's identity", () => {
+    const before = [landing(1, 100, "first")];
+    const next = landing(1, 100, "second");
+    expect(freshLandingRows(before, [next])).toEqual([next]);
   });
 });

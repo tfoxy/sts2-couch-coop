@@ -48,6 +48,10 @@ internal static class SeatBrowserPipeTests
                 "pipe-backed seat has an inert host-UI snapshot, not a TCP join URL");
             Expect(service.HotServerHost is HotReloadableBrowserServerHost { IsRunning: true },
                 "host-UI startup keeps the seat pipe server running");
+            Expect(service.HotServerHost is CouchCoop.Mod.Contracts.IHotRenderStreamRelayHost
+                { SupportsRenderStreamRelay: true } relay
+                && relay.RenderStreamSeatRoute == Environment.GetEnvironmentVariable(SeatBrowserPipe.RouteEnvironmentVariable),
+                "the persistent seat host exposes its launched route through the optional relay capability");
             Expect(HeadlessConnectionReporter.IsRelayReadyForTests,
                 "the built-in browser generation announces pipe readiness during startup");
             using var peer = new NamedPipeClientStream(".",
@@ -200,6 +204,7 @@ internal static class SeatBrowserPipeTests
         start.Environment["COUCHCOOP_HEADLESS_CLIENT"] = "1";
         start.Environment[SeatBrowserPipe.NameEnvironmentVariable] = PipeName();
         start.Environment[SeatBrowserPipe.TokenEnvironmentVariable] = new string('f', 64);
+        start.Environment[SeatBrowserPipe.RouteEnvironmentVariable] = new string('a', 32);
         // A different temp dir from this process's: the seat must still bind where the host would relay to.
         var seatTemp = Path.Combine(Path.GetTempPath(), "couchcoop-seat-tmp-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(seatTemp);

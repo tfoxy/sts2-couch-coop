@@ -154,9 +154,6 @@ import { localFixturePlayerId, installLocalFixtureJoin } from "./lib/touch-live-
 //   * A fresh instance whose user-dir has no `steam/<id>` profile opens a Steam cloud-sync modal and the
 //     browser server NEVER starts (symptom: the port never opens). `sts2 --instance` seeds the profile
 //     itself; if the port never opens, check `<instanceDir>/user/SlayTheSpire2/logs/godot.log` first.
-//   * Under `--headless` the mod's idle visual suspender drops `Engine.MaxFps` to 8 after a quiet
-//     period, which adds seconds of latency to a closed-loop measurement. The launcher below exports
-//     `COUCHCOOP_HEADLESS_IDLE_FPS=0` to disable the throttle while keeping the freezes.
 //   * `page.evaluate(<string>)` IGNORES extra args. Every page-side helper here is a real function with
 //     real arguments for that reason.
 //   * Playwright's touchscreen only exposes `tap()`. Everything needing a held finger (a peek dwell, a
@@ -178,7 +175,7 @@ import { fileURLToPath } from "node:url";
 import { BROWSER_PORT_RELATIVE, readInstanceMeta } from "./lib/instance-port.mjs";
 import { acquireLease, releaseLease } from "./live-qa-lock.mjs";
 import { assessClientConfirm, selectMirrorModuleBundle } from "./lib/h17-client-confirm-readiness.mjs";
-import { CORRECTION_PX, scoreCorrections } from "./lib/handLandingScore.mjs";
+import { CORRECTION_PX, freshLandingRows, scoreCorrections } from "./lib/handLandingScore.mjs";
 import { classifyProducerCatchup, classifyRestCommit, RESTING_TOLERANCE_PX } from "./lib/handLandingRestFence.mjs";
 import { createH15NativeArrivalProbe } from "./lib/h15-native-arrival.mjs";
 import { h15CoordinateVerdict, h15FocusedGrabFailure, planH15FifthPlay } from "./lib/h15-plan.mjs";
@@ -379,7 +376,6 @@ function manualPlayerEnvironment() {
   for (const key of PARENT_SEAT_ENV) delete env[key];
   env.COUCHCOOP_HEADLESS_CLIENT = "1";
   env.COUCHCOOP_PREFERRED_PORT = String(args.gamePort);
-  env.COUCHCOOP_HEADLESS_IDLE_FPS = "0";
   return env;
 }
 
@@ -552,14 +548,25 @@ async function ensureVite() {
 async function verifyAssetSource() {
   // These are the real hand-control sprite and its atlas, required by H14. Scene nodes alone can stream
   // from a standalone player while every image fails: refuse that incomplete setup before driving input.
-  for (const path of ["images/atlases/ui_atlas.sprites/peek_button.tres", "images/atlases/ui_atlas_0.png"]) {
+  const paths = ["images/atlases/ui_atlas.sprites/peek_button.tres"];
+  for (let index = 0; index < paths.length; index += 1) {
+    const path = paths[index];
     const response = await fetch(`http://127.0.0.1:${args.vitePort}/res/${path}`, { signal: AbortSignal.timeout(60000) });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`asset setup failed: /res/${path} returned HTTP ${response.status}; ` +
         "headless players cannot extract cold assets. Supply --asset-origin for a rendered host or prewarm the player's cache.");
     }
-    await response.arrayBuffer();
+    if (index === 0) {
+      const sprite = await response.text();
+      const texture = sprite.split(/\r?\n/).find((line) => line.startsWith("[ext_resource ")
+        && /\btype="Texture2D"/.test(line));
+      const atlas = texture?.match(/\bpath="res:\/\/([^"\r\n]+)"/)?.[1];
+      if (!atlas) throw new Error(`asset setup failed: /res/${path} declares no texture atlas`);
+      paths.push(atlas);
+    } else {
+      await response.arrayBuffer();
+    }
   }
   log("[setup] hand-control sprite and atlas are available through the asset proxy");
 }
@@ -2898,7 +2905,6 @@ async function checkH12(ctx) {
   if (!before) {
     return skip("this page has no __mirrorLandingLog seam after 5s (older build, or no renderer was constructed)");
   }
-  const seenBefore = before.rows.length;
 
   const tour = await handGestureTour(ctx, () => null);
   if (tour.skipped) return tour.skipped;
@@ -2906,10 +2912,7 @@ async function checkH12(ctx) {
   await stopLandingTrace(page);
 
   const after = await readLandingLog(page);
-  // The log is a bounded ring, so "everything past the mark" is only right while the ring did not wrap. A hand
-  // gesture opens ~5 rows and the ring holds 200; if it ever does wrap, taking the whole ring is the safe error
-  // (it over-reports, which fails loudly, rather than under-reporting, which passes quietly).
-  const fresh = after.rows.length >= seenBefore ? after.rows.slice(seenBefore) : after.rows;
+  const fresh = freshLandingRows(before.rows, after.rows);
   if (fresh.length === 0) {
     // SKIP, NOT FAIL. "Nothing was predicted" is a fact about the GAME's answer to the gesture, not about the
     // client: a hand the producer re-poses by teleport rather than by tween arms nothing, and that is a legal

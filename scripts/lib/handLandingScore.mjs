@@ -463,3 +463,10 @@ export function scoreCorrections(trace, landingRows = []) {
   corrections.invalidFrameIdentity = invalidFrameIdentity;
   return corrections;
 }
+
+/** Select newly closed rows across bounded-ring eviction, clears, and renderer replacement. */
+export function freshLandingRows(before, after) {
+  const identity = (row) => JSON.stringify([row.seq, row.armAt, row.id]);
+  const seen = new Set(before.map(identity));
+  return after.filter((row) => !seen.has(identity(row)));
+}

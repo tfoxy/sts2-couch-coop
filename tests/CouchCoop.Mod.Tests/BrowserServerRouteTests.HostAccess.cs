@@ -226,9 +226,9 @@ internal sealed partial class BrowserServerRouteTests
                     var oldWatchEpoch = (long)typeof(CouchCoopWebSocketConnection).GetField("_watchEpoch",
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(connection)!;
                     var sendMethod = typeof(CouchCoopWebSocketConnection).GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                        .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 6);
+                        .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 7);
                     var oldSend = (Task)sendMethod.Invoke(connection, [Encoding.UTF8.GetBytes("{\"type\":\"scene-delta\",\"oldWatch\":true}"),
-                        CancellationToken.None, access.State.Generation, oldWatchEpoch, null, false])!;
+                        CancellationToken.None, access.State.Generation, oldWatchEpoch, null, false, false])!;
                     await SendWatchAsync(socket, false);
                     Expect(await WaitForAsync(() => !connection.WantsSceneStream), "watch off immediately fences sends before its status can send");
                     sendGate.Release();
@@ -314,9 +314,24 @@ internal sealed partial class BrowserServerRouteTests
                 CancellationToken.None);
             using (var session = JsonDocument.Parse(await ReadWsMessageAsync(player)))
                 Expect(session.RootElement.GetProperty("hostAccess").GetProperty("allowed").GetBoolean(), "separate seat remains available");
+            Expect(await WaitForSceneSubscriptionAsync(runtime, true), "separate seat starts its own scene producer while host access is blocked");
+            runtime.PushSceneDelta(BuildSampleSceneDelta());
+            using (var scene = JsonDocument.Parse(await ReadNextSceneDeltaMatchingAsync(player,
+                node => TryReadFirstUpsertOriginX(node) == 100)))
+                Expect(scene.RootElement.GetProperty("full").GetBoolean()
+                    && scene.RootElement.GetProperty("presentationEpoch").GetInt64() == 0,
+                    "legacy separate seat receives its original presentation FULL before input");
             await SendAccessInputAsync(player, "seat-input");
             _ = await ReadCorrelatedReplyAsync(player, "seat-input");
             Expect(runtime.LastActionRequest?.RequestId == "seat-input", "separate player controls unaffected");
+            foreach (var kind in new[] { "select-map-node", "set-scroll-offset" })
+            {
+                await SendAccessJsonAsync(player, JsonSerializer.Serialize(new { type = "action", requestId = "seat-" + kind,
+                    semanticActionId = kind, args = new { elementId = "42" } }));
+                _ = await ReadCorrelatedReplyAsync(player, "seat-" + kind);
+                Expect(runtime.LastActionRequest?.RequestId == "seat-" + kind,
+                    "separate seat gameplay action ignores blocked host privacy: " + kind);
+            }
             using (var seatHold = new ManualResetEventSlim(false))
             {
                 runtime.ExecuteActionGate = seatHold;
@@ -332,11 +347,61 @@ internal sealed partial class BrowserServerRouteTests
                         if (frame.RootElement.GetProperty("type").GetString() == "pong") break;
                     }
                 }
+                var cancellations = runtime.InputCancellations;
+                var seatConnections = (System.Collections.Concurrent.ConcurrentDictionary<Guid, CouchCoopWebSocketConnection>)
+                    typeof(CouchCoopBrowserServer).GetField("_connections", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(seat)!;
+                var playerConnection = seatConnections.Values.Single();
                 await CloseWebSocketSilentlyAsync(player);
+                Expect(await WaitForAsync(() => (bool)typeof(CouchCoopWebSocketConnection).GetField("_closing",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(playerConnection)!),
+                    "seat disconnect retires input before the game thread resumes");
                 seatHold.Set();
-                Expect(await WaitForAsync(() => runtime.LastActionRequest?.RequestId == "seat-release"),
-                    "separate player disconnect still drains its accepted release edge");
+                Expect(await WaitForAsync(() => runtime.InputCancellations > cancellations),
+                    "separate player disconnect cancels held input instead of replaying retired work");
+                Expect(await WaitForAsync(() => seatConnections.IsEmpty), "separate seat finishes draining retired input");
+                Expect(runtime.LastActionRequest?.RequestId == "seat-held", "disconnect rejects its queued release after retiring the watch epoch");
                 runtime.ExecuteActionGate = null;
+            }
+            using (var actionPlayer = new ClientWebSocket())
+            {
+                await actionPlayer.ConnectAsync(new UriBuilder(seatUri) { Scheme = "ws", Path = "/ws", Query = StreamingQuery }.Uri,
+                    CancellationToken.None);
+                _ = await ReadWsMessageAsync(actionPlayer);
+                Expect(await WaitForSceneSubscriptionAsync(runtime, true), "action disconnect viewer starts its own scene subscription");
+                runtime.PushSceneDelta(BuildSampleSceneDelta());
+                _ = await ReadNextSceneDeltaMatchingAsync(actionPlayer, node => node.GetProperty("full").GetBoolean());
+                var seatConnections = (System.Collections.Concurrent.ConcurrentDictionary<Guid, CouchCoopWebSocketConnection>)
+                    typeof(CouchCoopBrowserServer).GetField("_connections", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(seat)!;
+                var actionConnection = seatConnections.Values.Single();
+                var lastAction = runtime.LastActionRequest;
+                using var entered = new ManualResetEventSlim();
+                using var release = new ManualResetEventSlim();
+                var blocked = Task.Run(() => mainThread.Invoke(() => { entered.Set(); release.Wait(); return true; }));
+                try
+                {
+                    Expect(entered.Wait(TimeSpan.FromSeconds(5)), "test holds the game thread before seat actions arrive");
+                    var hops = mainThread.Hops;
+                    foreach (var kind in new[] { "select-map-node", "set-scroll-offset" })
+                        await SendAccessJsonAsync(actionPlayer, JsonSerializer.Serialize(new { type = "action", requestId = "retired-" + kind,
+                            semanticActionId = kind, args = new { elementId = "42" } }));
+                    await SendAccessJsonAsync(actionPlayer, "{\"type\":\"ping\",\"t0\":123456}");
+                    using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                    {
+                        while (true)
+                        {
+                            using var frame = JsonDocument.Parse(await ReadWsMessageAsync(actionPlayer, deadline.Token));
+                            if (frame.RootElement.GetProperty("type").GetString() == "pong") break;
+                        }
+                    }
+                    Expect(await WaitForAsync(() => mainThread.Hops > hops), "accepted action waits for the game thread without blocking socket receive");
+                    await CloseWebSocketSilentlyAsync(actionPlayer);
+                    Expect(await WaitForAsync(() => (bool)typeof(CouchCoopWebSocketConnection).GetField("_closing",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(actionConnection)!),
+                        "real browser closure retires queued gameplay actions before the game thread resumes");
+                }
+                finally { release.Set(); await blocked; }
+                Expect(await WaitForAsync(() => seatConnections.IsEmpty), "seat disconnect drains both pending gameplay actions");
+                Expect(ReferenceEquals(runtime.LastActionRequest, lastAction), "neither queued map nor scroll action executes after real disconnect");
             }
             Expect(access.StartCount == hostStartsBeforeSeat && !access.Started && access.ListenerCount == 0,
                 "separate player instance creates no host access demand");

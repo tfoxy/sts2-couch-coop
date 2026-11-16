@@ -13,6 +13,23 @@ internal static class StreamingSeatDescriptor
     /// <summary>godot-scene-web's <c>GRC_LIVE_LAN_PLAINTEXT</c>: <c>allow</c> serves plain ws to LAN peers beside wss.</summary>
     internal const string LanPlaintextEnvironmentVariable = "GRC_LIVE_LAN_PLAINTEXT";
 
+    internal const string DirectEnvironmentVariable = "COUCHCOOP_RENDER_STREAM_DIRECT";
+
+    internal static bool IsSeatRoute(string? route)
+        => route is { Length: 32 } && route.All(Uri.IsHexDigit);
+
+    internal static BrowserRenderStreamDto? BuildRelayed(
+        (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? snapshot,
+        string? route)
+    {
+        if (!IsSeatRoute(route) || snapshot is not { } arm || LoopbackListen.Match(arm.Listen) is not { Success: true } hub
+            || int.Parse(hub.Groups[2].Value, CultureInfo.InvariantCulture) > 65535
+            || !TokenShape.IsMatch(arm.Token) || arm.StreamVersion is not (11 or 12 or 13)
+            || Presentation.Match(arm.RootSize) is not { Success: true } size) return null;
+        return new($"/render-stream/{route}/ws", $"/render-stream/{route}", arm.Token, arm.StreamVersion,
+            [int.Parse(size.Groups[1].Value, CultureInfo.InvariantCulture), int.Parse(size.Groups[2].Value, CultureInfo.InvariantCulture)]);
+    }
+
     private static readonly Regex TokenShape = new("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
     private static readonly Regex LoopbackListen = new(
         @"^(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})$", RegexOptions.CultureInvariant);

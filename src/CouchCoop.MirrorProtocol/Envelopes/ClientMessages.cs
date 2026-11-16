@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace CouchCoop.MirrorProtocol.Envelopes;
 
 // SEND-side client → host control messages, byte-compatible with what frontend/src/mirror/mirrorClient.ts sends
@@ -43,9 +45,20 @@ public sealed record InputMessage(
     double? LocalX = null,
     double? LocalY = null,
     // Decimal Godot instance id; when present it is authoritative over scene/path.
-    string? TargetInstance = null)
+    string? TargetInstance = null,
+    long? PresentationEpoch = null)
 {
     public string Type => "input";
+}
+
+// Existing map and scroll actions carry the epoch of the presentation the viewer is controlling.
+public sealed record ActionMessage(
+    string RequestId,
+    string SemanticActionId,
+    Dictionary<string, JsonElement>? Args = null,
+    long? PresentationEpoch = null)
+{
+    public string Type => "action";
 }
 
 // `{type:"scene-ack"}` — flow control: sent after each rendered frame so the host releases the next coalesced delta.

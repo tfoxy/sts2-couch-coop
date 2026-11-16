@@ -30,6 +30,8 @@ import { computed, reactive } from "vue";
 
 import { validateEndpoint, type RenderStreamEndpoint } from "@godot-scene-web/render-stream-client";
 
+import { hostBase } from "@/join/hostBase";
+
 import type { BrowserRendererState } from "@/protocol/browserEnvelope";
 
 import { mirrorDesignSize } from "@/mirror/mirrorDesign";
@@ -46,13 +48,14 @@ export const RENDER_STREAM_HIDDEN_DISPOSE_MS = 60_000;
 export const RENDER_STREAM_STAGE_LOAD_TIMEOUT_MS = 15_000;
 
 export type RenderStreamUnavailableReason = "core-build" | "no-webgl2" | "host-view" | "needs-proxy"
-  | "host-unavailable" | "not-streaming";
+  | "host-unavailable" | "host-update" | "not-streaming";
 
 export type RenderStreamEndpointSource = "qa-override" | "session";
 
 /** The host session's `renderStreamLan` (CAR7b): what its streaming seat offers a LAN page. Absent: the host has no
  * capture, so no seat of it streams. */
 export interface RenderStreamLanOffer {
+  relay?: boolean;
   /** The seat serves WebTransport (self-signed, pinned by hash: any secure-context page). */
   webTransport: boolean;
   /** The seat serves wss with a host certificate that names this page's host. */
@@ -67,10 +70,10 @@ export interface RenderStreamLanOffer {
  */
 export function parseLanOffer(raw: unknown): RenderStreamLanOffer | null {
   if (raw === null || typeof raw !== "object") return null;
-  const value = raw as { webTransport?: unknown; tls?: unknown; ws?: unknown };
+  const value = raw as { webTransport?: unknown; tls?: unknown; ws?: unknown; relay?: unknown };
   if (typeof value.webTransport !== "boolean" || typeof value.tls !== "boolean") return null;
   if (value.ws !== undefined && typeof value.ws !== "boolean") return null;
-  return { webTransport: value.webTransport, tls: value.tls, ws: value.ws ?? !value.tls };
+  return { webTransport: value.webTransport, tls: value.tls, ws: value.ws ?? !value.tls, ...(value.relay === true ? { relay: true } : {}) };
 }
 
 /** What this page can open: the facts the carrier matrix needs. */
@@ -90,6 +93,7 @@ export interface RenderStreamPageFacts {
  * (with one it refuses plaintext from the LAN). Any page runs the client, a plain-http one included (CAR9).
  */
 export function lanCarrierUsable(offer: RenderStreamLanOffer, page: RenderStreamPageFacts): boolean {
+  if (offer.relay) return !page.https || /^https:/i.test(hostBase());
   return (offer.webTransport && page.secureContext && page.webTransport) || offer.tls || (offer.ws && !page.https);
 }
 
@@ -134,6 +138,7 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
   if (inputs.directView) return unavailable("host-view");
   if (inputs.qaEndpoint) return { available: true, reason: null, endpoint: inputs.qaEndpoint, source: "qa-override" };
   if (inputs.hostUnavailableReason) return unavailable("host-unavailable");
+  if (!inputs.lanOffer?.relay) return unavailable("host-update");
   // A loopback http page is a secure context by definition, whatever a probe (or jsdom) reports.
   const page = inputs.pageLoopback ? { ...(inputs.page ?? LOOPBACK_PAGE), secureContext: true } : inputs.page ?? LOOPBACK_PAGE;
   if (inputs.sessionEndpoint) {
@@ -162,10 +167,16 @@ export function qaRenderStreamEndpoint(settings: Pick<MirrorSettings, "renderStr
 }
 
 /** The envelope's `renderStream` field: a valid descriptor, or null (absent or unusable means "not streaming"). */
-export function sessionRenderStreamEndpoint(raw: unknown): RenderStreamEndpoint | null {
+export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): RenderStreamEndpoint | null {
   if (raw === null || raw === undefined) return null;
   try {
-    return validateEndpoint(raw);
+    const value = raw as Record<string, unknown>;
+    if (typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
+    const url = new URL(value.url, `${base}/`);
+    if (url.protocol === "http:") url.protocol = "ws:";
+    if (url.protocol === "https:") url.protocol = "wss:";
+    return validateEndpoint({ ...value, url: url.href,
+      resourceBase: value.resourceBase === "" ? new URL(base).origin : new URL(value.resourceBase, `${base}/`).href.replace(/\/$/, "") });
   } catch {
     return null;
   }
@@ -268,8 +279,7 @@ export function seatRendererRequest(
     & { renderer: MirrorSettings["renderer"] }
 ): "stream" | undefined {
   const page = inputs.page ?? LOOPBACK_PAGE;
-  const reachable = inputs.pageLoopback
-    || (inputs.lanOffer != null && lanCarrierUsable(inputs.lanOffer, page));
+  const reachable = inputs.lanOffer?.relay === true && lanCarrierUsable(inputs.lanOffer, page);
   return !inputs.hostUnavailableReason && inputs.renderer === "stream" && inputs.coreProblem === null
     && !inputs.coreLoadFailed && inputs.webgl2 && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
 }

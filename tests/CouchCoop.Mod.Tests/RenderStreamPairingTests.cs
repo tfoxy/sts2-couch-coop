@@ -381,7 +381,7 @@ internal static class RenderStreamPairingTests
             var slot = h.Launches[i].Slot;
             var env = h.Environments[i];
             Assert(env["GRC_MODE"] == "standby", $"slot {slot} starts in standby");
-            Assert(env["GRC_LIVE_LISTEN"] == $"0.0.0.0:{StreamingSeatLaunch.HubPortForSlot(slot)}",
+            Assert(env["GRC_LIVE_LISTEN"] == $"127.0.0.1:{StreamingSeatLaunch.HubPortForSlot(slot)}",
                 $"slot {slot} gets its own hub port");
             Assert(env["GRC_EVIDENCE_DIR"] == StreamingSeatLaunch.EvidenceDirectory(h.UserDir, slot),
                 $"slot {slot} gets its own evidence directory");
@@ -522,10 +522,10 @@ internal static class RenderStreamPairingTests
             new BrowserRenderStreamWebTransportDto("https://127.0.0.1:13366/render-stream", [new string('c', 64)])));
         Assert(wt.Contains("\"webTransport\":{\"url\":\"https://127.0.0.1:13366/render-stream\",\"certificateHashes\":[\"", StringComparison.Ordinal),
             $"the client's key names: {wt}");
-        Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror")) == "{\"state\":\"mirror\",\"restoreComplete\":true}",
+        Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror")) == "{\"state\":\"mirror\",\"restoreComplete\":true,\"presentationEpoch\":0,\"presentationReady\":true,\"presentationWidth\":1920,\"presentationHeight\":1080}",
             "a restored renderer state omits its absent reason");
         Assert(BrowserJson.Serialize(new BrowserRendererStateDto("mirror", RestoreComplete: false))
-            == "{\"state\":\"mirror\",\"restoreComplete\":false}", "early fallback distinguishes pending restoration");
+            == "{\"state\":\"mirror\",\"restoreComplete\":false,\"presentationEpoch\":0,\"presentationReady\":true,\"presentationWidth\":1920,\"presentationHeight\":1080}", "early fallback distinguishes pending restoration");
         var unpinned = BrowserJson.Serialize(new BrowserRenderStreamWebTransportDto("https://h:1/render-stream"));
         Assert(unpinned == "{\"url\":\"https://h:1/render-stream\"}", $"no certificateHashes member when unpinned: {unpinned}");
     }

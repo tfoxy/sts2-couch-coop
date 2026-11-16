@@ -110,6 +110,7 @@
   "settings.newRendererCoreLoadFailed": "이 페이지에서 새 렌더러를 불러오지 못했습니다.",
   "settings.newRendererNoWebgl2": "이 브라우저에서는 새 렌더러를 실행할 수 없습니다.",
   "settings.newRendererHostView": "호스트 자신의 게임을 볼 때는 사용할 수 없습니다.",
+  "settings.newRendererHostUpdate": "새 렌더러를 사용하려면 호스트 모드를 업데이트하세요.",
   "settings.newRendererNeedsProxy": "이 페이지에서는 호스트의 새 렌더러 스트림을 실행할 수 없습니다. Chrome이나 Edge에서 호스트의 HTTPS 링크를 열거나, 호스트 컴퓨터에서 미러를 여세요.",
   "settings.newRendererSwitching": "전환 중…",
   "settings.newRendererFailed": "새 렌더러를 시작할 수 없습니다.",
