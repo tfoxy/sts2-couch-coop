@@ -152,7 +152,9 @@ Two things in that note are load-bearing, and `scripts/test-release-body.sh` ass
   not — see "One payload, one revision" below — and that exact sentence shipped as release prose
   until this shape replaced it.
 
-Pushing is always explicit — no agent pushes a branch or a tag on its own.
+Branch and tag pushes require an explicit request, except for temporary validation refs and
+workflow staging required by the documented remote-validation workflow. Those pushes are
+authorized as part of validation; main, release branches and tags are outside that exception.
 
 ### What a release publishes
 

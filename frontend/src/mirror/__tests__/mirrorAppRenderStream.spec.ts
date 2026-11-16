@@ -10,6 +10,7 @@ import type { RenderStreamClientOptions, RenderStreamStatus } from "@godot-scene
 // stream fails.
 
 const fake = vi.hoisted(() => ({
+  clientFactory: null as null | ((options: RenderStreamClientOptions) => import("@godot-scene-web/render-stream-client").RenderStreamClient),
   clients: [] as Array<{ options: RenderStreamClientOptions; connects: number; disposed: boolean }>,
   // The stage chunk's import (renderStreamStageLoader.ts): the real one unless a spec swaps it.
   stageImport: null as null | (() => Promise<unknown>)
@@ -24,6 +25,10 @@ vi.mock("@godot-scene-web/render-stream-client", async (importOriginal) => ({
   createRenderStreamClient: (options: RenderStreamClientOptions) => {
     const client = { options, connects: 0, disposed: false };
     fake.clients.push(client);
+    if (fake.clientFactory) {
+      const real = fake.clientFactory(options);
+      return { ...real, dispose: () => { client.disposed = true; real.dispose(); } };
+    }
     return {
       connect: () => { client.connects += 1; },
       setEndpoint: () => {},
@@ -39,6 +44,8 @@ vi.mock("@/mirror/renderStreamCore", () => ({
     problem: null
   })
 }));
+
+import { resourceLifecycleClient } from "./resourceLifecycleClient";
 
 import MirrorApp from "@/mirror/MirrorApp.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
@@ -151,6 +158,7 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   fake.clients.length = 0;
   fake.stageImport = null;
+  fake.clientFactory = null;
   realWebSocket = globalThis.WebSocket;
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
   // Widescreen stretch off unless a test turns it on: a streaming-seat request then carries no `aspect` (PRES-A).
@@ -793,6 +801,66 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     seat.emit(seatSession());
     await settle();
   }
+
+  it.each([404, 410, 503])("keeps the stream and input alive after a resource GET returns %i", async (httpStatus) => {
+    const seat = await showMirror();
+    let lifecycle!: ReturnType<typeof resourceLifecycleClient>;
+    fake.clientFactory = (options) => {
+      lifecycle = resourceLifecycleClient(options);
+      return lifecycle.client;
+    };
+    await startStream(seat);
+    lifecycle.open();
+    lifecycle.transaction(1, ["missing", "available"]);
+    lifecycle.frame();
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    const stage = app!.getComponent((await realStageImport()).default);
+    const canvas = stage.get("canvas").element;
+    seat.sent.length = 0;
+
+    lifecycle.complete("missing", httpStatus);
+    lifecycle.complete("available", 200);
+    await settle();
+    lifecycle.frame();
+    lifecycle.transaction(2, []);
+    lifecycle.frame();
+    await settle();
+
+    expect(app!.getComponent((await realStageImport()).default).get("canvas").element).toBe(canvas);
+    expect(app!.findComponent(MirrorView).exists()).toBe(false);
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(fake.clients).toHaveLength(1);
+    expect(fake.clients[0].disposed).toBe(false);
+    expect(lifecycle.transport.closed).toBeNull();
+    expect(lifecycle.calls).toContain("stage available");
+    expect(lifecycle.calls).toContain("apply 2");
+    expect(lifecycle.transport.acks()).toContain("applied 2");
+    expect(lifecycle.client.stats().resources).toMatchObject({
+      unavailable: 1, found: 1,
+      missing: httpStatus === 503 ? 0 : 1,
+      temporary: httpStatus === 503 ? 1 : 0,
+      recent: [expect.objectContaining({ hash: "missing", kind: 0, seq: 1, status: httpStatus, count: 1 })]
+    });
+    // The scripted core still names the resource across this independent update. Naming it
+    // again must keep it suppressed, with one diagnostic and no timer or duplicate GET.
+    lifecycle.transaction(3, ["missing"]);
+    lifecycle.frame();
+    await settle();
+    expect(lifecycle.transport.gets.filter((get) => get.path.endsWith("missing"))).toHaveLength(1);
+    expect(lifecycle.client.stats().resources?.recent).toHaveLength(1);
+    expect(lifecycle.transport.acks()).toContain("applied 3");
+    expect(seat.ofType("renderer")).toEqual([]);
+    expect(seat.ofType("watch")).toEqual([]);
+    expect(stage.props("inputEnabled")).toBe(true);
+    for (const [type, buttons] of [["pointerdown", 1], ["pointerup", 0]] as const) {
+      const event = new MouseEvent(type, { bubbles: true, clientX: 10, clientY: 20, buttons });
+      Object.defineProperties(event, { pointerType: { value: "mouse" }, pointerId: { value: 1 } });
+      canvas.dispatchEvent(event);
+    }
+    expect(seat.ofType("input")).toHaveLength(2);
+  });
 
   it.each(["arming", "armed", "failed"] as const)("keeps a saved-mirror page mounted and watching while a shared seat is %s", async (state) => {
     const seat = await showMirror();
