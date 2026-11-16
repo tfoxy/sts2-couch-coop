@@ -95,7 +95,8 @@ function composedOverrides() {
     itemMetaJson: () => "", setLogRemoved: vi.fn(), takeRemoved: () => new Uint32Array(),
     setOverrides: vi.fn(), refreshOverrides: () => 0, querySubtreeRect: () => [],
     queryChildren: () => new Uint32Array(), hitTest: () => null,
-    setHitFilters: vi.fn(), setPickOrder: vi.fn()
+    setHitFilters: vi.fn(), setPickOrder: vi.fn(),
+    itemVisible: () => false, queryItems: vi.fn(), itemsVisible: vi.fn(), queryEpoch: () => 0
   });
   disposals.push(() => host.dispose());
   return host.overrides;
