@@ -4,10 +4,69 @@ using System.Text.Json;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
+using CouchCoop.Mod.Session;
 using CouchCoop.Mod.Tests;
 
 internal sealed partial class BrowserServerRouteTests
 {
+    internal static async Task RunCouchPlayJoinRoutesAsync()
+    {
+        using var root = new TempStaticRoot();
+        var previousModePath = Environment.GetEnvironmentVariable(CouchPlayModeStore.PathEnvironmentVariable);
+        Environment.SetEnvironmentVariable(CouchPlayModeStore.PathEnvironmentVariable, Path.Combine(root.Path, "couch-play.json"));
+        CouchPlayModeStore.ResetForTests();
+        var scenarios = 0;
+        try
+        {
+            foreach (var mode in Enum.GetValues<CouchPlayMode>())
+            foreach (var screen in new[] { RuntimeStateMode.SingleplayerAmbiguous, RuntimeStateMode.Lobby, RuntimeStateMode.Unsupported })
+            foreach (var hasManager in new[] { true, false })
+            {
+                Expect(CouchPlayModeStore.TrySet(mode), "test mode persists");
+                var runtime = new RecordingSpirectlRuntime { Mode = screen, LobbyNetGameType = NetTypeNames.Singleplayer };
+                using var facts = runtime.InstallGameFacts();
+                var launches = 0;
+                using var manager = hasManager ? new HeadlessClientManager(
+                    launcher: _ => { launches++; throw new Exception("a solo join must never launch a seat"); },
+                    readinessProbe: (_, _) => Task.FromResult(true),
+                    registerProcessExit: false) : null;
+                var access = new TestHostBrowserAccess(false);
+                await using var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(root.Path),
+                    new CapturingAssetAdapter(), runtime.NewEnvelopeFactory(), preferredPort: 0,
+                    headlessManager: manager, isHeadlessClient: false, hostBrowserAccess: access,
+                    headlessManagerFactory: () => null);
+                var uri = await server.StartAsync();
+                var allowed = mode == CouchPlayMode.EveryScreen
+                    || mode == CouchPlayMode.SoloScreens && screen != RuntimeStateMode.Unsupported;
+                foreach (var (name, playerId) in new (string, string?)[]
+                         { ("", null), ("Alice", null), ("A new name", null), ("A new name", "p:1002"), ("Alice", "p:1") })
+                {
+                    using var socket = new ClientWebSocket();
+                    await socket.ConnectAsync(new UriBuilder(uri) { Scheme = "ws", Path = "/ws",
+                        Query = StreamingQuery.Replace("watch=1", "watch=0") }.Uri, CancellationToken.None);
+                    _ = await ReadWsMessageAsync(socket);
+                    var reply = await SendJoinAsync(socket, "couch-play-join-" + scenarios++, name, playerId);
+                    Expect(reply.TryGetProperty("directView", out var direct) && direct.GetBoolean() == allowed,
+                        $"{mode}/{screen}/{hasManager}/{name}/{playerId}: direct view follows the host mode: {reply}");
+                    Expect(!reply.TryGetProperty("headlessMirrorPort", out _) && !reply.TryGetProperty("headlessMirrorPath", out _),
+                        "solo and main-menu joins never redirect to a seat");
+                    Expect(!reply.TryGetProperty("joinRejection", out _), "seat joinability is not consulted");
+                    Expect(!reply.GetProperty("hostAccess").GetProperty("allowed").GetBoolean(),
+                        "direct routing cannot grant host stream or input access");
+                    await CloseWebSocketSilentlyAsync(socket);
+                }
+                Expect(launches == 0 && manager?.HasNameClaim("A new name") != true, "no solo join allocates or spawns a seat");
+                Expect(!access.Started, "a join without watch keeps policy demand dormant");
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(CouchPlayModeStore.PathEnvironmentVariable, previousModePath);
+            CouchPlayModeStore.ResetForTests();
+        }
+        Console.WriteLine($"couch play join routes: {scenarios} cases passed");
+    }
+
     internal static async Task RunHostAccessRoutesAsync()
     {
         using var root = new TempStaticRoot();
@@ -67,6 +126,16 @@ internal sealed partial class BrowserServerRouteTests
             Expect(runtime.LastActionRequest is null, "blocked requests never reach runtime");
             await SendWatchAsync(socket, true);
             await AssertNoSceneDeltaAsync(socket, "watch messages cannot override host permission");
+
+            // A screen change made while access was denied (no scene observer runs then) must reach the viewer on
+            // the grant, before the access update, so its join logic acts on the current screen.
+            runtime.Mode = RuntimeStateMode.Lobby;
+            access.Set(true);
+            Expect(await ReadSessionBeforeAccessAsync(socket) == "lobby", "a grant re-sends the session with the current screen");
+            access.Set(false);
+            await ReadAccessStatusAsync(socket, false);
+            Expect(await WaitForSceneSubscriptionAsync(runtime, false), "re-blocked before the grant loop");
+            runtime.Mode = RuntimeStateMode.MultiplayerRun;
 
             for (var iteration = 0; iteration < 2; iteration++)
             {
@@ -280,6 +349,22 @@ internal sealed partial class BrowserServerRouteTests
         => socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, CancellationToken.None);
     private static Task SendAccessInputAsync(ClientWebSocket socket, string id)
         => SendAccessJsonAsync(socket, JsonSerializer.Serialize(new { type = "input", requestId = id, kind = "key", key = "KeyA" }));
+    /// <summary>The screen kind of the session that precedes the next allowed access update, or null if none did.</summary>
+    private static async Task<string?> ReadSessionBeforeAccessAsync(ClientWebSocket socket)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        string? kind = null;
+        while (true)
+        {
+            using var doc = JsonDocument.Parse(await ReadWsMessageAsync(socket, timeout.Token));
+            var type = doc.RootElement.GetProperty("type").GetString();
+            if (type == "session" && doc.RootElement.TryGetProperty("screen", out var screen))
+                kind = screen.GetProperty("kind").GetString();
+            if (type == "host-access" && doc.RootElement.GetProperty("hostAccess").GetProperty("allowed").GetBoolean())
+                return kind;
+        }
+    }
+
     private static async Task ReadAccessStatusAsync(ClientWebSocket socket, bool allowed, long minimumResetGeneration = 0)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));

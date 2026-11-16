@@ -40,7 +40,7 @@ public static class CouchCoopLobbyHostGate
     /// cannot prove we are hosting).
     /// </param>
     public static bool ShouldShow(Uri? listenerBaseUri, GateFacts? facts)
-        => listenerBaseUri is not null && IsHostLobby(facts);
+        => listenerBaseUri is not null && (IsHostLobby(facts) || IsSoloLobby(facts));
 
     /// <summary>
     /// The lobby predicate, the same window as <c>MirrorJoinContext.SpawnAllowed</c> (the moments a phone may
@@ -52,13 +52,13 @@ public static class CouchCoopLobbyHostGate
     /// button on the load screen as well — which is required, since resuming a saved co-op run is exactly
     /// when absent players need to scan back in.
     /// </para>
-    /// <para>
-    /// A true singleplayer lobby reports <c>"singleplayer"</c> and is correctly refused: nothing can
-    /// join it, so a QR would be a promise we cannot keep.
-    /// </para>
     /// </summary>
     public static bool IsHostLobby(GateFacts? facts)
         => facts is { RunInProgress: false, CurrentLobbyNetType: HostNetGameType };
+
+    /// <summary>A single player lobby with no run in progress.</summary>
+    public static bool IsSoloLobby(GateFacts? facts)
+        => facts is { RunInProgress: false, CurrentLobbyNetType: NetTypeNames.Singleplayer };
 
     /// <summary>
     /// The support-checkpoint reading of an evaluation: <see cref="LobbyCheckpointEvaluation.Unavailable"/> when the

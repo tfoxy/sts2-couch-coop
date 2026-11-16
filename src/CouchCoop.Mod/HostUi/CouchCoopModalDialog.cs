@@ -94,6 +94,7 @@ internal abstract partial class CouchCoopModalDialog : Control
     private bool _inputModeWired;
     private bool _installed;
     private bool _closing;
+    private IDisposable? _hostOnlyModal;
 
     /// <summary>Raised after the dialog hides, so the owning panel can restore its own state.</summary>
     public Action? Closed { get; set; }
@@ -228,6 +229,13 @@ internal abstract partial class CouchCoopModalDialog : Control
     /// <summary>Show the modal, parking focus and taking cancel for as long as it is up.</summary>
     protected void OpenModal()
     {
+        if (_hostOnlyModal is null)
+        {
+            // Hook teardown before acquiring the lease, including dialogs opened before Install.
+            if (!IsConnected(Node.SignalName.TreeExiting, Callable.From(ReleaseHostOnlyModal)))
+                Connect(Node.SignalName.TreeExiting, Callable.From(ReleaseHostOnlyModal));
+            _hostOnlyModal = HostOnlyInputGuard.OpenModal();
+        }
         Visible = true;
         _restoreFocus = GetViewport()?.GuiGetFocusOwner();
         // Focus must leave the lobby control behind the scrim, or the select action would activate it
@@ -261,6 +269,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
 
         Visible = false;
+        ReleaseHostOnlyModal();
         UnbindCancel();
 
         if (_restoreFocus is { } previous && GodotObject.IsInstanceValid(previous))
@@ -270,6 +279,12 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         _restoreFocus = null;
         Closed?.Invoke();
+    }
+
+    private void ReleaseHostOnlyModal()
+    {
+        _hostOnlyModal?.Dispose();
+        _hostOnlyModal = null;
     }
 
     // ---- subclass seams -------------------------------------------------------------------------

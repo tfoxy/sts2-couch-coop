@@ -39,42 +39,41 @@ internal sealed class HostBrowserAccessGameSource
         }
     }
 
-    internal string ReadReason()
-        => CouchCoopMod.EngineAvailable ? ReadGameReason() : HostBrowserAccessReasons.Unavailable;
+    internal HostBrowserAccessFacts ReadFacts()
+        => CouchCoopMod.EngineAvailable ? ReadGameFacts() : default;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private string ReadGameReason()
+    private HostBrowserAccessFacts ReadGameFacts()
     {
         var game = NGame.Instance;
-        if (game is null || !GodotObject.IsInstanceValid(game)) return HostBrowserAccessReasons.Unavailable;
+        if (game is null || !GodotObject.IsInstanceValid(game)) return default;
         if (game.RootSceneContainer is { } root && GodotObject.IsInstanceValid(root))
             HostBrowserAccessHooks.CacheRoot(root);
         // A known loading boundary can temporarily have no readable screen. Authorization stays denied.
         var transitioning = HostBrowserAccessHooks.HasPendingTransition || game.Transition?.InTransition == true;
         HostBrowserAccessHooks.CacheTransition(transitioning);
-        if (transitioning) return HostBrowserAccessReasons.Transition;
+        if (transitioning) return new(null, false, true, false);
         var screen = GameScreenContext.GetCurrent();
         if (game is null || !GodotObject.IsInstanceValid(game) || screen is not Node node
             || !GodotObject.IsInstanceValid(node) || !node.IsInsideTree() || game.Transition is null)
-            return HostBrowserAccessReasons.Unavailable;
+            return default;
 
         var facts = CouchCoopGameFacts.ReadGates(screen);
         var protectedMenu = screen is NPauseMenu or NSettingsScreen;
-        if (facts is { RunInProgress: true })
+        var mainMenu = game.MainMenu is { } menu && GodotObject.IsInstanceValid(menu)
+            && (ReferenceEquals(node, menu) || menu.IsAncestorOf(node))
+            && (facts is { RunInProgress: true } || facts?.CurrentLobbyNetType is null);
+        if (facts is { RunInProgress: true } && !mainMenu)
         {
             // The container's category covers nested screens too, even when the first menu is hidden.
             var run = game.CurrentRunNode;
             if (run is null || !GodotObject.IsInstanceValid(run) || run.GlobalUi?.SubmenuStack is not { } submenu)
-                return HostBrowserAccessReasons.Unavailable;
+                return default;
             protectedMenu |= submenu.IsVisibleInTree()
                 && submenu.Type is CapstoneSubmenuType.PauseMenu or CapstoneSubmenuType.Settings;
-            // A stale run fact must never authorize a main-menu screen while returning from a run.
-            if (game.MainMenu is { } mainMenu && GodotObject.IsInstanceValid(mainMenu)
-                && (ReferenceEquals(node, mainMenu) || mainMenu.IsAncestorOf(node)))
-                return HostBrowserAccessReasons.MultiplayerRequired;
         }
 
-        return HostBrowserAccessMonitor.Decide(facts, true, game.Transition.InTransition || HostBrowserAccessHooks.HasPendingTransition, protectedMenu);
+        return new(facts, true, game.Transition.InTransition || HostBrowserAccessHooks.HasPendingTransition, protectedMenu, mainMenu);
     }
 
     private void Detach()

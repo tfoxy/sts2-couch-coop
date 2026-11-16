@@ -76,9 +76,8 @@ public static class BrowserAssignmentClassifier
         {
             var runPlayers = RunPlayers(run, registry);
             var runScreen = new BrowserScreenDto("run", screenType, screenTitle, mirrorMode);
-            // Singleplayer runs are browser-controllable too: the local bridge can execute the local
-            // player's actions (the "local-only-degraded" orchestration capability). The auto-player
-            // drives a singleplayer run, so it is treated as a normal, joinable run.
+            // Solo joins use the host's view when couch play allows it; they never create a seat.
+            // Stream and input authorization remains the host-access policy's responsibility.
             var assignment = handle is not null
                 ? registry.JoinHandle(handle, requestedName, runPlayers, runScreen, hostInRun: true)
                 : registry.JoinRun(requestedName, runPlayers, runScreen);

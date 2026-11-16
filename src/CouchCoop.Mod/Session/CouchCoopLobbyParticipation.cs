@@ -370,7 +370,9 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
         IReadOnlySet<ulong>? SeatNetIds = null,
         // Every netId the host can name right now (see RosterNames), carried on the SAME roster read that answered
         // the join question so publishing the roster to the seats costs no extra main-thread marshal.
-        IReadOnlyList<(ulong NetId, string Name)>? RosterNames = null)
+        IReadOnlyList<(ulong NetId, string Name)>? RosterNames = null,
+        bool IsSingleplayerLobby = false,
+        bool IsMainMenu = false)
     {
         /// <summary>
         /// Whether a headless may be launched for <paramref name="netId"/> even outside the
@@ -439,6 +441,9 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
     /// </summary>
     public static MirrorJoinContext DescribeMirrorJoinContext(RosterFacts? roster)
     {
+        if (roster?.RootScene == RosterRootScenes.MainMenu)
+            return new MirrorJoinContext(false, false, null, IsMainMenu: true);
+
         if (roster?.Run is { } run)
         {
             var runHost = run.Seats.FirstOrDefault(seat => seat.IsHost)?.DisplayName?.Trim();
@@ -463,10 +468,11 @@ public sealed class CouchCoopLobbyParticipation(CouchCoopRuntimeHost runtimeHost
                 // the lobby while the save still expects everyone, and those absent netIds are exactly the ones the
                 // returning devices must be able to spawn into.
                 SeatNetIds: NetIdsOf(lobby.Seats.Select(seat => seat.Id).Concat(lobby.SavedRunSeatIds)),
-                RosterNames: RosterNames(roster));
+                RosterNames: RosterNames(roster),
+                IsSingleplayerLobby: lobby.NetType == NetTypeNames.Singleplayer);
         }
 
-        return new MirrorJoinContext(false, false, null);
+        return new MirrorJoinContext(false, false, null, IsMainMenu: roster is not null);
     }
 
     // Every player id in a roster is "p:{netId}"; anything that doesn't parse is not a seat we can spawn.

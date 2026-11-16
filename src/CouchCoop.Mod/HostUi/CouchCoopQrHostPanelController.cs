@@ -145,6 +145,15 @@ public static class CouchCoopQrHostPanelController
     /// from the evaluation, where the state gate has already been answered, rather than from the mount patch.
     /// </remarks>
     public static event Action? HostLobbyPresented;
+    public static event Action<bool>? SoloEntryPresented;
+    private static bool _soloEntryPresented;
+
+    private static void SetSoloEntryPresented(bool presented)
+    {
+        if (_soloEntryPresented == presented) return;
+        _soloEntryPresented = presented;
+        SoloEntryPresented?.Invoke(presented);
+    }
 
     public static void Initialize()
     {
@@ -541,6 +550,7 @@ public static class CouchCoopQrHostPanelController
         if (Engine.GetMainLoop() is not SceneTree { Root: { } root } || !GodotObject.IsInstanceValid(root))
         {
             Screens.Clear();
+            SetSoloEntryPresented(false);
             return;
         }
 
@@ -549,6 +559,7 @@ public static class CouchCoopQrHostPanelController
         // double-fire. A freed screen took its connection with it and is pruned by Live() here.
         DisconnectVisibility();
         Screens.Clear();
+        SetSoloEntryPresented(false);
 
         foreach (var screen in FindLobbyScreens(root))
         {
@@ -783,6 +794,7 @@ public static class CouchCoopQrHostPanelController
             // No lobby in the tree at all is an unmount as far as the alert is concerned, and this is the
             // early return the rest of the evaluation takes on the main menu and mid-run — so the latch has
             // to be re-armed HERE, not only below.
+            SetSoloEntryPresented(false);
             GateFactsCache.Invalidate();
             DecideHostTransportAlert(null);
             return false;
@@ -817,6 +829,7 @@ public static class CouchCoopQrHostPanelController
 
             if (plan.Alert == LobbyAlertUpdate.Rearm)
             {
+                SetSoloEntryPresented(false);
                 DecideHostTransportAlert(null);
             }
 
@@ -830,14 +843,15 @@ public static class CouchCoopQrHostPanelController
         var gateFacts = ResolveGateFacts(screens, facts, currentScreenKnown);
         // Keep the QR entry point reachable when the browser listener failed. The dialog's empty state
         // names that failure; hiding the only host-facing explanation stranded controller users in the lobby.
-        var shouldShow = CouchCoopLobbyHostGate.IsHostLobby(gateFacts);
+        var solo = CouchCoopLobbyHostGate.IsSoloLobby(gateFacts);
+        var shouldShow = CouchCoopLobbyHostGate.IsHostLobby(gateFacts) || solo;
         var evaluation = CouchCoopLobbyHostGate.Classify(gateFacts);
         // A host lobby is on screen: arm the LAN/WAN services that no longer start at mod init. Raised on
         // IsHostLobby (not ShouldShow) so a host whose listener failed to bind still gets them — and never
         // on a singleplayer lobby, which is the whole point of gating here rather than at the mount patch.
         // The subscriber is idempotent and self-latching, so re-raising it every tick is harmless; keeping
         // the raise unconditional means there is no "already armed?" flag here to fall out of sync.
-        if (shouldShow)
+        if (CouchCoopLobbyHostGate.IsHostLobby(gateFacts))
         {
             try
             {
@@ -881,7 +895,7 @@ public static class CouchCoopQrHostPanelController
 
                 // Unconditional: `mounted ??= ScanScreen(...)` would short-circuit and skip installing on a
                 // second visible lobby screen. Only the FIRST panel is remembered, as the alert's host.
-                var panel = ScanScreen(screen, snapshot, shouldShow, refresh, screenFacts.Visible);
+                var panel = ScanScreen(screen, snapshot, shouldShow, solo, refresh, screenFacts.Visible);
                 mounted ??= panel;
             }
             catch (Exception exception)
@@ -895,7 +909,8 @@ public static class CouchCoopQrHostPanelController
             }
         }
 
-        DecideHostTransportAlert(mounted);
+        SetSoloEntryPresented(solo && mounted is not null);
+        DecideHostTransportAlert(solo ? null : mounted);
         return true;
     }
 
@@ -942,6 +957,7 @@ public static class CouchCoopQrHostPanelController
         Node screen,
         CouchCoopHostUiSnapshot snapshot,
         bool shouldShow,
+        bool solo,
         bool refresh,
         bool visible)
     {
@@ -973,7 +989,7 @@ public static class CouchCoopQrHostPanelController
             }
             else
             {
-                mounted = EnsurePanel(screen, snapshot, refresh);
+                mounted = EnsurePanel(screen, snapshot, refresh, solo);
             }
         }
         catch (Exception exception)
@@ -1039,7 +1055,7 @@ public static class CouchCoopQrHostPanelController
     private static bool IsUsablePanel(Node? panel)
         => panel is not null && GodotObject.IsInstanceValid(panel) && !panel.IsQueuedForDeletion();
 
-    private static CouchCoopQrHostPanel? EnsurePanel(Node screen, CouchCoopHostUiSnapshot snapshot, bool refreshLayout)
+    private static CouchCoopQrHostPanel? EnsurePanel(Node screen, CouchCoopHostUiSnapshot snapshot, bool refreshLayout, bool solo)
     {
         var kind = CheckpointKind(screen);
         var instanceId = screen.GetInstanceId();
@@ -1121,6 +1137,7 @@ public static class CouchCoopQrHostPanelController
 
         try
         {
+            panel.Solo = solo;
             panel.Visible = true;
             panel.Apply(snapshot);
         }

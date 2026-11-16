@@ -67,6 +67,7 @@ if (args is ["direct-ip-host", ..])
 
 if (args is ["host-access-routes", ..])
 {
+    await BrowserServerRouteTests.RunCouchPlayJoinRoutesAsync();
     await BrowserServerRouteTests.RunHostAccessRoutesAsync();
     return;
 }
@@ -511,6 +512,14 @@ if (args is ["seat-build", ..])
     return;
 }
 
+// Host-only couch play preferences: safe defaults, persisted choices, and change notifications.
+if (args is ["couch-play-mode", ..])
+{
+    CouchPlayModeTests.Run();
+    Console.WriteLine("couch play mode: ok (7 tests)");
+    return;
+}
+
 // `dotnet run --project tests/CouchCoop.Mod.Tests -- seat-mods` runs HOST-CHOSEN seat mod selection ALONE: which
 // mods a host may switch off for its seats (never a gameplay mod, never a library a gameplay mod needs), the
 // cascade and what re-enabling brings back, the inventory read from the host's mod_list and the manifests on disk
@@ -569,6 +578,7 @@ if (args is ["lanes", ..])
 // HeadlessAudioMuteTargetsTests).
 if (args is ["host-ui", ..])
 {
+    HostOnlyInputGuardTests.Run();
     QrHostOptionsTests.Run();
     QrSelectionModelTests.Run();
     DirectIpSetupFlowTests.Run();
@@ -588,6 +598,7 @@ if (args is ["host-ui", ..])
     // asserts the two never answer yes at once, which is only meaningful beside the lobby one.
     CouchCoopLobbyHostGateTests.Run();
     CouchCoopPauseMenuGateTests.Run();
+    CouchPlayDiscoveryDemandTests.Run();
     // What those gates decide on and when it is read: the typed facts front, the assignment record, and the cache
     // that makes the panel's heartbeat tick reuse the last read instead of asking the game again.
     CouchCoopGameFactsTests.Run();
@@ -605,6 +616,8 @@ if (args is ["host-ui", ..])
     // press writes), plus the geometry that makes it the connection card's mirror. Both pure — the card itself
     // is a Godot node this runner cannot construct. The layout half is also in the full contract suite below.
     SeatModPanelModelTests.Run();
+    CouchPlayPanelModelTests.Run();
+    CouchPlayPanelLayoutContractTests.Run();
     Console.WriteLine("host ui: ok");
     return;
 }
@@ -898,9 +911,12 @@ CouchCoopModalFocusTests.Run();
 // ...and WHICH controls a d-pad can walk to inside that modal: the closed chain that makes the QR dialog's
 // host-select rows reachable without letting focus escape onto the lobby behind the scrim.
 CouchCoopModalFocusChainTests.Run();
+HostOnlyInputGuardTests.Run();
 // The QR dialog's seat-mod card: what it lists and what a press writes. Pure C# over plain records, so it sits
 // up here with the other host-UI decisions. Also reachable alone as `-- host-ui`.
 SeatModPanelModelTests.Run();
+CouchPlayPanelModelTests.Run();
+CouchPlayPanelLayoutContractTests.Run();
 // …and the seat rule that protects the player's SAVES rather than their session: the verdict a failed cloud
 // isolation becomes, its test lever and its copy. Pure strings, so it sits up here with the rest, above the
 // suite that can take this process down. Also reachable alone as `-- connections`.
@@ -913,6 +929,8 @@ SeatModBuildTests.Run();
 // parser. Pure strings and temp directories, so it sits up here with the rest. Also reachable alone as
 // `-- seat-mods`.
 SeatModSelectionTests.Run();
+// The host-only mode preference, including safe defaults and persistence notifications.
+CouchPlayModeTests.Run();
 // Workshop single-payload round: which implementation lane the loader picks for the running game build, and
 // when it refuses. Pure temp directories, no game — up here with the other pure suites, and also reachable
 // alone as `-- lanes`.
@@ -1152,6 +1170,7 @@ CouchCoopLobbyHostGateTests.Run();
 // …and its mid-run twin, which decides the same thing for the pause menu's row. Beside the lobby gate on
 // purpose: it shares those snapshot builders, and it asserts the two gates never answer yes at once.
 CouchCoopPauseMenuGateTests.Run();
+CouchPlayDiscoveryDemandTests.Run();
 // …and what they decide on: the typed gate facts, when they are read, and the assignment hooks' contract.
 CouchCoopGameFactsTests.Run();
 // Who is in the lobby or the run: the roster facts and their parity with the retired snapshot, the observer that reads
@@ -1205,6 +1224,7 @@ StaticBackgroundHostProbeTests.Run();
 // (accept parse, live flips, disconnects, valve) rides BrowserServerRouteTests below.
 WalkSkipUnanimityTests.Run();
 var tests = new BrowserServerRouteTests();
+await BrowserServerRouteTests.RunCouchPlayJoinRoutesAsync();
 await BrowserServerRouteTests.RunHostAccessRoutesAsync();
 await tests.RunAsync();
 await SeatBrowserPipeTests.RunAsync();
@@ -4796,9 +4816,9 @@ internal sealed partial class BrowserServerRouteTests
         await lobbyObserver.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
 
-    private static async Task<JsonElement> SendJoinAsync(ClientWebSocket socket, string requestId, string name)
+    private static async Task<JsonElement> SendJoinAsync(ClientWebSocket socket, string requestId, string name, string? playerId = null)
     {
-        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { type = "join", requestId, name }, BrowserJson.Options));
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { type = "join", requestId, name, playerId }, BrowserJson.Options));
         await socket.SendAsync(bytes, WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
         // Every connection now streams the scene by default, and the roster observer re-sends `session` envelopes
         // on roster changes, so both a `scene-delta` and an unsolicited `session` (requestId "session") can land

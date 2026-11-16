@@ -6,6 +6,7 @@ public sealed record HostBrowserAccessState(bool Allowed, string Reason, long Ge
 public static class HostBrowserAccessReasons
 {
     public const string Allowed = "allowed";
+    public const string CouchPlayOff = "couch-play-off";
     public const string MultiplayerRequired = "outside-multiplayer";
     public const string MenuOpen = "menu-open";
     public const string Transition = "transitioning";

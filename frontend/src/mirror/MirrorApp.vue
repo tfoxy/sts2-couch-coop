@@ -101,6 +101,7 @@ import {
   computeMirrorJoinMode,
   hasNameParam,
   isIosInstallForced,
+  isHostOnlyMirrorMode,
   isMultiplayerMirrorMode,
   isNonJoinableMirrorMode,
   joinInfoFromSession,
@@ -109,6 +110,7 @@ import {
   readUrlNameState,
   rememberJoinedName,
   shouldReloadForUrlNameChange,
+  shouldWatchHostStream,
   trimName,
   urlNameStateFor,
   writeUrlNameParam,
@@ -350,6 +352,7 @@ const pendingName = ref<string | null>(null);
 const urlSeatIntent = computed(() => viewIntent.value === "player");
 let autoJoinSent = false;
 let hostViewRequested = false;
+let hostOnlyViewRequested = false;
 let grantedSelection: UrlNameState | null = null;
 
 function rememberUrlName(value: string | null): void {
@@ -665,6 +668,15 @@ function makeClient(url?: string, watchStream = false): MirrorClient {
         c.sendSceneAck();
       }
       joinSession.value = c.session;
+      if (hostOnlyViewRequested && isMultiplayerMirrorMode(c.session?.screen?.mirrorMode ?? null)) {
+        // A solo watch grants no multiplayer seat. Resume the URL's original selection without navigating.
+        hostOnlyViewRequested = false;
+        hostViewRequested = false;
+        directView.value = false;
+        presentationTarget.value = null;
+        viewIntent.value = expectedUrlName.kind === "seat" ? "player"
+          : expectedUrlName.kind === "host" ? "host" : "unassigned";
+      }
       // Only a live session from the active client resolves a view. The active-client guard above excludes stale
       // redirect callbacks; the connected/session checks (inside) keep disconnect and unmount from releasing a
       // pending Neow gate.
@@ -1103,10 +1115,12 @@ function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"
 watch(() => mirrorSettings.renderer, (renderer) => requestSeatRenderer(activeClient, renderer));
 watch(() => renderStreamContext.retryRequest, () => requestSeatRenderer(activeClient, "stream"));
 
-// Only a granted view requests scene bytes. Unassigned and joining connections are
-// coordination-only, even when the host is on a non-multiplayer screen. The mirror watches until the handover.
+// Host-only screens request a watch without choosing a seat. Authorization remains server-owned.
+// Multiplayer pickers and pending joins stay coordination-only. The mirror watches until the handover.
 const wantsHostStream = computed(() =>
-  sceneAblation.streamsScene && (joined.value || directView.value)
+  sceneAblation.streamsScene && shouldWatchHostStream(
+    joinInfo.value, pendingName.value, mirrorScreen.value, joined.value, directView.value, urlSeatIntent.value
+  ) && (joined.value || directView.value || isHostOnlyMirrorMode(mirrorScreen.value))
     && (!streamRendererOn.value || holdMirrorForStream.value)
     && (!mirrorReturnAwaitingScene.value || mirrorReturnRestored.value)
 );
@@ -1120,9 +1134,15 @@ const showStream = computed(() =>
 watch(showStream, (on) => { if (!on) stageAttempt.value += 1; }, { flush: "sync" });
 const hostAccess = computed(() => joinSession.value?.hostAccess);
 const hostAccessBlocked = computed(() => !hostAccess.value?.allowed);
+const hostAccessNoticeKey = computed(() => {
+  if (hostAccess.value?.reason === "couch-play-off") return "hostAccess.couchPlayOff";
+  if (hostAccess.value?.reason === "menu-open") return "hostAccess.menu";
+  return "hostAccess.wait";
+});
 // Keep the picker usable for other seats; privacy replaces only the host view/waiting surface.
 const showHostAccessNotice = computed(() =>
-  viewIntent.value === "host" && status.value === "connected" && joinSession.value !== null
+  (viewIntent.value === "host" || (isHostOnlyMirrorMode(mirrorScreen.value) && wantsHostStream.value))
+  && status.value === "connected" && joinSession.value !== null
   && !joined.value && !pendingName.value && !joinMessage.value && !seatNotice.value
   && hostAccessBlocked.value && hostAccess.value?.reason !== "transitioning"
 );
@@ -1251,21 +1271,7 @@ const joinProgressNotice = computed(() =>
 // precisely the state it exists for. Its lifetime is the host socket's instead (see `seatNotice`).
 const seatNoticeCopy = computed(() => mirrorSeatNoticeCopy(seatNotice.value, t));
 
-// F3 — THE WAITING SCREEN. A viewer whose URL names a seat (`?name=Ann`), sitting on a host screen that has no
-// seat to give: the main menu, a singleplayer character select, a singleplayer run. It replaces the picker, which
-// would be a lie there (there is nothing on it to pick), and pairs with the closed stream gate above — no scene
-// bytes, no join attempt, just "waiting for the host to start a game" and a way out.
-//
-// Every clause earns its place:
-//   * `urlSeatIntent` — this is the seat-viewer's screen only. A viewer with no `?name=` (the picker) or the empty
-//     host marker (which streams the host's screen) is never here.
-//   * `!joined && !directView` — a granted view outranks everything, exactly as it does in the gate.
-//   * `!pendingName` and `status === "connected"` — the transient lifecycle words ("Connecting…", "Joining…") own
-//     the screen while they last; replacing them with a steady "waiting for the host" would hide the fact that
-//     something IS happening. Note this also keeps a DISCONNECTED viewer on the picker's "Reconnecting…", which
-//     is the truthful report: we do not know what screen the host is on any more.
-//   * `isNonJoinableMirrorMode` — the host has SAID there is no seat here. A null mode is only the pre-session
-//     state, not that statement.
+// A named viewer waits only on unclassified screens. Solo and main-menu modes request the host view.
 const showHostWaiting = computed(
   () =>
     urlSeatIntent.value &&
@@ -1273,7 +1279,7 @@ const showHostWaiting = computed(
     !directView.value &&
     !pendingName.value &&
     status.value === "connected" &&
-    isNonJoinableMirrorMode(mirrorScreen.value)
+    isNonJoinableMirrorMode(mirrorScreen.value) && !isHostOnlyMirrorMode(mirrorScreen.value)
 );
 
 // "Control host" — the waiting screen's one control, and the ONLY writer of the empty host marker on a
@@ -1628,6 +1634,7 @@ function reconnectToHost(): void {
   // whose socket dropped re-takes the host row by itself once the new connection has a roster.
   autoJoinSent = rejoinTarget !== null;
   hostViewRequested = rejoinTarget !== null;
+  hostOnlyViewRequested = false;
   activeClient = makeClient();
   mirrorState.value = activeClient.state;
   status.value = activeClient.status;
@@ -1694,11 +1701,20 @@ function maybeAutoJoin(): void {
 // rest of the session, recoverable only by knowing to press "Control host". The marker retains host intent
 // while waiting for a supported multiplayer screen.
 function maybeAutoHostView(): void {
-  if (viewIntent.value !== "host" || hostViewRequested) return;
-  if (joined.value || directView.value || pendingName.value) return;
+  if (hostViewRequested || joined.value || directView.value || pendingName.value) return;
   if (status.value !== "connected") return;
   const session = joinSession.value;
-  if (!session || !isMultiplayerMirrorMode(session.screen?.mirrorMode ?? null)) return;
+  if (!session) return;
+  if (isHostOnlyMirrorMode(session.screen?.mirrorMode ?? null)) {
+    // Watch demand remains active while denied. Request the direct-view grant once permission arrives,
+    // without changing a shared named URL or treating the host view as a multiplayer seat.
+    if (!session.hostAccess?.allowed) return;
+    hostViewRequested = true;
+    hostOnlyViewRequested = true;
+    activeClient.sendJoin(urlSeatName.value ?? "");
+    return;
+  }
+  if (viewIntent.value !== "host" || !isMultiplayerMirrorMode(session.screen?.mirrorMode ?? null)) return;
   const host = mirrorRosterFor(session.players ?? []).find((player) => player.isHost);
   if (!host) return; // keep the marker, stay unlatched — a later session may well carry the host row
   hostViewRequested = true;
@@ -1877,14 +1893,9 @@ onBeforeUnmount(() => {
              stack correctly on the rare browser that earns both lines. -->
         <GamepadAdvisory />
       </div>
-      <!-- F3 — the seat viewer's WAITING screen, in the picker's place. `?name=Ann` on a host screen with no seat
-           to give (main menu / singleplayer character select / singleplayer run): there is nothing to pick, no
-           scene is being pulled (the stream gate is shut for the same reason), and the only choice left is to stop
-           being a player and control the host instead. Carries `mirror-status` exactly as the picker does — the
-           diag/e2e scripts wait on that testid to disappear, and a viewer that is still waiting has not joined. -->
       <section v-if="showHostAccessNotice" class="mirror-access-notice" data-testid="host-access-notice" role="status">
         <h2>{{ t('hostAccess.title') }}</h2>
-        <p>{{ t(hostAccess?.reason === 'menu-open' ? 'hostAccess.menu' : 'hostAccess.wait') }}</p>
+        <p>{{ t(hostAccessNoticeKey) }}</p>
       </section>
       <MirrorHostWaiting
         v-else-if="showHostWaiting"

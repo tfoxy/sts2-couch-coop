@@ -5,19 +5,20 @@ using CouchCoop.Mod.HostUi;
 //
 // The entry re-evaluates this every time the pause menu becomes visible (and only then) and shows or hides the row
 // from the answer, so this predicate is also the row's teardown path — there is no second "hide it now" branch that could
-// fall out of sync. The negative cases are the interesting ones, for the same reason they are in
-// CouchCoopLobbyHostGateTests: a row left on a singleplayer run is a QR that promises a join nobody can perform.
+// fall out of sync.
 internal static class CouchCoopPauseMenuGateTests
 {
     public static void Run()
     {
         HostRunWithAListenerShows();
-        SingleplayerRunIsRefused();
+        SingleplayerRunShows();
         ClientRunIsRefused();
         LobbyIsRefused();
         UnknownStateIsRefused();
         MissingListenerIsRefused();
         TheTwoGatesCoverDifferentMoments();
+        Expect(CouchCoopPauseMenuGate.IsSoloRun(Facts(true, null, NetTypeNames.Singleplayer)), "solo variant");
+        Expect(!CouchCoopPauseMenuGate.ShouldShow(null, Facts(true, null, NetTypeNames.Singleplayer)), "solo needs listener");
 
         Console.WriteLine("CouchCoopPauseMenuGateTests: ok");
     }
@@ -33,13 +34,12 @@ internal static class CouchCoopPauseMenuGateTests
             "a hosted run with a listener shows the row");
     }
 
-    // A couch-coop host reports "host" even alone in the run, so this is NOT a stand-in for "nobody else is
-    // here" — a true singleplayer run is a different net game type entirely, and nothing can join it.
-    private static void SingleplayerRunIsRefused()
+    // Single player has its own dialog variant.
+    private static void SingleplayerRunShows()
     {
         Expect(
-            !CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(true, null, "singleplayer")),
-            "a singleplayer run is refused");
+            CouchCoopPauseMenuGate.ShouldShow(Listener, Facts(true, null, "singleplayer")),
+            "a singleplayer run shows");
     }
 
     // We joined someone else's session: their browser players are their host's to serve, and our URL would hand

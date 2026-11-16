@@ -1,7 +1,8 @@
 {
   "hostAccess.title": "Vue de l’hôte temporairement indisponible",
   "hostAccess.menu": "L’hôte a ouvert un menu. L’accès reprendra automatiquement à sa fermeture.",
-  "hostAccess.wait": "L’accès reprendra automatiquement lorsque l’hôte reviendra dans un salon ou une partie multijoueur.",
+  "hostAccess.couchPlayOff": "L’hôte n’a pas activé Couch play pour le mode solo. Demandez-lui d’ouvrir Couch QR Code sur l’écran du jeu.",
+  "hostAccess.wait": "L’accès reprendra automatiquement lorsque l’hôte reviendra sur un écran qu’il a partagé.",
   "app.mirror": "Miroir",
   "common.working": "En cours",
   "common.host": "Hôte",

@@ -16,6 +16,7 @@ public static class CouchCoopMod
 {
     private static readonly object Gate = new();
     private static CouchCoopRuntimeHost? _runtime;
+    internal static void CancelInjectedInput() => _runtime?.CancelInjectedInput();
     private static CouchCoopHostUiServices? _hostUi;
     private static CouchCoopHostUiSnapshot? _hostUiStartupFailure;
     private static CancellationTokenSource? _spinePrerenderStop;
@@ -829,24 +830,34 @@ public static class CouchCoopMod
         }
 
         _discoveryArmSubscribed = true;
+        var demand = new CouchPlayDiscoveryDemand();
+        void RefreshDiscovery()
+        {
+            CouchCoopHostUiServices? hostUi;
+            lock (Gate) hostUi = _hostUi;
+            if (demand.ShouldRun(CouchPlayModeStore.Current)) hostUi?.StartDiscoveryServices();
+            else if (hostUi is not null) _ = hostUi.StopDiscoveryServicesAsync();
+        }
         CouchCoopQrHostPanelController.HostLobbyPresented += () =>
         {
-            CouchCoopHostUiServices? hostUi;
-            lock (Gate)
-            {
-                hostUi = _hostUi;
-            }
-
-            hostUi?.StartDiscoveryServices();
+            demand.MultiplayerHosting = true;
+            RefreshDiscovery();
         };
+        CouchCoopQrHostPanelController.SoloEntryPresented += presented =>
+        {
+            demand.SoloLobbyPresented = presented;
+            RefreshDiscovery();
+        };
+        CouchCoopPauseMenuQrEntry.SoloEntryPresented += presented =>
+        {
+            demand.SoloPausePresented = presented;
+            RefreshDiscovery();
+        };
+        CouchPlayModeStore.Changed += _ => RefreshDiscovery();
         CouchCoopHostTransport.HostingEnded += () =>
         {
-            CouchCoopHostUiServices? hostUi;
-            lock (Gate)
-            {
-                hostUi = _hostUi;
-            }
-            if (hostUi is not null) _ = hostUi.StopDiscoveryServicesAsync();
+            demand.MultiplayerHosting = false;
+            RefreshDiscovery();
         };
     }
 

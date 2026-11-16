@@ -97,6 +97,7 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
     private readonly CouchCoopQrDialog _dialog = new();
     private readonly Callable _visibilityChanged;
     private Control? _row;
+    private IDisposable? _hostOnlyRow;
     private Node? _pauseMenu;
     private bool _installed;
     private int _localeRevision = -1;
@@ -112,7 +113,10 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
         AddChild(_dialog);
     }
 
-    /// <summary>The row's wording, shared with the lobby button so the two entry points cannot drift apart.</summary>
+    public static event Action<bool>? SoloEntryPresented;
+    private bool _solo;
+
+    /// <summary>The multiplayer wording, shared with the lobby button.</summary>
     public static string ButtonText => CouchCoopQrHostPanel.ButtonText;
 
     /// <summary>
@@ -210,11 +214,22 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
         _installed = true;
         _pauseMenu = pauseMenu;
         _dialog.Install();
+        Connect(Node.SignalName.TreeExiting, Callable.From(() =>
+        {
+            SoloEntryPresented?.Invoke(false);
+            ReleaseHostOnlyRow();
+        }));
 
         _row = BuildRow();
         if (_row is not null)
         {
             InsertRow(pauseMenu, _row);
+        }
+
+        // The row is hidden from the phone stream, so a browser tap at its position must not press it.
+        if (_row is not null)
+        {
+            _hostOnlyRow = HostOnlyInputGuard.Register(_row);
         }
 
         ConnectVisibility(pauseMenu);
@@ -392,9 +407,9 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
     /// overflow the row's 372×80 plate at the scene's 32pt default. The game sets every other row's label the
     /// same way for the same reason.
     /// </remarks>
-    private static void ApplyRowText(Control row)
+    private void ApplyRowText(Control row)
     {
-        var text = ButtonText;
+        var text = CouchCoopQrHostPanel.ButtonTextFor(_solo);
         var label = row.GetNodeOrNull<Control>(RowLabelNodeName);
         switch (label)
         {
@@ -538,9 +553,16 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
                 $"pause menu qr visibility disconnect failed detail={exception.GetType().Name}: {exception.Message}");
         }
 
+        ReleaseHostOnlyRow();
         TryFree(_row);
         _row = null;
         _pauseMenu = null;
+    }
+
+    private void ReleaseHostOnlyRow()
+    {
+        _hostOnlyRow?.Dispose();
+        _hostOnlyRow = null;
     }
 
     private void OnPauseMenuVisibilityChanged()
@@ -575,6 +597,7 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
             // The menu closed. NPauseMenu.OnSubmenuClosed only sets Visible = false, so a dialog left open would
             // keep its cancel binding pushed and focus parked on something nobody can see.
             _dialog.Close();
+            SoloEntryPresented?.Invoke(false);
             return;
         }
 
@@ -583,9 +606,12 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
         {
             // The pause menu is on screen and the host player opened it: that player is the demand (named allowance).
             using var permit = ZeroClientGuard.Permit(ZeroClientAllowances.LobbyGateFacts);
-            _row.Visible = CouchCoopPauseMenuGate.ShouldShow(
-                snapshot.ListenerBaseUri,
-                CouchCoopGameFacts.ReadGates(currentScreen: null));
+            var facts = CouchCoopGameFacts.ReadGates(currentScreen: null);
+            var solo = CouchCoopPauseMenuGate.IsSoloRun(facts);
+            if (_solo != solo) _localeRevision = -1;
+            _solo = _dialog.Solo = solo;
+            _row.Visible = CouchCoopPauseMenuGate.ShouldShow(snapshot.ListenerBaseUri, facts);
+            SoloEntryPresented?.Invoke(solo && _row.Visible);
         }
 
         RefreshLocalization(snapshot);

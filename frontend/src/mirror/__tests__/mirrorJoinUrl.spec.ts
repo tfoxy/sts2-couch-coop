@@ -21,10 +21,6 @@ import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 //      consistent with every module's lazy `window.location` read.
 // The reload itself is injected: jsdom refuses to redefine `location.reload` ([LegacyUnforgeable]).
 //
-// F3 adds a FOURTH rule, and it is about what the two `?name=` forms MEAN rather than about navigation: a VALUED
-// param is a player waiting for a seat (no stream, no join, the waiting screen) while an EMPTY one is the host's
-// own browser (stream the host, as before). The block at the bottom of this file drives it end to end.
-
 class MockWebSocket extends EventTarget {
   static OPEN = 1;
   static instances: MockWebSocket[] = [];
@@ -104,7 +100,7 @@ function sessionMessage(over: Record<string, unknown> = {}) {
 }
 
 const spRun = { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" };
-// F3 screens. The two character selects share `kind: "lobby"` and differ only in `mirrorMode` — which is exactly
+// The two character selects share `kind: "lobby"` and differ only in `mirrorMode` — which is exactly
 // why the `?name=` rules key off the mirror mode and never off `kind`.
 const mainMenu = { kind: "menu", type: "Menu", title: "Menu", mirrorMode: "main-menu" };
 const spCharSelect = { kind: "lobby", type: "lobby", title: "Character Select", mirrorMode: "sp-character-select" };
@@ -258,15 +254,36 @@ describe("MirrorApp — join state in the page URL", () => {
       .toEqual([expect.objectContaining({ refreshRate: 37 })]);
   });
 
-  it("never automatically requests singleplayer host admission", async () => {
-    mountAt("", true);
+  it.each(["", "?name=Ann", "?name="])("requests solo watch while denied and resumes when allowed (%s)", async (search) => {
+    mountAt(search, true);
     await settle();
-    latest().emit(sessionMessage({ screen: spRun,
-      hostAccess: { allowed: false, reason: "outside-multiplayer", generation: 1 } }));
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: spRun, players: [], refreshRate: 37,
+      hostAccess: { allowed: false, reason: "couch-play-off", generation: 1 } }));
     await settle();
-    expect(latest().sentOfType("join")).toEqual([]);
+    expect(socket.sentOfType("join")).toEqual([]);
+    expect(watchOnTheWire()).toBe(true);
+    expect(app!.get('[data-testid="host-access-notice"]').text()).toContain(
+      "The host hasn't turned on Couch play for single player. Ask them to open the Couch QR Code on the game screen."
+    );
+    expect(waitingTitle().exists()).toBe(false);
+    expect(socket.sentOfType("settings").filter((message) => "refreshRate" in message)).toEqual([]);
+    socket.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 2 } });
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([expect.objectContaining({ name: search === "?name=Ann" ? "Ann" : "" })]);
+    socket.emit(sessionMessage({ screen: spRun, players: [], directView: true, refreshRate: 37,
+      hostAccess: { allowed: true, reason: "allowed", generation: 2 } }));
+    socket.emit({ type: "scene-delta", full: true, screenType: "run",
+      upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+      removedIds: [], orderedIds: ["root"] });
+    await settle();
+    expect(app!.findComponent(MirrorView).exists()).toBe(true);
     expect(app!.find('[data-testid="host-access-notice"]').exists()).toBe(false);
-    expect(watchOnTheWire()).toBe(false);
+    app!.findComponent(MirrorView).props("sendInput")!({ kind: "click", pressed: true });
+    expect(socket.sentOfType("input")).toHaveLength(1);
+    expect(socket.sentOfType("settings").filter((message) => "refreshRate" in message))
+      .toEqual([expect.objectContaining({ refreshRate: 37 })]);
+    expect(window.location.search).toBe(search);
   });
 
   it.each([false, true])("does not start audio from an unlock that crosses a hidden tab (visible before resolve: %s)", async (showBeforeResolve) => {
@@ -760,21 +777,139 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(window.history.length).toBe(before);
   });
 
-  it("waits for a multiplayer screen before acting on the empty ?name=", async () => {
+  it("requests the host view on the main menu without a roster", async () => {
     mountAt("?name=");
     await settle();
-    latest().emit(
-      sessionMessage({ players: [], screen: { kind: "menu", type: "Menu", title: "Menu", mirrorMode: "main-menu" } })
-    );
+    latest().emit(sessionMessage({ players: [], screen: mainMenu }));
     await settle();
+    expect(latest().sentOfType("join")).toEqual([expect.objectContaining({ name: "" })]);
+    expect(watchOnTheWire()).toBe(true);
+    expect(window.location.search).toBe("?name=");
+  });
 
-    expect(latest().sentOfType("join")).toHaveLength(0);
-    expect(window.location.search).toBe("?name="); // the marker survives — the host may still enter a lobby
-
-    // …and it fires the moment a multiplayer roster does arrive.
-    latest().emit(sessionMessage());
+  it("auto-joins the named seat once after a main-menu direct view reaches multiplayer", async () => {
+    mountAt("?name=Ann", true);
     await settle();
-    expect(latest().sentOfType("join")[0]).toMatchObject({ name: "Hosty", playerId: "p:1" });
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: mainMenu, players: [] }));
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([expect.objectContaining({ name: "Ann" })]);
+    socket.emit(sessionMessage({ screen: mainMenu, players: [], directView: true }));
+    await settle();
+    const before = window.history.length;
+
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([
+      expect.objectContaining({ name: "Ann" }),
+      expect.objectContaining({ name: "Ann" })
+    ]);
+    expect(watchOnTheWire()).toBe(false);
+    expect(window.location.search).toBe("?name=Ann");
+    expect(window.history.length).toBe(before);
+  });
+
+  it("auto-joins the named seat after a solo direct view crosses a denied menu into multiplayer", async () => {
+    mountAt("?name=Ann", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: spRun, players: [] }));
+    await settle();
+    socket.emit(sessionMessage({ screen: spRun, players: [], directView: true }));
+    await settle();
+    socket.emit(sessionMessage({ screen: mainMenu, players: [],
+      hostAccess: { allowed: false, reason: "outside-multiplayer", generation: 1 } }));
+    await settle();
+    const before = window.history.length;
+
+    socket.emit(sessionMessage({ screen: mpCharSelect,
+      hostAccess: { allowed: true, reason: "allowed", generation: 2 } }));
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([
+      expect.objectContaining({ name: "Ann" }),
+      expect.objectContaining({ name: "Ann" })
+    ]);
+    expect(watchOnTheWire()).toBe(false);
+    expect(window.location.search).toBe("?name=Ann");
+    expect(window.history.length).toBe(before);
+  });
+
+  it("re-takes the host row when an empty marker's solo direct view reaches multiplayer", async () => {
+    mountAt("?name=", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: spRun, players: [] }));
+    await settle();
+    socket.emit(sessionMessage({ screen: spRun, players: [], directView: true }));
+    await settle();
+    const before = window.history.length;
+
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([
+      expect.objectContaining({ name: "" }),
+      expect.objectContaining({ name: "Hosty", playerId: "p:1" })
+    ]);
+    expect(window.location.search).toBe("?name=");
+    expect(window.history.length).toBe(before);
+  });
+
+  it("returns a no-name solo direct viewer to the multiplayer picker with watch off", async () => {
+    mountAt("", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: spCharSelect, players: [] }));
+    await settle();
+    socket.emit(sessionMessage({ screen: spCharSelect, players: [], directView: true }));
+    await settle();
+    const before = window.history.length;
+
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([expect.objectContaining({ name: "" })]);
+    expect(app!.find('[data-testid="player-picker"]').exists()).toBe(true);
+    expect(watchOnTheWire()).toBe(false);
+    expect(window.location.search).toBe("");
+    expect(window.history.length).toBe(before);
+  });
+
+  it("re-arms the host-row join when solo admission is answered on a multiplayer screen", async () => {
+    mountAt("?name=", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: spRun, players: [] }));
+    await settle();
+    const requestId = socket.sentOfType("join")[0].requestId;
+    const before = window.history.length;
+
+    socket.emit(sessionMessage({ screen: mpCharSelect, requestId }));
+    await settle();
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([
+      expect.objectContaining({ name: "" }),
+      expect.objectContaining({ name: "Hosty", playerId: "p:1" })
+    ]);
+    expect(window.location.search).toBe("?name=");
+    expect(window.history.length).toBe(before);
+  });
+
+  it("retains a multiplayer direct grant across multiplayer session updates", async () => {
+    mountAt("?name=", true);
+    await settle();
+    const socket = latest();
+    socket.emit(sessionMessage({ screen: mpCharSelect }));
+    await settle();
+    socket.emit(sessionMessage({ screen: mpCharSelect, directView: true }));
+    await settle();
+    socket.emit(sessionMessage());
+    await settle();
+    expect(socket.sentOfType("join")).toEqual([expect.objectContaining({ name: "Hosty", playerId: "p:1" })]);
+    expect(app!.find('[data-testid="player-picker"]').exists()).toBe(false);
+    expect(watchOnTheWire()).toBe(true);
+    expect(window.location.search).toBe("?name=");
   });
 
   // F3 — REWRITTEN (this case used to assert the opposite: that the marker was dropped with a REPLACE and the
@@ -815,36 +950,24 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(reloadPage).toHaveBeenCalledTimes(1);
   });
 
-  // ---- F3: `?name=<seat>` view rules + the waiting screen -----------------------------------------------------
-  //
-  // A URL that NAMES a seat is a player waiting for a game, not a spectator. On a host screen with no seat to give
-  // — main menu, SINGLEPLAYER character select, singleplayer run — that viewer must: pull no scene bytes, send no
-  // join the host could only refuse, and be told what it is waiting for. The picker is not an option there: it has
-  // nothing on it to pick.
-
   for (const [label, screen] of [
     ["the main menu", mainMenu],
     ["a singleplayer character select", spCharSelect],
     ["a singleplayer run", spRun]
   ] as const) {
-    it(`?name=<seat> on ${label} waits: no stream, no join, no picker`, async () => {
-      mountAt("?name=Ann");
-      await settle();
-      latest().emit(sessionMessage({ screen, players: [] }));
-      await settle();
-
-      expect(waitingTitle().text()).toBe("Waiting for host to start game");
-      expect(app!.find('[data-testid="mirror-host-waiting-sub"]').text()).toBe(
-        "You'll join as Ann when the host starts a game."
-      );
-      expect(pickerIsUp()).toBe(false);
-      expect(app!.find('[data-testid="player-picker"]').exists()).toBe(false);
-      // NO join of any shape. The empty-name one matters as much as the named one: on a singleplayer run the app
-      // otherwise sends `join ""` to request a direct view, and the server ANSWERS it — which would hand this
-      // viewer the host's solo run through the gate's own directView arm.
-      expect(latest().sentOfType("join")).toHaveLength(0);
-      expect(watchOnTheWire()).toBe(false);
-    });
+    for (const search of ["?name=Ann", ""]) {
+      it(`${search || "no name"} on ${label} requests the host view`, async () => {
+        mountAt(search);
+        await settle();
+        latest().emit(sessionMessage({ screen, players: [] }));
+        await settle();
+        expect(waitingTitle().exists()).toBe(false);
+        expect(app!.find('[data-testid="player-picker"]').exists()).toBe(false);
+        expect(latest().sentOfType("join")).toEqual([expect.objectContaining({ name: search ? "Ann" : "" })]);
+        expect(watchOnTheWire()).toBe(true);
+        expect(window.location.search).toBe(search);
+      });
+    }
   }
 
   // The waiting screen is the diag/e2e scripts' `mirror-status` element, exactly as the picker is: they wait for
@@ -852,7 +975,7 @@ describe("MirrorApp — join state in the page URL", () => {
   it("carries data-testid=mirror-status like the picker it replaces", async () => {
     mountAt("?name=Ann");
     await settle();
-    latest().emit(sessionMessage({ screen: mainMenu, players: [] }));
+    latest().emit(sessionMessage({ screen: { ...mainMenu, mirrorMode: "unsupported" }, players: [] }));
     await settle();
 
     const status = app!.find('[data-testid="mirror-status"]');
@@ -862,13 +985,17 @@ describe("MirrorApp — join state in the page URL", () => {
 
   // The auto-join guard is a "not yet", never a "never": it sits ABOVE the one-shot latch, so the attempt is
   // still there to spend when the host reaches a screen that has seats.
-  it("auto-joins exactly once when the host walks from the menu into a multiplayer lobby", async () => {
+  it.each([
+    ["the main menu", mainMenu],
+    ["an unclassified screen", { ...mainMenu, mirrorMode: "unsupported" }]
+  ])("auto-joins exactly once when the host reaches multiplayer from %s", async (_label, screen) => {
     mountAt("?name=Ann");
     await settle();
-    latest().emit(sessionMessage({ screen: mainMenu, players: [] }));
+    latest().emit(sessionMessage({ screen, players: [],
+      hostAccess: { allowed: false, reason: "outside-multiplayer", generation: 0 } }));
     await settle();
     expect(latest().sentOfType("join")).toHaveLength(0);
-    expect(waitingTitle().exists()).toBe(true);
+    expect(waitingTitle().exists()).toBe(screen.mirrorMode === "unsupported");
 
     latest().emit(sessionMessage({ screen: mpCharSelect }));
     await settle();
@@ -884,13 +1011,11 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(latest().sentOfType("join")).toHaveLength(1);
   });
 
-  // "Control host" — from "I am a player waiting for a seat" (`?name=Ann`) to "I am the browser controlling the
-  // host" (`?name=`), which is the state whose stream gate is OPEN on these screens. A PUSH so Back returns the
-  // viewer to being a player, and a RELOAD because half this app's setup is URL-keyed and read exactly once.
+  // An unclassified screen still offers the host marker as a way out of seat intent.
   it("control host swaps the seat name for the empty marker and reloads", async () => {
     mountAt("?name=Ann");
     await settle();
-    latest().emit(sessionMessage({ screen: mainMenu, players: [] }));
+    latest().emit(sessionMessage({ screen: { ...mainMenu, mirrorMode: "unsupported" }, players: [] }));
     await settle();
 
     const before = window.history.length;
@@ -901,11 +1026,8 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(reloadPage).toHaveBeenCalledTimes(1);
   });
 
-  // The reason `urlSeatIntent` is kept in sync by ONE helper shared with the redirect path: a viewer that JOINED
-  // (and so stamped `?name=Ann` from code, not from the address bar it loaded with) is still a seat viewer when
-  // the run later ends under them. Without the shared update it would silently fall through to watching the
-  // host's main menu — the exact thing the seat rules exist to prevent, arrived at from the other direction.
-  it("a viewer that joined, then lost the run, waits on the host's menu instead of watching it", async () => {
+  // URL seat intent written by a join also applies to a subsequent unclassified screen.
+  it("a viewer that lost the run waits on an unclassified host screen", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     mountAt(""); // no param at load: the marker below is written by the JOIN, not by the URL we arrived on
     await settle();
@@ -922,7 +1044,7 @@ describe("MirrorApp — join state in the page URL", () => {
     await settle();
     vi.advanceTimersByTime(RECONNECT_BASE_DELAY_MS);
     await settle();
-    latest().emit(sessionMessage({ screen: mainMenu, players: [] })); // …and the host is back on the menu
+    latest().emit(sessionMessage({ screen: { ...mainMenu, mirrorMode: "unsupported" }, players: [] }));
     await settle();
 
     expect(waitingTitle().text()).toBe("Waiting for host to start game");
@@ -932,17 +1054,19 @@ describe("MirrorApp — join state in the page URL", () => {
     expect(watchOnTheWire()).toBe(false);
   });
 
-  // An explicit host marker survives unsupported screens without requesting their scene.
-  it("an EMPTY ?name= waits for multiplayer admission and survives the main menu", async () => {
+  it("an EMPTY ?name= keeps requesting the main menu while access is denied", async () => {
     mountAt("?name=");
     await settle();
-    latest().emit(sessionMessage({ screen: mainMenu, players: [] }));
+    latest().emit(sessionMessage({ screen: mainMenu, players: [],
+      hostAccess: { allowed: false, reason: "outside-multiplayer", generation: 1 } }));
     await settle();
-
-    expect(watchOnTheWire()).toBe(false);
+    expect(watchOnTheWire()).toBe(true);
     expect(latest().sentOfType("join")).toHaveLength(0);
     expect(waitingTitle().exists()).toBe(false);
-    expect(window.location.search).toBe("?name="); // the marker is durable — the host may still enter a lobby
+    expect(app!.get('[data-testid="host-access-notice"]').text()).toContain(
+      "Access resumes automatically when the host returns to a screen they've shared."
+    );
+    expect(window.location.search).toBe("?name=");
   });
 
   // The listener is per-app: an unmounted mirror must not keep reloading the page from under whatever mounted next.

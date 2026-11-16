@@ -22,7 +22,7 @@ namespace CouchCoop.Mod.HostUi;
 public static class CouchCoopPauseMenuGate
 {
     /// <summary>
-    /// True when this instance has a browser server AND is hosting a multiplayer run.
+    /// True when this instance has a browser server AND has a host or single player run.
     /// </summary>
     /// <param name="listenerBaseUri">
     /// <c>CouchCoopHostUiSnapshot.ListenerBaseUri</c> — the port the browser server actually bound. Same
@@ -34,16 +34,14 @@ public static class CouchCoopPauseMenuGate
     /// we cannot prove we are hosting.
     /// </param>
     public static bool ShouldShow(Uri? listenerBaseUri, GateFacts? facts)
-        => listenerBaseUri is not null && IsHostRun(facts);
+        => listenerBaseUri is not null && (IsHostRun(facts) || IsSoloRun(facts));
 
     /// <summary>
     /// A live run this instance is HOSTING.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A true singleplayer run reports <c>"singleplayer"</c> and is refused: nothing can join it, so a QR would
-    /// be a promise we cannot keep. A run we joined as someone else's client is refused too — that session's
-    /// browser players belong to ITS host, and our URL would hand out a seat we do not own.
+    /// A run joined as a client is refused: its browser players belong to its host.
     /// </para>
     /// <para>
     /// A couch-coop host reports <c>"host"</c> even when it is alone in the run (a multiplayer host is a host
@@ -53,4 +51,8 @@ public static class CouchCoopPauseMenuGate
     /// </remarks>
     public static bool IsHostRun(GateFacts? facts)
         => facts is { RunInProgress: true, RunNetType: CouchCoopLobbyHostGate.HostNetGameType };
+
+    /// <summary>A single player run, including its pause menu.</summary>
+    public static bool IsSoloRun(GateFacts? facts)
+        => facts is { RunInProgress: true, RunNetType: NetTypeNames.Singleplayer };
 }

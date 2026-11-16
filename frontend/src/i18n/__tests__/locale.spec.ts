@@ -81,6 +81,17 @@ describe("catalogue integrity", () => {
     }
   });
 
+  it("translates host-access notices while preserving the Couch feature names", () => {
+    for (const [locale, catalog] of Object.entries(messages)) {
+      expect(catalog["hostAccess.couchPlayOff"], locale).toContain("Couch play");
+      expect(catalog["hostAccess.couchPlayOff"], locale).toContain("Couch QR Code");
+      if (locale !== "en") {
+        expect(catalog["hostAccess.couchPlayOff"], locale).not.toBe(en["hostAccess.couchPlayOff"]);
+        expect(catalog["hostAccess.wait"], locale).not.toBe(en["hostAccess.wait"]);
+      }
+    }
+  });
+
   it("interpolates plain bootstrap strings without Vue", () => {
     expect(plainTranslate("zh-Hans", "picker.joinAs", { name: "Ada" })).toContain("Ada");
     expect(messages.en["picker.controllers"]).toContain("{count}");

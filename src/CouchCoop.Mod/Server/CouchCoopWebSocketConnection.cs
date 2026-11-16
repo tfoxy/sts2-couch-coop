@@ -590,7 +590,7 @@ public sealed class CouchCoopWebSocketConnection
                 // No manager (this process IS a headless client, or the host couldn't resolve its exe):
                 // there is nothing to spawn. This explicit join chooses the current process; the browser
                 // still has to request watch and pass the independent host-access policy before receiving it.
-                directView = true;
+                directView = _isHeadlessClient ? true : DirectOnlyHostView(_lobby.DescribeMirrorJoinContext()) ?? true;
             }
             else
             {
@@ -599,13 +599,14 @@ public sealed class CouchCoopWebSocketConnection
                 // EnsureHeadlessAsync so it does not ask again). No game-state snapshot is built for any of it.
                 var joinRead = _lobby.DescribeJoin();
                 var ctx = joinRead.Context;
+                var directOnly = ctx.IsSingleplayerRun || ctx.IsSingleplayerLobby || ctx.IsMainMenu;
                 // Publish who the HOST can name (itself — a SteamID64 on a Steam-hosted session — plus
                 // every remote player) to the durable roster BEFORE any spawn decision below, so the
                 // seat we may be about to launch reads a complete mp_names.json at construction and
                 // every ALREADY-RUNNING seat picks the newcomers up on its next name-sync tick. Without
                 // this a seat can only name the couch slots this host allocated, and renders everyone
                 // else — the host included — as a raw netId.
-                if (ctx.RosterNames is { Count: > 0 } rosterNames)
+                if (!directOnly && ctx.RosterNames is { Count: > 0 } rosterNames)
                 {
                     _headlessManager.PublishRosterNames(rosterNames);
                 }
@@ -622,10 +623,11 @@ public sealed class CouchCoopWebSocketConnection
                     targetNetId = pickedNetId;
                 }
 
-                if (ctx.IsSingleplayerRun)
+                if (directOnly)
                 {
-                    // The host's singleplayer game is private.
-                    directView = false;
+                    // Routing chooses this process without consulting seats. Watch and input still pass
+                    // the independent host-access policy, including transitions and protected menus.
+                    directView = DirectOnlyHostView(ctx);
                 }
                 else if (string.IsNullOrWhiteSpace(trimmedName))
                 {
@@ -817,6 +819,16 @@ public sealed class CouchCoopWebSocketConnection
             cancellationToken,
             headlessMirrorPath: headlessPath).ConfigureAwait(false)).ConfigureAwait(false);
     }
+
+    private static bool? DirectOnlyHostView(CouchCoopLobbyParticipation.MirrorJoinContext context)
+        => context.IsSingleplayerRun || context.IsSingleplayerLobby || context.IsMainMenu
+            ? CouchPlayModeStore.Current switch
+            {
+                CouchPlayMode.EveryScreen => true,
+                CouchPlayMode.SoloScreens => !context.IsMainMenu,
+                _ => false,
+            }
+            : null;
 
     internal static IPAddress? DirectIpAddressFromRequest(bool isSecure, string? host)
         => isSecure && Uri.TryCreate($"https://{host}/", UriKind.Absolute, out var uri)
@@ -1187,7 +1199,7 @@ public sealed class CouchCoopWebSocketConnection
 
     private static BrowserActionResultEnvelope AccessDenied(string? requestId, string type)
         => new(type, requestId ?? "", "host-access-denied",
-            "Host access is temporarily unavailable. Return to multiplayer play and close the host menu.");
+            "Host access is temporarily unavailable. Check couch play and the current screen at the game machine.");
 
     private T ExecuteWithAccess<T>(long generation, long watchEpoch, Func<T> action, T denied)
     {
@@ -1225,7 +1237,7 @@ public sealed class CouchCoopWebSocketConnection
     private void OnHostAccessChanged(HostBrowserAccessState state)
     {
         // The authoritative state has already changed synchronously. Do no scene/game reads in this callback.
-        if (_accessReady && _watchRequested && !_closing) _ = Task.Run(() => RefreshHostAccessAsync());
+        if (_accessReady && _watchRequested && !_closing) _ = Task.Run(() => RefreshHostAccessAsync(granted: state.Allowed));
     }
 
     internal void OnRendererChanged()
@@ -1237,7 +1249,7 @@ public sealed class CouchCoopWebSocketConnection
     private bool MirrorRestorePending => _isHeadlessClient && _rendererSwapHost is { } swap
         && swap.RendererStatus.State is "mirror" or "failed" && !swap.MirrorRestoreComplete;
 
-    private async Task RefreshHostAccessAsync(bool rendererChanged = false)
+    private async Task RefreshHostAccessAsync(bool rendererChanged = false, bool granted = false)
     {
         await _accessTransitionGate.WaitAsync().ConfigureAwait(false);
         try
@@ -1248,8 +1260,12 @@ public sealed class CouchCoopWebSocketConnection
             // Even a revoke/reopen that completed before this worker ran invalidates the old retained scene.
             if (MirrorRestorePending || !state.Allowed || _streamAccessGeneration != state.Generation || _streamWatchEpoch != watchEpoch || !_watchRequested)
                 await SetSceneStreamingAsync(false, state.Generation, watchEpoch).ConfigureAwait(false);
-            // Publish restoration before a resumed observer can send its first full scene.
-            if (rendererChanged || _mirrorRestoreBlocked) await ResendSessionAsync(null, CancellationToken.None).ConfigureAwait(false);
+            // Publish restoration before a resumed observer can send its first full scene. A policy grant also
+            // re-sends the session: the scene observer stopped while access was denied, so a screen change made in
+            // the meantime (a solo run left for a multiplayer lobby) reaches the browser only through this envelope.
+            // A watch request does not: its viewer already holds a fresh session.
+            if (rendererChanged || _mirrorRestoreBlocked || (granted && state.Allowed && _watchRequested))
+                await ResendSessionAsync(null, CancellationToken.None).ConfigureAwait(false);
             if (!rendererChanged) await SendBytesAsync([], CancellationToken.None, accessUpdate: true).ConfigureAwait(false);
             if (_watchRequested && AllowsAccess(state.Generation))
                 await SetSceneStreamingAsync(true, state.Generation, watchEpoch).ConfigureAwait(false);

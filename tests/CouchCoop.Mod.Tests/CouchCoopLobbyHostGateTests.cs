@@ -8,11 +8,14 @@ internal static class CouchCoopLobbyHostGateTests
     {
         HostLobbyWithAListenerShows();
         LoadSavedRunLobbyShows();
-        SingleplayerLobbyIsRefused();
+        SingleplayerLobbyShows();
         RunInProgressIsRefused();
         UnknownFactsAreRefused();
         MissingListenerIsRefused();
         FactsMatrix();
+        Expect(CouchCoopLobbyHostGate.IsSoloLobby(Facts(false, NetTypeNames.Singleplayer, null)), "solo variant");
+        Expect(!CouchCoopLobbyHostGate.IsSoloLobby(Facts(true, NetTypeNames.Singleplayer, NetTypeNames.Singleplayer)), "run refuses solo lobby");
+        Expect(!CouchCoopLobbyHostGate.ShouldShow(null, Facts(false, NetTypeNames.Singleplayer, null)), "solo needs listener");
         CheckpointEvaluationKeepsItsThreeStates();
         Console.WriteLine("CouchCoopLobbyHostGateTests: ok");
     }
@@ -26,9 +29,9 @@ internal static class CouchCoopLobbyHostGateTests
     private static void LoadSavedRunLobbyShows()
         => Expect(CouchCoopLobbyHostGate.ShouldShow(Listener, Facts(false, "host", null)), "saved-run host lobby shows through the same typed gate fact");
 
-    private static void SingleplayerLobbyIsRefused()
+    private static void SingleplayerLobbyShows()
     {
-        Expect(!CouchCoopLobbyHostGate.ShouldShow(Listener, Facts(false, "singleplayer", null)), "singleplayer lobby is refused");
+        Expect(CouchCoopLobbyHostGate.ShouldShow(Listener, Facts(false, "singleplayer", null)), "singleplayer lobby shows");
         Expect(!CouchCoopLobbyHostGate.ShouldShow(Listener, Facts(false, "client", null)), "client-side lobby is refused");
     }
 
@@ -66,7 +69,7 @@ internal static class CouchCoopLobbyHostGateTests
         foreach (var (facts, lobby, run, what) in cases)
         {
             Expect(CouchCoopLobbyHostGate.IsHostLobby(facts) == lobby, $"IsHostLobby for {what}");
-            Expect(CouchCoopLobbyHostGate.ShouldShow(Listener, facts) == lobby, $"ShouldShow for {what}");
+            Expect(CouchCoopLobbyHostGate.ShouldShow(Listener, facts) == (lobby || CouchCoopLobbyHostGate.IsSoloLobby(facts)), $"ShouldShow for {what}");
             Expect(!CouchCoopLobbyHostGate.ShouldShow(null, facts), $"missing listener refuses {what}");
             Expect(CouchCoopPauseMenuGate.IsHostRun(facts) == run, $"IsHostRun for {what}");
             Expect(!(lobby && run), $"the gates never both accept {what}");

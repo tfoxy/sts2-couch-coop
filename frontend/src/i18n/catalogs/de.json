@@ -1,7 +1,8 @@
 {
   "hostAccess.title": "Host-Ansicht vorübergehend nicht verfügbar",
   "hostAccess.menu": "Der Host hat ein Menü geöffnet. Der Zugriff wird automatisch fortgesetzt, sobald es geschlossen wird.",
-  "hostAccess.wait": "Der Zugriff wird automatisch fortgesetzt, sobald der Host in eine Mehrspieler-Lobby oder einen Mehrspieler-Durchlauf zurückkehrt.",
+  "hostAccess.couchPlayOff": "Der Host hat Couch play für den Einzelspielermodus noch nicht aktiviert. Bitte ihn, auf dem Spielbildschirm Couch QR Code zu öffnen.",
+  "hostAccess.wait": "Der Zugriff wird automatisch fortgesetzt, sobald der Host zu einem freigegebenen Bildschirm zurückkehrt.",
   "app.mirror": "Spiegel",
   "common.working": "Bitte warten",
   "common.host": "Host",

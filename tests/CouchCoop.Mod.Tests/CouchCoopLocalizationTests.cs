@@ -10,10 +10,44 @@ internal static class CouchCoopLocalizationTests
         CatalogsStayInParityAndUseSafePlaceholders();
         ShippedCatalogsDoNotTranslateThePlaceholdersThemselves();
         LocaleSelectionFallsBackToEnglish();
+        SoloQrCopyKeepsItsOwnLabels();
+        CouchPlayCopyIsTranslated();
         GuidedSetupCopyPreservesTrustAndPlatformSteps();
         GuidedHelpHasLocalizedHeadingsAndNumberedRemovalSteps();
         SemanticMappingsAndFontPredicateUseTheLocale();
         Console.WriteLine("CouchCoopLocalizationTests: ok");
+    }
+
+    private static void CouchPlayCopyIsTranslated()
+    {
+        var english = RawCatalog("en");
+        var keys = CouchPlayPanelModel.Options.SelectMany(option => new[] { option.LabelKey, option.DescriptionKey })
+            .Append(CouchPlayPanelModel.EnableKey).ToArray();
+        foreach (var language in CouchCoopLocalization.SupportedLanguages)
+        {
+            var catalog = CouchCoopLocalization.CatalogFor(language);
+            Assert(catalog[CouchPlayPanelModel.TitleKey] == "Couch play", $"{language} keeps the product name");
+            foreach (var key in keys)
+            {
+                Assert(!string.IsNullOrWhiteSpace(catalog[key]), $"{language} has {key}");
+                if (language != "eng") Assert(catalog[key] != english[key], $"{language} translates {key}");
+            }
+        }
+    }
+
+    private static void SoloQrCopyKeepsItsOwnLabels()
+    {
+        CouchCoopLocalization.SetLanguageForTests("eng");
+        Assert(CouchCoopQrHostPanel.ButtonTextFor(true) == "Couch QR Code", "solo button label");
+        Assert(CouchCoopQrHostPanel.ButtonTextFor(false) == "Couch Co-Op QR Code", "multiplayer label stays unchanged");
+        var english = RawCatalog("en");
+        Assert(english["couchcoop_solo_qr_title"] == "Scan to play with Couch", "solo dialog title");
+        foreach (var language in CouchCoopLocalization.SupportedLanguages.Where(language => language != "eng"))
+        {
+            var catalog = CouchCoopLocalization.CatalogFor(language);
+            foreach (var key in new[] { "couchcoop_solo_qr_button", "couchcoop_solo_qr_title" })
+                Assert(catalog[key] != english[key] && catalog[key].Contains("Couch"), $"{language} translates {key} and keeps the product name");
+        }
     }
 
     private static void SemanticMappingsAndFontPredicateUseTheLocale()

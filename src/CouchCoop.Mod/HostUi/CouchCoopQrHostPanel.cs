@@ -83,6 +83,8 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     private CouchCoopHostUiSnapshot _snapshot = CouchCoopHostUiSnapshot.Unavailable([]);
     private bool _installed;
     private bool _hotkeyBound;
+    private IDisposable? _hostOnlyButton;
+    private IDisposable? _hostOnlyHotkey;
     private int _localeRevision = -1;
     private readonly CouchCoopConnectionAttention _attention = new();
 
@@ -159,6 +161,20 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     /// <summary>Wording is part of the QA contract; the probe reads this label.</summary>
     public static string ButtonText => CouchCoopLocalization.Resolve("couchcoop_qr_button");
 
+    public bool Solo
+    {
+        get => _dialog.Solo;
+        set
+        {
+            if (_dialog.Solo == value) return;
+            _dialog.Solo = value;
+            RefreshLocalization(force: true);
+        }
+    }
+
+    public static string ButtonTextFor(bool solo)
+        => CouchCoopLocalization.Resolve(solo ? "couchcoop_solo_qr_button" : "couchcoop_qr_button");
+
     /// <summary>
     /// Idempotent wiring, called by the controller after <c>AddChild</c> rather than relying on
     /// <c>_Ready</c> — see <see cref="CouchCoopTextureButton"/> for why engine dispatch into this
@@ -172,6 +188,9 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
 
         _installed = true;
+        Connect(Node.SignalName.TreeExiting, Callable.From(UnregisterHostOnly));
+        _hostOnlyButton = HostOnlyInputGuard.Register(_button);
+        _hostOnlyHotkey = HostOnlyInputGuard.RegisterHotkey(this, _hotkeyAction);
         _button.Install();
         _hint.Install();
         _dialog.Install();
@@ -181,6 +200,14 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     }
 
     public override void _Ready() => Install();
+
+    private void UnregisterHostOnly()
+    {
+        _hostOnlyButton?.Dispose();
+        _hostOnlyButton = null;
+        _hostOnlyHotkey?.Dispose();
+        _hostOnlyHotkey = null;
+    }
 
     /// <summary>Re-reads the hot-reloadable layout. Called on install and on an explicit refresh only.</summary>
     public void ApplyLayout()
@@ -249,7 +276,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
 
         _localeRevision = revision;
-        _button.Text = ButtonText;
+        _button.Text = ButtonTextFor(Solo);
         _button.ApplyFontSize(_layout.ButtonFontSize);
         _hint.RefreshLocalization();
         _connectionNotice.Text = CouchCoopLocalization.Resolve("couchcoop_connection_attention_notice");

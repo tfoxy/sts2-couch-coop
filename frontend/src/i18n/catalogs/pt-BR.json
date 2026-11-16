@@ -1,7 +1,8 @@
 {
   "hostAccess.title": "Visualização do anfitrião temporariamente indisponível",
   "hostAccess.menu": "O anfitrião abriu um menu. O acesso será retomado automaticamente quando ele o fechar.",
-  "hostAccess.wait": "O acesso será retomado automaticamente quando o anfitrião voltar a uma sala ou partida multijogador.",
+  "hostAccess.couchPlayOff": "O anfitrião ainda não ativou Couch play para um jogador. Peça a ele para abrir Couch QR Code na tela do jogo.",
+  "hostAccess.wait": "O acesso será retomado automaticamente quando o anfitrião voltar a uma tela que compartilhou.",
   "app.mirror": "Espelho",
   "common.working": "Processando",
   "common.host": "Anfitrião",

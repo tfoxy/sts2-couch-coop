@@ -1,7 +1,8 @@
 {
   "hostAccess.title": "Widok gospodarza jest chwilowo niedostępny",
   "hostAccess.menu": "Gospodarz otworzył menu. Dostęp zostanie automatycznie przywrócony po jego zamknięciu.",
-  "hostAccess.wait": "Dostęp zostanie automatycznie przywrócony, gdy gospodarz wróci do lobby lub rozgrywki wieloosobowej.",
+  "hostAccess.couchPlayOff": "Host nie włączył Couch play w trybie jednoosobowym. Poproś go o otwarcie Couch QR Code na ekranie gry.",
+  "hostAccess.wait": "Dostęp zostanie automatycznie wznowiony, gdy host wróci do udostępnionego ekranu.",
   "app.mirror": "Lustro",
   "common.working": "Proszę czekać",
   "common.host": "Host",

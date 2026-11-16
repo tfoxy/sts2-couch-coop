@@ -12,21 +12,29 @@ validated `res://` path and only `raw` (default) or `?format=png`; unsupported f
 rejected. Browser semantic actions are limited to the two actions used by the shipped client, and their acting
 player comes from the served game process or the server-owned connection identity.
 
-Browser access to the host's screen is permitted only in a multiplayer lobby or multiplayer run,
-with the native pause menu, Settings, and their submenus closed. Singleplayer, the main menu, loading transitions,
-and unreadable game state deny access. Multiplayer run summaries remain accessible. The server stops host scene
-transmission and rejects browser input, browser actions, and settings that change the host process while blocked.
+Browser access to the host's screen follows the host's persisted couch play mode. The default, **Off**, permits
+only multiplayer lobbies and runs, with the native pause menu, Settings, and their submenus closed.
+**SoloScreens** also permits single player lobbies and runs, including pause, Settings, and their submenus in
+single player; multiplayer retains its menu restriction and the main menu remains blocked. **EveryScreen** permits
+every host screen, including the main menu and multiplayer pause and Settings screens. Run summaries remain
+accessible wherever their run is permitted. The mode is a local host preference, never sent to browsers or
+settable by a browser message. CouchCoop's own host controls (the QR button, the pause-menu QR row, their dialog
+and its mode select) are never streamed, and browser pointer, key and pad input is refused while one of its
+dialogs is open, on those controls, and for the QR hotkey, so a blind tap cannot change the mode. Every mode suspends access during loading transitions and denies unreadable game
+state. The server stops host scene transmission and rejects browser input, browser actions, and settings that
+change the host process while blocked.
 Queued work is invalidated on revocation, held injected controls are cancelled, and an allowed screen resumes with
 a fresh snapshot. Browser watch flags and claimed player identities cannot override this policy.
 
-Maps, decks, ordinary multiplayer dialogs, and roster updates preserve access. During known run loading, the
+Maps, decks, ordinary gameplay dialogs, and roster updates preserve permitted access. During known run loading, the
 browser retains its last permitted view while input and scene transmission are suspended. Control returns only
-after a fresh authorized snapshot is presented. Protected or unknown destinations clear the view and show an
-unavailable message; a separate monotonic scene-reset generation preserves that clear across rapid updates.
+after a fresh authorized snapshot is presented. Destinations outside the selected mode and unreadable state
+clear the view and show an unavailable message; a separate monotonic scene-reset generation preserves that clear
+across rapid updates.
 A host playing through a browser must close a blocked native menu on the game machine. Separate player instances retain their own controls; shared assets,
 seat audio, joining, and session coordination remain available. A frame whose transmission began before revocation
 may finish arriving, and previously received frames cannot be erased from a client. This restriction does not add
-passwords, kick controls, or protection against interference during permitted multiplayer play.
+passwords, kick controls, or protection against interference on permitted screens.
 
 Access monitoring runs only while a browser requests the host view, including a temporarily blocked viewer.
 Join-only and separate-player coordination connections do not keep it active. Without host watchers there are

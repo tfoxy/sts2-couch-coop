@@ -220,19 +220,14 @@ describe("shouldWatchHostStream", () => {
     expect(shouldWatchHostStream(noSession, null, null, false, true, false)).toBe(true);
   });
 
-  // F3 — SEAT INTENT. `?name=Ann` in the page URL means "I am a player waiting for a seat", and a player is not a
-  // spectator: until the seat is actually granted this viewer pulls NO scene bytes, not even on the screens a
-  // param-less viewer is happily shown. The server never reads `?name=`, so this client-side answer — which is
-  // what rides the `watch` wire — IS the enforcement.
-  it("a URL that names a seat streams NOTHING, on every screen a viewer without one would watch", () => {
-    expect(watch("main-menu", { seatIntent: true })).toBe(false);
-    expect(watch("singleplayer-run", { seatIntent: true })).toBe(false);
-    expect(watch("sp-character-select", { seatIntent: true })).toBe(false);
+  it("requests the host on solo and main-menu screens even when the URL names a player", () => {
+    expect(watch("main-menu", { seatIntent: true })).toBe(true);
+    expect(watch("singleplayer-run", { seatIntent: true })).toBe(true);
+    expect(watch("sp-character-select", { seatIntent: true })).toBe(true);
     expect(watch("unsupported", { seatIntent: true })).toBe(false);
-    // …and the multiplayer screens were already gated; seat intent cannot make them less so.
     expect(watch("mp-character-select", { seatIntent: true })).toBe(false);
+    expect(watch("mp-load-game", { seatIntent: true })).toBe(false);
     expect(watch("mp-run", { seatIntent: true })).toBe(false);
-    // Incomplete session data is gated while a seat is named too.
     expect(watch(null, { seatIntent: true })).toBe(false);
   });
 

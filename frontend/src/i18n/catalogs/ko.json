@@ -1,7 +1,8 @@
 {
   "hostAccess.title": "호스트 화면을 일시적으로 볼 수 없습니다",
   "hostAccess.menu": "호스트가 메뉴를 열었습니다. 메뉴를 닫으면 자동으로 다시 접속됩니다.",
-  "hostAccess.wait": "호스트가 멀티플레이 로비나 게임으로 돌아오면 자동으로 다시 접속됩니다.",
+  "hostAccess.couchPlayOff": "호스트가 싱글플레이용 Couch play를 켜지 않았습니다. 호스트에게 게임 화면에서 Couch QR Code를 열어 달라고 요청하세요.",
+  "hostAccess.wait": "호스트가 공유한 화면으로 돌아오면 자동으로 다시 접속됩니다.",
   "app.mirror": "미러",
   "common.working": "처리 중",
   "common.host": "호스트",

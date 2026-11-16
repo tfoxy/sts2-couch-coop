@@ -21,8 +21,8 @@ const frame = { type: "scene-delta", full: true, screenType: "run", upserts: [
 const session = { type: "session", hostName: "host", scrollAction: true, players: [],
   session: { name: null, status: "unassigned", joined: false, playerId: null, connectionCount: 0 },
   screen: { kind: "run", type: null, title: null, mirrorMode: "mp-run" } };
-function connect() {
-  const client = connectMirrorClient({ WebSocketCtor: Socket as unknown as typeof WebSocket,
+function connect(watch = true) {
+  const client = connectMirrorClient({ WebSocketCtor: Socket as unknown as typeof WebSocket, watch,
     location: { href: "http://localhost/", protocol: "http:" } });
   return { client, socket: Socket.current };
 }
@@ -41,6 +41,25 @@ describe("host access", () => {
     client.sendInput({ kind: "key", key: "Enter", pressed: true });
     expect(client.state.nodes.size).toBe(0);
     expect(socket.sent).toEqual([]);
+  });
+
+  it.each(["couch-play-off", "outside-multiplayer"])("preserves %s and resumes a requested watch when allowed", (reason) => {
+    const { client, socket } = connect(false);
+    socket.emit({ ...session, screen: { ...session.screen, mirrorMode: "singleplayer-run" },
+      hostAccess: { allowed: false, reason, generation: 1 } });
+    client.sendWatch(true);
+    expect(client.hostAccess).toMatchObject({ allowed: false, reason, generation: 1 });
+    socket.emit(frame);
+    client.sendInput({ kind: "click", pressed: true });
+    expect(client.state.nodes.size).toBe(0);
+    expect(socket.sent).toEqual([{ type: "watch", on: true }]);
+    socket.access(true, 2);
+    socket.emit({ ...frame, full: false });
+    expect(client.state.nodes.size).toBe(0);
+    socket.emit(frame);
+    expect(client.state.nodes.size).toBe(1);
+    client.sendInput({ kind: "click", pressed: true });
+    expect(socket.sent.at(-1)).toMatchObject({ type: "input", kind: "click" });
   });
 
   it("clears retained frames and hints, blocks all control kinds, and keeps coordination available", () => {

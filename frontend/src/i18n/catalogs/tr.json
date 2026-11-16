@@ -1,7 +1,8 @@
 {
   "hostAccess.title": "Ev sahibinin görünümü geçici olarak kullanılamıyor",
   "hostAccess.menu": "Ev sahibi bir menü açtı. Menü kapatıldığında erişim otomatik olarak devam edecek.",
-  "hostAccess.wait": "Ev sahibi çok oyunculu lobiye veya koşuya döndüğünde erişim otomatik olarak devam edecek.",
+  "hostAccess.couchPlayOff": "Ev sahibi tek oyunculu oyun için Couch play'i açmadı. Oyun ekranında Couch QR Code'u açmasını isteyin.",
+  "hostAccess.wait": "Ev sahibi paylaştığı bir ekrana döndüğünde erişim otomatik olarak devam eder.",
   "app.mirror": "Ayna",
   "common.working": "İşleniyor",
   "common.host": "Oda sahibi",

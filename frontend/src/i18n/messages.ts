@@ -17,7 +17,8 @@ import tr from "./catalogs/tr.json";
 export const en = {
   "hostAccess.title": "Host view temporarily unavailable",
   "hostAccess.menu": "The host opened a menu. Access resumes automatically when they close it.",
-  "hostAccess.wait": "Access resumes automatically when the host returns to a multiplayer lobby or run.",
+  "hostAccess.couchPlayOff": "The host hasn't turned on Couch play for single player. Ask them to open the Couch QR Code on the game screen.",
+  "hostAccess.wait": "Access resumes automatically when the host returns to a screen they've shared.",
   "app.mirror": "Mirror",
   "common.working": "Working",
   "common.host": "Host",
@@ -270,7 +271,8 @@ function preservePlaceholders(catalog: LocaleCatalog): LocaleCatalog {
 export const zhHans: LocaleCatalog = {
   "hostAccess.title": "暂时无法查看主机画面",
   "hostAccess.menu": "主机打开了菜单。关闭菜单后将自动恢复访问。",
-  "hostAccess.wait": "主机返回多人大厅或多人游戏后将自动恢复访问。",
+  "hostAccess.couchPlayOff": "主机尚未为单人游戏开启 Couch play。请让主机在游戏画面上打开 Couch QR Code。",
+  "hostAccess.wait": "主机返回已共享的画面后将自动恢复访问。",
   "app.mirror": "镜像",
   "common.working": "正在处理",
   "common.host": "房主",

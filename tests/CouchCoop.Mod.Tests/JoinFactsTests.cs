@@ -30,6 +30,7 @@ internal static class JoinFactsTests
     public static async Task RunAsync()
     {
         TheContextKeepsTheRulesTheRetiredReadHad();
+        SoloAndMainMenuContextsNeverOfferSeatSpawning();
         AnUnreadableRosterIsTheEmptyContext();
         SeatFactsFollowTheLobbyCap();
         AJoinAsksTheGameOnceInOneHop();
@@ -66,6 +67,28 @@ internal static class JoinFactsTests
     }
 
     private static string Show(IReadOnlySet<ulong>? set) => set is null ? "none" : string.Join(",", set.Order());
+
+    private static void SoloAndMainMenuContextsNeverOfferSeatSpawning()
+    {
+        foreach (var root in new[] { RosterRootScenes.CharacterSelect, RosterRootScenes.CustomRun,
+                     RosterRootScenes.DailyRun, RosterRootScenes.BlitzRun, RosterRootScenes.DreadRun })
+        {
+            var context = Context(LobbyRoster(NetTypeNames.Singleplayer) with { RootScene = root });
+            Expect(context.IsSingleplayerLobby && !context.IsSingleplayerRun && !context.IsMainMenu && !context.SpawnAllowed,
+                $"{root}: solo lobby facts route directly and never offer a new seat");
+        }
+        var run = Context(RunRoster(NetTypeNames.Singleplayer));
+        Expect(run.IsSingleplayerRun && !run.IsSingleplayerLobby && !run.IsMainMenu && !run.SpawnAllowed,
+            "solo run facts route directly without offering a new seat");
+        foreach (var roster in new[] { LobbyRoster(), RunRoster(), RunRoster(NetTypeNames.Singleplayer) })
+        {
+            var menu = Context(roster with { RootScene = RosterRootScenes.MainMenu });
+            Expect(menu.IsMainMenu && !menu.IsSingleplayerRun && !menu.IsSingleplayerLobby && !menu.SpawnAllowed
+                && menu.SeatNetIds is null && menu.HostName is null,
+                "the visible main menu wins over stale session facts and never offers a seat");
+        }
+        Expect(!Context(null).IsMainMenu, "unreadable state cannot claim to be the main menu");
+    }
 
     // The parity above only means something if the oracle agrees with what the rules actually are, so the rules that
     // matter are also written out by hand, one situation each.

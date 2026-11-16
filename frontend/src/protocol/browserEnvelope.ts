@@ -118,7 +118,7 @@ export interface BrowserEnvelopeBase {
 
 // The one-time per-client `session` message: identity + capabilities/notices + the lobby/run assignment.
 // The mirror-directive fields (below) ride the join reply.
-export type BrowserHostAccessReason = "allowed" | "unavailable" | "outside-multiplayer" | "menu-open" | "transitioning";
+export type BrowserHostAccessReason = "allowed" | "unavailable" | "outside-multiplayer" | "couch-play-off" | "menu-open" | "transitioning";
 
 export interface BrowserHostAccess {
   allowed: boolean;
@@ -131,7 +131,7 @@ export interface BrowserHostAccess {
 export function normalizeHostAccess(raw: unknown): BrowserHostAccess {
   const value = raw as Partial<BrowserHostAccess> | null;
   if (value && typeof value.allowed === "boolean"
-    && ["allowed", "unavailable", "outside-multiplayer", "menu-open", "transitioning"].includes(value.reason ?? "")
+    && ["allowed", "unavailable", "outside-multiplayer", "couch-play-off", "menu-open", "transitioning"].includes(value.reason ?? "")
     && Number.isSafeInteger(value.generation) && value.generation! >= 0
     && value.allowed === (value.reason === "allowed")
     && (value.sceneResetGeneration === undefined ||

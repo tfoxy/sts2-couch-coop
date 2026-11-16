@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using CouchCoop.Mod.Server;
+using CouchCoop.Mod.HostUi;
 using Spirectl.Sts2.Core.Actions;
 using Spirectl.Sts2.Embedding;
 
@@ -18,14 +19,19 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
 {
     private static readonly RateLimitedDiagnosticLog FailureLog = new(CouchCoopLog.Stderr);
     private static readonly RateLimitedDiagnosticLog TargetLog = new(CouchCoopLog.Stderr, TimeSpan.FromSeconds(10));
+    private static readonly RateLimitedDiagnosticLog HostOnlyLog = new(CouchCoopLog.Stderr, TimeSpan.Zero);
     private readonly ISemanticActionSource _actions = actions ?? throw new ArgumentNullException(nameof(actions));
     // C3: this connection's pointer-target placement (and its press binding). Built on the first pointer message.
     private PointerTargetPlacement? _placement;
     private readonly Func<IPointerTargetFinder> _finder = () => new GodotPointerTargetFinder();
+    private readonly Func<BrowserInputRequestEnvelope, bool> _hostOnly = request => HostOnlyInputGuard.Refuses(
+        request.Kind, request.CoordX, request.CoordY, request.ElementId, request.Key, request.Input);
 
-    internal BrowserInputExecutor(ISemanticActionSource actions, Func<IPointerTargetFinder> finder) : this(actions)
+    internal BrowserInputExecutor(ISemanticActionSource actions, Func<IPointerTargetFinder> finder,
+        Func<BrowserInputRequestEnvelope, bool>? hostOnly = null) : this(actions)
     {
         _finder = finder;
+        _hostOnly = hostOnly ?? _hostOnly;
     }
 
     public BrowserActionResultEnvelope? Execute(BrowserInputRequestEnvelope request)
@@ -42,10 +48,19 @@ public sealed class BrowserInputExecutor(ISemanticActionSource actions)
         EmbeddableActionRequest? action;
         try
         {
+            if (request.Kind is BrowserInputKinds.Hover or BrowserInputKinds.Click) request = PlaceTarget(request);
+            if (_hostOnly(request))
+            {
+                _placement = null;
+                HostOnlyLog.Write("host-only-ui", "input refused code=host-only-ui");
+                try { if (_actions is CouchCoopRuntimeHost runtime) runtime.CancelInjectedInput(); }
+                catch (Exception ex) { FailureLog.Write("input-cancel-failed", $"input cancellation failed: {ex}"); }
+                return Error(requestId, "host-only-ui", "This control is only available at the game machine.");
+            }
             action = request.Kind switch
             {
-                BrowserInputKinds.Hover => BuildPointer(requestId, SemanticActionKind.HoverElement, PlaceTarget(request)),
-                BrowserInputKinds.Click => BuildPointer(requestId, SemanticActionKind.MouseClick, PlaceTarget(request)),
+                BrowserInputKinds.Hover => BuildPointer(requestId, SemanticActionKind.HoverElement, request),
+                BrowserInputKinds.Click => BuildPointer(requestId, SemanticActionKind.MouseClick, request),
                 BrowserInputKinds.Key => BuildKey(requestId, request),
                 BrowserInputKinds.Pad => BuildPad(requestId, request),
                 _ => null

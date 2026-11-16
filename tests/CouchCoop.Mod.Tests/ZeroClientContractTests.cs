@@ -671,18 +671,19 @@ internal static class ZeroClientContractTests
                         Interlocked.Increment(ref rig.AccessDisposals);
                     });
                 },
-                ReadReason: () =>
+                ReadFacts: () =>
                 {
                     Interlocked.Increment(ref rig.AccessReads);
                     _ = GameScreenContext.GetCurrent();
-                    return runtime.Mode == "run" && screens.AccessAllowed
-                        ? HostBrowserAccessReasons.Allowed : HostBrowserAccessReasons.MenuOpen;
+                    return new HostBrowserAccessFacts(new GateFacts(true, null, NetTypeNames.Host),
+                        true, false, !(runtime.Mode == "run" && screens.AccessAllowed));
                 },
                 Schedule: callback =>
                 {
                     Interlocked.Increment(ref rig.AccessSchedules);
                     GameNextFrame.Schedule(callback);
-                });
+                },
+                ReadMode: () => CouchPlayMode.Off);
 
             if (compose is not null)
             {

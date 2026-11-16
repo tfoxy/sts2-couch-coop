@@ -41,7 +41,8 @@ public sealed class CouchCoopBrowserServer(
     AudioService? injectedAudioService = null,
     Action? requestSecureOrigin = null,
     IHostBrowserAccess? hostBrowserAccess = null,
-    IHotRendererSwapHost? rendererSwapHost = null) : IAsyncDisposable
+    IHotRendererSwapHost? rendererSwapHost = null,
+    Func<HeadlessClientManager?>? headlessManagerFactory = null) : IAsyncDisposable
 {
     /// <summary>Harness-only synthetic seat port injected into the control document; null in product hosting.</summary>
     public int? SyntheticSeatPort { get; set; }
@@ -156,9 +157,9 @@ public sealed class CouchCoopBrowserServer(
     // browser player and never spawn further headless instances). The eviction callback lets a reconnect
     // respawn force-disconnect a stale ENet peer still holding its netId (so the same-netId rejoin isn't
     // rejected as an IdCollision); routed through the host's CouchCoopLobbyParticipation.DisconnectClient.
-    private readonly HeadlessClientManager? _headlessManager = headlessManager ?? CreateHeadlessManager(
-        envelopeFactory,
-        isHeadlessClient ?? CouchCoopMod.IsHeadlessClient);
+    private readonly HeadlessClientManager? _headlessManager = headlessManager ?? (headlessManagerFactory is not null
+        ? headlessManagerFactory()
+        : CreateHeadlessManager(envelopeFactory, isHeadlessClient ?? CouchCoopMod.IsHeadlessClient));
     // ONE per host, shared by every per-connection envelope factory: it holds the grace-window bookkeeping that
     // decides whether a live-but-disconnected seat is still cold-starting or is a zombie, which a per-connection
     // instance would reset on every reconnect. Built on FIRST USE (the reap needs a lobby participation object,

@@ -101,18 +101,12 @@ export function isMultiplayerMirrorMode(mirrorMode: MirrorScreenKind | null): bo
   );
 }
 
-/**
- * Whether the host has told us it is on a screen NOBODY CAN JOIN: the main menu, the SINGLEPLAYER character
- * select, a singleplayer run, or a screen it could not classify (`unsupported`). This is the predicate the
- * `?name=<seat>` rules key off — a viewer whose URL names a seat waits quietly on such a screen rather than
- * mirroring a game it is not part of, and never fires an auto-join the host could only refuse.
- *
- * It is NOT the negation of {@link isMultiplayerMirrorMode}: `null` is only the gap before the first session,
- * not a statement that no seat exists. Read this as "the host has said there is no seat here".
- *
- * TS-only, like `isMultiplayerMirrorMode`: what it feeds — the `?name=` waiting screen and the seat-intent arm of
- * the stream gate — is the browser's `?name=` state machine, which the native client does not have.
- */
+/** Screens with no multiplayer seat: request the host view and let hostAccess decide permission. */
+export function isHostOnlyMirrorMode(mirrorMode: MirrorScreenKind | null): boolean {
+  return mirrorMode === "main-menu" || mirrorMode === "sp-character-select" || mirrorMode === "singleplayer-run";
+}
+
+/** No multiplayer seat can be claimed here; host-only modes instead request a direct watch. */
 export function isNonJoinableMirrorMode(mirrorMode: MirrorScreenKind | null): boolean {
   return (
     mirrorMode === "main-menu" ||
@@ -195,28 +189,9 @@ export function seatCharacterIconUrl(player: Pick<BrowserPlayerOption, "characte
 }
 
 /**
- * STREAM GATE — whether this viewer may have the host's live game streamed to it right now.
- *
- * The product rule, in one place: **never render (nor even pull) a multiplayer host's game behind the join
- * picker.** The host is streamed only when this device has been granted its own view — `joined` (its own headless
- * instance) or `directView` (the host handed over its own stream) — or when the host is NOT on a multiplayer
- * screen at all, which `computeMirrorJoinMode` already expresses as "title-only" (main menu / singleplayer run).
- *
- * The two extra conditions are why this can't just be `mode === "title-only"`: that mode is ALSO returned while a
- * join is in flight or the socket isn't connected (via `canChooseAssignment`), which are transient states owned by
- * a placeholder, not permission to stream.
- *
- * `seatIntent` — "this page's URL names a SEAT" (`?name=Ann`) — is the F3 rule, and it is REQUIRED rather than
- * optional so neither client can forget it. Such a viewer is a player waiting for a game, not a spectator: on a
- * screen it cannot join it must pull NO scene bytes at all and sit on the waiting screen instead. Because the
- * server never reads `?name=`, this client-side answer IS the enforcement point — it is what rides the `watch`
- * wire. Its position is deliberate: BELOW `joined || directView`, so an explicit grant (the seat was served, or
- * the host handed over its own view) always outranks a mere URL marker; ABOVE everything else, so a title-only
- * host screen no longer opens the gate for a viewer that named a seat.
- *
- * The web and native clients use this same predicate to decide whether to show the scene AND what to put on the
- * `watch` wire, so bytes and pixels can never disagree. C# twin: `JoinModel.ShouldWatchHostStream` — keep them in
- * lockstep (the native client has no `?name=`, so it passes `seatIntent: false`).
+ * Request the host stream for a granted view or an established host-only screen, regardless of URL name.
+ * Multiplayer selection and incomplete sessions stay coordination-only. The independent hostAccess status
+ * authorizes scene data and input; watch intent must survive denial so a later permission update can resume it.
  */
 export function shouldWatchHostStream(
   info: JoinInfo,
@@ -228,9 +203,6 @@ export function shouldWatchHostStream(
 ): boolean {
   if (joined || directView) {
     return true;
-  }
-  if (seatIntent) {
-    return false;
   }
   if (pendingJoinName || info.status !== "connected") {
     return false;
@@ -247,8 +219,9 @@ export function shouldWatchHostStream(
   if (mirrorMode === null) {
     return false;
   }
+  if (isHostOnlyMirrorMode(mirrorMode)) return true;
   // A name-based roster assignment is not a view grant, even if it reports joined.
-  return !isMultiplayerMirrorMode(mirrorMode);
+  return !seatIntent && !isMultiplayerMirrorMode(mirrorMode);
 }
 
 // ---- roster filter -----------------------------------------------------------------------------------------
