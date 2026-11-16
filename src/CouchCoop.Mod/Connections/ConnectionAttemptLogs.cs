@@ -94,9 +94,9 @@ public sealed class ConnectionAttemptLogs
         "Skipping loading mod",
         "Loading assembly DLL",
         "RUNNING MODDED",
-        "[couchcoop] loader-",
-        "[couchcoop] mod-init",
-        "[couchcoop] harmony-probe-complete",
+        CouchCoop.Mod.Session.CouchCoopLog.Line("loader-"),
+        CouchCoop.Mod.Session.CouchCoopLog.Line("mod-init"),
+        CouchCoop.Mod.Session.CouchCoopLog.Line("harmony-probe-complete"),
     ];
 
     private sealed record LogStart(string? Path, GodotLogCheckpoint? Checkpoint);
