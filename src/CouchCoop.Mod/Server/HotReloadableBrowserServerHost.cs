@@ -8,7 +8,7 @@ using CouchCoop.Mod.Session;
 
 namespace CouchCoop.Mod.Server;
 
-public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IHotRendererSwapHost, IHotRenderStreamRelayHost, IHotPresentationHost, IAsyncDisposable
+public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowserDemandHost, IHotDirectIpHttpsHost, IHotRendererSwapHost, IHotRenderStreamRelayHost, IHotSelfRenderStreamHost, IHotPresentationHost, IAsyncDisposable
 {
     private readonly CouchCoopRuntimeHost _runtime;
     private readonly IPAddress _bindAddress;
@@ -88,9 +88,12 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         }
     }
 
+    public bool SupportsSelfRenderStream => RenderStreamSelf.Enabled;
+    private static readonly string SelfRenderStreamRoute = Guid.NewGuid().ToString("N");
     public bool SupportsRenderStreamRelay => true;
     public string? RenderStreamSeatRoute => IsHeadlessClient
-        ? Environment.GetEnvironmentVariable(SeatBrowserPipe.RouteEnvironmentVariable) : null;
+        ? Environment.GetEnvironmentVariable(SeatBrowserPipe.RouteEnvironmentVariable)
+        : SupportsSelfRenderStream ? SelfRenderStreamRoute : null;
 
     private sealed record PresentationPage(string? Owner, bool Watch, bool Stream, double? Aspect, long ReleasedOrder = 0);
     private long _presentationReleaseOrder;
@@ -102,7 +105,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public void ClaimPresentationPage(string pageId, string owner)
     {
-        if (!IsHeadlessClient || _rendererDisposed) return;
+        if ((!IsHeadlessClient && !SupportsSelfRenderStream) || _rendererDisposed) return;
         GameMainThread.Invoke(() =>
         {
             if (_rendererDisposed) return false;
@@ -118,7 +121,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public void UpdatePresentationPage(string pageId, string owner, bool watch, bool? stream, double? aspect)
     {
-        if (!IsHeadlessClient || _rendererDisposed) return;
+        if ((!IsHeadlessClient && !SupportsSelfRenderStream) || _rendererDisposed) return;
         GameMainThread.Invoke(() =>
         {
             if (_rendererDisposed) return false;
@@ -136,7 +139,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public void ReleasePresentationPage(string pageId, string owner)
     {
-        if (!IsHeadlessClient || _rendererDisposed) return;
+        if ((!IsHeadlessClient && !SupportsSelfRenderStream) || _rendererDisposed) return;
         GameMainThread.Invoke(() =>
         {
             if (_presentationPages.TryGetValue(pageId, out var page) && page.Owner == owner)
@@ -159,7 +162,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public void RequestRenderer(string pageId, bool wantsStream, double? aspect)
     {
-        if (!IsHeadlessClient || _rendererDisposed) return;
+        if ((!IsHeadlessClient && !SupportsSelfRenderStream) || _rendererDisposed) return;
         GameMainThread.Invoke(() =>
         {
             if (_rendererDisposed) return false;
@@ -171,7 +174,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
 
     public void ReleaseRenderer(string pageId)
     {
-        if (!IsHeadlessClient || _rendererDisposed) return;
+        if ((!IsHeadlessClient && !SupportsSelfRenderStream) || _rendererDisposed) return;
         GameMainThread.Invoke(() => { _rendererSwap?.Release(pageId); return true; });
     }
 

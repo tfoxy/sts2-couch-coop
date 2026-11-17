@@ -109,6 +109,7 @@ internal static class StreamingSeatRole
                 CouchCoopLog.Warn(outcome.Message!);
                 return;
             case CaptureOutcomeKind.Loaded:
+                RenderStreamSelf.MarkLoaded();
                 CouchCoopLog.Info(outcome.Message!);
                 return;
             default:

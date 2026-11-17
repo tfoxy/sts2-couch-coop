@@ -105,6 +105,9 @@ public sealed partial class CouchCoopBrowserServer(
     private IDisposable? _rosterSubscription;
     private CouchCoopSceneObserver? _sceneObserver;
     private long _sceneAccessGeneration = -1;
+    private long _scenePresentationEpoch = -1;
+    private bool HasSelfRenderStream => _isHeadlessClient
+        || rendererSwapHost is IHotSelfRenderStreamHost { SupportsSelfRenderStream: true };
     // Encounter-load geoclip prerender (OFF by default — COUCHCOOP_PRERENDER_ENCOUNTER_GEOCLIPS=1). Its lifetime is
     // deliberately the scene observer's: it reads the observer's retained keyframe for its roster, and the observer
     // exists only while a mirror client is STREAMING, which is also the only condition under which anything would
@@ -372,7 +375,7 @@ public sealed partial class CouchCoopBrowserServer(
             // A dispatched old-generation request may finish its handshake after StopGenerationAsync took
             // the connection snapshot. Reject it before it can remain usable without a scene stream.
             if (_generationStopped) throw new OperationCanceledException("Browser server generation stopped.");
-            _rendererSubscription ??= _isHeadlessClient ? rendererSwapHost?.SubscribeRendererChanged(OnRendererChanged) : null;
+            _rendererSubscription ??= HasSelfRenderStream ? rendererSwapHost?.SubscribeRendererChanged(OnRendererChanged) : null;
             _mirrorConnectionCount++;
             RefreshObserversLocked();
             count = _mirrorConnectionCount;
@@ -463,14 +466,17 @@ public sealed partial class CouchCoopBrowserServer(
         var access = HostBrowserAccess?.State;
         var presentation = (rendererSwapHost as IHotPresentationHost)?.PresentationStatus;
         var accessGeneration = _isHeadlessClient ? presentation?.Epoch ?? 0 : access?.Generation ?? 0;
-        var sceneAllowed = _isHeadlessClient ? presentation is null or { Ready: true, Width: 1920, Height: 1080 } : access is { Allowed: true };
+        var presentationEpoch = HasSelfRenderStream ? presentation?.Epoch ?? 0 : 0;
+        var sceneAllowed = (_isHeadlessClient || access is { Allowed: true })
+            && (!HasSelfRenderStream || presentation is null or { Ready: true, Width: 1920, Height: 1080 });
         // Multiple viewers can stop and restart at different times, keeping demand above zero throughout
         // a revoke/resume. Retained scene and hints still belong to the old permission generation.
-        if (!sceneAllowed || _sceneAccessGeneration != accessGeneration)
+        if (!sceneAllowed || _sceneAccessGeneration != accessGeneration || _scenePresentationEpoch != presentationEpoch)
         {
             StopSceneObserverLocked();
             StopMirrorHintCollectorLocked();
             _sceneAccessGeneration = accessGeneration;
+            _scenePresentationEpoch = presentationEpoch;
         }
         // A GATED mirror viewer is the ONLY thing that keeps the ROSTER observer alive, and it must:
         // the roster observer is what re-sends a `session` when the roster changes, and a re-sent `session` is the ONLY
@@ -1109,10 +1115,14 @@ public sealed partial class CouchCoopBrowserServer(
 
         var observer = new CouchCoopSceneObserver(envelopeFactory.RuntimeHost);
         var accessGeneration = _sceneAccessGeneration;
+        var presentationEpoch = _scenePresentationEpoch;
         observer.SceneDeltaChanged += delta =>
         {
             if (!ReferenceEquals(_sceneObserver, observer)
-                || (!_isHeadlessClient && HostBrowserAccess?.IsAllowed(accessGeneration) != true)) return;
+                || (!_isHeadlessClient && HostBrowserAccess?.IsAllowed(accessGeneration) != true)
+                || HasSelfRenderStream && rendererSwapHost is IHotPresentationHost presentation
+                    && (presentation.PresentationStatus is not { Ready: true, Width: 1920, Height: 1080 } current
+                        || current.Epoch != presentationEpoch)) return;
             BroadcastSceneDelta(delta, accessGeneration);
         };
         _sceneObserver = observer;

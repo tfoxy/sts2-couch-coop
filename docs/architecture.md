@@ -62,6 +62,13 @@ Browsers sharing a player also share its game viewport. An active old-renderer v
 scene with input disabled until the replacement presentation is ready, and presentation epochs fence stale
 scene updates and gameplay input.
 
+A host running Godot with `--headless` can also stream its own view. When capture configuration resolves,
+the host loads it in standby in its own process, and an authorized host-view browser can select the new
+renderer. The browser uses the same presentation negotiation as a streaming seat; the host relays its own
+stream to a private loopback capture instead of a seat connection. Host access checks remain in force,
+and presentation epochs fence scene delivery and input during renderer changes. Windowed hosts keep
+their existing host-view renderer.
+
 ## Touch adaptation
 
 The browser translates touch gestures into the same classes of input expected by the game while adding safeguards for a small screen:

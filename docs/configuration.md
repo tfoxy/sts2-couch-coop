@@ -469,6 +469,15 @@ listener on loopback. Explicit direct capture endpoints remain available for QA.
 To enable that direct QA mode, set `COUCHCOOP_RENDER_STREAM_DIRECT=1` before launching the host; normal viewing
 does not require it.
 
+A host started with Godot `--headless` automatically loads its own capture in standby when the packaged
+`render-capture/` or the operator's `COUCHCOOP_RENDER_CAPTURE_EXTENSION` configuration resolves. Open the
+browser page, choose the host's view, and tick "Use new renderer (Beta)"; no extra opt-in flag is needed.
+The host's capture listens only on `127.0.0.1:13346`, supports up to four capture connections, and keeps
+texture pixels available for the old renderer's `/res` routes. Its evidence directory is
+`couch-coop/render-stream/slot-0` under the host's game user directory. If capture configuration or loading
+fails, the host logs the reason and continues with the old renderer. Windowed hosts do not load their
+own capture, and their host-view pages keep using the old renderer.
+
 Players can switch renderers without restarting their game instance. When browsers using different renderers
 watch the same player, the game viewport stays at 1920×1080 so the old renderer receives compatible geometry.
 Its Widescreen stretch setting still controls its browser-side layout. When only new-renderer viewers remain,

@@ -89,6 +89,9 @@ internal sealed partial class BrowserServerRouteTests
                 await fixture.AssertWebSocketAsync();
                 await AssertRenderRelayDeadlineAndEofAsync();
                 await AssertRendererNegotiationAsync(fixture);
+                await AssertHostSelfRelayAsync(fixture);
+                await AssertHostSelfRelayAccessAsync(fixture);
+                await AssertHostSelfRendererAsync(fixture);
                 await AssertHostRelayOfferAsync(fixture.Host);
                 fixture.ExitSeat();
                 RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(resource)).StartsWith("HTTP/1.1 410"), "an exited seat's public route is unavailable");
@@ -112,8 +115,10 @@ internal sealed partial class BrowserServerRouteTests
         await using var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(root.Path), new CapturingAssetAdapter(),
             runtime.NewEnvelopeFactory(), preferredPort: 0, isHeadlessClient: false, headlessManager: manager, rendererSwapHost: relay);
         await server.StartAsync();
+        foreach (var self in new[] { false, true })
         foreach (var supported in new[] { true, false })
         {
+            relay.Self = self;
             relay.SupportsRelay = supported;
             using var socket = new ClientWebSocket();
             socket.Options.SetRequestHeader("Origin", CouchCoopWebOrigin.DefaultOrigin);
@@ -123,9 +128,140 @@ internal sealed partial class BrowserServerRouteTests
             RelayExpect(supported ? offer.GetProperty("relay").GetBoolean() : !offer.TryGetProperty("relay", out _),
                 "host offer reflects the installed optional relay capability");
             RelayExpect(!session.RootElement.TryGetProperty("renderStream", out _), "host offers never include seat credentials");
+            RelayExpect(!session.RootElement.TryGetProperty("rendererState", out _), "a picker never receives self-renderer state");
             await CloseWebSocketSilentlyAsync(socket);
         }
         relay.SupportsRelay = true;
+        relay.Self = false;
+    }
+
+    private static async Task AssertHostSelfRelayAsync(RenderRelayFixture fixture)
+    {
+        var resource = $"/render-stream/{fixture.SelfHost.RenderStreamSeatRoute}/resources/sha256/{new string('a', 64)}";
+        fixture.Response = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n";
+        fixture.Body = "host"u8.ToArray();
+        RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(resource)).EndsWith("host"),
+            "the host's own route reaches its local capture hub");
+        RelayExpect(fixture.LastRequest!.Path == "/resources/sha256/" + new string('a', 64)
+            && fixture.LastRequest.Header("Origin") == "http://127.0.0.1:13337", "host relay uses the shared private-hub translation");
+        fixture.SelfHost.State = "arming";
+        RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(resource)).StartsWith("HTTP/1.1 410"),
+            "host self route requires a current arm");
+        fixture.SelfHost.State = "armed";
+        fixture.SelfHost.Self = false;
+        RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(resource)).StartsWith("HTTP/1.1 410"),
+            "a host without self capture cannot use a local route");
+        fixture.SelfHost.Self = true;
+        fixture.Response = "websocket";
+        using var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("Origin", CouchCoopWebOrigin.DefaultOrigin);
+        socket.Options.AddSubProtocol("render-stream.v13");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{fixture.PublicUri.Port}/render-stream/{fixture.SelfHost.RenderStreamSeatRoute}/ws"), deadline.Token);
+        await socket.SendAsync("host"u8.ToArray(), WebSocketMessageType.Binary, true, deadline.Token);
+        var bytes = new byte[16];
+        var received = await socket.ReceiveAsync(bytes, deadline.Token);
+        RelayExpect(received.Count == 4 && Encoding.ASCII.GetString(bytes, 0, 4) == "host", "host self route relays WebSocket frames");
+        await CloseWebSocketSilentlyAsync(socket);
+    }
+
+    private static async Task AssertHostSelfRelayAccessAsync(RenderRelayFixture fixture)
+    {
+        var route = $"/render-stream/{fixture.SelfHost.RenderStreamSeatRoute}";
+        fixture.Access.Set(false);
+        var lastRequest = fixture.LastRequest;
+        RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(route + "/ws", upgrade: true)).StartsWith("HTTP/1.1 410"),
+            "denied host access refuses an own-route WebSocket");
+        RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(route + "/resources/sha256/" + new string('a', 64))).StartsWith("HTTP/1.1 410"),
+            "denied host access refuses an own-route resource");
+        RelayExpect(ReferenceEquals(lastRequest, fixture.LastRequest), "denied host requests never reach the capture hub");
+
+        fixture.Access.Set(true);
+        fixture.Response = "websocket";
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        foreach (var regrantBeforeEof in new[] { false, true })
+        {
+            var eof = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            fixture.HubEof = eof;
+            using var socket = new ClientWebSocket();
+            socket.Options.SetRequestHeader("Origin", CouchCoopWebOrigin.DefaultOrigin);
+            socket.Options.AddSubProtocol("render-stream.v13");
+            await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{fixture.PublicUri.Port}{route}/ws"), deadline.Token);
+            await socket.SendAsync("host"u8.ToArray(), WebSocketMessageType.Binary, true, deadline.Token);
+            var bytes = new byte[16];
+            var received = await socket.ReceiveAsync(bytes.AsMemory(), deadline.Token);
+            RelayExpect(received.Count == 4 && Encoding.ASCII.GetString(bytes, 0, 4) == "host",
+                "a fresh host relay is admitted under the current access generation");
+            RelayExpect(!eof.Task.IsCompleted, "the upgraded hub stays connected until access is revoked");
+            fixture.Access.Set(false);
+            if (regrantBeforeEof) fixture.Access.Set(true);
+            RelayExpect(await eof.Task.WaitAsync(deadline.Token), "access revocation closes the upgraded hub with EOF");
+            if (!regrantBeforeEof) fixture.Access.Set(true);
+            var closed = false;
+            try
+            {
+                received = await socket.ReceiveAsync(bytes.AsMemory(), deadline.Token);
+                closed = received.MessageType == WebSocketMessageType.Close;
+            }
+            catch (WebSocketException) { closed = true; }
+            RelayExpect(closed, "regrant cannot revive a relay admitted under an older generation");
+        }
+        fixture.HubEof = null;
+    }
+
+    private static async Task AssertHostSelfRendererAsync(RenderRelayFixture fixture)
+    {
+        foreach (var self in new[] { false, true })
+        {
+            fixture.SelfHost.Self = self;
+            fixture.SelfHost.Wants = false;
+            using var socket = new ClientWebSocket();
+            socket.Options.SetRequestHeader("Origin", CouchCoopWebOrigin.DefaultOrigin);
+            await socket.ConnectAsync(new UriBuilder(new Uri(fixture.PublicUri, "/ws?" + GatedQuery)) { Scheme = "ws" }.Uri, CancellationToken.None);
+            using (var picker = await ReadSessionAsync(socket))
+                RelayExpect(!picker.RootElement.TryGetProperty("rendererState", out _) && !picker.RootElement.TryGetProperty("renderStream", out _),
+                    "coordination pages receive neither self state nor credentials");
+            var requests = fixture.SelfHost.Requests;
+            await SendRendererAsync(socket, "stream");
+            await SendControlAsync(socket, "{\"type\":\"session-refresh\"}");
+            using (var picker = await ReadSessionAsync(socket))
+                RelayExpect(fixture.SelfHost.Requests == requests && !picker.RootElement.TryGetProperty("renderStream", out _),
+                    "a picker cannot request the host capture");
+            await SendWatchAsync(socket, true);
+            using (var watching = await ReadSessionAsync(socket))
+            {
+                RelayExpect(watching.RootElement.GetProperty("directView").GetBoolean(), "watch selects the allowed host view");
+                RelayExpect(watching.RootElement.TryGetProperty("rendererState", out _) == self
+                    && !watching.RootElement.TryGetProperty("renderStream", out _), "only a self-streaming host publishes direct-view renderer state before opt-in");
+                RelayExpect(watching.RootElement.TryGetProperty("renderStreamUnavailableReason", out _),
+                    "the host keeps the existing seat-capture availability field");
+            }
+            await SendRendererAsync(socket, "stream");
+            if (self)
+            {
+                using var streaming = await ReadRendererAsync(socket, "armed");
+                var descriptor = streaming.RootElement.GetProperty("renderStream");
+                RelayExpect(descriptor.GetProperty("url").GetString() == $"/render-stream/{fixture.SelfHost.RenderStreamSeatRoute}/ws"
+                    && !descriptor.TryGetProperty("webTransport", out _), "direct-view stream request receives the host's relayed descriptor");
+                RelayExpect(fixture.SelfHost.Requests == requests + 1, "renderer-change subscription runs on the host");
+                fixture.Access.Set(false);
+                await ReadAccessStatusAsync(socket, false);
+                await SendControlAsync(socket, "{\"type\":\"session-refresh\"}");
+                using var denied = await ReadSessionAsync(socket);
+                RelayExpect(!denied.RootElement.TryGetProperty("renderStream", out _) && !denied.RootElement.TryGetProperty("rendererState", out _),
+                    "revoked host access removes self-renderer state and credentials");
+            }
+            else
+            {
+                await SendControlAsync(socket, "{\"type\":\"session-refresh\"}");
+                using var ignored = await ReadSessionAsync(socket);
+                RelayExpect(fixture.SelfHost.Requests == requests && !ignored.RootElement.TryGetProperty("rendererState", out _)
+                    && !ignored.RootElement.TryGetProperty("renderStream", out _), "a windowed host ignores renderer requests and keeps its existing envelope");
+            }
+            await CloseWebSocketSilentlyAsync(socket);
+            fixture.Access.Set(true);
+        }
+        fixture.SelfHost.Self = true;
     }
 
     private static async Task AssertRendererNegotiationAsync(RenderRelayFixture fixture)
@@ -171,7 +307,7 @@ internal sealed partial class BrowserServerRouteTests
         await relay.WaitAsync(TimeSpan.FromSeconds(3));
     }
 
-    private sealed class RelayRendererHost : IHotRendererSwapHost, IHotRenderStreamRelayHost
+    private sealed class RelayRendererHost : IHotRendererSwapHost, IHotRenderStreamRelayHost, IHotSelfRenderStreamHost
     {
         internal int Port;
         internal string? ListenOverride;
@@ -181,6 +317,8 @@ internal sealed partial class BrowserServerRouteTests
         internal int Requests;
         private event Action? Changed;
         internal bool SupportsRelay = true;
+        internal bool Self;
+        public bool SupportsSelfRenderStream => Self;
         public bool SupportsRenderStreamRelay => SupportsRelay;
         public string? RenderStreamSeatRoute { get; internal set; } = new string('c', 32);
         public (string State, string? Reason, (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
@@ -194,16 +332,20 @@ internal sealed partial class BrowserServerRouteTests
     private sealed class RenderRelayFixture : IAsyncDisposable
     {
         internal readonly RelayRendererHost Host = new();
+        internal readonly RelayRendererHost SelfHost = new() { Self = true };
+        internal readonly TestHostBrowserAccess Access = new();
         internal CouchCoopBrowserServer Server = null!;
         internal CouchCoopHttpRequest? LastRequest;
         internal string Response = "";
         internal byte[] Body = [];
         internal Action? OnRequest;
+        internal TaskCompletionSource<bool>? HubEof;
         internal bool SeatAlive => !_process.HasExited;
         internal void ExitSeat() => _process.Exit();
         private readonly TempStaticRoot _root = new();
         private readonly TcpListener _hub = new(IPAddress.Loopback, 0);
         private CouchCoopBrowserServer _public = null!;
+        internal Uri PublicUri => _public.BaseUri!;
         private HeadlessClientManager _manager = null!;
         private readonly HeadlessConnectionLifecycleTests.FakeProcess _process = new(40002);
         private Task<int?> _joining = null!;
@@ -217,6 +359,7 @@ internal sealed partial class BrowserServerRouteTests
             var f = new RenderRelayFixture();
             f._hub.Start();
             f.Host.Port = ((IPEndPoint)f._hub.LocalEndpoint).Port;
+            f.SelfHost.Port = f.Host.Port;
             var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
             f.Server = new(new StaticSpaFileProvider(f._root.Path), new CapturingAssetAdapter(), runtime.NewEnvelopeFactory(),
                 preferredPort: 0, isHeadlessClient: true, rendererSwapHost: f.Host);
@@ -240,7 +383,8 @@ internal sealed partial class BrowserServerRouteTests
                 && credential == environment[SeatBrowserPipe.TokenEnvironmentVariable], "host resolves only its launch's authenticated pipe");
             f._pipe = SeatBrowserPipe.Start(name, credential, f.Server.ServeAsync);
             f._public = new(new StaticSpaFileProvider(f._root.Path), new CapturingAssetAdapter(), runtime.NewEnvelopeFactory(),
-                preferredPort: 0, isHeadlessClient: false, headlessManager: f._manager);
+                preferredPort: 0, isHeadlessClient: false, headlessManager: f._manager,
+                hostBrowserAccess: f.Access, rendererSwapHost: f.SelfHost);
             await f._public.StartAsync();
             f._acceptHub = f.AcceptHubAsync();
             return f;
@@ -268,12 +412,18 @@ internal sealed partial class BrowserServerRouteTests
                 OnRequest?.Invoke();
                 if (LastRequest!.IsWebSocketUpgrade && Response == "websocket")
                 {
+                    var eof = HubEof;
                     var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(LastRequest.Header("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
                     await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: render-stream.v13\r\n\r\n"));
                     using var ws = WebSocket.CreateFromStream(stream, true, "render-stream.v13", TimeSpan.FromSeconds(30));
                     var bytes = new byte[1024];
                     var read = await ws.ReceiveAsync(bytes.AsMemory(), _stop.Token);
                     await ws.SendAsync(bytes.AsMemory(0, read.Count), WebSocketMessageType.Binary, true, _stop.Token);
+                    if (eof is not null)
+                    {
+                        try { eof.TrySetResult(await stream.ReadAsync(bytes, _stop.Token) == 0); }
+                        catch (Exception error) { eof.TrySetException(error); }
+                    }
                 }
                 else
                 {

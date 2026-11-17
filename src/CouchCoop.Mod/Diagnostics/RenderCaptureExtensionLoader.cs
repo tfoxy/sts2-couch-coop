@@ -2,8 +2,8 @@ namespace CouchCoop.Mod.Diagnostics;
 
 /// <summary>
 /// Loads the out-of-tree render-capture GDExtension, named by an absolute path in
-/// <see cref="EnvironmentVariable"/>, through <c>GDExtensionManager.LoadExtension</c>. Only the streaming seat
-/// loads it; <see cref="Session.StreamingSeatRole"/> decides when, and what a failure means.
+/// <see cref="EnvironmentVariable"/>, through <c>GDExtensionManager.LoadExtension</c>.
+/// <see cref="Session.RenderStreamSelf"/> coordinates seat and headless-host loading and failure policy.
 /// </summary>
 /// <remarks>
 /// This is the modder load route of godot-scene-web's render-stream capture: the extension reads its own

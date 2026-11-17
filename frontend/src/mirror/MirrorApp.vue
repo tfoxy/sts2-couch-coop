@@ -1069,11 +1069,17 @@ watch(() => JSON.stringify(renderStreamEndpoint.value), () => {
 const rendererRequests = new WeakMap<MirrorClient, {
   renderer: "stream" | "mirror"; retry: number; descriptorReceived: boolean;
 }>();
-// Availability's facts that live here: whether this view is the host's own game, and the descriptor in THIS
-// viewer's own seat envelope (MIR-3 sends it; absent means "not streaming"). Only a joined seat's session counts.
-watch(directView, (on) => { renderStreamContext.directView = on; }, { immediate: true });
+// A host's renderer state advertises its own capture; the seat LAN offer still describes seats only.
+const hostSelfStream = computed(() => hostSession.value?.rendererState !== undefined);
+const selfStreamingView = computed(() => directView.value && hostSelfStream.value);
+const rendererSession = computed(() => selfStreamingView.value ? hostSession.value : joined.value ? joinSession.value : null);
+const viewRendererState = computed(() => (selfStreamingView.value ? hostSession.value : joinSession.value)?.rendererState);
+watch([directView, hostSelfStream], ([direct, selfStream]) => {
+  renderStreamContext.directView = direct;
+  renderStreamContext.hostSelfStream = selfStream;
+}, { immediate: true });
 watch(
-  () => (joined.value ? joinSession.value : null),
+  rendererSession,
   (session) => {
     if (session !== null) mirrorRequestPending.value = false;
     const next = sessionRenderStreamEndpoint(session?.renderStream);
@@ -1082,7 +1088,7 @@ watch(
     if (next !== null && request?.renderer === "stream") request.descriptorReceived = true;
     if (state?.state === "failed" && mirrorSettings.renderer === "stream") {
       onRenderStreamFailed(state.reason ?? t("settings.newRendererFailed"));
-    } else if (next === null && joined.value && seatRendererDemand.value === "stream"
+    } else if (next === null && (joined.value || selfStreamingView.value) && seatRendererDemand.value === "stream"
       && mirrorSettings.renderStreamUrl === null
       && request?.renderer === "stream" && request.descriptorReceived
       && !(state?.presentationReady === false && ["arming", "disarming", "armed"].includes(state.state))) {
@@ -1101,10 +1107,10 @@ watch(
   },
   { immediate: true }
 );
-// Only this viewer's own seat can accept renderer requests.
+// A self-streaming direct view follows the host capture through the same stage as a joined seat.
 watch(
-  () => [joined.value, directView.value] as const,
-  ([isJoined, isDirect]) => { renderStreamContext.seatJoined = isJoined && !isDirect; },
+  () => (joined.value && !directView.value) || selfStreamingView.value,
+  (on) => { renderStreamContext.seatJoined = on; },
   { immediate: true }
 );
 // CAR7b: the host's LAN offer, on every host session while it has a capture (absent means none). Read before a join
@@ -1124,7 +1130,8 @@ function onRenderStreamRefresh(): void {
 }
 
 function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"): void {
-  if (client === hostClient || !joined.value || directView.value || client.status !== "connected" || !client.session
+  const selfView = client === hostClient && selfStreamingView.value;
+  if ((!selfView && (client === hostClient || !joined.value || directView.value)) || client.status !== "connected" || !client.session
     || mirrorSettings.renderStreamUrl !== null) return;
   if (renderer === "stream" && (renderStreamContext.stopped !== null
     || currentSeatRendererRequestFor("stream", mirrorSettings) !== "stream")) return;
@@ -1169,9 +1176,10 @@ const wantsHostStream = computed(() =>
   sceneAblation.streamsScene && shouldWatchHostStream(
     joinInfo.value, pendingName.value, mirrorScreen.value, joined.value, directView.value, urlSeatIntent.value
   ) && (joined.value || directView.value || isHostOnlyMirrorMode(mirrorScreen.value))
-    && (mirrorSettings.renderStreamUrl !== null
+    // Host access is tied to watch intent; scene admission alone closes while its capture streams.
+    && (directView.value || (mirrorSettings.renderStreamUrl !== null
       ? !streamRendererOn.value || holdMirrorForStream.value
-      : seatRendererDemand.value === "mirror")
+      : seatRendererDemand.value === "mirror"))
 );
 // The stream shows where the scene would: on a granted view, once it has somewhere to connect.
 const showStream = computed(() =>
@@ -1198,7 +1206,7 @@ const showHostAccessNotice = computed(() =>
 // Watch intent can request restoration while scene admission waits for a settled mirror presentation.
 const mirrorReturnRestored = computed(() => {
   if (mirrorRequestPending.value) return false;
-  const state = joinSession.value?.rendererState;
+  const state = viewRendererState.value;
   if (state?.presentationEpoch !== undefined) return state.presentationReady === true
     && state.presentationWidth === 1920 && state.presentationHeight === 1080;
   return mirrorSettings.renderStreamUrl !== null || directView.value
@@ -1206,10 +1214,10 @@ const mirrorReturnRestored = computed(() => {
 });
 const mirrorAdmissionAllowed = computed(() => mirrorReturnRestored.value
   && (mirrorSettings.renderStreamUrl !== null ? !streamRendererOn.value : seatRendererDemand.value === "mirror"));
-watch([mirrorAdmissionAllowed, joinSession], ([on]) => activeClient.setSceneAdmission(on), { flush: "sync" });
+watch([mirrorAdmissionAllowed, joinSession, hostSession], ([on]) => activeClient.setSceneAdmission(on), { flush: "sync" });
 const mirrorSceneReady = computed(() => {
   void revision.value;
-  const epoch = joinSession.value?.rendererState?.presentationEpoch;
+  const epoch = viewRendererState.value?.presentationEpoch;
   return mirrorAdmissionAllowed.value && !hostAccessBlocked.value
     && activeClient.sceneGeneration === hostAccess.value?.generation
     && (epoch === undefined || activeClient.scenePresentationEpoch === epoch);
@@ -1362,7 +1370,7 @@ const viewControls = computed(() => {
   const displayingStream = streamRendererOn.value;
   const state = mirrorState.value;
   const client = activeClient;
-  const epoch = displayingStream ? joinSession.value?.rendererState?.presentationEpoch
+  const epoch = displayingStream ? viewRendererState.value?.presentationEpoch
     : client.scenePresentationEpoch ?? undefined;
   const current = () => client === activeClient && state === mirrorState.value
     && client.hostAccess.allowed && generation === client.hostAccess.generation
@@ -1799,7 +1807,7 @@ if (latencyEnabled && typeof window !== "undefined") {
 if (typeof window !== "undefined") {
   (window as unknown as { __mirrorSendInput?: (msg: MirrorInputMessage) => void }).__mirrorSendInput =
     (msg: MirrorInputMessage) => {
-      if (joinSession.value?.rendererState?.presentationEpoch !== undefined && msg.presentationEpoch === undefined) return;
+      if (viewRendererState.value?.presentationEpoch !== undefined && msg.presentationEpoch === undefined) return;
       viewControls.value.sendInput(msg);
     };
 }
@@ -1943,8 +1951,8 @@ onBeforeUnmount(() => {
         :endpoint="renderStreamEndpoint"
         :core="renderStreamCore"
         :send-input="viewControls.sendInput"
-        :input-enabled="renderStreamContext.firstFrame && !hostAccessBlocked && joinSession?.rendererState?.presentationReady !== false"
-        :presentation-epoch="joinSession?.rendererState?.presentationEpoch"
+        :input-enabled="renderStreamContext.firstFrame && !hostAccessBlocked && viewRendererState?.presentationReady !== false"
+        :presentation-epoch="viewRendererState?.presentationEpoch"
         :show-chrome="showStreamChrome"
         :access-generation="hostAccess?.generation"
         @failed="streamCallbacks.failed"

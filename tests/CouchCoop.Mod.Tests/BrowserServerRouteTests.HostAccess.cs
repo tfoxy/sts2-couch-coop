@@ -226,9 +226,9 @@ internal sealed partial class BrowserServerRouteTests
                     var oldWatchEpoch = (long)typeof(CouchCoopWebSocketConnection).GetField("_watchEpoch",
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(connection)!;
                     var sendMethod = typeof(CouchCoopWebSocketConnection).GetMethods(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                        .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 7);
+                        .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 8);
                     var oldSend = (Task)sendMethod.Invoke(connection, [Encoding.UTF8.GetBytes("{\"type\":\"scene-delta\",\"oldWatch\":true}"),
-                        CancellationToken.None, access.State.Generation, oldWatchEpoch, null, false, false])!;
+                        CancellationToken.None, access.State.Generation, oldWatchEpoch, null, false, false, null])!;
                     await SendWatchAsync(socket, false);
                     Expect(await WaitForAsync(() => !connection.WantsSceneStream), "watch off immediately fences sends before its status can send");
                     sendGate.Release();

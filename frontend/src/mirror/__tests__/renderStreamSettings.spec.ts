@@ -48,7 +48,7 @@ function memoryStorage(initial: Record<string, unknown> = {}): MirrorSettingsSto
 }
 
 afterEach(() => {
-  Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
+  Object.assign(renderStreamContext, { directView: false, hostSelfStream: false, sessionEndpoint: null, coreLoadFailed: false, stopped: null,
     coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, lanOffer: null, page: undefined });
 });
 
@@ -228,7 +228,8 @@ describe("renderStreamAvailability", () => {
     expect(reason({ coreProblem: "stale", webgl2: false, directView: true })).toBe("core-build");
     expect(reason({ coreLoadFailed: true })).toBe("core-build");
     expect(reason({ webgl2: false, directView: true })).toBe("no-webgl2");
-    expect(reason({ directView: true })).toBe("host-view");
+    expect(reason({ directView: true, hostSelfStream: false })).toBe("host-view");
+    expect(reason({ directView: true, hostSelfStream: true })).toBeNull();
     // A LAN page on a host with no capture (no offer): its seat cannot stream either.
     expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: null })).toBe("host-update");
     expect(reason({ qaEndpoint: null, pageLoopback: false, lanOffer: { webTransport: false, tls: false, ws: true },
@@ -250,11 +251,36 @@ describe("renderStreamAvailability", () => {
       expect(renderStreamChoosable.value).toBe(true);
       renderStreamContext.directView = true;
       expect(renderStreamChoosable.value).toBe(false);
+      renderStreamContext.hostSelfStream = true;
+      renderStreamContext.lanOffer = null;
+      expect(renderStreamChoosable.value).toBe(true);
       renderStreamContext.directView = false;
       renderStreamContext.webgl2 = false;
       expect(renderStreamChoosable.value).toBe(false);
     } finally {
       mirrorSettings.renderer = saved;
+    }
+  });
+
+  it.each([
+    ["http://127.0.0.1:13337", false, true],
+    ["http://127.0.0.1:13337", true, false],
+    ["https://host.example", true, true]
+  ])("uses the host relay carrier independently of the seat offer (%s, https=%s)", (baseUrl, https, usable) => {
+    globalThis.__couchCoopHostBase = baseUrl;
+    try {
+      const inputs = { ...base, directView: true, hostSelfStream: true, lanOffer: null,
+        hostUnavailableReason: "no-capture", pageLoopback: false,
+        page: { https, secureContext: https, webTransport: false } };
+      expect(seatRendererRequest({ ...inputs, renderer: "stream" })).toBe(usable ? "stream" : undefined);
+      expect(computeRenderStreamAvailability(inputs).reason).toBe(usable ? "not-streaming" : "needs-proxy");
+      const endpoint = sessionRenderStreamEndpoint({ url: "/render-stream/host/ws", resourceBase: "/render-stream/host",
+        token: "a".repeat(64), protocol: 13 });
+      expect(computeRenderStreamAvailability({ ...inputs, sessionEndpoint: endpoint }).available).toBe(usable);
+      expect(computeRenderStreamAvailability({ ...inputs, qaEndpoint: qa })).toMatchObject({ available: true, source: "qa-override" });
+      expect(seatRendererRequest({ ...inputs, renderer: "stream", qaEndpoint: qa })).toBeUndefined();
+    } finally {
+      delete globalThis.__couchCoopHostBase;
     }
   });
 

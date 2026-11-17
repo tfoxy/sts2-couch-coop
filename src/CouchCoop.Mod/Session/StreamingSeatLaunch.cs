@@ -377,6 +377,19 @@ internal static class StreamingSeatLaunch
         return environment;
     }
 
+    /// <summary>The host's private capture keeps texture pixels available to the mirror's asset routes.</summary>
+    internal static IReadOnlyDictionary<string, string> HostEnvironment(
+        Config config, string evidenceDirectory, IReadOnlyList<string> allowedOrigins)
+    {
+        var environment = new Dictionary<string, string>(
+            Environment(config with { NetModule = null }, HubPortForSlot(0), evidenceDirectory, allowedOrigins),
+            StringComparer.Ordinal);
+        environment.Remove(StreamingSeatRole.EnvironmentVariable);
+        environment["GRC_HEADLESS_TEXTURE_RELEASE"] = "off";
+        environment["GRC_LIVE_MAX_CONNECTIONS"] = "4";
+        return environment;
+    }
+
     /// <summary>The capture's <c>GRC_ROOT_SIZE</c> value for a seat <paramref name="presentationWidth"/> wide.</summary>
     internal static string RootSize(int presentationWidth)
         => $"presentation:{presentationWidth.ToString(CultureInfo.InvariantCulture)}x{PresentationHeight.ToString(CultureInfo.InvariantCulture)}";

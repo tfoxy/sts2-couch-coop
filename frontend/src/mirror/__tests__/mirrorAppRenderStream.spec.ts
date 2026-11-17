@@ -173,7 +173,7 @@ afterEach(() => {
   app = null;
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     stretchEnabled: true, panelOpen: false });
-  Object.assign(renderStreamContext, { directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false, coreLoadFailed: false, stopped: null,
+  Object.assign(renderStreamContext, { directView: false, hostSelfStream: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false, coreLoadFailed: false, stopped: null,
     coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false,
     lanOffer: null, hostUnavailableReason: null, page: undefined });
   globalThis.localStorage?.clear();
@@ -655,23 +655,107 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(seat.ofType("renderer").filter((message) => message.renderer === "stream")).toEqual([]);
   });
 
-  it("does not request a renderer for a direct host view", async () => {
+  it("does not request a renderer for a direct host view without renderer state", async () => {
     canStream();
     mirrorSettings.renderer = "stream";
     app = mount(MirrorApp);
     await settle();
     const host = latest();
-    host.emit(sessionMessage({ rendererState: { state: "mirror" } }));
+    host.emit(sessionMessage());
     await settle();
     await app.findAll('[data-testid="player-picker"] button')[0].trigger("click");
     await settle();
-    host.emit(sessionMessage({ directView: true, rendererState: { state: "mirror" } }));
+    host.emit(sessionMessage({ directView: true }));
     await settle();
     mirrorSettings.renderer = "mirror";
     await settle();
     mirrorSettings.renderer = "stream";
     await settle();
     expect(host.ofType("renderer")).toEqual([]);
+    expect(renderStreamAvailability.value.reason).toBe("host-view");
+  });
+
+  it("requests and displays the host's own stream, fences its epochs, and unticks on the host socket", async () => {
+    canStream();
+    globalThis.__couchCoopHostBase = "http://127.0.0.1:13337";
+    mirrorSettings.panelOpen = true;
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    expect(host.ofType("renderer")).toEqual([]);
+    await app.findAll('[data-testid="player-picker"] button')[0].trigger("click");
+    await settle();
+    const presentation = (epoch: number, state = "armed") => ({ state, presentationEpoch: epoch,
+      presentationReady: true, presentationWidth: 1920, presentationHeight: 1080, restoreComplete: true });
+    const hostView = (over: Record<string, unknown> = {}) => sessionMessage({ requestId: "session",
+      renderStreamLan: undefined, renderStreamUnavailableReason: "no-capture", ...over });
+    host.emit(hostView({ directView: true, requestId: host.ofType("join").at(-1)!.requestId,
+      rendererState: presentation(7, "mirror") }));
+    await settle();
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(renderStreamContext).toMatchObject({ directView: true, hostSelfStream: true, seatJoined: true });
+    expect(app.get('[data-testid="mirror-renderer"]').attributes("disabled")).toBeUndefined();
+    host.sent.length = 0;
+    await app.get('[data-testid="mirror-renderer"]').setValue(true);
+    await settle();
+    expect(host.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+    expect(host.ofType("watch").some(message => message.on === false)).toBe(false);
+    const route = "/render-stream/" + "a".repeat(32);
+    const renderStream = { ...descriptor, url: `${route}/ws`, resourceBase: route };
+    host.emit(hostView({ rendererState: presentation(7), renderStream }));
+    await settle();
+    expect(renderStreamAvailability.value.reason).toBeNull();
+    expect(renderStreamAvailability.value).toMatchObject({ available: true, source: "session" });
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(fake.clients).toHaveLength(1);
+    expect(fake.clients[0].options.endpoint).toMatchObject({ url: `ws://127.0.0.1:13337${route}/ws`,
+      resourceBase: `http://127.0.0.1:13337${route}`, token: SEAT_TOKEN });
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const stage = app.getComponent((await realStageImport()).default);
+    expect(stage.props()).toMatchObject({ presentationEpoch: 7, inputEnabled: true });
+    const oldSend = stage.props("sendInput")!;
+    oldSend({ kind: "key", key: "KeyE", pressed: true, presentationEpoch: 7 });
+    expect(host.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 7 });
+    host.sent.length = 0;
+    host.emit(hostView({ rendererState: presentation(8), renderStream }));
+    await settle();
+    oldSend({ kind: "key", key: "KeyE", pressed: false, presentationEpoch: 7 });
+    expect(host.ofType("input")).toEqual([]);
+    expect(stage.props()).toMatchObject({ presentationEpoch: 8, inputEnabled: false });
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    stage.props("sendInput")!({ kind: "key", key: "KeyE", pressed: true, presentationEpoch: 8 });
+    expect(host.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 8 });
+    const beforeRevoke = stage.props("sendInput")!;
+    host.sent.length = 0;
+    host.emit(hostView({ hostAccess: { allowed: false, reason: "menu-open", generation: 1 } }));
+    await settle();
+    beforeRevoke({ kind: "key", key: "KeyE", pressed: false, presentationEpoch: 8 });
+    expect(host.ofType("input")).toEqual([]);
+    expect(host.ofType("watch").some(message => message.on === false)).toBe(false);
+    host.emit(hostView({ hostAccess: { allowed: true, reason: "allowed", generation: 2 },
+      rendererState: presentation(9), renderStream }));
+    await settle();
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    beforeRevoke({ kind: "key", key: "KeyE", pressed: false, presentationEpoch: 8 });
+    expect(host.ofType("input")).toEqual([]);
+    const resumedStage = app.getComponent((await realStageImport()).default);
+    resumedStage.props("sendInput")!({ kind: "key", key: "KeyE", pressed: true, presentationEpoch: 9 });
+    expect(host.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 9 });
+    await app.get('[data-testid="mirror-renderer"]').setValue(false);
+    await settle();
+    expect(host.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(app.find('[data-testid="mirror-stream-shell"]').exists()).toBe(false);
+    host.emit(hostView({ rendererState: presentation(10, "mirror"),
+      hostAccess: { allowed: true, reason: "allowed", generation: 2 } }));
+    await settle();
+    expect(renderStreamContext.returningToMirror).toBe(false);
   });
 
   describe("the seat's aspect", () => {

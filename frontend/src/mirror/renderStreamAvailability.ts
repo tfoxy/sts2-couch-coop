@@ -6,7 +6,7 @@
 //   core-build     the core wasm is missing, stale or unverifiable in this (dev) build, or failed to load; which one
 //                  is `renderStreamCoreCause` (a release always carries a verified core, so there only the load fails)
 //   no-webgl2      this browser gives no WebGL2 context
-//   host-view      watching the host's own game (`directView`), which never streams
+//   host-view      watching the host's own game (`directView`) without self-stream capability
 //   host-unavailable the host refused capture configuration; settings maps its code to a player-facing hint
 //   needs-proxy    no carrier the seat offers can work on this page (`lanCarrierUsable` / `endpointCarrierUsable`):
 //                  an https page cannot use plain ws, and WebTransport needs a secure context and the API. A
@@ -110,6 +110,8 @@ export interface RenderStreamAvailabilityInputs {
   coreLoadFailed: boolean;
   webgl2: boolean;
   directView: boolean;
+  /** The host session reports renderer state for its own capture. */
+  hostSelfStream?: boolean;
   /** The QA endpoint (`?renderStream=`), which outranks the session's. */
   qaEndpoint: RenderStreamEndpoint | null;
   /** The descriptor in this viewer's own seat `session` envelope (MIR-3). */
@@ -128,6 +130,7 @@ export type RenderStreamAvailability =
 
 /** A loopback http page: a secure context; WebTransport assumed present (the descriptor decides). */
 const LOOPBACK_PAGE: RenderStreamPageFacts = { https: false, secureContext: true, webTransport: true };
+const SELF_STREAM_OFFER: RenderStreamLanOffer = { relay: true, webTransport: false, tls: false, ws: true };
 
 const unavailable = (reason: RenderStreamUnavailableReason): RenderStreamAvailability =>
   ({ available: false, reason, endpoint: null, source: null });
@@ -135,10 +138,12 @@ const unavailable = (reason: RenderStreamUnavailableReason): RenderStreamAvailab
 export function computeRenderStreamAvailability(inputs: RenderStreamAvailabilityInputs): RenderStreamAvailability {
   if (inputs.coreProblem !== null || inputs.coreLoadFailed) return unavailable("core-build");
   if (!inputs.webgl2) return unavailable("no-webgl2");
-  if (inputs.directView) return unavailable("host-view");
+  const selfStream = inputs.directView && inputs.hostSelfStream;
+  if (inputs.directView && !selfStream) return unavailable("host-view");
   if (inputs.qaEndpoint) return { available: true, reason: null, endpoint: inputs.qaEndpoint, source: "qa-override" };
-  if (inputs.hostUnavailableReason) return unavailable("host-unavailable");
-  if (!inputs.lanOffer?.relay) return unavailable("host-update");
+  if (inputs.hostUnavailableReason && !selfStream) return unavailable("host-unavailable");
+  const offer = selfStream ? SELF_STREAM_OFFER : inputs.lanOffer;
+  if (!offer?.relay) return unavailable("host-update");
   // A loopback http page is a secure context by definition, whatever a probe (or jsdom) reports.
   const page = inputs.pageLoopback ? { ...(inputs.page ?? LOOPBACK_PAGE), secureContext: true } : inputs.page ?? LOOPBACK_PAGE;
   if (inputs.sessionEndpoint) {
@@ -146,7 +151,7 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
       ? { available: true, reason: null, endpoint: inputs.sessionEndpoint, source: "session" }
       : unavailable("needs-proxy");
   }
-  if (!inputs.pageLoopback && inputs.lanOffer && !lanCarrierUsable(inputs.lanOffer, page)) return unavailable("needs-proxy");
+  if (!inputs.pageLoopback && !lanCarrierUsable(offer, page)) return unavailable("needs-proxy");
   return unavailable("not-streaming");
 }
 
@@ -220,6 +225,7 @@ export function isLoopbackHttpPage(location: Pick<Location, "protocol" | "hostna
  */
 export const renderStreamContext = reactive({
   directView: false,
+  hostSelfStream: false,
   hostUnavailableReason: null as string | null,
   sessionEndpoint: null as RenderStreamEndpoint | null,
   rendererState: null as BrowserRendererState | null,
@@ -233,7 +239,7 @@ export const renderStreamContext = reactive({
   coreProblem: undefined as RenderStreamCoreProblem | null | undefined,
   webgl2: undefined as boolean | undefined,
   pageLoopback: undefined as boolean | undefined,
-  /** This viewer holds a seat of its own (joined, not the host's view): the page follows that seat's renderer. */
+  /** This viewer follows a joined seat's renderer or the host's own capture. */
   seatJoined: false,
   /** The host session's `renderStreamLan` (MirrorApp writes it): null when the host has no capture. */
   lanOffer: null as RenderStreamLanOffer | null,
@@ -260,6 +266,7 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
   coreLoadFailed: renderStreamContext.coreLoadFailed,
   webgl2: renderStreamContext.webgl2 ?? probeWebgl2(),
   directView: renderStreamContext.directView,
+  hostSelfStream: renderStreamContext.hostSelfStream,
   qaEndpoint: qaRenderStreamEndpoint(mirrorSettings),
   sessionEndpoint: renderStreamContext.sessionEndpoint,
   pageLoopback: renderStreamContext.pageLoopback ?? isLoopbackHttpPage(),
@@ -275,12 +282,15 @@ export const renderStreamAvailability = computed<RenderStreamAvailability>(() =>
  */
 export function seatRendererRequest(
   inputs: Pick<RenderStreamAvailabilityInputs, "coreProblem" | "coreLoadFailed" | "webgl2" | "pageLoopback" | "qaEndpoint"
-    | "lanOffer" | "page" | "hostUnavailableReason">
+    | "lanOffer" | "page" | "hostUnavailableReason" | "hostSelfStream">
+    & { directView?: boolean }
     & { renderer: MirrorSettings["renderer"] }
 ): "stream" | undefined {
   const page = inputs.page ?? LOOPBACK_PAGE;
-  const reachable = inputs.lanOffer?.relay === true && lanCarrierUsable(inputs.lanOffer, page);
-  return !inputs.hostUnavailableReason && inputs.renderer === "stream" && inputs.coreProblem === null
+  const selfStream = inputs.directView && inputs.hostSelfStream;
+  const offer = selfStream ? SELF_STREAM_OFFER : inputs.lanOffer;
+  const reachable = offer?.relay === true && lanCarrierUsable(offer, page);
+  return (!inputs.hostUnavailableReason || selfStream) && inputs.renderer === "stream" && inputs.coreProblem === null
     && !inputs.coreLoadFailed && inputs.webgl2 && reachable && inputs.qaEndpoint === null ? "stream" : undefined;
 }
 
@@ -294,6 +304,8 @@ export function currentSeatRendererRequestFor(renderer: MirrorSettings["renderer
   settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): "stream" | undefined {
   return seatRendererRequest({
     renderer,
+    directView: renderStreamContext.directView,
+    hostSelfStream: renderStreamContext.hostSelfStream,
     hostUnavailableReason: renderStreamContext.hostUnavailableReason,
     coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
     coreLoadFailed: renderStreamContext.coreLoadFailed,
@@ -307,9 +319,10 @@ export function currentSeatRendererRequestFor(renderer: MirrorSettings["renderer
 
 /**
  * Whether the checkbox can be switched ON for this page: the seat request would then ask for the stream
- * (`seatRendererRequest` with the choice on), or a QA endpoint brings its own. Not on the host's own view.
+ * (`seatRendererRequest` with the choice on), or a QA endpoint brings its own. A self-streaming host view uses
+ * its own relay independently of the seat offer.
  */
-export const renderStreamChoosable = computed(() => !renderStreamContext.directView
+export const renderStreamChoosable = computed(() => (!renderStreamContext.directView || renderStreamContext.hostSelfStream)
   && (renderStreamAvailability.value.source === "qa-override"
     || currentSeatRendererRequestFor("stream", mirrorSettings) === "stream"));
 

@@ -212,17 +212,15 @@ public static class CouchCoopMod
             // with no protection installed. Nothing above it here but EnsureMonoModCanPatch(), which it needs;
             // everything that can fail belongs below the protection, not above it.
             if (IsHeadlessClient) HeadlessSeatCloudIsolationGuard.EnforceOrExit();
-            // The streaming seat (COUCHCOOP_STREAMING_SEAT=1) loads godot-scene-web's render-capture GDExtension
-            // here, and refuses to start when it cannot: below the seat's cloud guard, above the override that lets
-            // a seat join. Unflagged, it loads nothing and logs nothing (one warning if the extension is named
-            // anyway). See StreamingSeatRole for the standby capture and saver gates below.
-            StreamingSeatRole.StartCaptureOrExit();
-            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamDesignPlacementPatch.Apply();
-            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamMapDrawingToolsPatch.Apply();
-            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamHandPlacementPatch.Apply();
-            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamCardRewardPlacementPatch.Apply();
-            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamCreaturePlacementPatch.Apply();
-            if (IsHeadlessClient && StreamingSeatRole.IsStreamingSeat) StreamEnergyPlacementPatch.Apply();
+            // Load a standby capture for a streaming seat or a configured headless host. A seat requires it;
+            // a host can keep serving the old renderer if capture loading fails.
+            RenderStreamSelf.StartCaptureOrExit(IsHeadlessClient, IsHeadlessDisplay());
+            if (RenderStreamSelf.Enabled) StreamDesignPlacementPatch.Apply();
+            if (RenderStreamSelf.Enabled) StreamMapDrawingToolsPatch.Apply();
+            if (RenderStreamSelf.Enabled) StreamHandPlacementPatch.Apply();
+            if (RenderStreamSelf.Enabled) StreamCardRewardPlacementPatch.Apply();
+            if (RenderStreamSelf.Enabled) StreamCreaturePlacementPatch.Apply();
+            if (RenderStreamSelf.Enabled) StreamEnergyPlacementPatch.Apply();
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
             // session impossible); on a headless couch seat it re-materializes "fastmp=join" + "clientId=<netId>"
@@ -338,9 +336,8 @@ public static class CouchCoopMod
             {
                 CouchCoopHeadlessVisualSuspender.Install();
             }
-            // TAG3: the streaming seat's item-identity groups for the render-stream client's extension modules. Only
-            // the streaming seat — no other instance has a capture reading groups, so tagging there is pure cost.
-            if (StreamingSeatRole.IsStreamingSeat)
+            // Item-identity groups are needed only where a local capture reads them.
+            if (RenderStreamSelf.Enabled)
             {
                 Session.RenderStreamItemTagger.Install();
             }

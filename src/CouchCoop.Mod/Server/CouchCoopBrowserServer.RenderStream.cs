@@ -36,6 +36,13 @@ public sealed partial class CouchCoopBrowserServer
             await RenderStreamRelay.ErrorAsync(browser, 405, request.Header("Origin"), token).ConfigureAwait(false);
             return;
         }
+        var relay = rendererSwapHost as IHotRenderStreamRelayHost;
+        if (_isHeadlessClient || rendererSwapHost is IHotSelfRenderStreamHost { SupportsSelfRenderStream: true }
+            && relay?.RenderStreamSeatRoute == route.Groups[1].Value)
+        {
+            await RelayLocalRenderStreamAsync(browser, request, route, token).ConfigureAwait(false);
+            return;
+        }
         if (!_isHeadlessClient)
         {
             if (_headlessManager is null || !_headlessManager.TryResolveSeatRelay(route.Groups[1].Value, out var name, out var credential))
@@ -56,9 +63,17 @@ public sealed partial class CouchCoopBrowserServer
             }
             return;
         }
+    }
+
+    private async Task RelayLocalRenderStreamAsync(Stream browser, CouchCoopHttpRequest request, Match route,
+        CancellationToken token)
+    {
+        var access = HostBrowserAccess;
+        var accessState = access?.State;
         var relay = rendererSwapHost as IHotRenderStreamRelayHost;
         var status = rendererSwapHost?.RendererStatus;
-        if (relay is not { SupportsRenderStreamRelay: true } || relay.RenderStreamSeatRoute != route.Groups[1].Value
+        if (!_isHeadlessClient && accessState is not { Allowed: true }
+            || relay is not { SupportsRenderStreamRelay: true } || relay.RenderStreamSeatRoute != route.Groups[1].Value
             || status is not { State: "armed", Snapshot: { } arm })
         {
             await RenderStreamRelay.ErrorAsync(browser, 410, request.Header("Origin"), token).ConfigureAwait(false);
@@ -73,11 +88,27 @@ public sealed partial class CouchCoopBrowserServer
             await RenderStreamRelay.ErrorAsync(browser, 502, request.Header("Origin"), token).ConfigureAwait(false);
             return;
         }
-        bool Current() => rendererSwapHost!.RendererStatus is { State: "armed", Snapshot: { } current } && current == arm;
+        bool Current() => (_isHeadlessClient || access?.IsAllowed(accessState!.Generation) == true)
+            && rendererSwapHost!.RendererStatus is { State: "armed", Snapshot: { } current } && current == arm;
+        using var accessStop = access is null ? null : CancellationTokenSource.CreateLinkedTokenSource(token);
+        var relayToken = accessStop?.Token ?? token;
+        void AccessChanged(HostBrowserAccessState state)
+        {
+            if (state.Allowed && state.Generation == accessState!.Generation) return;
+            try { accessStop!.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+        if (access is not null) access.Changed += AccessChanged;
         try
         {
+            // Recheck after subscribing so a change during admission cannot escape the relay's lifetime.
+            if (access is not null && !access.IsAllowed(accessState!.Generation))
+            {
+                await RenderStreamRelay.ErrorAsync(browser, 410, request.Header("Origin"), token).ConfigureAwait(false);
+                return;
+            }
             using var upstream = new TcpClient();
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(relayToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(2));
             await upstream.ConnectAsync(IPAddress.Parse(hub.Groups[1].Value.Trim('[', ']')), port, deadline.Token).ConfigureAwait(false);
             if (!Current())
@@ -87,12 +118,20 @@ public sealed partial class CouchCoopBrowserServer
             }
             var target = route.Groups[2].Value == "ws" ? "/render-stream" : "/" + route.Groups[2].Value;
             await RenderStreamRelay.ForwardAsync(upstream.GetStream(), browser, request,
-                RenderStreamRelay.RequestHeader(request, target, arm.Listen, origin), token, Current).ConfigureAwait(false);
+                RenderStreamRelay.RequestHeader(request, target, arm.Listen, origin), relayToken, Current).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (accessStop?.IsCancellationRequested == true && !token.IsCancellationRequested)
+        {
+            await RenderStreamRelay.ErrorAsync(browser, 410, request.Header("Origin"), token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is SocketException or IOException or OperationCanceledException && !token.IsCancellationRequested)
         {
             await RenderStreamRelay.ErrorAsync(browser, error is OperationCanceledException ? 504 : 502,
                 request.Header("Origin"), token).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (access is not null) access.Changed -= AccessChanged;
         }
     }
 }

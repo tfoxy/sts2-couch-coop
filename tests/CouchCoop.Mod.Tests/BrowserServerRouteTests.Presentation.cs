@@ -97,6 +97,7 @@ internal sealed partial class BrowserServerRouteTests
             Expect(wire.RootElement.GetProperty("presentationEpoch").GetInt64() == 17,
                 "full and incremental scene packets preserve the producer epoch");
         }
+        await AssertHostPresentationFencesAsync();
         InputCoalescerTests.Run();
         Console.WriteLine("Presentation fences: 23 assertions plus input coalescer cases passed.");
     }
@@ -107,7 +108,7 @@ internal sealed partial class BrowserServerRouteTests
         void Set(string name, object value) => type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(connection, value);
         bool Allows(long epoch) => (bool)type.GetMethod("AllowsPresentationInput", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(connection, [epoch])!;
         var send = type.GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
-            .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 7);
+            .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 8);
         var gate = (SemaphoreSlim)type.GetField("_sendGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
         using var socket = new PresentationSocket();
         Set("_socket", socket);
@@ -117,7 +118,7 @@ internal sealed partial class BrowserServerRouteTests
         Set("_watchEpoch", 0L);
         Set("_fullPresentationEpoch", -1L);
         Task Send(long epoch, bool full) => (Task)send.Invoke(connection,
-            [Encoding.UTF8.GetBytes("scene"), CancellationToken.None, epoch, 0L, null, false, full])!;
+            [Encoding.UTF8.GetBytes("scene"), CancellationToken.None, epoch, 0L, null, false, full, null])!;
         await gate.WaitAsync();
         Task oldFull;
         try
@@ -148,10 +149,108 @@ internal sealed partial class BrowserServerRouteTests
         host.Epoch = 1;
     }
 
+    private static async Task AssertHostPresentationFencesAsync()
+    {
+        var runtime = new RecordingSpirectlRuntime();
+        var host = new PresentationTestHost { Epoch = 17, Stream = true };
+        var access = new TestHostBrowserAccess();
+        access.Set(true);
+        var type = typeof(CouchCoopWebSocketConnection);
+        var connection = (CouchCoopWebSocketConnection)type.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single().Invoke(
+            [runtime.NewEnvelopeFactory(), new ConcurrentDictionary<Guid, CouchCoopWebSocketConnection>(),
+                (Func<CouchCoopSceneObserver?>)(() => null), (Action)(() => { }), (Action)(() => { }),
+                (Action<bool>)(_ => { }), null, null, false, true, false, false,
+                new ConnectionArrivalLog(), null, access, null, null, host]);
+        void Set(string name, object value) => type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(connection, value);
+        void Sync() => type.GetMethod("SyncPresentationPage", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(connection, []);
+        bool Allows(long epoch) => (bool)type.GetMethod("AllowsPresentationInput", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(connection, [epoch])!;
+        Task Queue(long epoch, string id) => (Task)type.GetMethod("QueueInputAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(connection,
+            [new BrowserInputRequestEnvelope("input", id, "key", Key: "KeyA", PresentationEpoch: epoch), CancellationToken.None])!;
+        Task Drain() => (Task)type.GetField("_inputPumpTask", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
+        Set("_rendererProtocol2", true);
+        using var socket = new PresentationSocket();
+        Set("_socket", socket);
+        Sync();
+        Expect(host.Claims == 1 && host.Watching, "an allowed host viewer claims and updates its presentation page");
+        var calls = runtime.Calls.Count;
+        await Queue(16, "stale-host-epoch");
+        using (var rejected = JsonDocument.Parse(socket.LastBytes!))
+            Expect(rejected.RootElement.GetProperty("code").GetString() == "host-access-denied" && runtime.Calls.Count == calls,
+                "a host rejects stale presentation input even with current access permission");
+        await Queue(17, "current-host-epoch");
+        await Drain().WaitAsync(TimeSpan.FromSeconds(5));
+        Expect(runtime.LastActionRequest?.RequestId == "current-host-epoch", "matching host epoch executes with independent access generation");
+
+        var prior = GameMainThread.Source;
+        using var main = new HopCountingMainThread();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        GameMainThread.Source = main;
+        try
+        {
+            var blocked = Task.Run(() => main.Invoke(() => { entered.Set(); release.Wait(); return true; }));
+            Expect(entered.Wait(TimeSpan.FromSeconds(5)), "host input test holds the game thread");
+            calls = runtime.Calls.Count;
+            await Queue(17, "queued-host-epoch");
+            host.Epoch = 18;
+            release.Set();
+            await blocked;
+            await Drain().WaitAsync(TimeSpan.FromSeconds(5));
+            Expect(runtime.Calls.Count == calls, "host input rechecks presentation after waiting for the game thread");
+        }
+        finally { release.Set(); GameMainThread.Source = prior; }
+
+        host.Stream = false;
+        Set("_sceneStreaming", true);
+        Set("_streamAccessGeneration", access.State.Generation);
+        Set("_streamWatchEpoch", 0L);
+        Set("_streamPresentationEpoch", 18L);
+        var keyframe = new RuntimeSceneDelta(true, "test", "test", [], [], []);
+        await (Task)type.GetMethod("SendSceneKeyframeAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(connection,
+            [keyframe, access.State.Generation, 0L, 18L])!;
+        using (var scene = JsonDocument.Parse(socket.LastBytes!))
+            Expect(scene.RootElement.GetProperty("presentationEpoch").GetInt64() == 18,
+                "host scenes carry the presentation epoch rather than the access generation");
+        Expect(Allows(18), "a matching host full scene opens mirror input");
+        var send = type.GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(m => m.Name == "SendBytesAsync" && m.GetParameters().Length == 8);
+        var gate = (SemaphoreSlim)type.GetField("_sendGate", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(connection)!;
+        await gate.WaitAsync();
+        var sends = socket.Sends;
+        var old = (Task)send.Invoke(connection, [Encoding.UTF8.GetBytes("old-host-full"), CancellationToken.None,
+            access.State.Generation, 0L, null, false, true, 18L])!;
+        host.Epoch = 19;
+        Set("_streamPresentationEpoch", 19L);
+        gate.Release();
+        await old;
+        Expect(socket.Sends == sends && !Allows(19), "a host full serialized before resize cannot unlock the next epoch at the send gate");
+        host.Stream = true;
+        var pending = new BrowserEnvelope("session", "pending-host-view", DirectView: true,
+            RenderStream: StreamingSeatDescriptor.BuildRelayed(("127.0.0.1:13346", new string('d', 64), "", "1920x1080", StreamingSeatLaunch.StreamVersion), new string('c', 32)),
+            RendererState: new("armed", null, true, 19, true, 1920, 1080));
+        await gate.WaitAsync();
+        var pendingSend = (Task)send.Invoke(connection, [Array.Empty<byte>(), CancellationToken.None,
+            null, null, pending, false, false, null])!;
+        access.Set(false);
+        gate.Release();
+        await pendingSend;
+        using (var session = JsonDocument.Parse(socket.LastBytes!))
+            Expect(!session.RootElement.TryGetProperty("renderStream", out _) && !session.RootElement.TryGetProperty("rendererState", out _),
+                "host access revoked behind the send gate removes previously decorated capture credentials and state");
+        await Queue(19, "revoked-host-access");
+        using (var rejected = JsonDocument.Parse(socket.LastBytes!))
+            Expect(rejected.RootElement.GetProperty("code").GetString() == "host-access-denied" && runtime.Calls.Count == calls,
+                "matching presentation cannot bypass revoked host access");
+        Sync();
+        Expect(host.Releases == 1, "revoked host access releases its presentation page");
+        Console.WriteLine("Host presentation fences: 11 assertions passed.");
+    }
+
     private sealed class PresentationSocket : WebSocket
     {
         internal int Sends;
         internal Action? AfterSend;
+        internal byte[]? LastBytes;
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
         public override WebSocketState State => WebSocketState.Open;
@@ -164,14 +263,18 @@ internal sealed partial class BrowserServerRouteTests
         public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType type, bool end, CancellationToken token)
         {
             Sends++;
+            LastBytes = buffer.ToArray();
             AfterSend?.Invoke();
             return Task.CompletedTask;
         }
     }
 
-    private sealed class PresentationTestHost : IHotRendererSwapHost, IHotPresentationHost
+    private sealed class PresentationTestHost : IHotRendererSwapHost, IHotPresentationHost, IHotSelfRenderStreamHost
     {
         internal long Epoch = 1;
+        internal int Claims, Releases;
+        internal bool Watching;
+        public bool SupportsSelfRenderStream => true;
         internal bool Ready = true, Stream, OwnsPage = true;
         internal int Width = 1920;
         public (long Epoch, bool Ready, int Width, int Height) PresentationStatus => (Epoch, Ready, Width, 1080);
@@ -180,9 +283,9 @@ internal sealed partial class BrowserServerRouteTests
         public bool WantsRenderStream(string pageId) => Stream;
         public void RequestRenderer(string pageId, bool stream, double? aspect) { }
         public void ReleaseRenderer(string pageId) { }
-        public void ClaimPresentationPage(string pageId, string owner) { }
-        public void UpdatePresentationPage(string pageId, string owner, bool watch, bool? stream, double? aspect) { }
-        public void ReleasePresentationPage(string pageId, string owner) { }
+        public void ClaimPresentationPage(string pageId, string owner) => Claims++;
+        public void UpdatePresentationPage(string pageId, string owner, bool watch, bool? stream, double? aspect) => Watching = watch;
+        public void ReleasePresentationPage(string pageId, string owner) => Releases++;
         public bool IsPresentationPageOwner(string pageId, string owner) => OwnsPage;
         public IDisposable SubscribeRendererChanged(Action handler) => new NoopCancellation();
     }

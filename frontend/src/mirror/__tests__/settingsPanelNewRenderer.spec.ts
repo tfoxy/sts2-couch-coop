@@ -73,7 +73,7 @@ beforeEach(() => {
     stage: "dom", runtimeStage: "dom", panelOpen: true
   });
   Object.assign(renderStreamContext, {
-    directView: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false,
+    directView: false, hostSelfStream: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false,
     coreLoadFailed: false, stopped: null, hostUnavailableReason: null,
     coreProblem: null, webgl2: true, pageLoopback: true,
     lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
@@ -91,6 +91,17 @@ afterEach(() => {
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
+  it("enables the checkbox for a self-streaming direct view without a seat offer", async () => {
+    Object.assign(renderStreamContext, { directView: true, hostSelfStream: true, seatJoined: true,
+      lanOffer: null, hostUnavailableReason: "no-capture" });
+    mountPanel();
+    expect(el("mirror-renderer").disabled).toBe(false);
+    expect(wrapper!.text()).not.toContain("Not available when watching the host's own game.");
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(mirrorSettings.renderer).toBe("stream");
+    expect(wrapper!.text()).not.toContain("Applies when you join");
+  });
+
   it("is the first control in This device, before Stage", () => {
     available();
     mountPanel();

@@ -78,6 +78,17 @@ internal sealed partial class BrowserServerRouteTests
         _ = args;
         try
         {
+            await using (var legacySeat = await RelayedSeat.StartAsync(withCapture: true))
+            {
+                var host = legacySeat.Host!;
+                Expect(!host.SupportsSelfRenderStream, "a seat without a loaded capture does not advertise self streaming");
+                host.ClaimPresentationPage("legacy-seat", "owner");
+                Expect(host.IsPresentationPageOwner("legacy-seat", "owner"), "a seat without capture retains mirror input ownership");
+                host.ReleasePresentationPage("legacy-seat", "owner");
+                Expect(!host.IsPresentationPageOwner("legacy-seat", "owner"), "a seat without capture releases mirror input ownership");
+            }
+            // The injected capture replaces native startup in this isolated streaming-seat process.
+            RenderStreamSelf.MarkLoaded();
             await using var seat = await RelayedSeat.StartAsync(withCapture: true);
             using var socket = await seat.ConnectAsync(AllowedPageOrigin);
             using (var first = await ReadSessionAsync(socket)) ExpectRenderer(first.RootElement, "mirror");

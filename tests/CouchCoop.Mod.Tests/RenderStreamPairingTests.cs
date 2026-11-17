@@ -26,6 +26,9 @@ internal static class RenderStreamPairingTests
         AllowedOriginsAreTheHostPageAndValidExtras();
         LaunchEnvironmentIsTheAcceptanceTable();
         TheNetModuleAddsWebTransport();
+        HostCaptureUsesAPrivateEnvironment();
+        HostCaptureFailuresKeepTheMirror();
+        HostEnvironmentReachesBothReaders();
         PresentationWidthFollowsTheAspect();
         TheFloat32GuardMatchesGodot();
         TheCapIsTheOperatorsSetting();
@@ -785,6 +788,88 @@ internal static class RenderStreamPairingTests
         var applyBody = launcher[apply..launcher.IndexOf("\n    }\n", apply, StringComparison.Ordinal)];
         Assert(!applyBody.Contains("live-token\"", StringComparison.Ordinal) && !applyBody.Contains("ReadAllText", StringComparison.Ordinal),
             "the host never reads the token");
+    }
+
+    private static void HostCaptureUsesAPrivateEnvironment()
+    {
+        var config = new StreamingSeatLaunch.Config(Extension, Calibration, NetModule: "/capture/net.so");
+        var evidence = StreamingSeatLaunch.EvidenceDirectory("/host/user", 0);
+        var origins = StreamingSeatLaunch.AllowedOrigins(HeadlessClientManager.HostPort, "http://127.0.0.1:5190");
+        var environment = StreamingSeatLaunch.HostEnvironment(config, evidence, origins);
+        Assert(environment["GRC_LIVE_LISTEN"] == "127.0.0.1:13346", "host uses its own loopback band");
+        Assert(environment["GRC_LIVE_CARRIERS"] == "ws", "host capture has only the relay's carrier");
+        Assert(environment["GRC_HEADLESS_TEXTURE_RELEASE"] == "off", "host preserves mirror asset pixels");
+        Assert(environment["GRC_LIVE_MAX_CONNECTIONS"] == "4", "several browsers can watch the host");
+        Assert(!environment.ContainsKey(StreamingSeatRole.EnvironmentVariable), "a host is not a streaming seat");
+        Assert(!environment.Keys.Any(key => key is "GRC_LIVE_EXPOSE" or "GRC_LIVE_NET_MODULE"
+            || key.StartsWith("GRC_LIVE_TLS_", StringComparison.Ordinal)
+            || key.StartsWith("GRC_LIVE_WT_", StringComparison.Ordinal)
+            || key == StreamingSeatDescriptor.LanPlaintextEnvironmentVariable), "host has no LAN, TLS or WT settings");
+        Assert(environment["GRC_STREAM_VERSION"] == StreamingSeatLaunch.StreamVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "host and seat use the same wire version");
+        Assert(environment["GRC_MODE"] == "standby" && environment["GRC_CALIBRATION"] == Calibration,
+            "host starts in standby with the configured calibration");
+        Assert(environment["GRC_EVIDENCE_DIR"] == evidence && evidence.EndsWith("slot-0", StringComparison.Ordinal),
+            "host evidence is isolated from seats");
+        Assert(environment["GRC_LIVE_ALLOWED_ORIGINS"] == string.Join(',', origins)
+            && origins.Contains("http://127.0.0.1:5190"), "host includes loopback and dev origins");
+        var derived = StreamingSeatLaunch.HostEnvironment(config with { AbiTable = "/capture/abi" }, evidence, origins);
+        Assert(derived["GRC_ABI_TABLE"] == "/capture/abi" && !derived.ContainsKey("GRC_CALIBRATION"),
+            "host can derive calibration from the ABI table");
+        var seatEnvironment = StreamingSeatLaunch.Environment(config, StreamingSeatLaunch.HubPortForSlot(2), "/seat/evidence", origins);
+        Assert(environment.All(kv => kv.Key is "GRC_LIVE_LISTEN" or "GRC_HEADLESS_TEXTURE_RELEASE" or "GRC_LIVE_CARRIERS"
+            or "GRC_LIVE_MAX_CONNECTIONS" or "GRC_EVIDENCE_DIR" || seatEnvironment[kv.Key] == kv.Value),
+            "all other capture settings match the seat table");
+        var psi = new ProcessStartInfo();
+        foreach (var (key, value) in environment) psi.Environment[key] = value;
+        psi.Environment["GRC_HOST_INHERITED"] = "host-only";
+        StreamingSeatLaunch.ClearInherited(psi);
+        Assert(!psi.Environment.Keys.Any(key => key.StartsWith("GRC_", StringComparison.Ordinal)),
+            "seat launches strip the host's capture environment including unknown GRC keys");
+        Console.WriteLine("host capture environment: 13 assertions passed.");
+    }
+
+    private static void HostCaptureFailuresKeepTheMirror()
+    {
+        var config = new StreamingSeatLaunch.Config(Extension, Calibration);
+        var prepares = 0;
+        var loads = 0;
+        StreamingSeatLaunch.ConfigResult Resolve() => new(config, null);
+        void Prepare(StreamingSeatLaunch.Config value) { Assert(value == config, "prepare receives resolved config"); prepares++; }
+        RenderCaptureExtensionLoader.LoadResult Load(string path) { Assert(path == Extension, "load uses resolved extension"); loads++; return new(true, "Ok"); }
+        var windowed = RenderStreamSelf.StartHostCapture(false, false, () => throw new Exception(), Prepare, Load);
+        Assert(windowed.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off && windowed.Message is null, "windowed host never resolves or loads capture");
+        var seat = RenderStreamSelf.StartHostCapture(true, true, () => throw new Exception(), Prepare, Load);
+        Assert(seat.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off, "host load path excludes clients");
+        var loaded = RenderStreamSelf.StartHostCapture(false, true, Resolve, Prepare, Load);
+        Assert(loaded.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Loaded && prepares == 1 && loads == 1,
+            "configured headless host prepares and loads exactly once");
+        var failed = RenderStreamSelf.StartHostCapture(false, true, Resolve, Prepare, _ => new(false, "Failed"));
+        Assert(failed.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && failed.Message!.Contains("Failed"),
+            "a host load failure is reported without refusing process startup");
+        var unresolved = RenderStreamSelf.StartHostCapture(false, true, () => new(null, "missing capture"), Prepare, Load);
+        Assert(unresolved.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && loads == 1,
+            "invalid configuration never loads capture");
+        var unconfigured = RenderStreamSelf.StartHostCapture(false, true, () => new(null, null), Prepare, Load);
+        Assert(unconfigured.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off, "unconfigured headless host stays off");
+        var thrown = RenderStreamSelf.StartHostCapture(false, true, Resolve, _ => throw new IOException("evidence unavailable"), Load);
+        Assert(thrown.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && loads == 1,
+            "preparation exceptions also keep the host running");
+        Console.WriteLine("host capture outcomes: 10 assertions passed.");
+    }
+
+    private static void HostEnvironmentReachesBothReaders()
+    {
+        var native = new Dictionary<string, string?> { ["GRC_LIVE_EXPOSE"] = "lan" };
+        var managed = new Dictionary<string, string?>(native);
+        var environment = StreamingSeatLaunch.HostEnvironment(new(Extension, Calibration), "/host/evidence", ["http://127.0.0.1:13337"]);
+        RenderStreamSelf.ApplyHostEnvironment(environment, native.Keys, (key, value) => native[key] = value,
+            (key, value) => managed[key] = value);
+        Assert(native["GRC_LIVE_EXPOSE"] is null && managed["GRC_LIVE_EXPOSE"] is null,
+            "stale capture overrides are cleared from native and managed environments");
+        Assert(environment.All(kv => native[kv.Key] == kv.Value && managed[kv.Key] == kv.Value),
+            "native capture and managed relay receive every environment value");
+        Console.WriteLine("host capture environment applier: 2 assertions passed.");
     }
 
     private static void HostCaptureVariableIsConfigurationNotAWarning()

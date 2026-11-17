@@ -53,6 +53,12 @@ public interface IHotRenderStreamRelayHost
     string? RenderStreamSeatRoute { get; }
 }
 
+// Optional capability for a process that loaded a capture for its own view.
+public interface IHotSelfRenderStreamHost
+{
+    bool SupportsSelfRenderStream { get; }
+}
+
 // Optional capability; all arguments are shared BCL types across reload assembly boundaries.
 public interface IHotDirectIpHttpsHost
 {
