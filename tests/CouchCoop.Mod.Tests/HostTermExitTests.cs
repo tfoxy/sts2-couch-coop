@@ -22,7 +22,13 @@ internal static class HostTermExitTests
         await FailedStepsStillLeave();
         await ThrowingLogsCannotPreventExit();
         FailedBackstopArmKeepsDefaultTermination();
-        Console.WriteLine("HostTermExitTests: 14 passed.");
+        WindowedBackstopIsArmedBeforeMainThreadQuit();
+        RepeatedWindowedTermsDoNotRestartTheSequence();
+        FailedWindowedPostKeepsTermCancelled();
+        FailedWindowedBackstopArmCanRetry();
+        ThrowingWindowedQuitKeepsTheBackstopArmed();
+        ThrowingWindowedLogsCannotPreventQuitOrBackstop();
+        Console.WriteLine("HostTermExitTests: 20 passed.");
     }
 
     private static void RegistrationDependsOnRoleDisplayAndPlatform()
@@ -34,7 +40,7 @@ internal static class HostTermExitTests
             var posix = os == OSPlatform.Linux || os == OSPlatform.OSX;
             var expected = seat && (posix || os == OSPlatform.Windows) ? HostTermSignal.Registration.Seat
                 : seat || !posix ? HostTermSignal.Registration.None
-                : headless ? HostTermSignal.Registration.HostCancel : HostTermSignal.Registration.HostDefault;
+                : headless ? HostTermSignal.Registration.HostCancel : HostTermSignal.Registration.HostQuit;
             Assert(HostTermSignal.Select(seat, headless, candidate => candidate == os) == expected,
                 $"seat={seat}, headless={headless}, os={os} selects {expected}");
         }
@@ -240,6 +246,112 @@ internal static class HostTermExitTests
             "a failed arm never dispatches work, stops seats, disarms capture or leaves directly");
     }
 
+    private static void WindowedBackstopIsArmedBeforeMainThreadQuit()
+    {
+        var fixture = new Fixture();
+        var armedAtPost = false;
+        Action? posted = null;
+        var sequence = fixture.CreateQuit(post: action =>
+        {
+            armedAtPost = fixture.Backstop is not null;
+            posted = action;
+        });
+        Assert(HostTermSignal.Decide(sequence.TryStart), "a queued windowed quit cancels default TERM");
+        Assert(armedAtPost && fixture.Events.SequenceEqual(new[] { "arm", "post" }),
+            "the windowed backstop is armed before posting, without running quit on the signal thread");
+        Assert(fixture.Delay == TimeSpan.FromSeconds(20)
+            && fixture.Delay > HostTermExitSequence.SeatStopGuard, "windowed backstop covers game quit and seat stop with margin");
+        Assert(posted is not null, "the game quit is posted to the main thread");
+        posted!();
+        Assert(fixture.Events.SequenceEqual(new[] { "arm", "post", "quit" }), "quit runs inside the posted action");
+    }
+
+    private static void RepeatedWindowedTermsDoNotRestartTheSequence()
+    {
+        var fixture = new Fixture();
+        var sequence = fixture.CreateQuit();
+        Assert(HostTermSignal.Decide(sequence.TryStart), "first windowed TERM is cancelled");
+        Assert(HostTermSignal.Decide(sequence.TryStart), "TERM while the main-thread hop is queued is cancelled");
+        fixture.Posted!();
+        Assert(HostTermSignal.Decide(sequence.TryStart), "TERM after a returning fake quit is cancelled");
+        Assert(fixture.Events.SequenceEqual(new[] { "arm", "post", "quit" }), "repeated windowed TERM arms and posts only once");
+    }
+
+    private static void FailedWindowedPostKeepsTermCancelled()
+    {
+        var clock = new Clock();
+        var fixture = new Fixture();
+        var sequence = fixture.CreateQuit(post: _ => throw new IOException("cannot post"), timeProvider: clock);
+        Assert(HostTermSignal.Decide(sequence.TryStart), "failed windowed post still cancels default TERM");
+        Assert(HostTermSignal.Decide(sequence.TryStart), "a repeated TERM does not retry a failed post");
+        Assert(fixture.Events.SequenceEqual(new[] { "arm", "post" }), "failed post leaves one backstop and never runs quit");
+        Assert(fixture.Logs.Any(line => line.Contains("quit dispatch failed: IOException: cannot post")), "post failure is logged");
+        FireWindowedBackstop(clock, fixture);
+    }
+
+    private static void FailedWindowedBackstopArmCanRetry()
+    {
+        var fixture = new Fixture();
+        var attempts = 0;
+        var sequence = fixture.CreateQuit(schedule: (delay, action) =>
+        {
+            if (++attempts == 1) throw new InvalidOperationException("cannot create thread");
+            fixture.Events.Enqueue("arm");
+            fixture.Delay = delay;
+            fixture.Backstop = action;
+        });
+        Assert(!HostTermSignal.Decide(sequence.TryStart), "a failed windowed backstop arm keeps default TERM");
+        Assert(fixture.Events.IsEmpty && fixture.Posted is null && fixture.Backstop is null,
+            "a failed windowed arm never posts or quits");
+        Assert(HostTermSignal.Decide(sequence.TryStart) && attempts == 2, "a later windowed TERM retries arming and is cancelled");
+        Assert(fixture.Events.SequenceEqual(new[] { "arm", "post" }), "the successful retry posts exactly once after arming");
+        fixture.Posted!();
+        Assert(fixture.Events.Last() == "quit", "the retry reaches the game quit");
+        fixture.Backstop!();
+        Assert(fixture.Forced == 1, "the retry leaves its backstop armed");
+    }
+
+    private static void ThrowingWindowedQuitKeepsTheBackstopArmed()
+    {
+        var clock = new Clock();
+        var fixture = new Fixture();
+        var sequence = fixture.CreateQuit(quit: () => throw new IOException("quit failed"), timeProvider: clock);
+        Assert(HostTermSignal.Decide(sequence.TryStart), "a windowed quit with a failing main-thread action is queued");
+        fixture.Posted!();
+        Assert(fixture.Logs.Any(line => line.Contains("game quit failed: IOException: quit failed")), "quit failure is logged");
+        Assert(fixture.Events.SequenceEqual(new[] { "arm", "post", "quit" }), "a failed quit does not force-exit early");
+        FireWindowedBackstop(clock, fixture);
+    }
+
+    private static void ThrowingWindowedLogsCannotPreventQuitOrBackstop()
+    {
+        foreach (var failure in new[] { "none", "post", "quit" })
+        {
+            var clock = new Clock();
+            var fixture = new Fixture();
+            var sequence = fixture.CreateQuit(
+                post: failure == "post" ? _ => throw new IOException("cannot post") : null,
+                quit: failure == "quit" ? () => throw new IOException("quit failed") : null,
+                log: _ => throw new IOException("logger failed"), timeProvider: clock);
+            Assert(HostTermSignal.Decide(sequence.TryStart), "failed signal-path logging cannot enable default TERM");
+            if (failure != "post")
+            {
+                fixture.Posted!();
+                Assert(fixture.Events.Contains("quit"), "failed main-thread logging cannot prevent quit");
+            }
+            Assert(fixture.Logs.Count >= 2, "both start and main-thread/failure log paths were exercised");
+            FireWindowedBackstop(clock, fixture);
+        }
+    }
+
+    private static void FireWindowedBackstop(Clock clock, Fixture fixture)
+    {
+        clock.Advance(HostTermQuitSequence.ForceExitDelay - TimeSpan.FromTicks(1));
+        Assert(fixture.Forced == 0, "windowed backstop does not fire before its deadline");
+        clock.Advance(TimeSpan.FromTicks(1));
+        Assert(fixture.Forced == 1, "windowed backstop still fires at its deadline");
+    }
+
     private static TaskCompletionSource Pending() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static Task Complete(HostTermExitSequence sequence) => sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -248,6 +360,7 @@ internal static class HostTermExitTests
         internal readonly ConcurrentQueue<string> Events = new();
         internal readonly ConcurrentQueue<string> Logs = new();
         internal Action? Backstop;
+        internal Action? Posted;
         internal TimeSpan Delay;
         internal int Forced;
 
@@ -262,6 +375,21 @@ internal static class HostTermExitTests
                 forceExit: () => { Events.Enqueue("force"); Interlocked.Increment(ref Forced); },
                 schedule: schedule ?? ((delay, action) => { Events.Enqueue("arm"); Delay = delay; Backstop = action; }),
                 log: line => { Logs.Enqueue(line); log?.Invoke(line); }, timeProvider: timeProvider, start: start);
+
+        internal HostTermQuitSequence CreateQuit(
+            Action<Action>? post = null, Action? quit = null, Action<TimeSpan, Action>? schedule = null,
+            Action<string>? log = null, TimeProvider? timeProvider = null) => new(
+                post: action => { Events.Enqueue("post"); if (post is null) Posted = action; else post(action); },
+                quit: () => { Events.Enqueue("quit"); quit?.Invoke(); },
+                forceExit: () => { Events.Enqueue("force"); Interlocked.Increment(ref Forced); },
+                schedule: schedule ?? ((delay, action) =>
+                {
+                    Events.Enqueue("arm");
+                    Delay = delay;
+                    Backstop = action;
+                    timeProvider?.CreateTimer(_ => action(), null, delay, Timeout.InfiniteTimeSpan);
+                }),
+                log: line => { Logs.Enqueue(line); log?.Invoke(line); });
     }
 
     private sealed class Clock : TimeProvider

@@ -1417,10 +1417,21 @@ public sealed partial class HeadlessClientManager : IDisposable
                     HeadlessProcessExit.Select(RuntimeInformation.IsOSPlatform)));
             _termSignal = HostTermSignal.Register(sequence);
         }
-        else if (registration == HostTermSignal.Registration.HostDefault)
+        else if (registration == HostTermSignal.Registration.HostQuit)
         {
-            // Windowed hosts retain the default TERM handling.
-            _termSignal = PosixSignalRegistration.Create(PosixSignal.SIGTERM, _ => BeginHostExit());
+            var sequence = new HostTermQuitSequence(
+                post: action => Godot.Callable.From(action).CallDeferred(),
+                quit: () =>
+                {
+                    var game = MegaCrit.Sts2.Core.Nodes.NGame.Instance;
+                    if (game is null)
+                    {
+                        CouchCoopLog.Info("windowed host SIGTERM: game unavailable — waiting for the force-exit backstop.");
+                        return;
+                    }
+                    game.Quit();
+                });
+            _termSignal = HostTermSignal.Register(sequence);
         }
     }
 
