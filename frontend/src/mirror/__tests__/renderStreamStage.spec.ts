@@ -60,6 +60,7 @@ function createClient(options: RenderStreamClientOptions): RenderStreamClient {
     options, connects: 0, disposed: false, carrier: null,
     connect() { fake.connects += 1; },
     setEndpoint: vi.fn(),
+    hints: () => [],
     cssToPresentation: vi.fn(() => null),
     presentationToCss: vi.fn((r) => r),
     toGame: vi.fn(() => null),

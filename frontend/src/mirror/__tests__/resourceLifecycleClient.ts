@@ -17,6 +17,7 @@ export function resourceLifecycleClient(options: RenderStreamClientOptions) {
   const client: RenderStreamClient = {
     connect: () => loop.connect(),
     setEndpoint: () => {},
+    hints: () => [],
     stats: () => loop.stats(),
     dispose: () => loop.dispose(),
     recording: () => null,
