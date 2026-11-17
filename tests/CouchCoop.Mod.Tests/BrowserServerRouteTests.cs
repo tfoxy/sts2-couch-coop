@@ -305,6 +305,24 @@ if (args is [WindowsSeatLifetimeTests.Verb, ..])
     return;
 }
 
+if (args is [HostTermExitTests.Verb, ..])
+{
+    await HostTermExitTests.RunAsync();
+    return;
+}
+
+if (args is ["headless-disconnect-exit", ..])
+{
+    await HeadlessDisconnectExitTests.RunAsync();
+    return;
+}
+
+if (args is ["headless-process-exit", ..])
+{
+    HeadlessProcessExitTests.Run();
+    return;
+}
+
 if (args is [HostSeatExitTests.Verb, ..])
 {
     await HostSeatExitTests.RunAsync();
@@ -1021,6 +1039,7 @@ HeadlessParticleFinishNudgeTests.Run();
 // overload discrimination) + the exit sequence's arm-backstop-first / one-shot contract.
 await HeadlessDisconnectExitTests.RunAsync();
 await HostSeatExitTests.RunAsync();
+await HostTermExitTests.RunAsync();
 WindowsSeatLifetimeTests.Run();
 HeadlessProcessExitTests.Run();
 RenderStreamCaptureQuitTests.Run();

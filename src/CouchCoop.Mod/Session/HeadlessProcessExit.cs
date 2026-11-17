@@ -64,7 +64,7 @@ internal static class HeadlessProcessExit
         static () => System.Environment.Exit(0),
         Select(RuntimeInformation.IsOSPlatform));
 
-    private static void PlatformExit(Route route)
+    internal static void PlatformExit(Route route)
     {
         switch (route)
         {

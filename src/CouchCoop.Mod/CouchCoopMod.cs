@@ -76,7 +76,7 @@ public static class CouchCoopMod
     // windowed host is deliberately NOT forced — NGame's own display apply owns its real window.
     // Primary signal is the headless display server; command line is a defensive fallback in case DisplayServer
     // isn't queryable this early in Init.
-    private static bool IsHeadlessDisplay()
+    internal static bool IsHeadlessDisplay()
     {
         try
         {

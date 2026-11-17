@@ -1,0 +1,319 @@
+using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
+using CouchCoop.Mod.Session;
+
+internal static class HostTermExitTests
+{
+    internal const string Verb = "host-term-exit";
+
+    internal static async Task RunAsync()
+    {
+        RegistrationDependsOnRoleDisplayAndPlatform();
+        CancelsOnlyAWiredSuccessfulStart();
+        BackstopIsArmedBeforeDispatch();
+        AFailedDispatchKeepsDefaultTermination();
+        await BackstopIsArmedBeforeAnyStep();
+        await BothStepsMustCompleteBeforeLeave();
+        await HungStepsHaveIndependentBounds();
+        await CaptureIsSkippedWhenNotLoaded();
+        await RepeatedTermsDoNotRestartTheSequence();
+        await SignalHandlingDoesNotWaitForSeatStop();
+        await ThrowingLeaveKeepsTheBackstopArmed();
+        await FailedStepsStillLeave();
+        await ThrowingLogsCannotPreventExit();
+        FailedBackstopArmKeepsDefaultTermination();
+        Console.WriteLine("HostTermExitTests: 14 passed.");
+    }
+
+    private static void RegistrationDependsOnRoleDisplayAndPlatform()
+    {
+        foreach (var os in new[] { OSPlatform.Linux, OSPlatform.OSX, OSPlatform.Windows, OSPlatform.FreeBSD, OSPlatform.Create("other") })
+        foreach (var seat in new[] { false, true })
+        foreach (var headless in new[] { false, true })
+        {
+            var posix = os == OSPlatform.Linux || os == OSPlatform.OSX;
+            var expected = seat && (posix || os == OSPlatform.Windows) ? HostTermSignal.Registration.Seat
+                : seat || !posix ? HostTermSignal.Registration.None
+                : headless ? HostTermSignal.Registration.HostCancel : HostTermSignal.Registration.HostDefault;
+            Assert(HostTermSignal.Select(seat, headless, candidate => candidate == os) == expected,
+                $"seat={seat}, headless={headless}, os={os} selects {expected}");
+        }
+    }
+
+    private static void CancelsOnlyAWiredSuccessfulStart()
+    {
+        var calls = 0;
+        Assert(HostTermSignal.Decide(() => { calls++; return true; }), "a queued sequence cancels default TERM");
+        Assert(calls == 1, "the signal requests the sequence once");
+        Assert(!HostTermSignal.Decide(null), "an unwired sequence retains default TERM");
+        Assert(!HostTermSignal.Decide(() => false), "an unavailable sequence retains default TERM");
+        Assert(!HostTermSignal.Decide(() => throw new IOException("unavailable")), "a throwing start retains default TERM");
+    }
+
+    private static void BackstopIsArmedBeforeDispatch()
+    {
+        var fixture = new Fixture();
+        Func<Task>? queued = null;
+        var armedAtDispatch = false;
+        var sequence = fixture.Create(start: work =>
+        {
+            armedAtDispatch = fixture.Backstop is not null;
+            queued = work;
+            return Pending().Task;
+        });
+        Assert(sequence.TryStart(), "deferred dispatch starts the sequence");
+        Assert(armedAtDispatch && fixture.Events.SequenceEqual(new[] { "arm" }),
+            "the backstop is armed before dispatch even when queued work never starts");
+        Assert(queued is not null && !sequence.Completion.IsCompleted, "shutdown work remains queued without running");
+        Assert(fixture.Delay == HostTermExitSequence.ForceExitDelay, "the deferred work already has the force-exit deadline");
+        fixture.Backstop!();
+        Assert(fixture.Forced == 1, "the backstop force-exits without queued work ever running");
+    }
+
+    private static void AFailedDispatchKeepsDefaultTermination()
+    {
+        var fixture = new Fixture();
+        var calls = 0;
+        var sequence = fixture.Create(start: _ => { calls++; throw new InvalidOperationException("cannot queue"); });
+        Assert(!HostTermSignal.Decide(sequence.TryStart), "a failed Task.Run equivalent keeps default TERM");
+        Assert(HostTermSignal.Decide(sequence.TryStart) && calls == 1,
+            "another TERM relies on the existing backstop without redispatching");
+        Assert(fixture.Events.SequenceEqual(new[] { "arm" }), "failed dispatch leaves exactly one backstop and no shutdown work");
+        fixture.Backstop!();
+        Assert(fixture.Forced == 1, "the backstop still force-exits after dispatch fails");
+    }
+
+    private static async Task BackstopIsArmedBeforeAnyStep()
+    {
+        var fixture = new Fixture();
+        var sequence = fixture.Create();
+        Assert(sequence.TryStart(), "the sequence starts");
+        await Complete(sequence);
+        var trace = fixture.Events.ToArray();
+        Assert(trace[0] == "arm" && trace[^1] == "leave:sigterm", "backstop is first and direct exit is last");
+        Assert(trace.Contains("seats") && trace.Contains("disarm"), "both shutdown steps run before leaving");
+        Assert(fixture.Delay == HostTermExitSequence.ForceExitDelay, "backstop uses the documented bound");
+        Assert(fixture.Delay > HostTermExitSequence.SeatStopGuard
+            && fixture.Delay > HeadlessDisconnectExitSequence.DisarmGuard, "backstop covers both parallel bounds with margin");
+        Assert(fixture.Logs.Any(line => line == "host received SIGTERM — signalling 2 seat(s), disarming capture: yes"),
+            "start log names seat count and capture");
+        Assert(fixture.Logs.Any(line => line.StartsWith("headless host SIGTERM: leaving after ") && line.EndsWith(" ms.")),
+            "leave log includes elapsed milliseconds");
+    }
+
+    private static async Task BothStepsMustCompleteBeforeLeave()
+    {
+        foreach (var seatFirst in new[] { false, true })
+        {
+            var fixture = new Fixture();
+            var seats = Pending();
+            var disarm = Pending();
+            var seatStarted = Pending();
+            var disarmStarted = Pending();
+            var sequence = fixture.Create(
+                stopSeats: () => { seatStarted.SetResult(); return seats.Task; },
+                disarm: () => { disarmStarted.SetResult(); return disarm.Task; });
+            Assert(sequence.TryStart(), "shutdown queues");
+            await Task.WhenAll(seatStarted.Task, disarmStarted.Task).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert(!fixture.Events.Any(item => item.StartsWith("leave")), "both steps start while neither is complete");
+            (seatFirst ? seats : disarm).SetResult();
+            Assert(!sequence.Completion.IsCompleted, "one completed step cannot release exit");
+            (seatFirst ? disarm : seats).SetResult();
+            await Complete(sequence);
+            Assert(fixture.Events.Count(item => item == "leave:sigterm") == 1, "both completions release one exit");
+        }
+    }
+
+    private static async Task HungStepsHaveIndependentBounds()
+    {
+        var clock = new Clock();
+        var fixture = new Fixture();
+        var seatBound = Pending();
+        var sequence = fixture.Create(stopSeats: () => Pending().Task, disarm: () => Pending().Task,
+            timeProvider: clock,
+            log: line => { if (line.Contains("seat stop did not finish")) seatBound.TrySetResult(); });
+        Assert(sequence.TryStart(), "hung work queues without blocking the caller");
+        await clock.BothTimers.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(HostTermExitSequence.SeatStopGuard);
+        await seatBound.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert(!sequence.Completion.IsCompleted, "seat timeout does not skip the capture bound");
+        Assert(!fixture.Events.Any(item => item.StartsWith("leave")), "exit still awaits capture");
+        clock.Advance(HeadlessDisconnectExitSequence.DisarmGuard - HostTermExitSequence.SeatStopGuard);
+        await Complete(sequence);
+        Assert(fixture.Events.Contains("leave:sigterm"), "both bounds release exit even if neither task finishes");
+        Assert(fixture.Backstop is not null && fixture.Forced == 0, "parallel timeouts leave the independent backstop armed");
+    }
+
+    private static async Task CaptureIsSkippedWhenNotLoaded()
+    {
+        var fixture = new Fixture();
+        var reads = 0;
+        var sequence = fixture.Create(captureEnabled: () => { reads++; return false; },
+            disarm: () => throw new Exception("capture must not be touched"));
+        Assert(sequence.TryStart(), "host without capture starts shutdown");
+        await Complete(sequence);
+        Assert(reads == 1 && !fixture.Events.Contains("disarm"), "capture enablement is read once and disarm is skipped");
+        Assert(fixture.Events.Contains("seats") && fixture.Events.Contains("leave:sigterm"), "seat stop and leave still run");
+        Assert(fixture.Logs.Any(line => line.EndsWith("disarming capture: no")), "start log reports no capture");
+    }
+
+    private static async Task RepeatedTermsDoNotRestartTheSequence()
+    {
+        var fixture = new Fixture();
+        var seats = Pending();
+        var sequence = fixture.Create(stopSeats: () => seats.Task);
+        Assert(HostTermSignal.Decide(sequence.TryStart), "first TERM cancels default termination");
+        Assert(HostTermSignal.Decide(sequence.TryStart), "TERM during shutdown also cancels default termination");
+        seats.SetResult();
+        await Complete(sequence);
+        Assert(HostTermSignal.Decide(sequence.TryStart), "a returning fake leave does not allow default termination on the next TERM");
+        Assert(fixture.Events.Count(item => item == "arm") == 1 && fixture.Events.Count(item => item == "leave:sigterm") == 1,
+            "repeated TERM cannot re-arm or leave twice");
+    }
+
+    private static async Task SignalHandlingDoesNotWaitForSeatStop()
+    {
+        using var release = new ManualResetEventSlim();
+        var entered = Pending();
+        var fixture = new Fixture();
+        var sequence = fixture.Create(stopSeats: () =>
+        {
+            entered.SetResult();
+            release.Wait();
+            return Task.CompletedTask;
+        });
+        var handle = Task.Run(() => HostTermSignal.Decide(sequence.TryStart));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert(await handle.WaitAsync(TimeSpan.FromSeconds(2)), "signal handling returns while seat stop is synchronously blocked");
+            Assert(!sequence.Completion.IsCompleted, "the queued sequence is still waiting for seat stop");
+        }
+        finally { release.Set(); }
+        await Complete(sequence);
+    }
+
+    private static async Task ThrowingLeaveKeepsTheBackstopArmed()
+    {
+        var fixture = new Fixture();
+        var sequence = fixture.Create(leave: _ => throw new IOException("exit failed"));
+        Assert(sequence.TryStart(), "throwing leave is queued");
+        await Complete(sequence);
+        Assert(fixture.Backstop is not null && fixture.Forced == 0, "failed leave does not cancel or fire the backstop early");
+        fixture.Backstop!();
+        Assert(fixture.Forced == 1, "the scheduled action still force-exits after a failed leave");
+    }
+
+    private static async Task FailedStepsStillLeave()
+    {
+        foreach (var synchronous in new[] { false, true })
+        {
+            var fixture = new Fixture();
+            Task Fail() => synchronous ? throw new IOException("blocked teardown") : Task.FromException(new IOException("blocked teardown"));
+            var sequence = fixture.Create(stopSeats: Fail, disarm: Fail);
+            Assert(sequence.TryStart(), "failed steps are queued");
+            await Complete(sequence);
+            Assert(fixture.Events.Contains("leave:sigterm"), "synchronous and asynchronous step failures still leave");
+        }
+    }
+
+    private static async Task ThrowingLogsCannotPreventExit()
+    {
+        var fixture = new Fixture();
+        var sequence = fixture.Create(log: _ => throw new IOException("logger failed"));
+        Assert(sequence.TryStart(), "shutdown queues despite failed logging");
+        await Complete(sequence);
+        Assert(fixture.Events.Contains("leave:sigterm"), "logger exceptions cannot prevent leave");
+    }
+
+    private static void FailedBackstopArmKeepsDefaultTermination()
+    {
+        var fixture = new Fixture();
+        var dispatches = 0;
+        var attempts = 0;
+        var sequence = fixture.Create(
+            schedule: (_, _) => { attempts++; throw new InvalidOperationException("cannot create thread"); },
+            start: _ => { dispatches++; return Task.CompletedTask; });
+        Assert(!HostTermSignal.Decide(sequence.TryStart), "a failed backstop arm keeps default TERM");
+        Assert(!HostTermSignal.Decide(sequence.TryStart) && attempts == 2, "a failed arm resets the one-shot gate for another attempt");
+        Assert(dispatches == 0 && fixture.Events.IsEmpty && fixture.Backstop is null && fixture.Forced == 0,
+            "a failed arm never dispatches work, stops seats, disarms capture or leaves directly");
+    }
+
+    private static TaskCompletionSource Pending() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static Task Complete(HostTermExitSequence sequence) => sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+
+    private sealed class Fixture
+    {
+        internal readonly ConcurrentQueue<string> Events = new();
+        internal readonly ConcurrentQueue<string> Logs = new();
+        internal Action? Backstop;
+        internal TimeSpan Delay;
+        internal int Forced;
+
+        internal HostTermExitSequence Create(
+            Func<Task>? stopSeats = null, Func<Task>? disarm = null, Func<bool>? captureEnabled = null,
+            Action<string>? leave = null, Action<TimeSpan, Action>? schedule = null,
+            Action<string>? log = null, TimeProvider? timeProvider = null, Func<Func<Task>, Task>? start = null) => new(
+                stopSeats: () => { Events.Enqueue("seats"); return stopSeats?.Invoke() ?? Task.CompletedTask; },
+                disarm: () => { Events.Enqueue("disarm"); return disarm?.Invoke() ?? Task.CompletedTask; },
+                captureEnabled: captureEnabled ?? (() => true), seatCount: () => 2,
+                leave: reason => { Events.Enqueue("leave:" + reason); leave?.Invoke(reason); },
+                forceExit: () => { Events.Enqueue("force"); Interlocked.Increment(ref Forced); },
+                schedule: schedule ?? ((delay, action) => { Events.Enqueue("arm"); Delay = delay; Backstop = action; }),
+                log: line => { Logs.Enqueue(line); log?.Invoke(line); }, timeProvider: timeProvider, start: start);
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        private readonly object _gate = new();
+        private readonly List<ManualTimer> _timers = [];
+        private long _now;
+        internal readonly TaskCompletionSource BothTimers = Pending();
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() { lock (_gate) return _now; }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            lock (_gate)
+            {
+                var timer = new ManualTimer(this, callback, state);
+                timer.Change(dueTime, period);
+                _timers.Add(timer);
+                if (_timers.Count == 2) BothTimers.TrySetResult();
+                return timer;
+            }
+        }
+
+        internal void Advance(TimeSpan elapsed)
+        {
+            ManualTimer[] due;
+            lock (_gate)
+            {
+                _now += elapsed.Ticks;
+                due = _timers.Where(timer => timer.Due <= _now).ToArray();
+                foreach (var timer in due) timer.Due = long.MaxValue;
+            }
+            foreach (var timer in due) timer.Fire();
+        }
+
+        private sealed class ManualTimer(Clock clock, TimerCallback callback, object? state) : ITimer
+        {
+            internal long Due = long.MaxValue;
+            internal void Fire() => callback(state);
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                Assert(period == Timeout.InfiniteTimeSpan, "exit bounds are one-shot timers");
+                lock (clock._gate) Due = dueTime == Timeout.InfiniteTimeSpan ? long.MaxValue : clock._now + dueTime.Ticks;
+                return true;
+            }
+            public void Dispose() { lock (clock._gate) Due = long.MaxValue; }
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException("HostTermExitTests: " + message);
+    }
+}

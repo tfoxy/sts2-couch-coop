@@ -17,7 +17,8 @@ internal static class HostSeatExitTests
         await BindingCallbackCannotLaunchAfterExit();
         await QueuedReconnectExpiryCannotInterruptHostExit();
         await BrowserAndHostingTeardownCannotInterruptHostExit();
-        Console.WriteLine("host seat exit: 8 passed.");
+        await AsyncSeatStopReusesTheDisposeTask();
+        Console.WriteLine("host seat exit: 9 passed.");
     }
 
     internal static void PatchTargetResolves()
@@ -184,6 +185,25 @@ internal static class HostSeatExitTests
             "the survivor gets the original grace window even when hosting ends before Dispose");
         Assert(child.Signals == 1 && child.Kills == 1 && child.HostExitKills == 1 && child.Disposals == 1,
             "Dispose kills the survivor only after the shared deadline, without sending a second signal");
+    }
+
+    private static async Task AsyncSeatStopReusesTheDisposeTask()
+    {
+        var child = new Child(2);
+        using var manager = new HeadlessClientManager(_ => child, (_, _) => Task.FromResult(true),
+            registerProcessExit: false);
+        await manager.EnsureHeadlessAsync(Guid.NewGuid(), "async-stop", default);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        child.OnWait = () => waiting.TrySetResult();
+        var stop = manager.StopHostSeatsAsync();
+        await waiting.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert(!stop.IsCompleted && child.Signals == 1, "async stop returns while the signalled seat is still alive");
+        Assert(ReferenceEquals(stop, manager.StopHostSeatsAsync()), "all callers share the original bounded stop task");
+        child.Exit();
+        await stop.WaitAsync(TimeSpan.FromSeconds(1));
+        manager.Dispose();
+        Assert(child.Signals == 1 && child.Disposals == 1 && child.Kills == 0,
+            "Dispose reuses the completed async stop without signalling or disposing seats again");
     }
 
     private sealed class Child(int slot) : IHeadlessProcess, IHeadlessProcessExitSignal

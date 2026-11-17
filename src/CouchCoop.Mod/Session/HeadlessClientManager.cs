@@ -90,7 +90,7 @@ public sealed partial class HeadlessClientManager : IDisposable
     // How long to wait for a SIGTERM'd headless to exit on its own (ENet leave + teardown) before
     // escalating to SIGKILL. Generous enough to let an ENet disconnect packet flush to the host,
     // short enough that slot reuse on reconnect isn't noticeably delayed.
-    private static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(3);
+    internal static readonly TimeSpan GracefulStopTimeout = TimeSpan.FromSeconds(3);
 
     internal static readonly TimeSpan DefaultSeatShutdownGrace = HeadlessDisconnectExitSequence.ForceExitDelay + TimeSpan.FromSeconds(2.5);
     internal TimeSpan SeatShutdownGrace { get; } = DefaultSeatShutdownGrace;
@@ -1403,9 +1403,23 @@ public sealed partial class HeadlessClientManager : IDisposable
         if (CouchCoopMod.IsHeadlessClient) return;
         _processExitHandler = (_, _) => Dispose();
         AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
-        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        var registration = HostTermSignal.Select(false,
+            CouchCoopMod.EngineAvailable && CouchCoopMod.IsHeadlessDisplay(), RuntimeInformation.IsOSPlatform);
+        if (registration == HostTermSignal.Registration.HostCancel)
         {
-            // The host's default TERM handling continues; only seats cancel it to finish their exit sequence.
+            var sequence = new HostTermExitSequence(
+                stopSeats: StopHostSeatsAsync,
+                disarm: RenderStreamCaptureQuit.DisarmDeferredAsync,
+                captureEnabled: () => RenderStreamSelf.Enabled,
+                seatCount: CountLiveSeatProcesses,
+                leave: reason => HeadlessProcessExit.Leave(reason, CouchCoopLog.Info, CouchCoopLog.Stderr,
+                    HeadlessProcessExit.PlatformExit, static () => Environment.Exit(0),
+                    HeadlessProcessExit.Select(RuntimeInformation.IsOSPlatform)));
+            _termSignal = HostTermSignal.Register(sequence);
+        }
+        else if (registration == HostTermSignal.Registration.HostDefault)
+        {
+            // Windowed hosts retain the default TERM handling.
             _termSignal = PosixSignalRegistration.Create(PosixSignal.SIGTERM, _ => BeginHostExit());
         }
     }
@@ -1438,11 +1452,16 @@ public sealed partial class HeadlessClientManager : IDisposable
         CouchCoopLog.Stderr($"headless host exit: asked {signalled} seat(s) to stop.");
     }
 
-    public void Dispose()
+    // Keep signal registrations alive until direct exit; Dispose also unregisters them.
+    internal Task StopHostSeatsAsync()
     {
         BeginHostExit();
-        Task stop;
-        lock (_lock) stop = _hostExitTask ??= Task.Run(FinishHostExitAsync);
+        lock (_lock) return _hostExitTask ??= Task.Run(FinishHostExitAsync);
+    }
+
+    public void Dispose()
+    {
+        var stop = StopHostSeatsAsync();
         // Never hold _lock while waiting: ProcessExit, browser teardown and seat status callbacks also take it.
         stop.GetAwaiter().GetResult();
         _termSignal?.Dispose();
