@@ -89,6 +89,8 @@ if [[ ${#exes[@]} -gt 0 ]]; then
     [[ -f "$record" ]] || record="$repo_root/eng/render-capture/windows/$engine_id.json"
     output="$(python3 -I "$calibrator" --verify-record "$record" --binary "$exe" --header "$header")"
     printf '%s\n' "$output"
-    grep -qx 'verified: 14/14' <<< "$output" || { echo 'expected verified: 14/14' >&2; exit 1; }
+    python3 -I -c 'import re, sys
+counts = re.findall(r"^verified: ([1-9][0-9]*)/([0-9]+)$", sys.stdin.read(), re.M)
+sys.exit(0 if len(counts) == 1 and counts[0][0] == counts[0][1] else "expected all checks verified")' <<< "$output"
   done
 fi

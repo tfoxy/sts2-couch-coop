@@ -117,7 +117,11 @@ sed -i 's/CALIBRATOR_VERSION = "9"/CALIBRATOR_VERSION = "10"/' "$calibrator"
 reject 'calibrator version'
 reset_fixture
 sed -i 's/verified: 14\/14/verified: 13\/14/' "$calibrator"
-reject 'expected verified: 14/14' --exe "$windows_id=$work/engine.exe" --header "$work/header.h"
+reject 'expected all checks verified' --exe "$windows_id=$work/engine.exe" --header "$work/header.h"
+reset_fixture
+sed -i 's/verified: 14\/14/verified: 37\/37/' "$calibrator"
+accept --exe "$windows_id=$work/engine.exe" --header "$work/header.h"
+sed -i 's/verified: 37\/37/verified: 14\/14/' "$calibrator"
 for os in linux windows; do
   for pair in 'sha:record sha256' 'platform:platform' 'schema:source schema' 'engine-id:source engineId' \
     'exe:exe sha256' 'version:calibrator version' 'source-version:calibrator version' \
@@ -144,7 +148,7 @@ for pair in 'identity:GNU build-id' 'build-id:invalid GNU build-id' 'header:cali
 done
 
 # Exercise calibration writes in the same isolated fixture; no executable or committed record is changed.
-cp "$here/calibrate-windows-capture.sh" "$work/couch/scripts/"
+cp "$here/calibrate-windows-capture.sh" "$here/calibrate-capture.sh" "$work/couch/scripts/"
 reset_fixture
 cp "$work/couch/eng/render-capture/windows/$windows_id.json" "$work/calibration-template"
 rm "$work/couch/eng/render-capture/windows/"*.json
@@ -204,3 +208,4 @@ grep -q 'existing engine record differs' "$work/output"
 cmp "$work/source-before" "$work/couch/eng/render-capture/windows/$windows_id.source.json"
 checks=$((checks+1))
 echo "render capture records: $checks checks passed"
+"$here/test-calibrate-capture.sh"

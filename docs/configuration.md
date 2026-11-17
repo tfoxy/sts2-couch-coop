@@ -20,6 +20,17 @@ Local developer builds default to `game.modsDir/couchcoop` when `game.modsDir` i
 
 Capture records in `eng/render-capture/<os>/` are per game executable. A new game version needs a new record only when the executable's GNU build-id (Linux) or PE identity (Windows: image size, timestamp and CodeView ID) changes. On Linux, run `readelf -n <exe> | grep 'Build ID'` and compare its first eight hex digits with the `id8` suffix in the record names. Records stage as extensionless `calibration.<engineId>` files. When no record matches the running executable, the seat falls back to the Godot ABI table staged beside them (`abi-table.<godot version>-rendering-server`, from godot-scene-web): the capture derives the calibration from the running game itself, runs the same safety checks as with a record, and refuses to stream if anything disagrees. The seat log then says `calibration=derived`, and the capture writes the derived record into the seat's evidence directory as the starting point for a committed one.
 
+When godot-scene-web adds hook slots, refresh the existing engine record with its current calibrator;
+the executable still uses the same record name. Run
+`scripts/calibrate-capture.sh --platform linux --exe <exe> --header <rendering_server.h> --refresh`
+(use `--platform windows` for a PE executable, and `COUCHCOOP_GSW_ROOT` to select the GSW checkout).
+This calibrates and verifies offline, requires an unchanged executable identity, preserves
+`gameBuildsSeen`, and updates the record hash and calibrator provenance while retaining the prior
+calibrator in `mergedSources`. Without `--refresh`, differing record bytes are refused. For a new
+executable, omit `--refresh` and supply `--game-build <version>` and optionally `--steam-build <id>`.
+Verify the result with `scripts/check-render-capture-records.sh --exe <engineId>=<exe> --header <rendering_server.h>`;
+repeat `--exe` to check multiple executables together.
+
 A local deploy stamps its own identity into the output directory, and the deploy prints the version it wrote. `couchcoop.json` gets `9999.0.0+dev.<short sha>` (plus `.dirty` for an unclean tree), because a game that has this mod installed **both** from the Workshop and in `mods/` resolves the duplicate by version on the `public-beta` branch — a dev deploy that declared its release version would silently lose to a published item, and every seat the host spawns would load that item instead. Only the DEPLOYED manifest is stamped; `src/CouchCoop.Mod.Loader/couchcoop.json` is never written, and every other field, `affects_gameplay` included, is preserved verbatim. `build-info.txt` beside it records the source commit, branch, dirty flag, detected STS2 API lane and the sibling checkouts the deploy was built from (`scripts/stamp-local-mod.sh`, self-test `scripts/test-stamp-local-mod.sh`). It declares `couchcoop-local-build-info/v1`, so the release-archive gate keeps rejecting it as the release payload it is not.
 
 `sts2 game deploy src/CouchCoop.Mod.Loader --build --restart --verify` uses the repo build script to stage artifacts and then lets `sts2` copy, restart, and verify through the configured local game.

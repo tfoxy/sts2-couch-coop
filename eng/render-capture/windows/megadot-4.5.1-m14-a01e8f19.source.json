@@ -21,17 +21,25 @@
     "codeview_id": "a01e8f1938eff7ed4c4c44205044422e:1",
     "image_sha256": "a753ddfd61917c89e3256c689d9dabb97519b735818455658c29429321201d60"
   },
-  "recordSha256": "5959551f80bf6d2db0e36f362e8ceceb5bee84896b6ddcbe247b699a0b74e583",
+  "recordSha256": "925afc54a101e1316b05f4057000317a607c1fb2b9416c7aa41faa8cebf66df3",
   "calibrator": {
     "version": "9",
-    "gswCommit": "4df2d93e9f04ca83664d4a5fba2bc4ca52186e51"
+    "gswCommit": "9fb10b6cc608c17f65c63f5ff2a097fa2c1f3ab2",
+    "headerSha256": "3e01fb10af9abb6955314abacd65d45b697a8ea57c7bf651e59c29e8a399b9d7"
   },
   "provenance": {
+    "command": "scripts/calibrate-capture.sh --platform windows --exe <executable> --header <godot-header> --refresh",
     "mergedSources": [
       {
         "calibrator": {
           "version": "9",
           "gswCommit": "794ae0b1f67156160120959383062407b521b189"
+        }
+      },
+      {
+        "calibrator": {
+          "version": "9",
+          "gswCommit": "4df2d93e9f04ca83664d4a5fba2bc4ca52186e51"
         }
       }
     ]
