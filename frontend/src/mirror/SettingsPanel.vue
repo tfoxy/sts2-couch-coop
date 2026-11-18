@@ -146,6 +146,7 @@ const newRendererReason = computed(() => {
       case "operator-record-mismatch": return t("settings.newRendererGameUnsupported");
       case "no-capture":
       case "os-unsupported":
+      case "library-validation":
       case "library-missing": return t("settings.newRendererComputerUnavailable");
       default: return t("settings.newRendererHostUnavailable");
     }

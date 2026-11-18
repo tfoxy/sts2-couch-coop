@@ -75,6 +75,7 @@ internal static class RenderCaptureAvailabilityTests
         var mac = RenderCaptureAvailability.Resolve(null, null, "macos", "arm64", _ => throw new Exception(), _ => false, _ => [], () => throw new Exception());
         Check(mac.Config is null && mac.Refusal is null, "macOS without a packaged directory is not configured");
         LinuxRecords();
+        MachOImageTests.Run();
         ElfNotes();
         TypedOutcomes();
         CrossCheck();

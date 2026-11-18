@@ -10,7 +10,7 @@ internal static class RenderCaptureAvailability
     internal enum UnavailableReason
     {
         NoCapture, CaptureInvalid, OsUnsupported, LibraryMissing, CalibrationInvalid, CalibrationMissing,
-        NoMatchingRecord, OperatorRecordMismatch, IdentityUnreadable, Unknown,
+        NoMatchingRecord, OperatorRecordMismatch, IdentityUnreadable, LibraryValidation, Unknown,
     }
 
     internal static string ReasonCode(UnavailableReason reason) => reason switch
@@ -24,6 +24,7 @@ internal static class RenderCaptureAvailability
         UnavailableReason.NoMatchingRecord => "no-matching-record",
         UnavailableReason.OperatorRecordMismatch => "operator-record-mismatch",
         UnavailableReason.IdentityUnreadable => "identity-unreadable",
+        UnavailableReason.LibraryValidation => "library-validation",
         _ => "unknown",
     };
 
@@ -35,7 +36,7 @@ internal static class RenderCaptureAvailability
     internal static StreamingSeatLaunch.ConfigResult Resolve(
         string? extension, string? calibration, string os, string arch,
         Func<string, string> readFile, Func<string, bool> fileExists,
-        Func<string, IEnumerable<string>> listFiles, Func<PeIdentity?> readIdentity, Func<string?>? readBuildId = null)
+        Func<string, IEnumerable<string>> listFiles, Func<PeIdentity?> readIdentity, Func<string?>? readBuildId = null, Func<MachOImage.Identity?>? readMachOIdentity = null)
     {
         try
         {
@@ -149,12 +150,52 @@ internal static class RenderCaptureAvailability
                 }
                 calibrationPath = matching;
             }
+            else if (os == "macos")
+            {
+                var identity = readMachOIdentity?.Invoke();
+                if (identity is null)
+                    return new(null, $"the host executable has no readable macOS {arch} LC_UUID", Reason: UnavailableReason.NoMatchingRecord);
+                if (identity.Value.Hardened && !identity.Value.DisableLibraryValidation)
+                    return new(null, "the hardened macOS host does not disable library validation for the capture dylib",
+                        Reason: UnavailableReason.LibraryValidation);
+                var candidates = !string.IsNullOrWhiteSpace(calibration) ? [calibrationPath] : listFiles(directory)
+                    .Where(path => Path.GetFileName(path) == "calibration" || Path.GetFileName(path).StartsWith("calibration.", StringComparison.Ordinal))
+                    .OrderBy(Path.GetFileName, StringComparer.Ordinal).ToArray();
+                string? matching = null;
+                foreach (var candidate in candidates)
+                {
+                    if (!fileExists(candidate)) continue;
+                    try
+                    {
+                        using var record = JsonDocument.Parse(readFile(candidate));
+                        var engine = record.RootElement.GetProperty("engine");
+                        var uuid = engine.GetProperty("uuid").GetString();
+                        if (engine.GetProperty("platform").GetString() == "macos-" + arch
+                            && uuid is { Length: 32 } && uuid[..8] == identity.Value.Id8)
+                        { matching = candidate; break; }
+                    }
+                    catch (Exception) { /* An invalid record cannot identify an engine. */ }
+                }
+                if (matching is null)
+                {
+                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, listFiles, fileExists) : null;
+                    if (table is not null)
+                    {
+                        var derivedNet = Path.Combine(directory, "librender_stream_net.dylib");
+                        return new(new StreamingSeatLaunch.Config(request.Path, "", NetModule: fileExists(derivedNet) ? derivedNet : null,
+                            AbiTable: table), null);
+                    }
+                    return new(null, $"no capture calibration matches the host executable (uuid={identity.Value.Uuid}, platform=macos-{arch})",
+                        Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
+                }
+                calibrationPath = matching;
+            }
             else if (string.IsNullOrWhiteSpace(calibration) && !fileExists(calibrationPath))
             {
                 calibrationPath = Path.Combine(directory, StreamingSeatLaunch.PackagedCalibrationFileName);
             }
             if (!fileExists(calibrationPath)) return new(null, $"the capture's calibration record does not exist: '{calibrationPath}'", Reason: UnavailableReason.CalibrationMissing);
-            var net = Path.Combine(directory, os == "windows" ? "render_stream_net.dll" : "librender_stream_net.so");
+            var net = Path.Combine(directory, os switch { "windows" => "render_stream_net.dll", "macos" => "librender_stream_net.dylib", _ => "librender_stream_net.so" });
             return new(new StreamingSeatLaunch.Config(request.Path, calibrationPath, NetModule: fileExists(net) ? net : null), null);
         }
         catch (Exception exception)

@@ -250,6 +250,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     ["no-capture", "The new renderer isn't available on this computer."],
     ["os-unsupported", "The new renderer isn't available on this computer."],
     ["library-missing", "The new renderer isn't available on this computer."],
+    ["library-validation", "The new renderer isn't available on this computer."],
     ["capture-invalid", "The new renderer is unavailable on this host."],
     ["calibration-invalid", "The new renderer is unavailable on this host."],
     ["calibration-missing", "The new renderer is unavailable on this host."],

@@ -65,7 +65,8 @@ internal static class StreamingSeatLaunch
     /// <c>render-capture/</c>, scripts/build-render-capture.sh's staging, godot-scene-web's <c>capture/build/</c>), and
     /// names the file it found in <c>GRC_LIVE_NET_MODULE</c> so the capture loads exactly that one.
     /// </summary>
-    internal static string NetModuleFileName => OperatingSystem.IsWindows() ? "render_stream_net.dll" : "librender_stream_net.so";
+    internal static string NetModuleFileName => OperatingSystem.IsWindows() ? "render_stream_net.dll"
+        : OperatingSystem.IsMacOS() ? "librender_stream_net.dylib" : "librender_stream_net.so";
 
     /// <summary>Where a released payload carries the capture, under the payload root (scripts/package-release.sh).</summary>
     private static string[] PackagedExtensionRelativePath(string os) => ["render-capture", os, "render_stream_capture.gdextension"];
@@ -175,7 +176,7 @@ internal static class StreamingSeatLaunch
 
     /// <summary>
     /// The configuration, or a typed reason and host-only diagnostic when unavailable. A
-    /// <paramref name="Warning"/> is a setting that was ignored (the caller logs it; this file logs nothing).
+    /// <paramref name="Warning"/> is a setting that was ignored (the caller logs it).
     /// </summary>
     internal readonly record struct ConfigResult(Config? Config, string? Refusal, string? Warning = null,
         RenderCaptureAvailability.UnavailableReason? Reason = null);
@@ -183,7 +184,7 @@ internal static class StreamingSeatLaunch
     internal static ConfigResult ResolveConfig(string? extension, string? calibration, Func<string, bool> fileExists)
     {
         return ResolveConfig(extension, calibration, fileExists, null,
-            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity, ReadHostBuildId);
+            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity, ReadHostBuildId, ReadHostMachOIdentity);
     }
 
     internal static string HostOs => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux";
@@ -203,6 +204,24 @@ internal static class StreamingSeatLaunch
             if (exe is null) return null;
             using var stream = File.Open(exe, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             return RenderCaptureAvailability.ReadPeIdentity(stream);
+        }
+        catch { return null; }
+    }
+
+    private static int _signatureDetailLogged;
+
+    private static MachOImage.Identity? ReadHostMachOIdentity()
+    {
+        if (!OperatingSystem.IsMacOS()) return null;
+        try
+        {
+            var exe = System.Environment.ProcessPath;
+            if (exe is null) return null;
+            using var stream = File.Open(exe, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var identity = MachOImage.Read(stream, HostArch);
+            if (identity?.SignatureDetail is { } detail && Interlocked.Exchange(ref _signatureDetailLogged, 1) == 0)
+                CouchCoopLog.Info($"capture availability: {detail}; treating the host as not hardened");
+            return identity;
         }
         catch { return null; }
     }
@@ -244,14 +263,14 @@ internal static class StreamingSeatLaunch
         string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory)
     {
         return ResolveConfig(extension, calibration, fileExists, assemblyDirectory,
-            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity, ReadHostBuildId);
+            File.ReadAllText, HostOs, HostArch, Directory.EnumerateFiles, ReadHostIdentity, ReadHostBuildId, ReadHostMachOIdentity);
     }
 
     internal static ConfigResult ResolveConfig(
         string? extension, string? calibration, Func<string, bool> fileExists, string? assemblyDirectory,
         Func<string, string> readFile, string os, string arch,
         Func<string, IEnumerable<string>> listFiles, Func<RenderCaptureAvailability.PeIdentity?> readIdentity,
-        Func<string?>? readBuildId = null)
+        Func<string?>? readBuildId = null, Func<MachOImage.Identity?>? readMachOIdentity = null)
     {
         ArgumentNullException.ThrowIfNull(fileExists);
         if (string.IsNullOrWhiteSpace(extension) && assemblyDirectory is not null)
@@ -262,7 +281,7 @@ internal static class StreamingSeatLaunch
         }
 
         return RenderCaptureAvailability.Resolve(extension, calibration, os, arch,
-            readFile, fileExists, listFiles, readIdentity, readBuildId);
+            readFile, fileExists, listFiles, readIdentity, readBuildId, readMachOIdentity);
     }
 
     /// <summary>

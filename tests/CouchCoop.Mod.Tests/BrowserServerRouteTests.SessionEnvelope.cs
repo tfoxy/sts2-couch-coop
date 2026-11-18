@@ -52,6 +52,7 @@ internal sealed partial class BrowserServerRouteTests
             (RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "no-matching-record"),
             (RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch, "operator-record-mismatch"),
             (RenderCaptureAvailability.UnavailableReason.IdentityUnreadable, "identity-unreadable"),
+            (RenderCaptureAvailability.UnavailableReason.LibraryValidation, "library-validation"),
             (RenderCaptureAvailability.UnavailableReason.Unknown, "unknown"),
         };
         foreach (var (reason, code) in reasons)
@@ -73,7 +74,7 @@ internal sealed partial class BrowserServerRouteTests
             Expect(session.RootElement.GetProperty("renderStreamLan").GetProperty("ws").GetBoolean(), "available capture still offers streaming");
             await CloseWebSocketSilentlyAsync(socket);
         }
-        Console.WriteLine("renderer availability routes: 11 cases, 22 assertions passed.");
+        Console.WriteLine($"renderer availability routes: {reasons.Length + 1} cases, {(reasons.Length + 1) * 2} assertions passed.");
     }
 
     private const string GatedQuery = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0";
