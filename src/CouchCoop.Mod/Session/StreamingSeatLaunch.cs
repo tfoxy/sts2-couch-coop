@@ -208,8 +208,6 @@ internal static class StreamingSeatLaunch
         catch { return null; }
     }
 
-    private static int _signatureDetailLogged;
-
     private static MachOImage.Identity? ReadHostMachOIdentity()
     {
         if (!OperatingSystem.IsMacOS()) return null;
@@ -218,10 +216,7 @@ internal static class StreamingSeatLaunch
             var exe = System.Environment.ProcessPath;
             if (exe is null) return null;
             using var stream = File.Open(exe, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            var identity = MachOImage.Read(stream, HostArch);
-            if (identity?.SignatureDetail is { } detail && Interlocked.Exchange(ref _signatureDetailLogged, 1) == 0)
-                CouchCoopLog.Info($"capture availability: {detail}; treating the host as not hardened");
-            return identity;
+            return MachOImage.Read(stream, HostArch);
         }
         catch { return null; }
     }

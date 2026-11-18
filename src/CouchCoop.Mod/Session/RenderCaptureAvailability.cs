@@ -7,6 +7,8 @@ namespace CouchCoop.Mod.Session;
 /// <summary>Checks capture compatibility before a seat is assigned the streaming role.</summary>
 internal static class RenderCaptureAvailability
 {
+    private static int _signatureDetailLogged;
+
     internal enum UnavailableReason
     {
         NoCapture, CaptureInvalid, OsUnsupported, LibraryMissing, CalibrationInvalid, CalibrationMissing,
@@ -155,6 +157,9 @@ internal static class RenderCaptureAvailability
                 var identity = readMachOIdentity?.Invoke();
                 if (identity is null)
                     return new(null, $"the host executable has no readable macOS {arch} LC_UUID", Reason: UnavailableReason.NoMatchingRecord);
+                // Logged here, once, because StreamingSeatLaunch must stay free of logging (it carries the stream token).
+                if (identity.Value.SignatureDetail is { } detail && Interlocked.Exchange(ref _signatureDetailLogged, 1) == 0)
+                    CouchCoopLog.Info($"capture availability: {detail}; treating the host as not hardened");
                 if (identity.Value.Hardened && !identity.Value.DisableLibraryValidation)
                     return new(null, "the hardened macOS host does not disable library validation for the capture dylib",
                         Reason: UnavailableReason.LibraryValidation);
