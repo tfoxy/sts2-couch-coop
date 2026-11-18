@@ -10,8 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Compile the shipping implementation and its existing filesystem suite directly. This stays game-free
-         while preventing a macOS-only copy from drifting away from the mod's actual seeder. -->
+    <!-- Compile shipping implementations and their shared suites directly. This stays game-free while
+         preventing a macOS-only copy from drifting away from the mod's actual code. -->
+    <Compile Include="../../src/CouchCoop.Mod/Session/HostExitWait.cs" Link="HostExitWait.cs" />
+    <Compile Include="../CouchCoop.Mod.Tests/HostExitWaitTests.cs" Link="HostExitWaitTests.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessUserDirSeeder.cs" Link="HeadlessUserDirSeeder.cs" />
     <Compile Include="../../src/CouchCoop.Mod/Session/HeadlessSeatModSelection.cs" Link="HeadlessSeatModSelection.cs" />
     <!-- The mod-list reader/rewriter the seat pin runs on, and the id comparer it matches rows with. Both

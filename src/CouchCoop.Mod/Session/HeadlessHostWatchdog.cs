@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.ComponentModel;
 using Microsoft.Win32.SafeHandles;
 using CouchCoop.Mod.Patches;
-using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace CouchCoop.Mod.Session;
@@ -17,20 +16,16 @@ namespace CouchCoop.Mod.Session;
 /// <para>
 /// No-op when the env var is absent (e.g. a manually launched headless for testing) or on a platform with
 /// no supported watch below. The watch is wrapper-agnostic (it watches the host PID directly, not our immediate
-/// parent, so a gamescope/headless wrapper in the chain doesn't matter) and PID-reuse-safe (it pins an
-/// identity for the host process and re-checks it).
+/// parent, so a gamescope/headless wrapper in the chain doesn't matter) and checks process identity
+/// while arming to guard against PID reuse.
 /// </para>
 /// <para>
-/// Windows waits on a pinned kernel process handle without polling, covering failed job assignments.
-/// The existing Unix implementations remain unchanged. <b>Linux</b> reads <c>/proc</c> for both liveness and identity and is
-/// untouched — it is the path that ships and is proven, and its identity (field 22 of <c>/proc/&lt;pid&gt;/stat</c>,
-/// boot-relative jiffies) is the only one that is reliable there: .NET's <see cref="Process.StartTime"/> is
-/// reconstructed from boot time on Linux and is not stable enough to compare across processes.
-/// <b>macOS</b> has no <c>/proc</c> at all, which is why this used to return early and leave every seat
-/// unreaped — a host crash there strands N windowless game processes with no Dock icon and no window, alive
-/// until the user finds them in Activity Monitor. It asks <c>kill(pid, 0)</c> for liveness and
-/// <see cref="Process.StartTime"/> for identity, which on macOS is an absolute kernel wall-clock value
-/// (<c>kp_proc.p_starttime</c>) and therefore sound.
+/// Windows waits on a pinned kernel process handle, Linux on a pidfd, and macOS on a kqueue process event.
+/// Linux identity is field 22 of <c>/proc/&lt;pid&gt;/stat</c> (boot-relative jiffies): .NET's
+/// <see cref="Process.StartTime"/> is reconstructed from boot time there and is not stable enough to compare
+/// across processes. macOS has no <c>/proc</c>; its <see cref="Process.StartTime"/> is an absolute kernel
+/// wall-clock value (<c>kp_proc.p_starttime</c>) and therefore sound. The two-second poll remains only as
+/// the fallback when a Unix kernel wait is unavailable or fails.
 /// </para>
 /// </summary>
 internal static class HeadlessHostWatchdog
@@ -81,17 +76,39 @@ internal static class HeadlessHostWatchdog
             return;
         }
 
-        // Pin the host's start time so a recycled PID — the host died and the kernel handed its number to an
-        // unrelated new process — reads as "host gone" rather than falsely "host alive".
-        var hostStartTime = onLinux ? TryReadProcStartTime(hostPid) : TryReadKernelStartTime(hostPid);
-
-        var thread = new Thread(() => Watch(hostPid, hostStartTime, onLinux))
+        var arm = HostExitWait.Arm(hostPid);
+        var fired = 0;
+        void Gone()
         {
-            IsBackground = true,
-            Name = "couchcoop-host-watchdog",
-        };
-        thread.Start();
-        CouchCoopLog.Stderr($"headless host-watchdog armed for host pid={hostPid}.");
+            if (Interlocked.Exchange(ref fired, 1) == 0)
+                OnHostGone(hostPid, HeadlessDisconnectExitPatch.RequestExit,
+                    ScheduleOnBackgroundThread, HeadlessForceExit.Now, HeadlessLog.Write);
+        }
+        void PollFallback(string reason)
+        {
+            CouchCoopLog.Stderr($"headless host-watchdog armed for host pid={hostPid} (poll fallback: {reason}).");
+            var thread = new Thread(() => Watch(hostPid, arm.Identity, onLinux))
+            {
+                IsBackground = true,
+                Name = "couchcoop-host-watchdog",
+            };
+            thread.Start();
+        }
+
+        switch (arm.Kind)
+        {
+            case HostExitWait.ArmKind.Wait:
+                CouchCoopLog.Stderr($"headless host-watchdog armed for host pid={hostPid} ({HostExitWait.PathName} wait).");
+                HostExitWait.StartWait(arm.Handle, Gone, reason => PollFallback($"{HostExitWait.PathName} {reason}"));
+                break;
+            case HostExitWait.ArmKind.HostGone:
+                CouchCoopLog.Stderr($"headless host-watchdog armed for host pid={hostPid} (host already gone at arm: {arm.Reason}).");
+                Gone();
+                break;
+            case HostExitWait.ArmKind.Fallback:
+                PollFallback(arm.Reason!);
+                break;
+        }
     }
 
     internal static IDisposable? ArmWindowsHostWatch(int hostPid,
@@ -154,6 +171,7 @@ internal static class HeadlessHostWatchdog
     private static extern SafeWaitHandle OpenProcess(uint access,
         [MarshalAs(UnmanagedType.Bool)] bool inheritHandle, int processId);
 
+    // Fallback-only polling, explicitly retained for unavailable or failed kernel waits.
     private static void Watch(int hostPid, string? hostStartTime, bool onLinux)
     {
         while (true)
@@ -161,7 +179,7 @@ internal static class HeadlessHostWatchdog
             Thread.Sleep(PollInterval);
             if (onLinux
                 ? HostAlive(hostPid, hostStartTime)
-                : HostAliveByIdentity(hostStartTime, () => ProcessSignalAlive(hostPid), () => TryReadKernelStartTime(hostPid)))
+                : HostAliveByIdentity(hostStartTime, () => ProcessSignalAlive(hostPid), () => HostExitWait.TryReadKernelStartTime(hostPid)))
             {
                 continue;
             }
@@ -220,7 +238,7 @@ internal static class HeadlessHostWatchdog
             return true; // Couldn't pin a start time at arm — fall back to bare /proc existence.
         }
 
-        var now = TryReadProcStartTime(hostPid);
+        var now = HostExitWait.TryReadProcStartTime(hostPid);
         // Unreadable now but /proc exists → treat as alive (avoid a false kill); a changed value → PID reused.
         return now is null || now == expectedStartTime;
     }
@@ -271,47 +289,4 @@ internal static class HeadlessHostWatchdog
         }
     }
 
-    /// <summary>
-    /// The host process's start time as a comparable string, for the platforms where .NET reports an absolute
-    /// kernel timestamp (macOS: <c>kp_proc.p_starttime</c> via sysctl).
-    /// </summary>
-    /// <remarks>
-    /// NOT used on Linux, where <see cref="Process.StartTime"/> is reconstructed from boot time and two reads
-    /// of the same process are not reliably equal — the reason the Linux path reads <c>/proc</c> directly.
-    /// </remarks>
-    private static string? TryReadKernelStartTime(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return process.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    // Field 22 (1-based) of /proc/<pid>/stat is the process start time. Field 2 (comm) is parenthesized and may
-    // itself contain spaces and parentheses, so split AFTER the last ')': the remaining tokens are fields 3..N,
-    // which puts start time at index 19.
-    private static string? TryReadProcStartTime(int pid)
-    {
-        try
-        {
-            var stat = File.ReadAllText($"/proc/{pid}/stat");
-            var close = stat.LastIndexOf(')');
-            if (close < 0)
-            {
-                return null;
-            }
-
-            var fields = stat[(close + 1)..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            return fields.Length > 19 ? fields[19] : null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }

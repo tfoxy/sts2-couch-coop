@@ -1,6 +1,7 @@
-// Custom executable runner: this intentionally source-links shipping filesystem and loader code, so macOS CI
+// Custom executable runner: source-links shipping host waits, filesystem and loader code, so macOS CI
 // tests precisely the code a shipped seat uses without needing game assemblies or an STS2 install.
 var completed = true;
+HostExitWaitTests.Run();
 HeadlessUserDirSeederTests.Run();
 MacOsLoaderSelectionTests.Run();
 MacOsReleaseArchiveTests.RunGraphTests();

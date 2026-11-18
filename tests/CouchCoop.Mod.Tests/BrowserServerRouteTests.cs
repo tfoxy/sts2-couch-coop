@@ -334,6 +334,7 @@ if (args is ["seats", ..])
     await HostSeatExitTests.RunAsync();
     WindowsSeatLifetimeTests.Run();
     HeadlessProcessExitTests.Run();
+    HostExitWaitTests.Run();
     await HeadlessClientManagerTests.RunAsync();
     // Run presence for a browser disconnect and a seat launch: the typed read, its failure semantics, and that a
     // disconnect and a launch refusal cost no state snapshot. Beside the seat manager because it drives one.
@@ -1260,6 +1261,7 @@ await BrowserServerRouteTests.RunCouchPlayJoinRoutesAsync();
 await BrowserServerRouteTests.RunHostAccessRoutesAsync();
 await tests.RunAsync();
 await SeatBrowserPipeTests.RunAsync();
+HostExitWaitTests.Run();
 await HeadlessClientManagerTests.RunAsync();
 ConnectionHostingDemandTests.Run();
 ConnectionHostingTrackerStateTests.Run();
