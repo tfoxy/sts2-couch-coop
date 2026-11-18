@@ -43,7 +43,7 @@ vi.mock("@/mirror/atlasSprite", async (importOriginal) => {
 // after 60 s in a hidden tab, reconnecting as a fresh join when visible again.
 
 const endpoint: RenderStreamEndpoint = { url: "ws://127.0.0.1:9/render-stream", resourceBase: "http://127.0.0.1:9",
-  token: null, protocol: 12, presentation: [1920, 1080] };
+  token: null, protocol: 16, presentation: [1920, 1080] };
 const core = { glueUrl: "/g.js", wasmUrl: "/w.wasm", expectedTree: "0ccb21bb561c" };
 
 interface Fake extends RenderStreamClient {

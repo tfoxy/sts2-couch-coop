@@ -743,7 +743,7 @@ internal static class RenderStreamSwapTests
     }
 
     private static RenderStreamSnapshot Snapshot(string arm) => new(
-        "127.0.0.1:19849", $"test-token-{arm}", $"test-certificate-{arm}", "2340x1080", 13);
+        "127.0.0.1:19849", $"test-token-{arm}", $"test-certificate-{arm}", "2340x1080", 16);
 
     private sealed class Fixture : IDisposable
     {

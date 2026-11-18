@@ -69,7 +69,7 @@ function available(): void {
 beforeEach(() => {
   localStorage.clear();
   Object.assign(mirrorSettings, VIEWER, {
-    renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null, renderStreamProtocol: 12,
+    renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null, renderStreamProtocol: 16,
     stage: "dom", runtimeStage: "dom", panelOpen: true
   });
   Object.assign(renderStreamContext, {
@@ -85,7 +85,7 @@ afterEach(() => {
   wrapper = null;
   clearStoredMirrorSettings();
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
-    renderStreamProtocol: 12, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
+    renderStreamProtocol: 16, panelOpen: false, reproRecorder: false, latencyOverlay: false, audio: false });
   Object.assign(renderStreamContext, { coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, stopped: null,
     seatJoined: false, hostUnavailableReason: null, returningToMirror: false, sessionEndpoint: null, lanOffer: null, page: undefined });
 });
@@ -127,7 +127,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
 
     for (const [testid, key, kind] of FORCED_ROWS) {
-      const forced = STREAM_RENDER_OVERRIDES[key](12);
+      const forced = STREAM_RENDER_OVERRIDES[key](16);
       if (kind === "select") {
         const select = el<HTMLSelectElement>(testid);
         expect(select.disabled, testid).toBe(true);
@@ -183,15 +183,6 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(mirrorSettings.stretchEnabled).toBe(false);
     expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}"))
       .toEqual({ renderer: "stream", stretchEnabled: false });
-  });
-
-  it("forces Particles off on a /11 stream, which carries no emitters", async () => {
-    available();
-    mirrorSettings.renderStreamProtocol = 11;
-    mountPanel();
-    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
-    await nextTick();
-    expect(el<HTMLSelectElement>("mirror-particle-mode").value).toBe("off");
   });
 
   it("un-checking restores every saved value, and storage holds only `renderer`", async () => {
@@ -345,7 +336,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
   it("shows the saved choice even when the seat already streams, and can switch it off", async () => {
     renderStreamContext.seatJoined = true;
     renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
-      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 16 });
     mountPanel();
     expect(el("mirror-renderer").checked).toBe(false);
     expect(el("mirror-renderer").disabled).toBe(false);
@@ -363,7 +354,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
     renderStreamContext.rendererState = { state: "armed" };
     renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
-      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 16 });
     await nextTick();
     expect(wrapper!.get('[data-testid="mirror-renderer-reason"]').text()).toBe("Switching…");
     renderStreamContext.firstFrame = true;
@@ -375,7 +366,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     renderStreamContext.seatJoined = true;
     renderStreamContext.rendererState = { state };
     renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
-      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 16 });
     renderStreamContext.returningToMirror = true;
     mountPanel();
     expect(el("mirror-renderer").checked).toBe(false);
@@ -386,7 +377,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     renderStreamContext.seatJoined = true;
     renderStreamContext.rendererState = { state, reason: "capture stopped" };
     renderStreamContext.sessionEndpoint = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
-      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13 });
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 16 });
     renderStreamContext.stopped = "capture stopped";
     mountPanel();
     expect(el("mirror-renderer").checked).toBe(false);

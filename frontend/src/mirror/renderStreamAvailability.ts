@@ -35,7 +35,7 @@ import { hostBase } from "@/join/hostBase";
 import type { BrowserRendererState } from "@/protocol/browserEnvelope";
 
 import { mirrorDesignSize } from "@/mirror/mirrorDesign";
-import { mirrorSettings, type MirrorSettings } from "@/mirror/mirrorSettings";
+import { DEFAULT_RENDER_STREAM_PROTOCOL, mirrorSettings, type MirrorSettings } from "@/mirror/mirrorSettings";
 import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/renderStreamCore";
 
 /** After this long in a hidden tab the stage disposes its client (its heap, and the hub's carried set for us, are
@@ -157,7 +157,7 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
 
 /**
  * The `?renderStream=` descriptor: the hub's origin serves the resource GETs, no token (the QA hub runs
- * `GRC_LIVE_AUTH=none` on loopback), the protocol from `?rsProtocol=`, presentation 1920×1080.
+ * `GRC_LIVE_AUTH=none` on loopback), protocol 16, presentation 1920×1080.
  */
 export function qaRenderStreamEndpoint(settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): RenderStreamEndpoint | null {
   if (!settings.renderStreamUrl) return null;
@@ -176,7 +176,8 @@ export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): Re
   if (raw === null || raw === undefined) return null;
   try {
     const value = raw as Record<string, unknown>;
-    if (typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
+    if (value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL
+      || typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
     const url = new URL(value.url, `${base}/`);
     if (url.protocol === "http:") url.protocol = "ws:";
     if (url.protocol === "https:") url.protocol = "wss:";
@@ -376,7 +377,7 @@ export function resolveRuntimeRenderer(
 /** Re-derive `runtimeRenderer` (and the stream's protocol) after any input changed. */
 export function syncRuntimeRenderer(settings: MirrorSettings = mirrorSettings): void {
   const availability = renderStreamAvailability.value;
-  if (availability.available) settings.renderStreamProtocol = availability.endpoint.protocol;
+  if (availability.available) settings.renderStreamProtocol = DEFAULT_RENDER_STREAM_PROTOCOL;
   const next = renderStreamContext.returningToMirror ? "mirror"
     : resolveRuntimeRenderer(settings.renderer, availability, renderStreamContext.stopped);
   if (settings.runtimeRenderer !== next) settings.runtimeRenderer = next;

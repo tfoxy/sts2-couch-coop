@@ -187,11 +187,11 @@ export function parseSpineMode(raw: string | null): SpineMode {
 
 /** Which renderer draws the game: the node-geometry mirror, or the render-stream (the "new renderer", Beta). */
 export type MirrorRenderer = "mirror" | "stream";
-/** The render-stream protocol versions the client speaks (`@godot-scene-web/render-stream-client`'s 11 | 12 | 13 | 14). */
-export type RenderStreamWireVersion = 11 | 12 | 13 | 14 | 15;
+/** The render-stream protocol version CouchCoop speaks. */
+export type RenderStreamWireVersion = 16;
 /** Which live carrier the new renderer's client opens (godot-scene-web's `RenderStreamCarrier`). */
 export type RenderStreamCarrierChoice = "auto" | "websocket" | "webtransport";
-export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 13;
+export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 16;
 
 export interface MirrorSettings {
   /** Public stage choice; a fresh WebKit viewer starts on canvas, other viewers on DOM. */
@@ -219,7 +219,7 @@ export interface MirrorSettings {
    * anything but an absolute ws(s) URL is dropped.
    */
   renderStreamUrl: string | null;
-  /** The wire version of the stream in use (`?rsProtocol=11|12`, default 12): decides the Particles row's forced value. */
+  /** The wire version of the stream in use. */
   renderStreamProtocol: RenderStreamWireVersion;
   /**
    * QA only (`?rsCarrier=auto|websocket|webtransport`, default `auto`), session-only: the client's `carrier`. `auto`
@@ -468,8 +468,8 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 //   keyboard         — the keyboard capture's twin of `gamepad`, for the same reason and on the same terms.
 //   runtimeRenderer  — the live renderer; it drops to `mirror` when a stream fails, and `renderer` stays saved.
 //   renderStream*    — the QA endpoint is per session (`?renderStream=`), like every endpoint: a stream address
-//                      describes one host's seat, never this viewer. So are its protocol and the QA carrier
-//                      (`?rsProtocol=`, `?rsCarrier=`).
+//                      describes one host's seat, never this viewer. The protocol and QA carrier
+//                      (`?rsCarrier=`) are also session-only.
 export const NEVER_PERSISTED_SETTING_KEYS = [
   "runtimeStage",
   "runtimeRenderer",
@@ -514,12 +514,6 @@ export function parseRenderStreamUrl(raw: string | null): string | null {
 /** `?rsCarrier=auto|websocket|webtransport`; anything else is `auto`. */
 export function parseRenderStreamCarrier(raw: string | null): RenderStreamCarrierChoice {
   return raw === "websocket" || raw === "webtransport" ? raw : "auto";
-}
-
-/** `?rsProtocol=11|12|13|14|15`; anything else is the default. */
-export function parseRenderStreamProtocol(raw: string | null): RenderStreamWireVersion {
-  return raw === "11" ? 11 : raw === "12" ? 12 : raw === "13" ? 13 : raw === "14" ? 14 : raw === "15" ? 15
-    : DEFAULT_RENDER_STREAM_PROTOCOL;
 }
 
 function boolValue(raw: unknown): boolean | undefined {
@@ -756,8 +750,8 @@ export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protoc
   quality: () => "high",
   // The game's own shaders run every frame.
   shaderMode: () => "dynamic",
-  // `/12` simulates emitters on the client (PM6b); `/11` carries none.
-  particleMode: (protocol) => (protocol >= 12 ? "dynamic" : "off"),
+  // The client simulates the streamed emitters.
+  particleMode: () => "dynamic",
   // The live background is in the stream.
   staticBgEnabled: () => false,
   // A DOM-mirror compositing optimization.
@@ -901,7 +895,7 @@ export function createMirrorSettings(
     renderer,
     runtimeRenderer: "mirror",
     renderStreamUrl: parseRenderStreamUrl(params.get("renderStream")),
-    renderStreamProtocol: parseRenderStreamProtocol(params.get("rsProtocol")),
+    renderStreamProtocol: DEFAULT_RENDER_STREAM_PROTOCOL,
     renderStreamCarrier: parseRenderStreamCarrier(params.get("rsCarrier")),
     stage,
     textMethod: parseTextMethod(params.get("textMethod")) ?? saved.textMethod ?? "bitmap",

@@ -44,7 +44,7 @@ internal sealed partial class BrowserServerRouteTests
         start.Environment["COUCHCOOP_STREAMING_SEAT"] = "1";
         start.Environment["GRC_LIVE_ALLOWED_ORIGINS"] = $"{AllowedPageOrigin},http://localhost:13337";
         start.Environment["GRC_LIVE_LISTEN"] = "127.0.0.1:13366";
-        start.Environment["GRC_STREAM_VERSION"] = "13";
+        start.Environment["GRC_STREAM_VERSION"] = "16";
         start.Environment["GRC_LIVE_AUTH"] = "token";
         start.Environment["GRC_LIVE_CARRIERS"] = "ws,wt";
         start.Environment["COUCHCOOP_RENDER_STREAM_DIRECT"] = "1";
@@ -301,7 +301,7 @@ internal sealed partial class BrowserServerRouteTests
         Expect(rs.GetProperty("url").GetString() == "ws://127.0.0.1:13366/render-stream", $"{where}: hub url");
         Expect(rs.GetProperty("resourceBase").GetString() == "http://127.0.0.1:13366", $"{where}: resource base");
         Expect(rs.GetProperty("token").GetString() == RenderStreamSeatToken, $"{where}: the capture's token");
-        Expect(rs.GetProperty("protocol").GetInt32() == 13, $"{where}: /13");
+        Expect(rs.GetProperty("protocol").GetInt32() == 16, $"{where}: /16");
         Expect(rs.GetProperty("webTransport").GetProperty("certificateHashes")[0].GetString() == new string('c', 64),
             $"{where}: this arm's certificate");
         Expect(session.GetProperty("rendererState").GetProperty("state").GetString() == "armed", $"{where}: armed state");
@@ -391,7 +391,7 @@ internal sealed partial class BrowserServerRouteTests
 
         internal void Armed(string token, int width = 2340, string? hash = null)
             => GameMainThread.Invoke(() => { Capture!.EmitArmed(new("127.0.0.1:13366", token, hash ?? new string('c', 64),
-                $"{width}x1080", 13)); return true; });
+                $"{width}x1080", 16)); return true; });
         internal void Disarmed() => GameMainThread.Invoke(() => { Capture!.EmitDisarmed(); return true; });
         internal void FailStream(string reason) => GameMainThread.Invoke(() => { Capture!.EmitStreamEnded(reason); return true; });
         internal Task StopServerAsync() => _server.StopGenerationAsync();

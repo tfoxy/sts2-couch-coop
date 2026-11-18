@@ -166,7 +166,8 @@ internal static class RenderStreamPairingTests
             ["GRC_CALIBRATION"] = Calibration,
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
             ["GRC_LIVE_CARRIERS"] = "ws",
-            ["GRC_STREAM_VERSION"] = "13",
+            ["GRC_STREAM_VERSION"] = "16",
+            ["GRC_RESOURCE_HINTS"] = "off",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = "/home/p/couch-coop/render-stream/slot-2",
             ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337,http://localhost:13337",
@@ -191,6 +192,7 @@ internal static class RenderStreamPairingTests
         Assert(env.Count == expected.Count && expected.All(kv => env.TryGetValue(kv.Key, out var v) && v == kv.Value),
             "the streaming seat's environment is exactly the acceptance table: "
             + string.Join(' ', env.Where(kv => !expected.TryGetValue(kv.Key, out var v) || v != kv.Value).Select(kv => $"{kv.Key}={kv.Value}")));
+        Assert(!env.ContainsKey("GRC_VIEWPORTS"), "viewport surfaces use the capture default");
         Assert(!env.ContainsKey("GRC_VALIDATION_LOG"), "the capture uses its default validation logging");
         Assert(!env.ContainsKey("GRC_RESOURCE_STORE_DIR") && !env.ContainsKey("GRC_STREAM_PATCH_OUT"),
             "a live-only seat writes no recording and no store to disk");
@@ -450,7 +452,7 @@ internal static class RenderStreamPairingTests
     }
 
     private static (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion) Snapshot(
-        string? token = null, string hash = "", string listen = "127.0.0.1:13366", string rootSize = "1920x1080", int version = 13)
+        string? token = null, string hash = "", string listen = "127.0.0.1:13366", string rootSize = "1920x1080", int version = 16)
         => (listen, token ?? Token, hash, rootSize, version);
 
     private static void DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin()
@@ -458,7 +460,7 @@ internal static class RenderStreamPairingTests
         var env = SeatEnvironment(auth: "token");
         var ok = StreamingSeatDescriptor.Build(Snapshot(), "http://127.0.0.1:13337", env.GetValueOrDefault);
         Assert(ok is not null && ok.Url == "ws://127.0.0.1:13366/render-stream" && ok.ResourceBase == "http://127.0.0.1:13366"
-               && ok.Token == Token && ok.Protocol == 13 && ok.Presentation is [1920, 1080],
+               && ok.Token == Token && ok.Protocol == 16 && ok.Presentation is [1920, 1080],
             "an armed seat's allowed page gets this arm's descriptor");
         Assert(StreamingSeatDescriptor.Build(Snapshot(), "http://localhost:13337", env.GetValueOrDefault) is not null,
             "the localhost spelling of the host page too");
@@ -470,10 +472,15 @@ internal static class RenderStreamPairingTests
             "no armed snapshot: no descriptor");
         Assert(StreamingSeatDescriptor.Build(Snapshot(listen: "0.0.0.0:13366"), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
             "a non-loopback listener without LAN exposure is never described");
-        Assert(StreamingSeatDescriptor.Build(Snapshot(version: 8), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
-            "only the wire versions the client speaks (11, 12, 13)");
-        Assert(StreamingSeatDescriptor.Build(Snapshot(version: 12), "http://127.0.0.1:13337", env.GetValueOrDefault) is { Protocol: 12 },
-            "the snapshot's wire version is described");
+        foreach (var version in new[] { 8, 11, 12, 13, 14, 15, 17 })
+        {
+            Assert(StreamingSeatDescriptor.Build(Snapshot(version: version), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
+                $"direct descriptors reject unsupported wire version {version}");
+            Assert(StreamingSeatDescriptor.BuildRelayed(Snapshot(version: version), new string('c', 32)) is null,
+                $"relayed descriptors reject unsupported wire version {version}");
+        }
+        Assert(StreamingSeatDescriptor.BuildRelayed(Snapshot(), new string('c', 32)) is { Protocol: 16 },
+            "relayed descriptors use wire version 16");
         var open = SeatEnvironment(auth: "none");
         Assert(StreamingSeatDescriptor.Build(Snapshot(token: ""), "http://127.0.0.1:13337", open.GetValueOrDefault) is { Token: null },
             "a hub without token auth is described with no token");
@@ -518,10 +525,10 @@ internal static class RenderStreamPairingTests
     {
         // The client's validator is strict: an unknown key or an explicit null `webTransport` fails the descriptor.
         var plain = BrowserJson.Serialize(new BrowserRenderStreamDto("ws://127.0.0.1:13366/render-stream",
-            "http://127.0.0.1:13366", Token, 13, [1920, 1080]));
+            "http://127.0.0.1:13366", Token, 16, [1920, 1080]));
         Assert(!plain.Contains("webTransport", StringComparison.Ordinal), $"no webTransport member at all: {plain}");
         var wt = BrowserJson.Serialize(new BrowserRenderStreamDto("ws://127.0.0.1:13366/render-stream",
-            "http://127.0.0.1:13366", Token, 13, [1920, 1080],
+            "http://127.0.0.1:13366", Token, 16, [1920, 1080],
             new BrowserRenderStreamWebTransportDto("https://127.0.0.1:13366/render-stream", [new string('c', 64)])));
         Assert(wt.Contains("\"webTransport\":{\"url\":\"https://127.0.0.1:13366/render-stream\",\"certificateHashes\":[\"", StringComparison.Ordinal),
             $"the client's key names: {wt}");
@@ -805,8 +812,9 @@ internal static class RenderStreamPairingTests
             || key.StartsWith("GRC_LIVE_TLS_", StringComparison.Ordinal)
             || key.StartsWith("GRC_LIVE_WT_", StringComparison.Ordinal)
             || key == StreamingSeatDescriptor.LanPlaintextEnvironmentVariable), "host has no LAN, TLS or WT settings");
-        Assert(environment["GRC_STREAM_VERSION"] == StreamingSeatLaunch.StreamVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "host and seat use the same wire version");
+        Assert(environment["GRC_STREAM_VERSION"] == "16", "host uses wire version 16");
+        Assert(environment["GRC_RESOURCE_HINTS"] == "off", "host skips unused resource hints");
+        Assert(!environment.ContainsKey("GRC_VIEWPORTS"), "host uses viewport surfaces by default");
         Assert(environment["GRC_MODE"] == "standby" && environment["GRC_CALIBRATION"] == Calibration,
             "host starts in standby with the configured calibration");
         Assert(environment["GRC_EVIDENCE_DIR"] == evidence && evidence.EndsWith("slot-0", StringComparison.Ordinal),
@@ -826,7 +834,7 @@ internal static class RenderStreamPairingTests
         StreamingSeatLaunch.ClearInherited(psi);
         Assert(!psi.Environment.Keys.Any(key => key.StartsWith("GRC_", StringComparison.Ordinal)),
             "seat launches strip the host's capture environment including unknown GRC keys");
-        Console.WriteLine("host capture environment: 13 assertions passed.");
+        Console.WriteLine("host capture environment: 15 assertions passed.");
     }
 
     private static void HostCaptureFailuresKeepTheMirror()
@@ -1013,7 +1021,7 @@ internal static class RenderStreamPairingTests
     {
         ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337, http://localhost:13337",
         ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
-        ["GRC_STREAM_VERSION"] = "13",
+        ["GRC_STREAM_VERSION"] = "16",
         ["GRC_LIVE_AUTH"] = auth,
         ["GRC_EVIDENCE_DIR"] = "/home/p/ev",
         ["GRC_ROOT_SIZE"] = "presentation:1920x1080",

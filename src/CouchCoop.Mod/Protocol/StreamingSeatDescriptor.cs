@@ -24,7 +24,7 @@ internal static class StreamingSeatDescriptor
     {
         if (!IsSeatRoute(route) || snapshot is not { } arm || LoopbackListen.Match(arm.Listen) is not { Success: true } hub
             || int.Parse(hub.Groups[2].Value, CultureInfo.InvariantCulture) > 65535
-            || !TokenShape.IsMatch(arm.Token) || arm.StreamVersion is not (11 or 12 or 13)
+            || !TokenShape.IsMatch(arm.Token) || arm.StreamVersion is not 16
             || Presentation.Match(arm.RootSize) is not { Success: true } size) return null;
         return new($"/render-stream/{route}/ws", $"/render-stream/{route}", arm.Token, arm.StreamVersion,
             [int.Parse(size.Groups[1].Value, CultureInfo.InvariantCulture), int.Parse(size.Groups[2].Value, CultureInfo.InvariantCulture)]);
@@ -57,7 +57,7 @@ internal static class StreamingSeatDescriptor
         if (HubAddress(armed.Listen, lan) is not { } hub) return null;
 
         var protocol = armed.StreamVersion;
-        if (protocol is not (11 or 12 or 13)) return null;
+        if (protocol is not 16) return null;
 
         // The page the hub serves, and how. The host's own loopback http page reaches the hub on loopback, as it always
         // did. A LAN page (only under GRC_LIVE_EXPOSE=lan) reaches it at the page's own host -- the Origin's, which the

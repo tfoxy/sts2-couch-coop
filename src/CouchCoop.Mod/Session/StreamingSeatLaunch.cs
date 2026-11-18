@@ -78,11 +78,11 @@ internal static class StreamingSeatLaunch
     internal const string PerfTimelineMaxBytes = "8388608";
 
     /// <summary>
-    /// The wire version the seat speaks: render-stream/13, /12 (GPU particles simulated on the client) with
-    /// dynamic mesh and multimesh blocks predicted from the two previous transactions (about half /12's coded
-    /// bytes in combat). The listener also offers /12, so an older client still connects.
+    /// The wire version the seat speaks: render-stream/16, /15 with viewport surfaces
+    /// (godot-scene-web experiments/render-stream/protocol/render-stream-16.md).
+    /// The listener offers only <c>render-stream.16</c>.
     /// </summary>
-    internal const int StreamVersion = 13;
+    internal const int StreamVersion = 16;
 
     /// <summary>
     /// The hub listens on the last port of the seat's 10-port band (<see cref="HeadlessClientManager.SlotToPort"/>
@@ -318,6 +318,8 @@ internal static class StreamingSeatLaunch
             // The carriers the hub serves (see the remarks): WebSocket always, WebTransport with the net module.
             ["GRC_LIVE_CARRIERS"] = config.NetModule is null ? "ws" : "ws,wt",
             ["GRC_STREAM_VERSION"] = StreamVersion.ToString(CultureInfo.InvariantCulture),
+            // The browser does not consume resource hints.
+            ["GRC_RESOURCE_HINTS"] = "off",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = evidenceDirectory,
             ["GRC_LIVE_ALLOWED_ORIGINS"] = string.Join(',', allowedOrigins),

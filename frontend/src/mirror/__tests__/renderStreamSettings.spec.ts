@@ -72,13 +72,13 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(readStoredMirrorSettings(memoryStorage({ renderer: 7 }))).toEqual({});
   });
 
-  it("layers ?renderer= / ?renderStream= / ?rsProtocol= / ?rsCarrier= for the session and never writes them back", () => {
+  it("layers ?renderer= / ?renderStream= / ?rsCarrier= for the session and never writes them back", () => {
     const storage = memoryStorage({ renderer: "mirror" });
     const settings = createMirrorSettings(undefined,
-      "?renderer=stream&renderStream=ws://127.0.0.1:14861/render-stream&rsProtocol=11&rsCarrier=websocket", { storage });
+      "?renderer=stream&renderStream=ws://127.0.0.1:14861/render-stream&rsCarrier=websocket", { storage });
     expect(settings.renderer).toBe("stream");
     expect(settings.renderStreamUrl).toBe("ws://127.0.0.1:14861/render-stream");
-    expect(settings.renderStreamProtocol).toBe(11);
+    expect(settings.renderStreamProtocol).toBe(16);
     expect(settings.renderStreamCarrier).toBe("websocket");
     expect(createMirrorSettings(undefined, "?rsCarrier=webtransport", { storage: null }).renderStreamCarrier).toBe("webtransport");
     expect(createMirrorSettings(undefined, "?rsCarrier=quic", { storage: null }).renderStreamCarrier).toBe("auto");
@@ -94,15 +94,12 @@ describe("mirrorSettings — the renderer keys", () => {
       .toBe("mirror");
   });
 
-  it("accepts only an absolute ws(s) QA endpoint and a known protocol", () => {
+  it("accepts only an absolute ws(s) QA endpoint and uses protocol 16", () => {
     const at = (search: string) => createMirrorSettings(undefined, search, { storage: null });
     expect(at("?renderStream=http://127.0.0.1:1/render-stream").renderStreamUrl).toBeNull();
     expect(at("?renderStream=/render-stream").renderStreamUrl).toBeNull();
     expect(at("?renderStream=wss://h.example:9/render-stream").renderStreamUrl).toBe("wss://h.example:9/render-stream");
-    expect(at("?rsProtocol=8").renderStreamProtocol).toBe(13);
-    expect(at("").renderStreamProtocol).toBe(13);
-    expect(at("?rsProtocol=12").renderStreamProtocol).toBe(12);
-    expect(at("?rsProtocol=14").renderStreamProtocol).toBe(14);
+    expect(at("").renderStreamProtocol).toBe(16);
   });
 
   it("preserves saved freezes under the stream while disabling static background and tween replay", () => {
@@ -201,25 +198,29 @@ describe("mirrorSettings — the renderer keys", () => {
     }
   });
 
-  it("forces Particles by protocol: dynamic at /12, off at /11", () => {
-    expect(STREAM_RENDER_OVERRIDES.particleMode(12)).toBe("dynamic");
-    expect(STREAM_RENDER_OVERRIDES.particleMode(11)).toBe("off");
+  it("forces dynamic Particles for the stream", () => {
+    expect(STREAM_RENDER_OVERRIDES.particleMode(16)).toBe("dynamic");
   });
 });
 
 describe("renderStreamAvailability", () => {
-  const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://127.0.0.1:14861/render-stream", renderStreamProtocol: 12 });
+  const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://127.0.0.1:14861/render-stream", renderStreamProtocol: 16 });
   const base: RenderStreamAvailabilityInputs = {
     coreProblem: null, coreLoadFailed: false, webgl2: true, directView: false, qaEndpoint: null,
     sessionEndpoint: null, pageLoopback: true, lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
   };
 
+  it.each([8, 11, 12, 13, 14, 15, 17])("rejects a session descriptor with protocol %s", (protocol) => {
+    expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol })).toBeNull();
+  });
+
   it("derives the QA descriptor: the hub's origin, no token, 1920x1080", () => {
     expect(qa).toEqual({ url: "ws://127.0.0.1:14861/render-stream", resourceBase: "http://127.0.0.1:14861",
-      token: null, protocol: 12, presentation: [1920, 1080] });
-    expect(qaRenderStreamEndpoint({ renderStreamUrl: "wss://h.example/render-stream", renderStreamProtocol: 11 }))
-      .toMatchObject({ resourceBase: "https://h.example", protocol: 11 });
-    expect(qaRenderStreamEndpoint({ renderStreamUrl: null, renderStreamProtocol: 12 })).toBeNull();
+      token: null, protocol: 16, presentation: [1920, 1080] });
+    expect(qaRenderStreamEndpoint({ renderStreamUrl: "wss://h.example/render-stream", renderStreamProtocol: 16 }))
+      .toMatchObject({ resourceBase: "https://h.example", protocol: 16 });
+    expect(qaRenderStreamEndpoint({ renderStreamUrl: null, renderStreamProtocol: 16 })).toBeNull();
   });
 
   it("applies the reasons in the design's precedence", () => {
@@ -275,7 +276,7 @@ describe("renderStreamAvailability", () => {
       expect(seatRendererRequest({ ...inputs, renderer: "stream" })).toBe(usable ? "stream" : undefined);
       expect(computeRenderStreamAvailability(inputs).reason).toBe(usable ? "not-streaming" : "needs-proxy");
       const endpoint = sessionRenderStreamEndpoint({ url: "/render-stream/host/ws", resourceBase: "/render-stream/host",
-        token: "a".repeat(64), protocol: 13 });
+        token: "a".repeat(64), protocol: 16 });
       expect(computeRenderStreamAvailability({ ...inputs, sessionEndpoint: endpoint }).available).toBe(usable);
       expect(computeRenderStreamAvailability({ ...inputs, qaEndpoint: qa })).toMatchObject({ available: true, source: "qa-override" });
       expect(seatRendererRequest({ ...inputs, renderer: "stream", qaEndpoint: qa })).toBeUndefined();
@@ -286,7 +287,7 @@ describe("renderStreamAvailability", () => {
 
   it("prefers the QA endpoint, then the seat's own descriptor", () => {
     const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
-      token: "a".repeat(64), protocol: 12 });
+      token: "a".repeat(64), protocol: 16 });
     expect(seat).not.toBeNull();
     expect(computeRenderStreamAvailability({ ...base, qaEndpoint: qa, sessionEndpoint: seat })).toMatchObject({
       available: true, source: "qa-override", endpoint: qa });
@@ -296,7 +297,7 @@ describe("renderStreamAvailability", () => {
 
   it("treats an unusable envelope descriptor as not streaming", () => {
     expect(sessionRenderStreamEndpoint(null)).toBeNull();
-    expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: "short", protocol: 12 })).toBeNull();
+    expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: "short", protocol: 16 })).toBeNull();
     expect(sessionRenderStreamEndpoint({ url: "ws://x/render-stream", resourceBase: "", token: null, protocol: 9 })).toBeNull();
   });
 
@@ -305,15 +306,15 @@ describe("renderStreamAvailability", () => {
     // its `carrier: "auto"` default prefers on a secure-context page such as the host's own loopback http page.
     const hash = "c".repeat(64);
     const seat = sessionRenderStreamEndpoint(JSON.parse(JSON.stringify({ url: "ws://127.0.0.1:13366/render-stream",
-      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 13, presentation: [1920, 1080],
+      resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol: 16, presentation: [1920, 1080],
       webTransport: { url: "https://127.0.0.1:13366/render-stream", certificateHashes: [hash] } })));
     expect(seat?.webTransport).toEqual({ url: "https://127.0.0.1:13366/render-stream", certificateHashes: [hash] });
     expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: seat })).toMatchObject({ available: true, source: "session" });
     // A malformed carrier spoils the whole descriptor (the client never guesses), which the seat's own checks prevent.
     expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
-      token: null, protocol: 13, webTransport: null })).toBeNull();
+      token: null, protocol: 16, webTransport: null })).toBeNull();
     expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
-      token: null, protocol: 13, webTransport: { url: "http://127.0.0.1:1/render-stream" } })).toBeNull();
+      token: null, protocol: 16, webTransport: { url: "http://127.0.0.1:1/render-stream" } })).toBeNull();
   });
 
   it("names why the core is unusable: the build's problem first, then a failed load", () => {
@@ -364,14 +365,14 @@ describe("renderStreamAvailability", () => {
     it("streams a plain-http LAN page over the seat's ws, never WebTransport (CAR9)", () => {
       const token = "a".repeat(64);
       const ws = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
-        resourceBase: "http://192.168.1.77:13366", token, protocol: 13 })!;
+        resourceBase: "http://192.168.1.77:13366", token, protocol: 16 })!;
       expect(endpointCarrierUsable(ws, pages.httpLan)).toBe(true);
       expect(computeRenderStreamAvailability({ ...base, pageLoopback: false, sessionEndpoint: ws, page: pages.httpLan }))
         .toMatchObject({ available: true, source: "session", endpoint: ws });
       // WebTransport needs a secure context: a WebTransport member does not make a descriptor usable on an http page,
       // only its socket url does (the seat describes none for an http page anyway).
       const wtOnHttps = sessionRenderStreamEndpoint({ url: "wss://192.168.1.77:13366/render-stream",
-        resourceBase: "https://192.168.1.77:13366", token, protocol: 13,
+        resourceBase: "https://192.168.1.77:13366", token, protocol: 16,
         webTransport: { url: "https://192.168.1.77:13366/render-stream", certificateHashes: ["c".repeat(64)] } })!;
       expect(endpointCarrierUsable({ ...wtOnHttps, url: "ws://192.168.1.77:13366/render-stream" },
         { https: true, secureContext: false, webTransport: true })).toBe(false);
@@ -391,11 +392,11 @@ describe("renderStreamAvailability", () => {
       const token = "a".repeat(64);
       const wt = { url: "https://192.168.1.77:13366/render-stream", certificateHashes: ["c".repeat(64)] };
       const plainWithWt = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
-        resourceBase: "https://192.168.1.77:13366", token, protocol: 13, webTransport: wt })!;
+        resourceBase: "https://192.168.1.77:13366", token, protocol: 16, webTransport: wt })!;
       const wss = sessionRenderStreamEndpoint({ url: "wss://192.168.1.77:13366/render-stream",
-        resourceBase: "https://192.168.1.77:13366", token, protocol: 13 })!;
+        resourceBase: "https://192.168.1.77:13366", token, protocol: 16 })!;
       const ws = sessionRenderStreamEndpoint({ url: "ws://192.168.1.77:13366/render-stream",
-        resourceBase: "http://192.168.1.77:13366", token, protocol: 13 })!;
+        resourceBase: "http://192.168.1.77:13366", token, protocol: 16 })!;
       expect(endpointCarrierUsable(plainWithWt, pages.httpsChrome)).toBe(true);
       expect(endpointCarrierUsable(plainWithWt, pages.httpsNoWt)).toBe(false);
       expect(endpointCarrierUsable(wss, pages.httpsNoWt)).toBe(true);
@@ -408,7 +409,7 @@ describe("renderStreamAvailability", () => {
         page: pages.httpsChrome })).toMatchObject({ available: true, source: "session" });
       // The host's own loopback page keeps working exactly as before (ws on loopback).
       const loop = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
-        resourceBase: "http://127.0.0.1:13366", token, protocol: 13 })!;
+        resourceBase: "http://127.0.0.1:13366", token, protocol: 16 })!;
       expect(computeRenderStreamAvailability({ ...base, sessionEndpoint: loop })).toMatchObject({ available: true });
     });
 
@@ -457,7 +458,7 @@ describe("renderStreamAvailability", () => {
 
   it("runs a seat stream only when this page chose it, until it stops", () => {
     const seat = sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:1/render-stream", resourceBase: "http://127.0.0.1:1",
-      token: "a".repeat(64), protocol: 12 });
+      token: "a".repeat(64), protocol: 16 });
     const streaming = computeRenderStreamAvailability({ ...base, sessionEndpoint: seat });
     expect(resolveRuntimeRenderer("mirror", streaming, null)).toBe("mirror");
     expect(resolveRuntimeRenderer("stream", streaming, null)).toBe("stream");
@@ -471,7 +472,7 @@ describe("renderStreamAvailability", () => {
     try {
       Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true });
       Object.assign(mirrorSettings, { renderer: "stream", renderStreamUrl: "ws://127.0.0.1:9/render-stream",
-        renderStreamProtocol: 12 });
+        renderStreamProtocol: 16 });
       syncRuntimeRenderer();
       expect(mirrorSettings.runtimeRenderer).toBe("stream");
 
@@ -490,7 +491,7 @@ describe("renderStreamAvailability", () => {
     try {
       Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true });
       Object.assign(mirrorSettings, { renderer: "stream", renderStreamUrl: "ws://127.0.0.1:9/render-stream",
-        renderStreamProtocol: 12 });
+        renderStreamProtocol: 16 });
       syncRuntimeRenderer();
 
       stopRenderStream("core-load-failed: timeout after 30000 ms in wasm fetch + glue import");
@@ -516,7 +517,7 @@ describe("renderStreamAvailability", () => {
 describe("relay protocol2", () => {
   it("normalizes relay paths on the host before validating carriers, preserving resource prefixes", () => {
     const raw = { url: "/render-stream/seat-1/ws", resourceBase: "/render-stream/seat-1",
-      token: null, protocol: 13, presentation: [2340, 1080] };
+      token: null, protocol: 16, presentation: [2340, 1080] };
     const endpoint = sessionRenderStreamEndpoint(raw, "https://host.example");
     expect(endpoint).toMatchObject({ url: "wss://host.example/render-stream/seat-1/ws",
       resourceBase: "https://host.example/render-stream/seat-1", presentation: [2340, 1080] });
@@ -530,7 +531,7 @@ describe("relay protocol2", () => {
       webgl2: true, directView: false, qaEndpoint: null, sessionEndpoint: null, pageLoopback: true };
     expect(computeRenderStreamAvailability(inputs).reason).toBe("host-update");
     expect(seatRendererRequest({ ...inputs, renderer: "stream" })).toBeUndefined();
-    const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://localhost:9/render-stream", renderStreamProtocol: 13 });
+    const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://localhost:9/render-stream", renderStreamProtocol: 16 });
     expect(computeRenderStreamAvailability({ ...inputs, qaEndpoint: qa }).available).toBe(true);
     expect(parseLanOffer({ relay: true, webTransport: false, tls: false, ws: true })?.relay).toBe(true);
   });

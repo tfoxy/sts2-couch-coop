@@ -87,7 +87,7 @@ internal sealed partial class BrowserServerRouteTests
         internal int Releases;
         public (long Epoch, bool Ready, int Width, int Height) PresentationStatus => (0, true, 1920, 1080);
         public (string State, string? Reason, (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
-            => ("armed", null, ("127.0.0.1:13366", "test", "test", "1920x1080", 13));
+            => ("armed", null, ("127.0.0.1:13366", "test", "test", "1920x1080", 16));
         public bool WantsRenderStream(string pageId) => true;
         public void RequestRenderer(string pageId, bool stream, double? aspect) { }
         public void ReleaseRenderer(string pageId) { }

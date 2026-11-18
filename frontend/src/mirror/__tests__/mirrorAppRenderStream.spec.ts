@@ -163,7 +163,7 @@ beforeEach(() => {
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
   // Widescreen stretch off unless a test turns it on: a streaming-seat request then carries no `aspect` (PRES-A).
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
-    renderStreamProtocol: 12, refreshRate: DEFAULT_REFRESH_RATE, ...HEADLESS_FREEZES, staticBgEnabled: true,
+    renderStreamProtocol: 16, refreshRate: DEFAULT_REFRESH_RATE, ...HEADLESS_FREEZES, staticBgEnabled: true,
     stretchEnabled: false });
 });
 
@@ -428,7 +428,7 @@ describe("MirrorApp — the new renderer's stream branch", () => {
 describe("MirrorApp — pairing with the host's streaming seat", () => {
   const SEAT_TOKEN = "c".repeat(64);
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
-    token: SEAT_TOKEN, protocol: 13, presentation: [1920, 1080] };
+    token: SEAT_TOKEN, protocol: 16, presentation: [1920, 1080] };
   const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
     ...HEADLESS_FREEZES, rendererState: { state: over.renderStream ? "armed" : "mirror" }, ...over
@@ -804,7 +804,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     await joinStreamingSeat();
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(fake.clients).toHaveLength(1);
-    expect(fake.clients[0].options.endpoint).toMatchObject({ url: descriptor.url, token: SEAT_TOKEN, protocol: 13 });
+    expect(fake.clients[0].options.endpoint).toMatchObject({ url: descriptor.url, token: SEAT_TOKEN, protocol: 16 });
   });
 
   it("answers the stage's unauthorized ask with a session-refresh on the seat socket", async () => {
@@ -1018,7 +1018,7 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
 // A reconnected seat socket applies the saved choice again, independently of the retired connection.
 describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
-    token: "e".repeat(64), protocol: 13, presentation: [1920, 1080] };
+    token: "e".repeat(64), protocol: 16, presentation: [1920, 1080] };
   const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
     ...HEADLESS_FREEZES, rendererState: { state: over.renderStream ? "armed" : "mirror" }, ...over
@@ -1124,7 +1124,7 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
 
 describe("MirrorApp — switching renderers with a mirror on screen", () => {
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
-    token: "a".repeat(64), protocol: 13, presentation: [1920, 1080] };
+    token: "a".repeat(64), protocol: 16, presentation: [1920, 1080] };
   const seatSession = (over: Record<string, unknown> = {}) => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
     ...HEADLESS_FREEZES, rendererState: { state: "armed" }, renderStream: descriptor, ...over
@@ -1767,7 +1767,7 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
 // the host's join would wait at "the browser is displaying the game" forever.
 describe("MirrorApp — the stage chunk fails to load", () => {
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
-    token: "f".repeat(64), protocol: 13, presentation: [1920, 1080] };
+    token: "f".repeat(64), protocol: 16, presentation: [1920, 1080] };
   const seatSession = () => sessionMessage({
     session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
     ...HEADLESS_FREEZES, renderStream: descriptor
