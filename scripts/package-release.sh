@@ -21,6 +21,7 @@ sibling checkouts beside this repo (../spirectl, ../godot-scene-web) at their cu
 must have a clean working tree -- rather than from the commits release-dependencies.json pins.
 
 Environment:
+  COUCHCOOP_MACOS_CAPTURE_DIR prebuilt macOS bundle (required for releases; optional for snapshots).
   COUCHCOOP_RELEASE_STS2_LANE   build only these lanes (space separated); default: every lane on
                                 disk. A payload built this way is a LOCAL build: it carries fewer
                                 lanes than a release and the gate is told so explicitly.
@@ -44,6 +45,20 @@ fi
 if [[ $# -ne 0 ]]; then
   usage
   exit 2
+fi
+
+macos_capture_dir="${COUCHCOOP_MACOS_CAPTURE_DIR:-}"
+if [[ -n "$macos_capture_dir" ]]; then
+  macos_capture_dir="$(cd "$macos_capture_dir" && pwd -P)"
+  for name in librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension build-info.txt; do
+    [[ -s "$macos_capture_dir/$name" ]] || { echo "package-release: missing macOS capture file: $name" >&2; exit 1; }
+  done
+  export COUCHCOOP_MACOS_CAPTURE_DIR="$macos_capture_dir"
+elif [[ "${COUCHCOOP_RELEASE_SNAPSHOT:-$snapshot}" != 1 ]]; then
+  echo 'package-release: releases require COUCHCOOP_MACOS_CAPTURE_DIR with the macOS capture bundle' >&2
+  exit 1
+else
+  echo 'package-release: COUCHCOOP_MACOS_CAPTURE_DIR unset; snapshot omits render-capture/macos/' >&2
 fi
 
 if [[ "${COUCHCOOP_RELEASE_STAGED:-}" != "1" ]]; then
@@ -296,6 +311,11 @@ for manifest in experiments/render-stream/web/gsw-rs/Cargo.toml experiments/rend
   cargo fetch --locked --manifest-path "$source_parent/godot-scene-web/$manifest"
 done
 COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-stream-client.sh"
+capture_targets=(linux windows)
+if [[ -n "$macos_capture_dir" ]]; then
+  capture_targets+=(macos)
+  COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-capture.sh" --target macos --from "$macos_capture_dir"
+fi
 for target in linux windows; do
   COUCHCOOP_GSW_ROOT="$source_parent/godot-scene-web" "$repo_root/scripts/build-render-capture.sh" --target "$target"
 done
@@ -405,11 +425,11 @@ done
 cp -a "$publish_root/$first_lane/." "$payload_dir/"
 
 # The streaming seat's capture, beside the shared tree (StreamingSeatLaunch.PackagedConfig looks for it there).
-for target in linux windows; do
+for target in "${capture_targets[@]}"; do
   mkdir -p "$payload_dir/render-capture/$target"
   for file in "$repo_root/.sts2/render-capture/$target/"*; do
     case "$(basename "$file")" in
-      source-stamp|toolchain.json|llvm-mingw-LICENSE.txt) continue ;;
+      source-stamp|toolchain.json|llvm-mingw-LICENSE.txt|build-info.txt) continue ;;
     esac
     cp "$file" "$payload_dir/render-capture/$target/"
   done
@@ -459,7 +479,11 @@ cp "$repo_root/.sts2/render-capture/windows/llvm-mingw-LICENSE.txt" "$license_di
 cp "$repo_root/licenses/render-capture/mingw-w64-runtime-COPYING.txt" "$license_dir/render-capture/windows/"
 cp "$repo_root/licenses/render-capture/rust-std-MIT.txt" "$license_dir/render-capture/windows/"
 # The net module statically links its crates; their licences, from the same Cargo.lock it was built from.
-python3 "$repo_root/scripts/render-capture-net-licenses.py" "$source_parent/godot-scene-web" "$license_dir/render-capture/net"
+net_license_args=()
+if [[ -n "$macos_capture_dir" ]]; then
+  net_license_args+=(--macos)
+fi
+python3 "$repo_root/scripts/render-capture-net-licenses.py" "$source_parent/godot-scene-web" "$license_dir/render-capture/net" "${net_license_args[@]}"
 
 npm_license_manifest="$license_dir/npm-dependencies.tsv"
 printf 'package\tversion\tdeclared-license\tlicense-file\n' > "$npm_license_manifest"
@@ -528,6 +552,10 @@ capture_sources=(/dev/null)
 for record_source in "$repo_root"/eng/render-capture/windows/*.source.json; do
   [[ -f "$record_source" ]] && capture_sources+=("$record_source")
 done
+macos_info=null
+if [[ -n "$macos_capture_dir" ]]; then
+  macos_info="$(python3 -I "$repo_root/scripts/lib/render-capture-macos-info.py" "$macos_capture_dir" "$godot_scene_web_commit")"
+fi
 jq -n \
   --arg schema "couchcoop-release-build-info/v2" \
   --arg sourceCommit "$source_commit" --arg tag "$tag" --arg version "$version" \
@@ -535,13 +563,14 @@ jq -n \
   --arg godotSceneWeb "$godot_scene_web_commit" \
   --argjson sts2References "$sts2_references" \
   --argjson captureRecords "$(jq -s 'map({key: .engineId, value: {gameBuildsSeen, exeSha256, recordSha256}}) | from_entries' "${capture_sources[@]}")" \
+  --argjson macosCapture "$macos_info" \
   --argjson llvmMingw "$(cat "$repo_root/.sts2/render-capture/windows/toolchain.json")" \
   --arg rustc "$(rustc --version)" \
   --arg dotnet "$(dotnet --version)" --arg node "$(node --version)" --arg pnpm "$(corepack pnpm --version)" \
   --arg frontendLock "$(release_sha256 "$repo_root/frontend/package-lock.json")" \
   --arg spirectlLock "$(release_sha256 "$source_parent/spirectl/presentation/web/pnpm-lock.yaml")" \
   --arg godotSceneWebLock "$(release_sha256 "$source_parent/godot-scene-web/pnpm-lock.yaml")" \
-  '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: $sts2References}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, renderCapture: {windows: {llvmMingw: $llvmMingw, rustc: $rustc, rustTarget: "x86_64-pc-windows-gnullvm", records: $captureRecords}}, lockfileSha256: {frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
+  '{schemaVersion: $schema, sourceCommit: $sourceCommit, tag: ($tag | if length > 0 then . else null end), version: $version, dependencies: {spirectl: $spirectl, godotSceneWeb: $godotSceneWeb, sts2References: $sts2References}, toolchain: {dotnet: $dotnet, node: $node, pnpm: $pnpm}, renderCapture: ({windows: {llvmMingw: $llvmMingw, rustc: $rustc, rustTarget: "x86_64-pc-windows-gnullvm", records: $captureRecords} } + (if $macosCapture == null then {} else {macos: $macosCapture} end)), lockfileSha256: {frontendPackageLock: $frontendLock, spirectlPresentationPnpmLock: $spirectlLock, godotSceneWebPnpmLock: $godotSceneWebLock}}' > "$build_info"
 
 # The payload is complete here, build-info.txt included, so the gate sees exactly what ships. The
 # lane expectations are stated, not inferred: every lane built must be present, and a full release

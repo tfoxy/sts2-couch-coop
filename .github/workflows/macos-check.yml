@@ -44,6 +44,7 @@ jobs:
         timeout-minutes: 3
         run: |
           scripts/test-macos-iphone-workflow-policy.sh
+          scripts/test-macos-capture-workflow.sh
           scripts/test-validate-iphone-artifact-stage.sh
 
       - name: Check shell scripts when ShellCheck is available
@@ -63,8 +64,52 @@ jobs:
               scripts/verify-sts2-reference-sdk.sh
           fi
 
-  snapshot:
+  macos-capture:
     needs: policy
+    if: ${{ github.event_name == 'push' || inputs.run_arm == true || inputs.run_intel == true }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out source without credentials
+        timeout-minutes: 3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: sources/sts2-couch-coop
+          persist-credentials: false
+
+      - name: Build the pinned universal macOS capture
+        timeout-minutes: 50
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          url="$(jq -er '.dependencies["godot-scene-web"].repository' release-dependencies.json)"
+          commit="$(jq -er '.dependencies["godot-scene-web"].commit' release-dependencies.json)"
+          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
+          git clone --quiet "$url" ../godot-scene-web
+          git -C ../godot-scene-web checkout --quiet --detach "$commit"
+          test "$(git -C ../godot-scene-web rev-parse HEAD)" = "$commit"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo fetch --locked --manifest-path ../godot-scene-web/experiments/render-stream/rs-net/Cargo.toml
+          bash ../godot-scene-web/experiments/render-stream/scripts/build-capture.sh --target macos
+          bash ../godot-scene-web/experiments/render-stream/scripts/build-rs-net.sh --target macos
+          bundle=../godot-scene-web/experiments/render-stream/capture/build/macos/bundle
+          mkdir -p ../macos-capture
+          for name in librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension build-info.txt; do
+            cp "$bundle/$name" ../macos-capture/
+          done
+          (cd ../macos-capture && shasum -a 256 librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension build-info.txt > SHA256SUMS)
+
+      - name: Upload the macOS capture with checksums
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-capture-${{ github.run_id }}
+          path: sources/macos-capture/
+          if-no-files-found: error
+          retention-days: 1
+
+  snapshot:
+    needs: [policy, macos-capture]
     if: ${{ github.event_name == 'push' || inputs.run_arm == true || inputs.run_intel == true }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -118,9 +163,29 @@ jobs:
           rustup target add wasm32-unknown-unknown x86_64-pc-windows-gnullvm
           cargo install wasm-bindgen-cli --version 0.2.129 --locked
 
+      - name: Download the macOS capture
+        timeout-minutes: 5
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: macos-capture-${{ github.run_id }}
+          path: macos-capture/
+
+      - name: Verify the macOS artifact handoff
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          cd macos-capture
+          sha256sum --check --strict SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 4
+          for name in librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension build-info.txt; do
+            awk -v name="$name" '$2 == name { found = 1 } END { exit !found }' SHA256SUMS
+          done
+
       - name: Build and validate the production snapshot package
         timeout-minutes: 55
         working-directory: sources/sts2-couch-coop
+        env:
+          COUCHCOOP_MACOS_CAPTURE_DIR: ${{ github.workspace }}/macos-capture
         run: scripts/package-release.sh --snapshot
 
       - name: Upload the production snapshot package
@@ -413,6 +478,11 @@ jobs:
           scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
             --lane stable --lane public-beta --lane beta-v113 --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
+          for name in librender_stream_capture.dylib librender_stream_net.dylib; do
+            library="$extracted/couchcoop/render-capture/macos/$name"
+            lipo "$library" -verify_arch arm64 x86_64
+            codesign --verify --strict --all-architectures "$library"
+          done
 
       - name: Run iPhone 13 Simulator Safari survival contract
         timeout-minutes: 25
@@ -690,6 +760,11 @@ jobs:
           scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
             --lane stable --lane public-beta --lane beta-v113 --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
+          for name in librender_stream_capture.dylib librender_stream_net.dylib; do
+            library="$extracted/couchcoop/render-capture/macos/$name"
+            lipo "$library" -verify_arch arm64 x86_64
+            codesign --verify --strict --all-architectures "$library"
+          done
 
       - name: Verify stock Godot honors a fake HOME
         timeout-minutes: 5

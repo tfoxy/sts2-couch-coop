@@ -48,12 +48,12 @@ require_fixed "default: false" "Intel must remain opt-in"
 require_fixed "- 'ci/macos'" "ci/macos branch trigger is missing"
 require_fixed "contents: read" "workflow permissions must remain contents: read"
 
-for job in policy snapshot iphone_webkit macos_arm macos_intel; do
+for job in policy macos-capture snapshot iphone_webkit macos_arm macos_intel; do
   require_fixed "  $job:" "required job is missing: $job"
 done
 
 require_count "needs: policy" 2 \
-  "WebKit and the Linux snapshot must depend only on the policy gate"
+  "WebKit and the macOS capture must depend only on the policy gate"
 reject_fixed "needs: [policy, iphone_webkit]" \
   "Mac jobs must not wait for the independent WebKit job"
 require_fixed "inputs.run_webkit == true" \
@@ -62,14 +62,14 @@ require_fixed "inputs.run_webkit == true" \
 # Scope package policy to each job so one correct Mac cannot mask a regression in the other.
 job_source() {
   awk -v job="$1" '
-    /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
+    /^  [a-z0-9_-]+:$/ { selected = ($0 == "  " job ":") }
     selected { print }
   ' "$workflow"
 }
 
 snapshot_source="$(job_source snapshot)"
 for required in \
-  'needs: policy' \
+  'needs: [policy, macos-capture]' \
   'runs-on: ubuntu-24.04' \
   "if: \${{ github.event_name == 'push' || inputs.run_arm == true || inputs.run_intel == true }}" \
   'rustup target add wasm32-unknown-unknown x86_64-pc-windows-gnullvm' \
@@ -182,7 +182,7 @@ fi
 
 job_count="$(awk '
   /^jobs:$/ { in_jobs = 1; next }
-  in_jobs && /^  [a-z0-9_]+:$/ { count += 1 }
+  in_jobs && /^  [a-z0-9_-]+:$/ { count += 1 }
   END { print count + 0 }
 ' "$workflow")"
 job_timeout_count="$(grep -Ec '^    timeout-minutes: [0-9]+$' "$workflow" || true)"
@@ -226,8 +226,8 @@ for forbidden in "$fixture_tag" "$fixture_name" "$real_job" "$private_fixture" "
 done
 
 upload_count="$(grep -Fc 'uses: actions/upload-artifact@' "$workflow" || true)"
-if [ "$upload_count" -ne 3 ]; then
-  fail "workflow must have exactly two synthetic uploads and one Linux snapshot upload"
+if [ "$upload_count" -ne 4 ]; then
+  fail "workflow must have exactly two synthetic uploads, one macOS capture upload and one Linux snapshot upload"
 fi
 require_fixed "path: sources/sts2-couch-coop/.ci-artifacts/iphone-webkit" \
   "artifact upload path must be the reviewed repository-internal staging directory"

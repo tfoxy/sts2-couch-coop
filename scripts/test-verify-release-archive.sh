@@ -138,6 +138,10 @@ make_valid_payload() { # make_valid_payload <root> [lane]...
   done
   printf '[libraries]\nlinux.x86_64 = "librender_stream_capture.so"\n' > "$root/render-capture/linux/render_stream_capture.gdextension"
   printf '[libraries]\nwindows.x86_64 = "render_stream_capture.dll"\n' > "$root/render-capture/windows/render_stream_capture.gdextension"
+  bash "$repo_root/scripts/test-build-render-capture-macos.sh" --fixture "$root/render-capture/macos"
+  rm "$root/render-capture/macos/build-info.txt"
+  printf '[libraries]\nmacos.arm64 = "librender_stream_capture.dylib"\nmacos.x86_64 = "librender_stream_capture.dylib"\n' > "$root/render-capture/macos/render_stream_capture.gdextension"
+  printf 'fixture\n' > "$root/render-capture/macos/abi-table.godot-4.5.1-rendering-server"
   for file in llvm-mingw-LICENSE.txt mingw-w64-runtime-COPYING.txt rust-std-MIT.txt; do
     printf 'fixture license\n' > "$root/licenses/render-capture/windows/$file"
   done
@@ -629,4 +633,33 @@ done
 valid_record="$(clone_payload valid-windows-record)"
 printf 'fixture\n' > "$valid_record/render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c"
 "$verifier" --payload "$valid_record" --version 1.2.3 "${all_lane_args[@]}"
+for name in librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension; do
+  bad="$(clone_payload "missing-macos-$name")"
+  rm "$bad/render-capture/macos/$name"
+  expect_reject_saying "missing-macos-$name" "release payload is missing: render-capture/macos/$name" \
+    "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}" --complete
+done
+for mode in missing homebrew identity unsigned; do
+  bad="$(clone_payload "macos-$mode")"
+  bash "$repo_root/scripts/test-build-render-capture-macos.sh" --fixture "$fixture_root/macho-$mode" "$mode"
+  cp "$fixture_root/macho-$mode/"*.dylib "$bad/render-capture/macos/"
+  expect_reject "macos-$mode" "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}" --complete
+done
+bad="$(clone_payload macos-descriptor)"
+printf 'macos.x86_64 = "wrong.dylib"\n' >> "$bad/render-capture/macos/render_stream_capture.gdextension"
+expect_reject_saying macos-descriptor 'invalid macos descriptor libraries' \
+  "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}"
+for arch in arm64 x86_64; do
+  good="$(clone_payload "macos-record-$arch")"
+  printf 'fixture\n' > "$good/render-capture/macos/calibration.megadot-4.5.1-m12-1234abcd"
+  "$verifier" --payload "$good" --version 1.2.3 "${all_lane_args[@]}" --complete >/dev/null
+done
+bad="$(clone_payload missing-macos)"
+rm -rf "$bad/render-capture/macos"
+expect_reject_saying missing-macos 'release payload is missing: render-capture/macos/' \
+  "$verifier" --payload "$bad" --version 1.2.3 "${all_lane_args[@]}" --complete
+write_build_info "$bad" '1.2.3+snapshot.123456789abc' "${known_lanes[@]}"
+jq '.version = "1.2.3+snapshot.123456789abc"' "$bad/couchcoop.json" > "$bad/manifest.tmp"
+mv "$bad/manifest.tmp" "$bad/couchcoop.json"
+"$verifier" --payload "$bad" --version '1.2.3+snapshot.123456789abc' "${all_lane_args[@]}" --complete >/dev/null
 echo "test-verify-release-archive: ok"

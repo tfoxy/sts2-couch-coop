@@ -6,11 +6,24 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/lib/render-capture-stamp.sh"
 target=linux
-if [[ "${1:-}" == --target && $# -eq 2 ]]; then target="$2"; shift 2; fi
-if [[ $# -ne 0 || ( "$target" != linux && "$target" != windows ) ]]; then
-  echo 'usage: scripts/build-render-capture.sh [--target linux|windows]' >&2; exit 2
+from=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target|--from)
+      [[ $# -ge 2 && -n "$2" ]] || { echo "$1 requires a value" >&2; exit 2; }
+      if [[ "$1" == --target ]]; then target="$2"; else from="$2"; fi
+      shift 2 ;;
+    *) echo 'usage: scripts/build-render-capture.sh [--target linux|windows|macos] [--from <macos bundle>]' >&2; exit 2 ;;
+  esac
+done
+if [[ "$target" != linux && "$target" != windows && "$target" != macos ]] || [[ -n "$from" && "$target" != macos ]]; then
+  echo 'render capture: --from is only supported with --target macos' >&2; exit 2
 fi
-if [[ "$(uname -sm)" != 'Linux x86_64' ]]; then
+if [[ "$target" == macos ]]; then
+  [[ "$(uname -s)" == Darwin || ( "$(uname -s)" == Linux && -n "$from" ) ]] || {
+    echo 'render capture: macos needs a macOS host, or --from <prebuilt bundle> on Linux' >&2; exit 2;
+  }
+elif [[ "$(uname -sm)" != 'Linux x86_64' ]]; then
   echo "render capture: target $target needs a Linux x86_64 build host" >&2; exit 1
 fi
 gsw_root="${COUCHCOOP_GSW_ROOT:-$repo_root/../godot-scene-web}"
@@ -20,6 +33,44 @@ net_build="$gsw_root/experiments/render-stream/scripts/build-rs-net.sh"
 out_root="${COUCHCOOP_RENDER_CAPTURE_OUT:-$repo_root/.sts2/render-capture}"
 out="$out_root/$target"
 calibration_src="$(render_capture_calibration_source "$repo_root" || true)"
+if [[ "$target" == macos ]]; then
+  if [[ -z "$from" ]]; then
+    bash "$gsw_root/experiments/render-stream/scripts/build-capture.sh" --target macos
+    bash "$net_build" --target macos
+    from="$capture_src/build/macos/bundle"
+  fi
+  for name in librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension build-info.txt; do
+    [[ -s "$from/$name" ]] || { echo "render capture: missing macos bundle file: $from/$name" >&2; exit 1; }
+  done
+  python3 -I "$repo_root/scripts/lib/render-capture-macos.py" \
+    "$from/librender_stream_capture.dylib" "$from/librender_stream_net.dylib"
+  mkdir -p "$out"
+  rm -f "$out/source-stamp" "$out"/calibration.*
+  cp "$from/librender_stream_capture.dylib" "$from/librender_stream_net.dylib" "$from/build-info.txt" "$out/"
+  python3 -I - "$from/render_stream_capture.gdextension" "$out/render_stream_capture.gdextension" <<'PYEXT'
+from pathlib import Path
+import sys
+lines, libraries = [], False
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if line.strip().startswith('['):
+        libraries = line.strip() == '[libraries]'
+        lines.append(line)
+        if libraries:
+            lines += [f'macos.{arch} = "librender_stream_capture.dylib"' for arch in ('arm64', 'x86_64')]
+    elif not libraries or not line.strip() or line.lstrip().startswith(';'):
+        lines.append(line)
+if '[libraries]' not in lines:
+    sys.exit('render capture: descriptor has no [libraries] section')
+Path(sys.argv[2]).write_text('\n'.join(lines) + '\n')
+PYEXT
+  for record in "$repo_root"/eng/render-capture/macos/*.json; do
+    [[ -f "$record" && "$record" != *.source.json ]] || continue
+    cp "$record" "$out/calibration.$(basename "$record" .json)"
+  done
+  render_capture_stage_abi_tables "$gsw_root" "$out"
+  echo "render capture staged in $out"
+  exit 0
+fi
 [[ -f "$capture_src/CMakeLists.txt" && -f "$net_build" ]] || {
   echo "render-stream capture sources missing: $gsw_root (set COUCHCOOP_GSW_ROOT)" >&2; exit 1;
 }

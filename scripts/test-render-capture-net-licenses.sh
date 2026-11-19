@@ -24,7 +24,8 @@ python3 -I - "$work" <<'PY'
 import json, sys
 from pathlib import Path
 work = Path(sys.argv[1])
-for target in ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-gnullvm'):
+for target in ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-gnullvm',
+               'aarch64-apple-darwin', 'x86_64-apple-darwin'):
     packages, nodes = [], []
     def package(name, version='1.0.0', deps=()):
         directory = work / 'crates' / f'{name}-{version}'
@@ -50,8 +51,13 @@ for target in ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-gnullvm'):
     deps = [(shared, [None]), (mixed, ['build', None]), (dev, ['dev']), (build, ['build'])]
     if target == 'x86_64-pc-windows-gnullvm':
         deps += [(windows, [None]), (package('shared', '2.0.0'), [None])]
-    else:
+    elif target == 'x86_64-unknown-linux-gnu':
         deps += [(linux, [None])]
+    else:
+        apple = package('security-framework', deps=[
+            (package(name), [None]) for name in
+            ('bitflags', 'core-foundation', 'core-foundation-sys', 'security-framework-sys')])
+        deps += [(apple, [None]), (package(target + '-only'), [None])]
     root = package('render-stream-net', deps=deps)
     (work / (target + '.json')).write_text(json.dumps(dict(packages=packages, resolve=dict(root=root, nodes=nodes))))
 PY
@@ -92,4 +98,26 @@ check(all(t in notice for t in ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-g
                               'render-capture/linux/librender_stream_net.so',
                               'render-capture/windows/render_stream_net.dll']), 'notice omits shipped targets')
 print(f'render capture net licences: {checks} checks passed')
+PY
+LICENSE_TEST_WORK="$work" PATH="$work/bin:$PATH" \
+  python3 -I "$here/render-capture-net-licenses.py" "$work/gsw" "$work/out-macos" --macos
+python3 -I - "$work" <<'PY'
+import csv, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+out = work / 'out-macos'
+with (out / 'manifest.tsv').open() as manifest:
+    rows = {r['crate']: r for r in csv.DictReader(manifest, delimiter='\t')}
+apple = ('bitflags', 'core-foundation', 'core-foundation-sys', 'security-framework',
+         'security-framework-sys', 'aarch64-apple-darwin-only', 'x86_64-apple-darwin-only')
+for name in apple:
+    assert name in rows, f'Apple-only dependency missing: {name}'
+    assert f'licence text for {name} 1.0.0\n' in (out / rows[name]['license_filename']).read_text()
+    assert name not in (work / 'out/manifest.tsv').read_text(), 'Apple dependency added without macOS'
+assert (work / 'calls').read_text().splitlines()[2:] == [
+    'x86_64-unknown-linux-gnu', 'x86_64-pc-windows-gnullvm', 'aarch64-apple-darwin', 'x86_64-apple-darwin']
+notice = (out / 'THIRD_PARTY_NOTICES.md').read_text()
+assert all(t in notice for t in ('aarch64-apple-darwin', 'x86_64-apple-darwin',
+                                'render-capture/macos/librender_stream_net.dylib'))
+print('render capture macOS net licences: 23 checks passed')
 PY

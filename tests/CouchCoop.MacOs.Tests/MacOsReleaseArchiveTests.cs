@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.IO.Compression;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
@@ -18,6 +19,13 @@ internal static class MacOsReleaseArchiveTests
 
     internal static void RunGraphTests()
     {
+        foreach (var os in new[] { "linux", "windows", "macos" })
+        {
+            Assert(IsCaptureRecordOrTable($"render-capture/{os}/calibration.megadot-4.5.1-m12-1234abcd"), "engine capture record");
+            Assert(IsCaptureRecordOrTable($"render-capture/{os}/abi-table.godot-4.5.1-rendering-server"), "capture ABI table");
+            Assert(!IsCaptureRecordOrTable($"render-capture/{os}/calibration.stable"), "retired record alias refused");
+            Assert(!IsCaptureRecordOrTable($"render-capture/{os}/calibration.megadot-4.5.1-m12-1234abcd.json"), "JSON manifest refused");
+        }
         DependencyClosure.AssertOwnedReferencesResolve(
             [new("CouchCoop.Mod", ["CouchCoop.Spirectl", "GodotSharp"])],
             new HashSet<string>(["CouchCoop.Mod", "CouchCoop.Spirectl"], StringComparer.Ordinal),
@@ -51,11 +59,11 @@ internal static class MacOsReleaseArchiveTests
             "Microsoft.Extensions.Logging.Abstractions.dll", "System.Diagnostics.DiagnosticSource.dll", "YamlDotNet.dll",
             // The streaming seat's render capture, per OS (scripts/verify-release-archive.sh holds the full rules).
             "render-capture/linux/librender_stream_capture.so", "render-capture/linux/render_stream_capture.gdextension",
-            "render-capture/linux/librender_stream_net.so", "render-capture/linux/calibration.stable",
-            "render-capture/linux/calibration.public-beta", "render-capture/linux/calibration.beta-v113",
+            "render-capture/linux/librender_stream_net.so",
             "render-capture/windows/render_stream_capture.dll", "render-capture/windows/render_stream_capture.gdextension",
-            "render-capture/windows/render_stream_net.dll", "render-capture/windows/calibration.stable",
-            "render-capture/windows/calibration.public-beta"
+            "render-capture/windows/render_stream_net.dll",
+            "render-capture/macos/librender_stream_capture.dylib", "render-capture/macos/render_stream_capture.gdextension",
+            "render-capture/macos/librender_stream_net.dylib"
         };
         foreach (var assembly in SharedAssemblies) Assert(File.Exists(Path.Combine(payload, assembly)), $"shared file {assembly}");
 
@@ -73,7 +81,7 @@ internal static class MacOsReleaseArchiveTests
         {
             var relative = Path.GetRelativePath(payload, file).Replace(Path.DirectorySeparatorChar, '/');
             var isLane = LaneAssemblies.Any(name => relative == $"lanes/0.107.1/{name}" || relative == $"lanes/0.111.0/{name}" || relative == $"lanes/0.113.0/{name}");
-            var isKnownShared = allowed.Contains(relative);
+            var isKnownShared = allowed.Contains(relative) || IsCaptureRecordOrTable(relative);
             var isAllowedFrontend = relative.StartsWith("frontend/", StringComparison.Ordinal);
             var isAllowedLicense = relative.StartsWith("licenses/", StringComparison.Ordinal);
             Assert(isLane || isKnownShared || isAllowedFrontend || isAllowedLicense, $"unexpected release file {relative}");
@@ -95,6 +103,9 @@ internal static class MacOsReleaseArchiveTests
             DependencyClosure.AssertOwnedReferencesResolve(ownedNodes, payloadNames, ReviewedSdkClosure);
         }
     }
+
+    private static bool IsCaptureRecordOrTable(string path) => Regex.IsMatch(path,
+        @"\Arender-capture/(linux|windows|macos)/(calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}|abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-rendering-server)\z");
 
     private static DependencyClosure.Node ReadMetadataOnly(string path)
     {

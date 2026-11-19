@@ -78,6 +78,15 @@ for job in macos_arm macos_intel; do
   expect_reject "$job-download" "$tmp/$job-download.yml" "$job must download the Linux snapshot"
 done
 
+sed 's/needs: \[policy, macos-capture\]/needs: policy/' "$workflow" > "$tmp/snapshot-no-capture.yml"
+expect_reject snapshot-no-capture "$tmp/snapshot-no-capture.yml" \
+  "Linux snapshot job must include: needs: [policy, macos-capture]"
+
+sed '/name: Upload the macOS capture with checksums/,/retention-days: 1/d' \
+  "$workflow" > "$tmp/no-capture-upload.yml"
+expect_reject no-capture-upload "$tmp/no-capture-upload.yml" \
+  "workflow must have exactly two synthetic uploads, one macOS capture upload and one Linux snapshot upload"
+
 sed 's/ || inputs.run_intel == true//' "$workflow" > "$tmp/snapshot-toggle.yml"
 expect_reject snapshot-toggle "$tmp/snapshot-toggle.yml" \
   "Linux snapshot job must include: if:"

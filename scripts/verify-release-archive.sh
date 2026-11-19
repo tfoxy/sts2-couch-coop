@@ -67,15 +67,15 @@ is_allowed_payload_file() {
     frontend/icons/icon.svg|frontend/icons/icon-*.png) return 0 ;;
     licenses/FontAwesome-Free-6.7.2-LICENSE.txt|licenses/FontAwesome-CC-BY-4.0.txt|licenses/QRCoder-1.6.0-MIT.txt|licenses/DeviceDetector.NET-6.5.2-Apache-2.0.txt|licenses/LiteDB-5.0.21-MIT.txt|licenses/Microsoft.Extensions.DependencyInjection.Abstractions-10.0.10-MIT.txt|licenses/Microsoft.Extensions.Logging.Abstractions-10.0.10-MIT.txt|licenses/System.Diagnostics.DiagnosticSource-10.0.10-MIT.txt|licenses/YamlDotNet-18.1.0-MIT.txt|licenses/spirectl-LICENSE|licenses/spirectl-NOTICE|licenses/godot-scene-web-LICENSE|licenses/HarfBuzz-LICENSE|licenses/Emscripten-LICENSE|licenses/OpenSans-LICENSE|licenses/npm-dependencies.tsv) return 0 ;;
     # Capture records are extensionless: STS2 scans every *.json as a mod manifest.
-    render-capture/linux/librender_stream_capture.so|render-capture/linux/render_stream_capture.gdextension|render-capture/linux/librender_stream_net.so|render-capture/windows/render_stream_capture.dll|render-capture/windows/render_stream_capture.gdextension|render-capture/windows/render_stream_net.dll) return 0 ;;
-    render-capture/linux/calibration.*|render-capture/windows/calibration.*)
+    render-capture/linux/librender_stream_capture.so|render-capture/linux/render_stream_capture.gdextension|render-capture/linux/librender_stream_net.so|render-capture/windows/render_stream_capture.dll|render-capture/windows/render_stream_capture.gdextension|render-capture/windows/render_stream_net.dll|render-capture/macos/librender_stream_capture.dylib|render-capture/macos/librender_stream_net.dylib|render-capture/macos/render_stream_capture.gdextension) return 0 ;;
+    render-capture/linux/calibration.*|render-capture/windows/calibration.*|render-capture/macos/calibration.*)
       # Archive verification is self-contained; accept the engine naming contract without a checkout.
-      [[ "$path" =~ ^render-capture/(linux|windows)/calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}$ ]]
+      [[ "$path" =~ ^render-capture/(linux|windows|macos)/calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}$ ]]
       return
       ;;
     # Godot ABI tables for the capture's derived-calibration fallback, extensionless like the records.
-    render-capture/linux/abi-table.*|render-capture/windows/abi-table.*)
-      [[ "$path" =~ ^render-capture/(linux|windows)/abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-rendering-server$ ]]
+    render-capture/linux/abi-table.*|render-capture/windows/abi-table.*|render-capture/macos/abi-table.*)
+      [[ "$path" =~ ^render-capture/(linux|windows|macos)/abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-rendering-server$ ]]
       return
       ;;
     licenses/render-capture/windows/llvm-mingw-LICENSE.txt|licenses/render-capture/windows/mingw-w64-runtime-COPYING.txt|licenses/render-capture/windows/rust-std-MIT.txt) return 0 ;;
@@ -231,9 +231,12 @@ verify_crate_license_bundle() {
 }
 
 verify_capture_binaries() {
-  python3 -I - "$1" <<'PYCAPTURE'
+  python3 -I - "$1" "$require_complete" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib" <<'PYCAPTURE'
 from pathlib import Path
-import re, sys
+import json, re, sys
+sys.path.insert(0, sys.argv[3])
+from importlib import import_module
+macos = import_module("render-capture-macos")
 root = Path(sys.argv[1]) / 'render-capture'
 for os, names, magic in (
     ('linux', ('librender_stream_capture.so', 'librender_stream_net.so'), b'\x7fELF'),
@@ -254,6 +257,24 @@ for os, names, magic in (
         with (root / os / name).open('rb') as f:
             if f.read(len(magic)) != magic:
                 sys.exit(f'render capture: wrong binary magic: {os}/{name}')
+mac_root = root / 'macos'
+info = json.loads((root.parent / 'build-info.txt').read_text())
+if sys.argv[2] == '1' and '+snapshot.' not in info['version'] and not mac_root.is_dir():
+    sys.exit('release payload is missing: render-capture/macos/')
+if mac_root.is_dir():
+    descriptor = (mac_root / 'render_stream_capture.gdextension').read_text()
+    section, libraries = None, []
+    for raw in descriptor.splitlines():
+        line = raw.split(';', 1)[0].strip()
+        if line.startswith('['):
+            section = line
+        elif section == '[libraries]' and line:
+            libraries.append(line)
+    if sorted(libraries) != [f'macos.{arch} = "librender_stream_capture.dylib"' for arch in ('arm64', 'x86_64')]:
+        sys.exit('render capture: invalid macos descriptor libraries')
+    for name in ('librender_stream_capture.dylib', 'librender_stream_net.dylib'):
+        macos.verify(mac_root / name)
+
 PYCAPTURE
 }
 
@@ -320,6 +341,13 @@ verify_file_list() {
         ;;
     esac
   done < "$list_file"
+  if grep -q '^render-capture/macos/' "$list_file"; then
+    for required in librender_stream_capture.dylib librender_stream_net.dylib render_stream_capture.gdextension; do
+      grep -Fxq "render-capture/macos/$required" "$list_file" || {
+        echo "release payload is missing: render-capture/macos/$required" >&2; return 1;
+      }
+    done
+  fi
   for required in "${required_files[@]}"; do
     grep -Fxq "$required" "$list_file" || { echo "release payload is missing: $required" >&2; return 1; }
   done

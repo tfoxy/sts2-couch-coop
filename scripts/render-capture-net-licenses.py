@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the licence bundle for the Linux and Windows render-stream net modules a release ships.
+"""Write the licence bundle for the render-stream net modules a release ships.
 
 The module is godot-scene-web's rs-net, a Rust cdylib that statically links its crates.io dependencies
 (wtransport, quinn, rustls, ring, tokio, ...). godot-scene-web commits no licence bundle for it (unlike its MSDF
@@ -11,14 +11,16 @@ format so scripts/verify-release-archive.sh checks both the same way:
   THIRD_PARTY_NOTICES.md what this is and how it was made
 
 The crate set is the union of the normal (non-dev, non-build) dependency graphs of `render-stream-net` for
-x86_64-unknown-linux-gnu and x86_64-pc-windows-gnullvm, read offline with `cargo metadata --locked` and deduplicated
+x86_64-unknown-linux-gnu and x86_64-pc-windows-gnullvm (plus both Apple targets with --macos),
+read offline with `cargo metadata --locked` and deduplicated
 by name and version; procedural macros are included conservatively. A crate whose package ships no licence file
 gets its declared licence's standard text (MIT where the expression offers it), with the authors Cargo.toml names
 as the copyright holders, and the notice lists it.
 
-usage: scripts/render-capture-net-licenses.py <godot-scene-web root> <output dir>
+usage: scripts/render-capture-net-licenses.py <godot-scene-web root> <output dir> [--macos]
 """
 
+import argparse
 import json
 import os
 import re
@@ -27,6 +29,7 @@ import sys
 from pathlib import Path
 
 TARGETS = ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnullvm")
+MACOS_TARGETS = ("aarch64-apple-darwin", "x86_64-apple-darwin")
 LICENSE_FILE = re.compile(r"^(licen[cs]e|copying|notice)", re.IGNORECASE)
 MIT_TEXT = """Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 documentation files (the "Software"), to deal in the Software without restriction, including without limitation the
@@ -49,14 +52,17 @@ def normalize_spdx(expression: str) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        print(__doc__.strip().splitlines()[-1], file=sys.stderr)
-        return 2
-    gsw = Path(sys.argv[1]).resolve()
-    out = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("gsw", type=Path)
+    parser.add_argument("out", type=Path)
+    parser.add_argument("--macos", action="store_true", help="include both Apple dependency graphs")
+    args = parser.parse_args()
+    gsw = args.gsw.resolve()
+    out = args.out
+    targets = TARGETS + MACOS_TARGETS if args.macos else TARGETS
     manifest_path = gsw / "experiments/render-stream/rs-net/Cargo.toml"
     bundled = {}
-    for target in TARGETS:
+    for target in targets:
         metadata = json.loads(subprocess.run(
             ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", target,
              "--manifest-path", str(manifest_path)],
@@ -117,11 +123,12 @@ def main() -> int:
     notice = [
         "# Render-stream net module third-party notices",
         "",
-        "`render-capture/linux/librender_stream_net.so` and `render-capture/windows/render_stream_net.dll` are",
+        "`render-capture/linux/librender_stream_net.so` and `render-capture/windows/render_stream_net.dll`" +
+        (", plus `render-capture/macos/librender_stream_net.dylib`, are" if args.macos else " are"),
         "godot-scene-web's `rs-net` (the WebTransport carrier and the",
         "TLS for wss of the new renderer's streaming seat), built from `experiments/render-stream/rs-net/Cargo.lock`.",
         f"The modules statically link the {len(rows)} third-party crates in `manifest.tsv`: the union of the normal",
-        f"dependency graphs of `render-stream-net` for `{'` and `'.join(TARGETS)}`, deduplicated by name and version,",
+        f"dependency graphs of `render-stream-net` for `{'` and `'.join(targets)}`, deduplicated by name and version,",
         "procedural macros included conservatively. Each crate's",
         "`chosen_spdx` is the licence expression its Cargo.toml declares, and its `.txt` file carries every licence",
         "file of its package, copied from the crate source the module was built from.",
