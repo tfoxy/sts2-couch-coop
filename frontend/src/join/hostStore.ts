@@ -24,6 +24,12 @@ export interface RememberedHost {
   origin: string;
   /** Epoch ms of the last time this origin answered as a CouchCoop host. */
   lastSeenMs: number;
+  /** Base64url SHA-256 certificate fingerprint, when advertised by this host. */
+  fingerprint?: string;
+}
+
+function validFingerprint(value: unknown): string | undefined {
+  return typeof value === "string" && value.length === 43 && /^[A-Za-z0-9_-]+$/.test(value) ? value : undefined;
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
@@ -67,10 +73,12 @@ export function readHosts(storage: StorageLike | null = defaultStorage()): Remem
     const origin = normalizeHostBase((entry as { origin?: unknown }).origin as string | undefined);
     if (!origin || seen.has(origin)) continue;
     const rawLastSeen = (entry as { lastSeenMs?: unknown }).lastSeenMs;
+    const fingerprint = validFingerprint((entry as { fingerprint?: unknown }).fingerprint);
     seen.add(origin);
     hosts.push({
       origin,
-      lastSeenMs: typeof rawLastSeen === "number" && Number.isFinite(rawLastSeen) ? rawLastSeen : 0
+      lastSeenMs: typeof rawLastSeen === "number" && Number.isFinite(rawLastSeen) ? rawLastSeen : 0,
+      ...(fingerprint ? { fingerprint } : {})
     });
   }
   return hosts.sort((a, b) => b.lastSeenMs - a.lastSeenMs);
@@ -78,6 +86,7 @@ export function readHosts(storage: StorageLike | null = defaultStorage()): Remem
 
 /**
  * Record that `value` (an authority or a full origin) is a live host, and return the new list.
+ * Omitting the fingerprint clears an older pin for this origin.
  *
  * Best-effort persistence: a store we cannot write costs the player one re-scan, which is much better
  * than an exception on the boot path.
@@ -85,13 +94,15 @@ export function readHosts(storage: StorageLike | null = defaultStorage()): Remem
 export function rememberHost(
   value: string | null | undefined,
   nowMs: number,
-  storage: StorageLike | null = defaultStorage()
+  storage: StorageLike | null = defaultStorage(),
+  fingerprint?: string | null
 ): RememberedHost[] {
   const origin = normalizeHostBase(value);
   if (!origin) return readHosts(storage);
 
   const rest = readHosts(storage).filter((host) => host.origin !== origin);
-  const hosts = [{ origin, lastSeenMs: nowMs }, ...rest].slice(0, MAX_REMEMBERED_HOSTS);
+  const pin = validFingerprint(fingerprint);
+  const hosts = [{ origin, lastSeenMs: nowMs, ...(pin ? { fingerprint: pin } : {}) }, ...rest].slice(0, MAX_REMEMBERED_HOSTS);
   try {
     storage?.setItem(HOST_STORE_KEY, JSON.stringify(hosts));
   } catch {
@@ -139,4 +150,10 @@ export function hostFromUrl(href: string | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+/** Read a pin only alongside a usable host, so an unrelated URL cannot assign an identity. */
+export function fingerprintFromUrl(href: string | null | undefined): string | null {
+  if (!hostFromUrl(href)) return null;
+  return validFingerprint(new URL(href!).searchParams.get("f")) ?? null;
 }

@@ -81,14 +81,14 @@ public sealed class OfflineQrCode
     /// same seat. Default-deny keeps that impossible no matter what a future caller passes in.
     /// </para>
     /// <para>
-    /// <c>h</c> is the one exception, and it is load-bearing: the "web link" option encodes a PUBLIC origin
+    /// <c>h</c> identifies the host and <c>f</c> pins its LAN RTC identity. The "web link" option encodes a PUBLIC origin
     /// whose only clue about which PC to talk to is that parameter (see
     /// <see cref="QrHostOptions.DescribeWebFor"/>). Stripping it would produce a code that scans
     /// perfectly, opens the right site, and cannot find the game — a failure that looks like a network
     /// problem and is not.
     /// </para>
     /// </remarks>
-    private static readonly string[] PreservedQueryKeys = ["h"];
+    private static readonly string[] PreservedQueryKeys = ["h", "f"];
 
     private static string NormalizePayload(Uri joinBaseUri)
         => new UriBuilder(joinBaseUri)

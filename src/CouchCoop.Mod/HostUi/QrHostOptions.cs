@@ -112,7 +112,9 @@ public static class QrHostOptions
         CouchCoopText? secureUnavailableReason,
         bool mdnsNameResolves = true,
         bool secureOriginEnabled = true,
-        DirectIpHttpsState? directIpHttps = null)
+        DirectIpHttpsState? directIpHttps = null,
+        bool lanRtcAvailable = false,
+        string? lanRtcFingerprint = null)
     {
         var options = new List<QrHostOption>();
         var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -149,7 +151,7 @@ public static class QrHostOptions
                     DisabledReason: port > 0 ? (CouchCoopText?)null : ServerNotListeningText));
             }
 
-            if (DescribeWebFor(adapter, port, webOrigin) is { } webRow)
+            if (DescribeWebFor(adapter, port, webOrigin, lanRtcAvailable, lanRtcFingerprint) is { } webRow)
             {
                 TryAdd(webRow);
             }
@@ -270,7 +272,8 @@ public static class QrHostOptions
     /// involved on the LAN leg at all, which is precisely what makes this work where the
     /// <c>local-ip.co</c> option fails on routers with DNS-rebinding protection.
     /// </remarks>
-    public static QrHostOption? DescribeWebFor(QrAdapterInfo adapter, int port, string? webOrigin)
+    public static QrHostOption? DescribeWebFor(QrAdapterInfo adapter, int port, string? webOrigin,
+        bool lanRtcAvailable = false, string? lanRtcFingerprint = null)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         var origin = CouchCoopWebOrigin.Normalize(webOrigin);
@@ -293,7 +296,10 @@ public static class QrHostOptions
         }
 
         var authority = $"{adapter.Address}:{port.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-        var uri = new Uri(CouchCoopWebOrigin.BuildJoinUrl(origin, authority));
+        var joinUrl = CouchCoopWebOrigin.BuildJoinUrl(origin, authority);
+        if (lanRtcAvailable && !string.IsNullOrEmpty(lanRtcFingerprint))
+            joinUrl += "&f=" + Uri.EscapeDataString(lanRtcFingerprint);
+        var uri = new Uri(joinUrl);
         return new QrHostOption(uri.Host, uri.Port, QrHostOptionKind.Web, adapter, AbsoluteUri: uri.ToString());
     }
 

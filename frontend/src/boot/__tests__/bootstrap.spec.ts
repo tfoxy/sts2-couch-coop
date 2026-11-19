@@ -7,11 +7,12 @@ import {
   parseBootManifest,
   probeHost,
   resolveHost,
+  rememberResolvedHost,
   stripHostParam,
   webLinkBlockedByBrowser,
   type BootManifest
 } from "@/boot/bootstrap";
-import { HOST_STORE_KEY } from "@/join/hostStore";
+import { HOST_STORE_KEY, readHosts, rememberHost } from "@/join/hostStore";
 
 const MANIFEST: BootManifest = {
   entry: "/app/index-abc123.js",
@@ -231,11 +232,47 @@ describe("webLinkBlockedByBrowser", () => {
   });
 });
 
+describe("rememberResolvedHost", () => {
+  const origin = "http://192.168.1.5:13337";
+  const fingerprint = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+
+  it("stores a scanned fingerprint before its parameters are stripped", () => {
+    const href = `https://x.example/?h=192.168.1.5:13337&f=${fingerprint}`;
+    rememberResolvedHost(origin, 1, href);
+    expect(readHosts()).toEqual([{ origin, lastSeenMs: 1, fingerprint }]);
+    expect(stripHostParam(href)).toBe("https://x.example/");
+  });
+
+  it("preserves remembered pins on return visits and recovery to another candidate", () => {
+    rememberHost(origin, 1, undefined, fingerprint);
+    rememberResolvedHost(origin, 2, "https://x.example/");
+    expect(readHosts()[0]?.fingerprint).toBe(fingerprint);
+    rememberResolvedHost(origin, 3, "https://x.example/?h=192.168.1.9:13337&f=" + "_".repeat(43));
+    expect(readHosts()[0]?.fingerprint).toBe(fingerprint);
+  });
+
+  it("clears an old pin when a scan or manual address has no fingerprint", () => {
+    rememberHost(origin, 1, undefined, fingerprint);
+    rememberResolvedHost(origin, 2, "https://x.example/?h=192.168.1.5:13337");
+    expect(readHosts()[0]?.fingerprint).toBeUndefined();
+    rememberHost(origin, 3, undefined, fingerprint);
+    rememberResolvedHost(origin, 4, null);
+    expect(readHosts()[0]?.fingerprint).toBeUndefined();
+  });
+});
+
 describe("stripHostParam", () => {
   // The installed PWA's start_url is a bare `/`. Keeping the running page consistent with that is what
   // stops a player who adds to home screen mid-session from pinning one particular DHCP lease.
   it("removes ?h= and leaves everything else", () => {
     expect(stripHostParam("https://x.example/?h=192.168.1.5:13337&debug=1"))
+      .toBe("https://x.example/?debug=1");
+  });
+
+  it("strips f, including without h, and keeps unrelated query parameters and fragments", () => {
+    expect(stripHostParam("https://x.example/?h=192.168.1.5:13337&f=pin&debug=1#part"))
+      .toBe("https://x.example/?debug=1#part");
+    expect(stripHostParam("https://x.example/?f=pin&debug=1"))
       .toBe("https://x.example/?debug=1");
   });
 

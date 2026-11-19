@@ -6,6 +6,7 @@ import {
   MAX_REMEMBERED_HOSTS,
   hostCandidates,
   hostFromUrl,
+  fingerprintFromUrl,
   readHosts,
   rememberHost
 } from "@/join/hostStore";
@@ -125,6 +126,37 @@ describe("hostStore", () => {
       "http://192.168.1.5:13337",
       "http://192.168.1.9:13337"
     ]);
+  });
+
+  const fingerprint = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+
+  it("stores the fingerprint with its host and clears it on an update without f", () => {
+    const storage = memoryStorage();
+    rememberHost("192.168.1.5:13337", 1000, storage, fingerprint);
+    rememberHost("192.168.1.9:13337", 2000, storage, "_".repeat(43));
+    expect(readHosts(storage)[1]?.fingerprint).toBe(fingerprint);
+    expect(readHosts(storage)[0]?.fingerprint).toBe("_".repeat(43));
+    rememberHost("192.168.1.5:13337", 3000, storage);
+    expect(readHosts(storage)[0]).toEqual({ origin: "http://192.168.1.5:13337", lastSeenMs: 3000 });
+    expect(readHosts(storage)[1]?.fingerprint).toBe("_".repeat(43));
+  });
+
+  it.each(["", "a".repeat(42), "a".repeat(44), "+".repeat(43), "/".repeat(43), fingerprint + "=", "a".repeat(42) + "\n"])(
+    "ignores an invalid fingerprint %j in URLs and storage", (invalid) => {
+      const href = `https://x.example/?h=192.168.1.5:13337&f=${encodeURIComponent(invalid)}`;
+      expect(fingerprintFromUrl(href)).toBeNull();
+      const storage = memoryStorage(JSON.stringify([{ origin: "http://192.168.1.5:13337", fingerprint: invalid }]));
+      expect(readHosts(storage)[0]?.fingerprint).toBeUndefined();
+      expect(rememberHost("192.168.1.5:13337", 1, storage, invalid)[0]?.fingerprint).toBeUndefined();
+    }
+  );
+
+  it("reads f only with a usable host in the URL", () => {
+    expect(fingerprintFromUrl(`https://x.example/?h=192.168.1.5:13337&f=${fingerprint}`)).toBe(fingerprint);
+    expect(fingerprintFromUrl(`https://x.example/?f=${fingerprint}`)).toBeNull();
+    expect(fingerprintFromUrl(`https://x.example/?h=javascript:x&f=${fingerprint}`)).toBeNull();
+    expect(fingerprintFromUrl("nonsense")).toBeNull();
+    expect(fingerprintFromUrl(null)).toBeNull();
   });
 
   it("caps the list so it cannot grow into a record of every network the phone has been on", () => {

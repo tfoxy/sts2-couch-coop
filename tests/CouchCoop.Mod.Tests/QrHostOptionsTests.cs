@@ -41,6 +41,7 @@ internal static class QrHostOptionsTests
         TwoWebRowsSharingThePublicHostBothSurvive();
         SecureRowsUseTheAdaptersOwnAddress();
         WebRowsCarryTheAdaptersOwnAddressInH();
+        WebFingerprintRequiresLanRtcAvailability();
         SelectionKeysAreUniqueAcrossTheList();
 
         DisabledMethodsAreShownWithTheBlocker();
@@ -87,6 +88,29 @@ internal static class QrHostOptionsTests
     private const int Port = 13337;
     private const int SecurePort = Port;
     private const string Origin = "https://sts2-couch.pages.dev";
+
+    private static void WebFingerprintRequiresLanRtcAvailability()
+    {
+        const string fingerprint = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+        var adapter = new QrAdapterInfo("Wi-Fi", QrAdapterKind.Wifi, IPAddress.Parse("192.168.1.5"));
+        var original = QrHostOptions.DescribeWebFor(adapter, Port, Origin)!.ToUri();
+        var unavailable = QrHostOptions.DescribeWebFor(adapter, Port, Origin, lanRtcFingerprint: fingerprint)!.ToUri();
+        Expect(original.ToString() == Origin + "/?h=192.168.1.5:13337", "default web payload remains byte-identical");
+        Expect(unavailable.ToString() == original.ToString(), "flag off never advertises fingerprint");
+        var originalCode = OfflineQrCode.EncodeJoinUrl(original);
+        var unavailableCode = OfflineQrCode.EncodeJoinUrl(unavailable);
+        Expect(originalCode.Payload == unavailableCode.Payload && originalCode.Size == unavailableCode.Size &&
+            Enumerable.Range(0, originalCode.Size).All(y => Enumerable.Range(0, originalCode.Size)
+                .All(x => originalCode.IsDark(x, y) == unavailableCode.IsDark(x, y))), "flag off preserves every QR module");
+        var available = QrHostOptions.DescribeWebFor(adapter, Port, Origin, true, fingerprint)!.ToUri();
+        Expect(available.ToString() == original + "&f=" + fingerprint, "flag on appends fingerprint");
+        Expect(QrHostOptions.DescribeWebFor(adapter, Port, Origin, true)!.ToUri() == original, "missing fingerprint is omitted");
+        var built = QrHostOptions.Build(null, null, [Wifi("192.168.1.5")], Port, Origin, null, 0, null,
+            lanRtcAvailable: true, lanRtcFingerprint: fingerprint);
+        Expect(built.Single(option => option.Kind == QrHostOptionKind.Web).ToUri() == available, "Build forwards availability");
+        var noisy = new Uri(available + "&name=Alice&token=secret#fragment");
+        Expect(OfflineQrCode.EncodeJoinUrl(noisy).Payload == available.ToString(), "offline QR keeps h and f, strips other keys and fragment");
+    }
 
     private static IReadOnlyList<QrHostOption> Build(
         string? machine = "my-machine",

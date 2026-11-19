@@ -86,7 +86,7 @@ async function boot(explicitHost?: string): Promise<void> {
     return;
   }
 
-  rememberResolvedHost(outcome.origin, Date.now());
+  rememberResolvedHost(outcome.origin, Date.now(), explicitHost ? null : location.href);
   // Only once the host has ANSWERED: an address that never worked is not worth pinning into the URL, and
   // dropping it early would lose the one clue a retry has.
   const stripped = stripHostParam(location.href);

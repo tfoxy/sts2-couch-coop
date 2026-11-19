@@ -396,6 +396,12 @@ if (args is ["direct-ip-certificate-child", var certificateRoot])
     return;
 }
 
+if (args is ["lan-rtc-identity", ..])
+{
+    LanRtcIdentityTests.Run();
+    return;
+}
+
 if (args is ["direct-ip-certificates", ..])
 {
     await DirectIpCertificatesTests.RunAsync();
@@ -411,6 +417,13 @@ if (args is ["host-discovery", ..])
 if (args is ["browser-port-udp", ..])
 {
     await BrowserPortUdpSocketTests.RunAsync();
+    return;
+}
+
+if (args is ["qr-host-options", ..])
+{
+    QrHostOptionsTests.Run();
+    WebOriginTests.Run();
     return;
 }
 
@@ -1179,6 +1192,7 @@ DirectIpPlatformIconsTests.Run();
 // WS6 secure origin: the pure half — dashed-host derivation, the https scheme, the per-adapter secure ROW
 // (enabled or disabled-with-reason), and the persisted selection preference incl. its checkbox-era reads.
 SecureOriginTests.Run();
+LanRtcIdentityTests.Run();
 await DirectIpCertificatesTests.RunAsync();
 await DirectIpHttpsHostServiceTests.RunAsync();
 // The "web link" option: the public-origin client that reaches this PC by literal IPv4 under the browser's

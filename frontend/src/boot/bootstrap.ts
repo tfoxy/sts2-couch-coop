@@ -16,7 +16,7 @@
 // a permission that only a WINDOW can prompt for.
 
 import { normalizeHostBase } from "@/join/hostBase";
-import { hostCandidates, hostFromUrl, readHosts, rememberHost } from "@/join/hostStore";
+import { fingerprintFromUrl, hostCandidates, hostFromUrl, readHosts, rememberHost } from "@/join/hostStore";
 
 /** What the host publishes about the app bundle it wants loaded (vite.config.ts `couchCoopBootManifest`). */
 export interface BootManifest {
@@ -249,13 +249,17 @@ export async function isPermissionGranted(): Promise<boolean> {
 
 /**
  * Record a host that answered, so the next launch finds it without a QR.
+ * A null URL marks a manual address; a bare return visit preserves its remembered pin.
  */
-export function rememberResolvedHost(origin: string, nowMs: number): void {
-  rememberHost(origin, nowMs);
+export function rememberResolvedHost(origin: string, nowMs: number, href?: string | null): void {
+  const fingerprint = href === null || hostFromUrl(href) === origin
+    ? fingerprintFromUrl(href)
+    : readHosts().find((host) => host.origin === origin)?.fingerprint;
+  rememberHost(origin, nowMs, undefined, fingerprint);
 }
 
 /**
- * Strip `?h=` from the address bar once it has been stored.
+ * Strip `h` and `f` from the address bar once they have been stored.
  *
  * The installed PWA's `start_url` is a bare `/`, and this keeps the RUNNING page consistent with that: a
  * player who adds to home screen mid-session, or shares the URL, should not pin one particular lease.
@@ -264,8 +268,9 @@ export function rememberResolvedHost(origin: string, nowMs: number): void {
 export function stripHostParam(href: string): string | null {
   try {
     const url = new URL(href);
-    if (!url.searchParams.has("h")) return null;
+    if (!url.searchParams.has("h") && !url.searchParams.has("f")) return null;
     url.searchParams.delete("h");
+    url.searchParams.delete("f");
     return url.toString();
   } catch {
     return null;
