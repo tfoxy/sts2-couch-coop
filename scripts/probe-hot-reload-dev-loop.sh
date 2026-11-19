@@ -137,7 +137,7 @@ require_pattern "src/CouchCoop.Mod.HotReload/CouchCoopHotLogic.cs" 'CouchCoopOve
 for command in \
   'npm --prefix frontend run dev' \
   'npm --prefix frontend run build:watch' \
-  'sts2 --mode dev --json dev mod-reload --project \. --build --wait'; do
+  'sts2 --json dev mod-reload --project \. --build --wait'; do
   require_pattern "docs/configuration.md" "$command" "configuration_command_$command" "configuration docs must document $command"
 done
 

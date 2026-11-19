@@ -252,6 +252,6 @@ bring-up: instance $INSTANCE is up.
   cache root     $CACHE_ROOT
 Next, with the live lock still held:
   sts2 --config $CONFIG --instance $INSTANCE dev fixture load <an ironclad fixture>
-  sts2 --config $CONFIG --instance $INSTANCE --mode dev dev console fight KNIGHTS_ELITE
+  sts2 --config $CONFIG --instance $INSTANCE dev console fight KNIGHTS_ELITE
   # record the ACTUAL roster, write it into a probe dataset, then run the bench.
 SUMMARY

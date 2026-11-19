@@ -16,7 +16,7 @@ description: >-
   one and then jump:
 
       sts2 dev fixture load tests/fixtures/knights-elite-4p.sts2.fixture.yaml
-      sts2 --mode dev dev console room Shop
+      sts2 dev console room Shop
 
   which is how the shop evidence under `.sts2/artifacts/creature-placeholder/` was captured.
 
