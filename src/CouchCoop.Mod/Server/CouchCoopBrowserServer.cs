@@ -1521,11 +1521,16 @@ public sealed partial class CouchCoopBrowserServer(
     public async Task ServeAsync(Stream stream, bool isSecure, CancellationToken cancellationToken)
         => await ServeAsync(stream, isSecure, IPAddress.None, cancellationToken).ConfigureAwait(false);
 
-    public async Task ServeAsync(Stream stream, bool isSecure, IPAddress remoteAddress, CancellationToken cancellationToken)
+    public Task ServeAsync(Stream stream, bool isSecure, IPAddress remoteAddress, CancellationToken cancellationToken)
+        => ServeAsync(stream, isSecure, remoteAddress, cancellationToken,
+            bodyEndsAtEof: stream is LanRtc.ILanRtcRequestStream);
+
+    internal async Task ServeAsync(Stream stream, bool isSecure, IPAddress remoteAddress,
+        CancellationToken cancellationToken, bool bodyEndsAtEof)
     {
         using var lease = _admission.TryAcquireHttp(remoteAddress);
         if (lease is null) return;
-        await ServeCoreAsync(stream, isSecure, lease, remoteAddress, cancellationToken).ConfigureAwait(false);
+        await ServeCoreAsync(stream, isSecure, lease, remoteAddress, cancellationToken, bodyEndsAtEof).ConfigureAwait(false);
     }
 
     private async Task ServeCoreAsync(
@@ -1533,7 +1538,8 @@ public sealed partial class CouchCoopBrowserServer(
         bool isSecure,
         NetworkAdmissionLimiter.Lease httpLease,
         IPAddress remoteAddress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool bodyEndsAtEof = false)
     {
         ArgumentNullException.ThrowIfNull(stream);
         CouchCoopHttpRequest? request = null;
@@ -1575,7 +1581,8 @@ public sealed partial class CouchCoopBrowserServer(
                         seatRoute, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
                     return;
                 }
-                await HandleRequestAsync(requestStream, request, isSecure, remoteAddress, cancellationToken).ConfigureAwait(false);
+                await HandleRequestAsync(requestStream, request, isSecure, remoteAddress, cancellationToken,
+                    bodyEndsAtEof).ConfigureAwait(false);
             }
         }
         catch (HttpHeaderLimitException)
@@ -1679,7 +1686,8 @@ public sealed partial class CouchCoopBrowserServer(
         CouchCoopHttpRequest? request,
         bool isSecure,
         IPAddress remoteAddress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool tunnelBody = false)
     {
         if (request is null)
         {
@@ -1716,7 +1724,7 @@ public sealed partial class CouchCoopBrowserServer(
         if (string.Equals(request.Path, BrowserLifecycleDiagnostics.Route, StringComparison.Ordinal)
             || string.Equals(request.Path, BrowserLifecycleDiagnostics.Route + "/summary", StringComparison.Ordinal))
         {
-            await HandleLifecycleDiagnosticsAsync(stream, request, cancellationToken).ConfigureAwait(false);
+            await HandleLifecycleDiagnosticsAsync(stream, request, cancellationToken, tunnelBody).ConfigureAwait(false);
             return;
         }
 
@@ -2357,7 +2365,7 @@ public sealed partial class CouchCoopBrowserServer(
         await HttpResponseWriter.WriteBytesAsync(stream, 200, "OK", file.Bytes, file.ContentType, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task HandleLifecycleDiagnosticsAsync(Stream stream, CouchCoopHttpRequest request, CancellationToken cancellationToken)
+    private async Task HandleLifecycleDiagnosticsAsync(Stream stream, CouchCoopHttpRequest request, CancellationToken cancellationToken, bool tunnelBody)
     {
         if (_lifecycleDiagnostics is not null && string.Equals(request.Path, BrowserLifecycleDiagnostics.Route + "/summary", StringComparison.Ordinal)
             && string.Equals(request.Method, "GET", StringComparison.OrdinalIgnoreCase))
@@ -2369,13 +2377,18 @@ public sealed partial class CouchCoopBrowserServer(
                 cancellationToken).ConfigureAwait(false);
             return;
         }
+        // Only the private tunnel stream has an authenticated FIN-delimited request body.
+        // Ordinary HTTP requests retain their explicit length requirement.
+        var hasLength = int.TryParse(request.Header("Content-Length"), out var length);
         if (_lifecycleDiagnostics is null || !string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase)
-            || !int.TryParse(request.Header("Content-Length"), out var length) || length < 0 || length > BrowserLifecycleDiagnostics.MaximumRequestBytes)
+            || (!tunnelBody && !hasLength) || (hasLength && (length < 0 || length > BrowserLifecycleDiagnostics.MaximumRequestBytes)))
         {
             await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound, "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
             return;
         }
-        var body = await ReadBoundedBodyAsync(stream, length, cancellationToken).ConfigureAwait(false);
+        var body = tunnelBody && !hasLength
+            ? await ReadTunnelBodyAsync(stream, BrowserLifecycleDiagnostics.MaximumRequestBytes, cancellationToken).ConfigureAwait(false)
+            : await ReadBoundedBodyAsync(stream, length, cancellationToken).ConfigureAwait(false);
         if (!_lifecycleDiagnostics.TryAccept(body))
         {
             await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.BadRequest, "invalid-lifecycle", "Lifecycle payload was refused.", cancellationToken).ConfigureAwait(false);
@@ -2484,6 +2497,19 @@ public sealed partial class CouchCoopBrowserServer(
         return token.Length is > 0 and <= 512;
     }
 
+    private static async Task<string?> ReadTunnelBodyAsync(Stream stream, int maximum, CancellationToken token)
+    {
+        var bytes = new byte[maximum + 1];
+        var count = 0;
+        while (count < bytes.Length)
+        {
+            var read = await stream.ReadAsync(bytes.AsMemory(count), token).ConfigureAwait(false);
+            if (read == 0) return Encoding.UTF8.GetString(bytes, 0, count);
+            count += read;
+        }
+        return null;
+    }
+
     private static async Task<string?> ReadBoundedBodyAsync(Stream stream, int length, CancellationToken cancellationToken)
     {
         var bytes = new byte[length];
@@ -2584,8 +2610,12 @@ public sealed partial class CouchCoopBrowserServer(
             writer.WriteStartObject();
             foreach (var property in document.RootElement.EnumerateObject())
             {
+                if (property.NameEquals("tunnel")) continue;
                 property.WriteTo(writer);
             }
+
+            if (LanRtc.LanRtcAvailability.IsAvailable(request.Header("Host")))
+                writer.WriteString("tunnel", LanRtc.LanRtcAvailability.Protocol);
 
             // Whether THIS caller's origin may open the game socket, and which origin this host expects —
             // the second so the message can name the address to go to rather than just refusing.

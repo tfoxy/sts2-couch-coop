@@ -398,6 +398,30 @@ if (args is ["direct-ip-certificate-child", var certificateRoot])
     return;
 }
 
+if (args is ["lan-rtc-host", ..])
+{
+    await LanRtcHostTests.RunAsync();
+    return;
+}
+
+if (args is ["lan-rtc-ws", ..])
+{
+    await LanRtcWebSocketTests.RunAsync();
+    return;
+}
+
+if (args is ["lan-rtc-fetch", ..])
+{
+    await LanRtcTunnelTests.RunAsync();
+    return;
+}
+
+if (args is ["lan-rtc-module", ..])
+{
+    await LanRtcModuleTests.RunAsync();
+    return;
+}
+
 if (args is ["lan-rtc-identity", ..])
 {
     LanRtcIdentityTests.Run();
@@ -1189,6 +1213,10 @@ DirectIpPlatformIconsTests.Run();
 // (enabled or disabled-with-reason), and the persisted selection preference incl. its checkbox-era reads.
 SecureOriginTests.Run();
 LanRtcIdentityTests.Run();
+await LanRtcModuleTests.RunAsync();
+await LanRtcTunnelTests.RunAsync();
+await LanRtcWebSocketTests.RunAsync();
+await LanRtcHostTests.RunAsync();
 await DirectIpCertificatesTests.RunAsync();
 await DirectIpHttpsHostServiceTests.RunAsync();
 // The "web link" option: the public-origin client that reaches this PC by literal IPv4 under the browser's

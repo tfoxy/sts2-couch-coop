@@ -4,6 +4,7 @@ using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
+using CouchCoop.Mod.Server.LanRtc;
 using CouchCoop.MirrorProtocol.Discovery;
 using CouchCoop.Mod.Session;
 
@@ -33,6 +34,9 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
     private HotReloadableBrowserServerHost? _browserServer;
     private HostDiscoveryResponder? _discovery;
     private MdnsResponder? _mdns;
+    private LanRtcHost? _lanRtc;
+    internal string? LanRtcIdentityStorageRoot { get; set; }
+    internal LanRtcModuleFactory? CreateLanRtcModule { get; set; }
     private SecureOriginCertificates? _secureCertificates;
     private CouchCoopHostUiSnapshot _snapshot = CouchCoopHostUiSnapshot.Unavailable([]);
 
@@ -264,6 +268,11 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
                 HostDiscovery.ProtocolVersion),
             _log);
 
+        if (_browserServer is { IsHeadlessClient: false } server &&
+            joinBaseUri is not null && IPAddress.TryParse(joinBaseUri.Host, out var rtcAddress))
+            _lanRtc = LanRtcHost.TryStart(new IPEndPoint(rtcAddress, listenerBaseUri.Port), _discovery.UdpSocket,
+                server.ServeLanRtcAsync, _log, LanRtcIdentityStorageRoot, CreateLanRtcModule);
+
         // WS8: publish `<machine>.local` ourselves. The QR dialog's default row is that name, and until now
         // we only PREDICTED that the OS would publish it — true for avahi/Bonjour, false on a stock Windows
         // box (no `.local` responder at all, and Environment.MachineName is the NetBIOS name, so even a
@@ -490,6 +499,9 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
             _discoveryStarted = false;
             var mdns = _mdns;
             var discovery = _discovery;
+            var lanRtc = _lanRtc;
+            _lanRtc = null;
+            lanRtc?.Stop();
             var stop = _discoveryStop;
             var secureTask = _secureOriginTask;
             _mdns = null;
@@ -498,11 +510,17 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
             _secureOriginTask = Task.CompletedTask;
             stop?.Cancel();
             // Dispose detached instances only. A late completion cannot touch a later session's fields.
-            _discoveryNetworkTeardown = Task.WhenAll(DisposeOneAsync(mdns), DisposeOneAsync(discovery));
+            _discoveryNetworkTeardown = Task.WhenAll(DisposeOneAsync(mdns), DisposeLanRtcAndDiscoveryAsync(lanRtc, discovery));
             _discoveryTeardown = DisposeDiscoveryAsync(
                 _discoveryNetworkTeardown, secureTask, stop, _discoveryTeardown);
             return new ValueTask(_discoveryTeardown);
         }
+    }
+
+    private async Task DisposeLanRtcAndDiscoveryAsync(LanRtcHost? lanRtc, HostDiscoveryResponder? discovery)
+    {
+        await DisposeOneAsync(lanRtc).ConfigureAwait(false);
+        await DisposeOneAsync(discovery).ConfigureAwait(false);
     }
 
     private async Task DisposeDiscoveryAsync(Task networkTeardown, Task secureTask,

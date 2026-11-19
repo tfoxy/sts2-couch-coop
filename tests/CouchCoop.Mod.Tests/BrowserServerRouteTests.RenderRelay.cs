@@ -346,6 +346,7 @@ internal sealed partial class BrowserServerRouteTests
         private readonly TcpListener _hub = new(IPAddress.Loopback, 0);
         private CouchCoopBrowserServer _public = null!;
         internal Uri PublicUri => _public.BaseUri!;
+        internal CouchCoopBrowserServer PublicServer => _public;
         private HeadlessClientManager _manager = null!;
         private readonly HeadlessConnectionLifecycleTests.FakeProcess _process = new(40002);
         private Task<int?> _joining = null!;

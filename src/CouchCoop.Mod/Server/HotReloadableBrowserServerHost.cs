@@ -455,6 +455,25 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
                 "seat-generation-unavailable", "The player's game view is not ready.", cancellationToken).ConfigureAwait(false);
     }
 
+    // Tunnels must preserve the authenticated address; legacy addressless generations fail closed.
+    internal async Task ServeLanRtcAsync(Stream stream, IPAddress remoteAddress, CancellationToken token)
+    {
+        ICouchCoopHotGeneration? generation;
+        lock (_generationGate) generation = _generation;
+        ZeroClientGuard.ClientOpened();
+        try
+        {
+            if (generation is BuiltInBrowserServerGeneration builtIn)
+                await builtIn.ServeAsync(stream, false, remoteAddress, token).ConfigureAwait(false);
+            else if (generation is ICouchCoopAddressedStreamGeneration addressed)
+                await addressed.ServeAsync(stream, false, remoteAddress, token).ConfigureAwait(false);
+            else
+                await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.ServiceUnavailable,
+                    "tunnel-generation-unavailable", "The active browser server cannot serve LAN tunnels.", token).ConfigureAwait(false);
+        }
+        finally { ZeroClientGuard.ClientClosed(); }
+    }
+
     public async Task ReplaceGenerationAsync(
         ICouchCoopHotGeneration generation,
         int generationNumber,

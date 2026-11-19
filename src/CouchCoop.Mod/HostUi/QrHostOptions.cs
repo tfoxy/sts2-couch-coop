@@ -113,7 +113,7 @@ public static class QrHostOptions
         bool mdnsNameResolves = true,
         bool secureOriginEnabled = true,
         DirectIpHttpsState? directIpHttps = null,
-        bool lanRtcAvailable = false,
+        bool? lanRtcAvailable = null,
         string? lanRtcFingerprint = null)
     {
         var options = new List<QrHostOption>();
@@ -273,7 +273,7 @@ public static class QrHostOptions
     /// <c>local-ip.co</c> option fails on routers with DNS-rebinding protection.
     /// </remarks>
     public static QrHostOption? DescribeWebFor(QrAdapterInfo adapter, int port, string? webOrigin,
-        bool lanRtcAvailable = false, string? lanRtcFingerprint = null)
+        bool? lanRtcAvailable = null, string? lanRtcFingerprint = null)
     {
         ArgumentNullException.ThrowIfNull(adapter);
         var origin = CouchCoopWebOrigin.Normalize(webOrigin);
@@ -297,7 +297,12 @@ public static class QrHostOptions
 
         var authority = $"{adapter.Address}:{port.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
         var joinUrl = CouchCoopWebOrigin.BuildJoinUrl(origin, authority);
-        if (lanRtcAvailable && !string.IsNullOrEmpty(lanRtcFingerprint))
+        if (lanRtcAvailable is null)
+        {
+            lanRtcFingerprint = Server.LanRtc.LanRtcAvailability.FingerprintFor(adapter.Address, port);
+            lanRtcAvailable = lanRtcFingerprint is not null;
+        }
+        if (lanRtcAvailable == true && !string.IsNullOrEmpty(lanRtcFingerprint))
             joinUrl += "&f=" + Uri.EscapeDataString(lanRtcFingerprint);
         var uri = new Uri(joinUrl);
         return new QrHostOption(uri.Host, uri.Port, QrHostOptionKind.Web, adapter, AbsoluteUri: uri.ToString());

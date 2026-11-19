@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RollForward>Major</RollForward>
     <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
     <!-- The staged reference-SDK gate needs only PE metadata. This alternate entry point intentionally has no
