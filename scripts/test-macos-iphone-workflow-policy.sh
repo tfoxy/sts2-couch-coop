@@ -78,6 +78,65 @@ for job in macos_arm macos_intel; do
   expect_reject "$job-download" "$tmp/$job-download.yml" "$job must download the Linux snapshot"
 done
 
+for job in macos_arm macos_intel; do
+  for field in build-id stock-id hardened-condition stock-out hardened-out slice-facts upload-condition upload-path upload-retention entitlement-loop; do
+    awk -v job="$job" -v field="$field" '
+      /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
+      /^      - name:/ { upload = /Upload Godot Harmony fixture diagnostics/ }
+      selected {
+        if (field == "build-id") sub(/id: build_fixtures/, "id: removed_build")
+        if (field == "stock-id") sub(/id: godot_fixture_stock/, "id: removed_stock")
+        if (field == "hardened-condition" && /steps.build_fixtures.outcome/) sub(/!cancelled\(\)/, "success()")
+        if (field == "stock-out" && /--out/) sub(/fixture\/stock/, "fixture/removed")
+        if (field == "hardened-out" && /--out/) sub(/fixture\/hardened/, "fixture/removed")
+        if (field == "slice-facts") sub(/for arch in arm64 x86_64/, "for arch in arm64")
+        if (field == "upload-condition" && upload) sub(/if: always\(\)/, "if: success()")
+        if (field == "upload-path" && upload) sub(/runner.temp/, "github.workspace")
+        if (field == "upload-retention" && upload) sub(/retention-days: 7/, "retention-days: 3")
+        if (field == "entitlement-loop") sub(/disable-library-validation; do/, "disable-library-validation extra; do")
+      }
+      { print }
+    ' "$workflow" > "$tmp/$job-$field.yml"
+    case "$field" in
+      build-id) expected="$job must expose the fixture build outcome" ;;
+      stock-id) expected="$job must expose the stock fixture outcome" ;;
+      hardened-condition) expected="$job hardened fixture must run after a stock failure" ;;
+      stock-out) expected="$job stock fixture must include: --out" ;;
+      hardened-out) expected="$job hardened fixture must include: --out" ;;
+      slice-facts) expected="$job stock fixture must include: for arch" ;;
+      upload-*) expected="$job fixture upload must include:" ;;
+      entitlement-loop) expected="both Mac jobs must verify the game's four entitlement keys" ;;
+    esac
+    expect_reject "$job-$field" "$tmp/$job-$field.yml" "$expected"
+  done
+done
+
+cp "$root/tests/CouchCoop.MacOs.GodotHarmonyFixture/project.godot" \
+  "$fixture_root/tests/CouchCoop.MacOs.GodotHarmonyFixture/project.godot"
+for mutation in extra-key false-value; do
+  python3 - "$root/tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runtime.entitlements.plist" \
+    "$fixture_root/tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runtime.entitlements.plist" "$mutation" <<'PYPLIST'
+import plistlib
+import sys
+with open(sys.argv[1], "rb") as source:
+    entitlements = plistlib.load(source)
+if sys.argv[3] == "extra-key":
+    entitlements["com.apple.security.cs.disable-executable-page-protection"] = True
+else:
+    entitlements["com.apple.security.cs.allow-jit"] = False
+with open(sys.argv[2], "wb") as target:
+    plistlib.dump(entitlements, target)
+PYPLIST
+  if output="$(COUCHCOOP_VALIDATE_REPO_ROOT="$fixture_root" COUCHCOOP_WORKFLOW_PATH="$workflow" bash "$validator" 2>&1)"; then
+    echo "expected $mutation entitlement fixture to fail" >&2
+    exit 1
+  fi
+  grep -Fq "Godot hardened-runtime fixture must use exactly the game's four true entitlements" <<< "$output" || {
+    echo "missing $mutation entitlement diagnostic: $output" >&2
+    exit 1
+  }
+done
+
 sed 's/needs: \[policy, macos-capture\]/needs: policy/' "$workflow" > "$tmp/snapshot-no-capture.yml"
 expect_reject snapshot-no-capture "$tmp/snapshot-no-capture.yml" \
   "Linux snapshot job must include: needs: [policy, macos-capture]"
@@ -85,7 +144,7 @@ expect_reject snapshot-no-capture "$tmp/snapshot-no-capture.yml" \
 sed '/name: Upload the macOS capture with checksums/,/retention-days: 1/d' \
   "$workflow" > "$tmp/no-capture-upload.yml"
 expect_reject no-capture-upload "$tmp/no-capture-upload.yml" \
-  "workflow must have exactly two synthetic uploads, one macOS capture upload and one Linux snapshot upload"
+  "workflow must have exactly two synthetic uploads, two Godot fixture uploads, one macOS capture upload and one Linux snapshot upload"
 
 sed 's/ || inputs.run_intel == true//' "$workflow" > "$tmp/snapshot-toggle.yml"
 expect_reject snapshot-toggle "$tmp/snapshot-toggle.yml" \

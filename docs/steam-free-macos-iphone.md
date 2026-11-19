@@ -17,7 +17,7 @@ claims that still need a player-owned installation or physical device.
 | Hosted Mac Harmony smoke | The pinned public Harmony runtime can patch and invoke a trivial CouchCoop-owned method in a standalone process, and the watchdog recognizes success, non-zero exit, crash/signal, and timeout. | Harmony can patch a game method inside the signed game process. |
 | Stable/public-beta target metadata | The declaration-only reference DLLs still contain both supported lobby screen types with a directly declared, zero-argument `_Ready`; the check reads PE metadata and never loads those DLLs. | That either reference lane can execute, or that the runtime game has identical behavior. |
 | Godot .NET lobby-hook fixture, on each selected architecture | The exact production mount-hook implementation can patch two synthetic Godot `Control` types with public Harmony 2.4.2, dispatch each callback once, remain idempotent, and stay alive for at least 30 frames and five seconds. | Mod discovery, actual STS2 scene identities, the QR panel's real resources/layout, or Harmony inside the signed game process. |
-| Ad-hoc hardened Godot .NET fixture | The same synthetic hook succeeds after a temporary Godot copy is ad-hoc signed with hardened runtime and the reviewed JIT/dynamic-loading entitlements. | Developer ID signing, notarization, Gatekeeper acceptance, or the entitlement set used by the real game. |
+| Ad-hoc hardened Godot .NET fixture | The same synthetic hook succeeds after a temporary Godot copy is ad-hoc signed with hardened runtime and the real game's audited entitlement set (four keys), with fixture results, Godot output and signing diagnostics uploaded for diagnosis. | Developer ID signing, notarization, Gatekeeper acceptance, or Harmony inside the real game. |
 | Playwright WebKit, iPhone 13 profile | WebKit can load both the frozen baseline and deterministic field-reproduction workloads, preserve a single visit/journey, acknowledge every credit-gated keyframe/delta, and remain responsive for ten seconds plus 30 frames after the final delta. | Simulator Safari integration, physical iPhone memory/GPU pressure, or Jetsam behavior. Playwright's device profile is emulation, not an iOS runtime. |
 | Simulator SafariDriver, exact iPhone 13 | On Apple Silicon, Safari in the selected exact iPhone 13 Simulator survives the field-reproduction workload and no matching bounded Safari/WebKit crash header appears in the test window. A capability result records when the exact device/runtime or SafariDriver is unavailable; another model is never substituted. | A physical iPhone, real radio/network conditions, genuine memory pressure, physical-device thermal pressure, or physical-device Jetsam behavior. |
 | Physical-iPhone report | Only an actual field report can cover device RAM/GPU limits, Jetsam, temperature, local-network permissions, and the installed iOS/Safari build. | Mac host discovery, Godot, Gatekeeper, or Harmony in the game. |
@@ -82,11 +82,12 @@ the filesystem path. Accepted records are bounded, schema-checked, redacted life
 query values, player names, payloads, stacks, user agents, tokens, and arbitrary messages are rejected rather
 than scrubbed after collection.
 
-Hosted diagnostic uploads contain only explicitly staged synthetic/sanitized result, timeline, lifecycle,
+Hosted browser diagnostic uploads contain only explicitly staged synthetic/sanitized result, timeline, lifecycle,
 crash-header, or failure-screenshot files, retained for three days. A separate
 `couchcoop-snapshot-<run-id>` artifact contains the validated Linux-built snapshot ZIP for the Mac jobs and is
-retained for one day. The restored SDK, browser build directory, Simulator diagnostic tree, and external paths
-are not staged. Download a run's artifact from its **Artifacts** section on the Actions run summary; the
+retained for one day. Separate `godot-harmony-fixture-<arch>-<run-id>` artifacts retain fixture results,
+capped Godot output, and codesign/runtime facts for seven days. The restored SDK, browser build directory,
+and Simulator diagnostic tree are not staged. Download a run's artifact from its **Artifacts** section on the Actions run summary; the
 workflow-policy test treats any new upload path as a reviewed allowlist change.
 
 Both WebKit workloads (the frozen baseline and the larger field-reproduction profile) are deterministic, generated

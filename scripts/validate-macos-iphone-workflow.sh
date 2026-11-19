@@ -102,6 +102,71 @@ for job in macos_arm macos_intel; do
   done
 done
 
+# Fixture artifacts are confined to this game-free producer's runner-temp directory. Each architecture must
+# preserve its own stock/hardened evidence, including a comparison after stock failure.
+for job in macos_arm macos_intel; do
+  mac_source="$(job_source "$job")"
+  fixture_step() {
+    awk -v name="$1" '
+      /^      - name:/ { selected = ($0 == "      - name: " name) }
+      selected { print }
+    ' <<< "$mac_source"
+  }
+  build_source="$(fixture_step 'Build reference SDKs and public runtime fixtures')"
+  grep -Fq 'id: build_fixtures' <<< "$build_source" \
+    || fail "$job must expose the fixture build outcome"
+  game_free_source="$(fixture_step 'Run game-free macOS and Harmony checks')"
+  if grep -Fq -- '--godot-harmony-fixture' <<< "$game_free_source"; then
+    fail "$job must run the stock Godot fixture in its own step"
+  fi
+  stock_source="$(fixture_step 'Run the stock Godot .NET Harmony fixture')"
+  grep -Fq 'id: godot_fixture_stock' <<< "$stock_source" \
+    || fail "$job must expose the stock fixture outcome"
+  hardened_source="$(fixture_step 'Run the ad-hoc hardened Godot .NET fixture')"
+  grep -Fq "if: \${{ !cancelled() && steps.build_fixtures.outcome == 'success' }}" <<< "$hardened_source" \
+    || fail "$job hardened fixture must run after a stock failure when fixtures built"
+  for variant in stock hardened; do
+    if [ "$variant" = stock ]; then
+      fixture_source="$stock_source"
+      fixture_app='$COUCHCOOP_GODOT_APP'
+    else
+      fixture_source="$hardened_source"
+      fixture_app='$signed_app'
+    fi
+    for required in \
+      "diagnostics=\"\$RUNNER_TEMP/couchcoop-godot-harmony-fixture/$variant\"" \
+      "--out \"\$RUNNER_TEMP/couchcoop-godot-harmony-fixture/$variant\"" \
+      "codesign --display --verbose=4 \"$fixture_app\"" \
+      'for arch in arm64 x86_64; do' \
+      "codesign --display --entitlements :- --arch \"\$arch\" \"$fixture_app\"" \
+      '>"$diagnostics/entitlements-$arch.plist" 2>"$diagnostics/entitlements-$arch.log" || true' \
+      "lipo -archs \"$fixture_app/Contents/MacOS/Godot\"" \
+      'dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"'; do
+      grep -Fq -- "$required" <<< "$fixture_source" \
+        || fail "$job $variant fixture must include: $required"
+    done
+  done
+  upload_source="$(fixture_step 'Upload Godot Harmony fixture diagnostics')"
+  if [ "$job" = macos_arm ]; then fixture_arch=arm64; else fixture_arch=x86_64; fi
+  for required in \
+    'if: always()' \
+    'uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2' \
+    "name: godot-harmony-fixture-$fixture_arch-\${{ github.run_id }}" \
+    'path: ${{ runner.temp }}/couchcoop-godot-harmony-fixture' \
+    'if-no-files-found: ignore' \
+    'retention-days: 7'; do
+    grep -Fq -- "$required" <<< "$upload_source" \
+      || fail "$job fixture upload must include: $required"
+  done
+done
+require_count 'for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-library-validation; do' 2 \
+  "both Mac jobs must verify the game's four entitlement keys"
+for key in allow-dyld-environment-variables allow-jit allow-unsigned-executable-memory disable-library-validation; do
+  require_count "\"com.apple.security.cs.$key\"" 2 \
+    "both Mac jobs must pin the exact entitlement JSON keys: $key"
+done
+reject_fixed 'disable-executable-page-protection' "Godot fixture must use only the game's four entitlements"
+
 require_fixed "runs-on: ubuntu-24.04" "Ubuntu policy/WebKit runner is not pinned"
 require_fixed "runs-on: macos-15" "Apple Silicon runner must be macos-15"
 require_fixed "runs-on: macos-15-intel" "Intel runner must be macos-15-intel"
@@ -226,8 +291,8 @@ for forbidden in "$fixture_tag" "$fixture_name" "$real_job" "$private_fixture" "
 done
 
 upload_count="$(grep -Fc 'uses: actions/upload-artifact@' "$workflow" || true)"
-if [ "$upload_count" -ne 4 ]; then
-  fail "workflow must have exactly two synthetic uploads, one macOS capture upload and one Linux snapshot upload"
+if [ "$upload_count" -ne 6 ]; then
+  fail "workflow must have exactly two synthetic uploads, two Godot fixture uploads, one macOS capture upload and one Linux snapshot upload"
 fi
 require_fixed "path: sources/sts2-couch-coop/.ci-artifacts/iphone-webkit" \
   "artifact upload path must be the reviewed repository-internal staging directory"
@@ -248,12 +313,20 @@ entitlements="$repo_root/tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runt
 if [ ! -f "$entitlements" ]; then
   fail "Godot hardened-runtime entitlements are missing"
 else
-  for entitlement in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-executable-page-protection disable-library-validation; do
-    grep -Fq "com.apple.security.cs.$entitlement" "$entitlements" \
-      || fail "Godot hardened-runtime entitlement is missing: $entitlement"
-  done
-  if grep -Fq "get-task-allow" "$entitlements"; then
-    fail "Godot hardened-runtime fixture must not request get-task-allow"
+  if ! python3 - "$entitlements" <<'PYPLIST'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    actual = plistlib.load(source)
+expected = {"com.apple.security.cs." + key: True for key in (
+    "allow-dyld-environment-variables", "allow-jit",
+    "allow-unsigned-executable-memory", "disable-library-validation",
+)}
+sys.exit(0 if actual == expected and all(value is True for value in actual.values()) else 1)
+PYPLIST
+  then
+    fail "Godot hardened-runtime fixture must use exactly the game's four true entitlements"
   fi
 fi
 

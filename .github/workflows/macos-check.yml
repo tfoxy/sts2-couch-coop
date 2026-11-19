@@ -358,6 +358,7 @@ jobs:
 
       - name: Build reference SDKs and public runtime fixtures
         timeout-minutes: 20
+        id: build_fixtures
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -417,11 +418,30 @@ jobs:
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --harmony-smoke "$RUNNER_TEMP/couchcoop-harmony-smoke/CouchCoop.HarmonySmoke"
+
+      - name: Run the stock Godot .NET Harmony fixture
+        timeout-minutes: 15
+        id: godot_fixture_stock
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          diagnostics="$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock"
+          mkdir -p "$diagnostics"
+          codesign --display --verbose=4 "$COUCHCOOP_GODOT_APP" >"$diagnostics/codesign.txt" 2>&1
+          for arch in arm64 x86_64; do
+            codesign --display --entitlements :- --arch "$arch" "$COUCHCOOP_GODOT_APP" \
+              >"$diagnostics/entitlements-$arch.plist" 2>"$diagnostics/entitlements-$arch.log" || true
+          done
+          lipo -archs "$COUCHCOOP_GODOT_APP/Contents/MacOS/Godot" >"$diagnostics/lipo-archs.txt"
+          dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
-            --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE"
+            --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE" \
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock"
 
       - name: Run the ad-hoc hardened Godot .NET fixture
         timeout-minutes: 15
+        # Collect the hardened comparison even when the stock fixture refuses a patch.
+        if: ${{ !cancelled() && steps.build_fixtures.outcome == 'success' }}
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -433,20 +453,27 @@ jobs:
             --entitlements tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runtime.entitlements.plist \
             "$signed_app"
           codesign --verify --deep --strict "$signed_app"
-          signature="$RUNNER_TEMP/couchcoop-godot-signature.txt"
-          codesign --display --verbose=4 "$signed_app" >"$signature" 2>&1
+          diagnostics="$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened"
+          mkdir -p "$diagnostics"
+          codesign --display --verbose=4 "$signed_app" >"$diagnostics/codesign.txt" 2>&1
+          for arch in arm64 x86_64; do
+            codesign --display --entitlements :- --arch "$arch" "$signed_app" \
+              >"$diagnostics/entitlements-$arch.plist" 2>"$diagnostics/entitlements-$arch.log" || true
+          done
+          lipo -archs "$signed_app/Contents/MacOS/Godot" >"$diagnostics/lipo-archs.txt"
+          dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"
+          signature="$diagnostics/codesign.txt"
           grep -Fq 'Signature=adhoc' "$signature"
           grep -Eq '^CodeDirectory .*flags=.*\([^)]*runtime[^)]*\)' "$signature"
-          actual_entitlements="$RUNNER_TEMP/couchcoop-godot-entitlements.plist"
+          actual_entitlements="$diagnostics/entitlements.plist"
           codesign --display --entitlements :- "$signed_app" >"$actual_entitlements" 2>/dev/null
-          for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-executable-page-protection disable-library-validation; do
+          for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-library-validation; do
             test "$(/usr/libexec/PlistBuddy -c "Print :com.apple.security.cs.$key" "$actual_entitlements")" = true
           done
           plutil -convert json -o - "$actual_entitlements" | jq -e 'keys == [
             "com.apple.security.cs.allow-dyld-environment-variables",
             "com.apple.security.cs.allow-jit",
             "com.apple.security.cs.allow-unsigned-executable-memory",
-            "com.apple.security.cs.disable-executable-page-protection",
             "com.apple.security.cs.disable-library-validation"
           ]' >/dev/null
           if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$actual_entitlements" >/dev/null 2>&1; then
@@ -454,7 +481,18 @@ jobs:
             exit 1
           fi
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
-            --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE"
+            --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE" \
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened"
+
+      - name: Upload Godot Harmony fixture diagnostics
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: godot-harmony-fixture-arm64-${{ github.run_id }}
+          path: ${{ runner.temp }}/couchcoop-godot-harmony-fixture
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Download the Linux-built production snapshot package
         timeout-minutes: 5
@@ -640,6 +678,7 @@ jobs:
 
       - name: Build reference SDKs and public runtime fixtures
         timeout-minutes: 20
+        id: build_fixtures
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -699,11 +738,30 @@ jobs:
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --harmony-smoke "$RUNNER_TEMP/couchcoop-harmony-smoke/CouchCoop.HarmonySmoke"
+
+      - name: Run the stock Godot .NET Harmony fixture
+        timeout-minutes: 15
+        id: godot_fixture_stock
+        working-directory: sources/sts2-couch-coop
+        run: |
+          set -euo pipefail
+          diagnostics="$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock"
+          mkdir -p "$diagnostics"
+          codesign --display --verbose=4 "$COUCHCOOP_GODOT_APP" >"$diagnostics/codesign.txt" 2>&1
+          for arch in arm64 x86_64; do
+            codesign --display --entitlements :- --arch "$arch" "$COUCHCOOP_GODOT_APP" \
+              >"$diagnostics/entitlements-$arch.plist" 2>"$diagnostics/entitlements-$arch.log" || true
+          done
+          lipo -archs "$COUCHCOOP_GODOT_APP/Contents/MacOS/Godot" >"$diagnostics/lipo-archs.txt"
+          dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
-            --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE"
+            --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE" \
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock"
 
       - name: Run the ad-hoc hardened Godot .NET fixture
         timeout-minutes: 15
+        # Collect the hardened comparison even when the stock fixture refuses a patch.
+        if: ${{ !cancelled() && steps.build_fixtures.outcome == 'success' }}
         working-directory: sources/sts2-couch-coop
         run: |
           set -euo pipefail
@@ -715,20 +773,27 @@ jobs:
             --entitlements tests/CouchCoop.MacOs.GodotHarmonyFixture/hardened-runtime.entitlements.plist \
             "$signed_app"
           codesign --verify --deep --strict "$signed_app"
-          signature="$RUNNER_TEMP/couchcoop-godot-signature.txt"
-          codesign --display --verbose=4 "$signed_app" >"$signature" 2>&1
+          diagnostics="$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened"
+          mkdir -p "$diagnostics"
+          codesign --display --verbose=4 "$signed_app" >"$diagnostics/codesign.txt" 2>&1
+          for arch in arm64 x86_64; do
+            codesign --display --entitlements :- --arch "$arch" "$signed_app" \
+              >"$diagnostics/entitlements-$arch.plist" 2>"$diagnostics/entitlements-$arch.log" || true
+          done
+          lipo -archs "$signed_app/Contents/MacOS/Godot" >"$diagnostics/lipo-archs.txt"
+          dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"
+          signature="$diagnostics/codesign.txt"
           grep -Fq 'Signature=adhoc' "$signature"
           grep -Eq '^CodeDirectory .*flags=.*\([^)]*runtime[^)]*\)' "$signature"
-          actual_entitlements="$RUNNER_TEMP/couchcoop-godot-entitlements.plist"
+          actual_entitlements="$diagnostics/entitlements.plist"
           codesign --display --entitlements :- "$signed_app" >"$actual_entitlements" 2>/dev/null
-          for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-executable-page-protection disable-library-validation; do
+          for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-library-validation; do
             test "$(/usr/libexec/PlistBuddy -c "Print :com.apple.security.cs.$key" "$actual_entitlements")" = true
           done
           plutil -convert json -o - "$actual_entitlements" | jq -e 'keys == [
             "com.apple.security.cs.allow-dyld-environment-variables",
             "com.apple.security.cs.allow-jit",
             "com.apple.security.cs.allow-unsigned-executable-memory",
-            "com.apple.security.cs.disable-executable-page-protection",
             "com.apple.security.cs.disable-library-validation"
           ]' >/dev/null
           if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$actual_entitlements" >/dev/null 2>&1; then
@@ -736,7 +801,18 @@ jobs:
             exit 1
           fi
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
-            --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE"
+            --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE" \
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened"
+
+      - name: Upload Godot Harmony fixture diagnostics
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: godot-harmony-fixture-x86_64-${{ github.run_id }}
+          path: ${{ runner.temp }}/couchcoop-godot-harmony-fixture
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Download the Linux-built production snapshot package
         timeout-minutes: 5
