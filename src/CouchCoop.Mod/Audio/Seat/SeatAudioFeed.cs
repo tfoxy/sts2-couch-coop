@@ -124,6 +124,13 @@ public static class SeatAudioFeed
             try
             {
                 var key = SoundKey.Canonical(path, parameters);
+                if (!AudioService.TryParseKey(key, out _, out _))
+                {
+                    if (AudioDiagnostics.Enabled)
+                        AudioDiagnostics.Trace(new AudioDiagnostics.Mark("seat-drop-unrenderable", AudioDiagnostics.NowUs(),
+                            SeatTUs: NowUs(), KeyId: SoundKey.Id(key), Path: path));
+                    return;
+                }
                 var sound = new SeatAudioSfx(SoundKey.Id(key), key, NowUs(), Volume: volume);
                 TraceCall(sound);
                 PublishLocked(sound);

@@ -149,11 +149,15 @@ internal static class AudioRenderLaneConnection
                     {
                         string? keyId = root.GetProperty("keyId").GetString();
                         string? key = root.GetProperty("key").GetString();
-                        if (keyId is null || key is null || !SoundKey.IsId(keyId) || SoundKey.Id(key) != keyId ||
-                            !AudioService.TryParseKey(key, out string path, out _) ||
+                        if (keyId is null || key is null || !SoundKey.IsId(keyId) || SoundKey.Id(key) != keyId)
+                        { await ClosePolicy(socket, "invalid-sound-key"); return; }
+                        if (!AudioService.TryParseKey(key, out string path, out _) ||
                             path.StartsWith("event:/music", StringComparison.OrdinalIgnoreCase) ||
                             path.StartsWith("event:/ambience", StringComparison.OrdinalIgnoreCase))
-                        { await ClosePolicy(socket, "invalid-sound-key"); return; }
+                        {
+                            await SendControl(new AudioUnavailable(keyId, "invalid-sound-key"), stop.Token).ConfigureAwait(false);
+                            break;
+                        }
                         uint id = ++streamId;
                         long order = ++requestOrder;
                         if (AudioDiagnostics.Enabled)

@@ -9,6 +9,7 @@ internal static class SeatAudioFeedTests
     public static async Task RunAsync()
     {
         NoSubscriberAllocatesNothing();
+        await UnrenderableSfxIsDroppedAsync();
         await SnapshotGatingAndStaleDropAsync();
         await BoundedQueueDropsOldestAsync();
         TargetsResolve();
@@ -21,6 +22,25 @@ internal static class SeatAudioFeedTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1000; i++) SeatAudioFeed.Sfx("event:/sfx/test", null, 1);
         Require(GC.GetAllocatedBytesForCurrentThread() == before, "dormant SFX path allocates zero bytes");
+    }
+
+    private static async Task UnrenderableSfxIsDroppedAsync()
+    {
+        using var subscription = SeatAudioFeed.Subscribe(new SeatAudioVolumes(1, 1, 1, 1, 0, 0));
+        foreach (var path in new[] { "blunt_attack.mp3", "event:/music/x" })
+        {
+            SeatAudioFeed.Sfx(path, null, 1);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
+            try
+            {
+                await subscription.ReadAsync(timeout.Token);
+                throw new Exception("unrenderable SFX was published");
+            }
+            catch (OperationCanceledException) { }
+        }
+        SeatAudioFeed.Sfx("event:/sfx/test", null, 1);
+        Require(await subscription.ReadAsync(CancellationToken.None) is SeatAudioSfx { Key: "event:/sfx/test" },
+            "renderable SFX is published after an unrenderable path");
     }
 
     private static async Task SnapshotGatingAndStaleDropAsync()

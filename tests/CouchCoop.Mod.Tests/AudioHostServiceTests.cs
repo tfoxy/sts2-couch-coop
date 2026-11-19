@@ -192,6 +192,18 @@ internal static class AudioHostServiceTests
             using (var echoed = await AwaitClock(first, 42))
                 if (echoed.RootElement.GetProperty("clientPerfMs").GetDouble() != 1234.25)
                     throw new Exception("Maximum-length clock was refused");
+            foreach (string unrenderable in new[] { "blunt_attack.mp3", "event:/music/x", "event:/ambience/x", "event:/sfx/ambience/x" })
+            {
+                string unrenderableId = SoundKey.Id(unrenderable);
+                byte[] request = Encoding.UTF8.GetBytes($"{{\"kind\":\"play\",\"keyId\":\"{unrenderableId}\",\"key\":\"{unrenderable}\"}}");
+                await first.SendAsync(request, WebSocketMessageType.Text, true, CancellationToken.None);
+                using var unavailable = await AwaitUnavailable(first);
+                var message = unavailable.RootElement;
+                if (message.GetProperty("keyId").GetString() != unrenderableId ||
+                    message.GetProperty("reason").GetString() != "invalid-sound-key")
+                    throw new Exception("Unrenderable key did not receive a keyed unavailable control");
+            }
+            if (backend.Renders != 0) throw new Exception("Unrenderable key reached the render backend");
             string key = "event:/sfx/card_draw", id = SoundKey.Id(key);
             byte[] play = Encoding.UTF8.GetBytes($"{{\"kind\":\"play\",\"keyId\":\"{id}\",\"key\":\"{key}\"}}");
             await first.SendAsync(play, WebSocketMessageType.Text, true, CancellationToken.None);
@@ -199,6 +211,12 @@ internal static class AudioHostServiceTests
             await AwaitReady(first);
             await AwaitReady(second);
             if (backend.Renders != 1) throw new Exception("Concurrent cold key rendered more than once");
+            using var mismatched = new ClientWebSocket();
+            await mismatched.ConnectAsync(endpoint, CancellationToken.None);
+            byte[] mismatch = Encoding.UTF8.GetBytes($"{{\"kind\":\"play\",\"keyId\":\"{SoundKey.Id("event:/sfx/other")}\",\"key\":\"{key}\"}}");
+            await mismatched.SendAsync(mismatch, WebSocketMessageType.Text, true, CancellationToken.None);
+            if (await AwaitClose(mismatched) != WebSocketCloseStatus.PolicyViolation)
+                throw new Exception("Mismatched sound key id was accepted");
             using var invalid = new ClientWebSocket();
             await invalid.ConnectAsync(endpoint, CancellationToken.None);
             await invalid.SendAsync(new byte[] { 1 }, WebSocketMessageType.Binary, true, CancellationToken.None);
@@ -230,9 +248,23 @@ internal static class AudioHostServiceTests
         while (true)
         {
             var result = await socket.ReceiveAsync(buffer, deadline.Token);
+            if (result.MessageType == WebSocketMessageType.Close)
+                throw new Exception("Render lane closed before expected text message");
             if (result.MessageType == WebSocketMessageType.Text)
                 return Encoding.UTF8.GetString(buffer, 0, result.Count);
         }
+    }
+
+    private static async Task<System.Text.Json.JsonDocument> AwaitUnavailable(ClientWebSocket socket)
+    {
+        for (int i = 0; i < 32; i++)
+        {
+            var document = System.Text.Json.JsonDocument.Parse(await ReceiveText(socket));
+            if (document.RootElement.GetProperty("kind").GetString() == "unavailable")
+                return document;
+            document.Dispose();
+        }
+        throw new Exception("No unavailable control received");
     }
 
     private static async Task<System.Text.Json.JsonDocument> AwaitClock(ClientWebSocket socket, long seq)

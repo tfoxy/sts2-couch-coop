@@ -187,6 +187,8 @@ if (args is ["audio", ..])
     AudioNativeLayerTests.Run();
     StreamLaneSubscriptionTests.Run();
     await AudioHostServiceTests.RunAsync();
+    await SeatAudioFeedTests.RunAsync();
+    await SeatAudioLaneConnectionTests.RunAsync();
     Console.WriteLine("audio: ok");
     return;
 }
@@ -842,12 +844,6 @@ if (args is ["static-bg", ..])
 //
 // Every leg is run even when an earlier one fails, and each is named on its own line: a game update typically
 // breaks several members at once, and stopping at the first would hide the rest behind another build+run cycle.
-if (args is ["audio", ..])
-{
-    await SeatAudioFeedTests.RunAsync();
-    await SeatAudioLaneConnectionTests.RunAsync();
-    return;
-}
 
 if (args is ["beta-targets", ..])
 {
