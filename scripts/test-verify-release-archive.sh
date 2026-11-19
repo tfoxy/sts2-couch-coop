@@ -591,11 +591,13 @@ with zipfile.ZipFile(sys.argv[1], "w") as archive:
 PY
 expect_reject traversal "$verifier" --archive "$traversal_archive"
 
+# The uppercase-id case must not be an uppercase spelling of a shipped record: on a case-insensitive
+# filesystem (macOS) writing it would overwrite the valid record and the verifier would see a valid name.
 for path in render-capture/librender_stream_capture.so render-capture/linux/calibration \
   render-capture/linux/calibration.nightly render-capture/linux/calibration.0-operator \
   render-capture/windows/calibration.nightly render-capture/linux/calibration.stable \
   render-capture/windows/calibration.stable render-capture/linux/calibration.megadot-4.5.1-m12-9a404df \
-  render-capture/linux/calibration.megadot-4.5.1-m12-9A404DFE \
+  render-capture/linux/calibration.megadot-4.5.1-m12-ABCDEF12 \
   render-capture/windows/calibration.megadot-4.5.1-m12-e6ebf95c.source \
   render-capture/linux/calibration.extra/calibration.megadot-4.5.1-m12-9a404dfe \
   render-capture/linux/calibration.render-capture/windows/calibration.megadot-4.5.1-m12-9a404dfe \
