@@ -59,6 +59,12 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
         get { lock (_discoveryGate) return _discoveryStarted; }
     }
 
+    // Available only while discovery services own the browser-port UDP bind. Its lifetime follows those services.
+    public BrowserPortUdpSocket? BrowserPortUdpSocket
+    {
+        get { lock (_discoveryGate) return _discovery?.UdpSocket; }
+    }
+
     /// <param name="deferDiscoveryServices">
     /// When <see langword="true"/>, <see cref="StartAsync"/> brings up ONLY the browser listener and leaves
     /// the LAN discovery responder and the mDNS name for

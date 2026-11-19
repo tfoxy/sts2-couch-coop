@@ -402,6 +402,18 @@ if (args is ["direct-ip-certificates", ..])
     return;
 }
 
+if (args is ["host-discovery", ..])
+{
+    await HostDiscoveryResponderTests.RunAsync();
+    return;
+}
+
+if (args is ["browser-port-udp", ..])
+{
+    await BrowserPortUdpSocketTests.RunAsync();
+    return;
+}
+
 if (args is ["network", ..])
 {
     LanAddressRankingTests.Run();
@@ -417,6 +429,7 @@ if (args is ["network", ..])
     SecureHeadlessRedirectTests.RunAsync();
     MdnsResponderTests.Run();
     await HostDiscoveryResponderTests.RunAsync();
+    await BrowserPortUdpSocketTests.RunAsync();
     await NetworkHardeningTests.RunAsync();
     HostReachabilityWatchTests.Run();
     WindowsFirewallProbeTests.Run();
@@ -1107,6 +1120,7 @@ HeadlessUserDirSeederTests.Run();
 HostProfileBackupTests.Run();
 // Host-discovery responder (real UDP loopback round-trip). Runs before the flaky network suite below.
 await HostDiscoveryResponderTests.RunAsync();
+await BrowserPortUdpSocketTests.RunAsync();
 AssetCacheTokenEnvelopeTests.Run();
 // Host-performance truth: the `session` envelope reports the freezes THIS instance actually applies (all off
 // on a windowed host, which never installs the suspender), so the mirror panel's checkboxes stop lying.

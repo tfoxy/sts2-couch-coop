@@ -4,7 +4,7 @@ namespace CouchCoop.Mod.HostUi;
 
 /// <summary>
 /// <c>SO_REUSEPORT</c> for the two UDP sockets this mod binds on a fixed wildcard port
-/// (<see cref="MdnsResponder"/> on 5353, <see cref="HostDiscoveryResponder"/> on the browser server's port).
+/// (<see cref="MdnsResponder"/> on 5353, <see cref="BrowserPortUdpSocket"/> on the browser server's port).
 /// </summary>
 /// <remarks>
 /// <para>
