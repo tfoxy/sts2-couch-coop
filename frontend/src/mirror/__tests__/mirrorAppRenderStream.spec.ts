@@ -1415,6 +1415,19 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     lifecycle.complete("missing", httpStatus);
     lifecycle.complete("available", 200);
     await settle();
+    if (httpStatus === 503) {
+      // Temporary failures settle unavailable only after three retries at bounded backoff.
+      for (const [attempt, delay] of [250, 500, 1000].entries()) {
+        const failedAt = lifecycle.now;
+        lifecycle.frameAt(failedAt + delay - 1);
+        expect(lifecycle.transport.gets.filter((get) => get.path.endsWith("missing"))).toHaveLength(attempt + 1);
+        expect(lifecycle.client.stats().resources).toMatchObject({ unavailable: 0, found: 0, temporary: 0 });
+        lifecycle.frameAt(failedAt + delay);
+        expect(lifecycle.transport.gets.filter((get) => get.path.endsWith("missing"))).toHaveLength(attempt + 2);
+        lifecycle.complete("missing", httpStatus, attempt + 1);
+        await settle();
+      }
+    }
     lifecycle.frame();
     lifecycle.transaction(2, []);
     lifecycle.frame();
@@ -1437,12 +1450,13 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
       temporary: httpStatus === 503 ? 1 : 0,
       recent: [expect.objectContaining({ hash: "missing", kind: 0, seq: 1, status: httpStatus, count: 1 })]
     });
-    // The scripted core still names the resource across this independent update. Naming it
-    // again must keep it suppressed, with one diagnostic and no timer or duplicate GET.
+    // Missing payloads and exhausted temporary retries stay suppressed while the core names them.
     lifecycle.transaction(3, ["missing"]);
     lifecycle.frame();
+    if (httpStatus === 503) lifecycle.frameAt(lifecycle.now + 10000);
     await settle();
-    expect(lifecycle.transport.gets.filter((get) => get.path.endsWith("missing"))).toHaveLength(1);
+    expect(lifecycle.transport.gets.filter((get) => get.path.endsWith("missing")))
+      .toHaveLength(httpStatus === 503 ? 4 : 1);
     expect(lifecycle.client.stats().resources?.recent).toHaveLength(1);
     expect(lifecycle.transport.acks()).toContain("applied 3");
     expect(seat.ofType("renderer")).toEqual([]);

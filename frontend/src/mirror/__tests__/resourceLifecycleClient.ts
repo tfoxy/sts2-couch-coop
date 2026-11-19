@@ -30,11 +30,13 @@ export function resourceLifecycleClient(options: RenderStreamClientOptions) {
     client,
     calls: core.calls,
     get transport() { return transport; },
+    get now() { return clock.t; },
     open() { transport.on.open(); transport.on.message(session()); },
     transaction(seq: number, hashes: string[]) { transport.on.message(tx(seq, hashes)); },
     frame() { clock.frame(); },
-    complete(hash: string, status: number) {
-      const request = transport.gets.find((get) => get.path.endsWith(hash));
+    frameAt(at: number) { clock.t = at - 16.7; clock.frame(); },
+    complete(hash: string, status: number, attempt = 0) {
+      const request = transport.gets.filter((get) => get.path.endsWith(hash))[attempt];
       if (!request) throw new Error(`No resource GET for ${hash}`);
       request.resolve(status);
     }
