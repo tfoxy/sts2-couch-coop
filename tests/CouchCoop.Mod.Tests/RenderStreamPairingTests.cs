@@ -167,7 +167,6 @@ internal static class RenderStreamPairingTests
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
             ["GRC_LIVE_CARRIERS"] = "ws",
             ["GRC_STREAM_VERSION"] = "16",
-            ["GRC_RESOURCE_HINTS"] = "off",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = "/home/p/couch-coop/render-stream/slot-2",
             ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337,http://localhost:13337",
@@ -813,7 +812,7 @@ internal static class RenderStreamPairingTests
             || key.StartsWith("GRC_LIVE_WT_", StringComparison.Ordinal)
             || key == StreamingSeatDescriptor.LanPlaintextEnvironmentVariable), "host has no LAN, TLS or WT settings");
         Assert(environment["GRC_STREAM_VERSION"] == "16", "host uses wire version 16");
-        Assert(environment["GRC_RESOURCE_HINTS"] == "off", "host skips unused resource hints");
+        Assert(!environment.ContainsKey("GRC_RESOURCE_HINTS"), "host uses resource hints by default");
         Assert(!environment.ContainsKey("GRC_VIEWPORTS"), "host uses viewport surfaces by default");
         Assert(environment["GRC_MODE"] == "standby" && environment["GRC_CALIBRATION"] == Calibration,
             "host starts in standby with the configured calibration");
