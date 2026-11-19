@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MessageChannel as NodeMessageChannel } from "node:worker_threads";
+import { startServiceWorkerBridge, type ServiceWorkerBridge } from "@/tunnel/serviceWorkerBridge";
+import type { TunnelFetch } from "@/tunnel/tunnelFetch";
 
 import {
   applyServiceWorkerPolicy,
@@ -617,5 +620,207 @@ describe("service worker registration policy", () => {
     const second = await applyServiceWorkerPolicy(env());
     expect(second.reloaded).toBe(false);
     expect(reloads).toBe(1);
+  });
+});
+
+// The public-origin worker has a separate routing policy: a tunnel prefix belongs to a window port.
+const PAGES_SW_PATH = fileURLToPath(new URL("../../pages/public/sw.js", import.meta.url));
+const TAB = "abcdefghijklmnopqrstuv";
+
+function createPagesHarness() {
+  const listeners = new Map<string, (event: any) => void>();
+  const fetchCalls: string[] = [];
+  const clients: { id: string; postMessage(data: unknown): void }[] = [];
+  const ports: MessagePort[] = [];
+  let claims = 0;
+  const context = {
+    URL, Headers, Response, ReadableStream, Uint8Array, setTimeout, clearTimeout,
+    location: new URL("https://pages.example.test/"),
+    clients: { matchAll: async () => clients, claim: async () => { claims++; } },
+    caches: { open: async () => ({ keys: async () => [], addAll: async () => {} }), keys: async () => [], match: async () => undefined },
+    fetch: async (request: Request) => { fetchCalls.push(request.url); return new Response("network"); },
+    registration: { unregister: async () => true }, skipWaiting: async () => {},
+    addEventListener: (type: string, listener: (event: unknown) => void) => listeners.set(type, listener)
+  };
+  vm.runInNewContext(readFileSync(PAGES_SW_PATH, "utf8"), { ...context, self: context }, { filename: PAGES_SW_PATH });
+  function register(tab: string, port: MessagePort, clientId = "window-1") {
+    ports.push(port);
+    listeners.get("message")!({ data: { type: "couchcoop-tunnel-register", tab }, ports: [port], source: { id: clientId } });
+  }
+  function request(path: string, init?: RequestInit) {
+    let response: Promise<Response> | undefined;
+    const request = new Request(new URL(path, context.location).href, init);
+    listeners.get("fetch")!({ request, respondWith(value: Promise<Response>) { response = value; } });
+    return response;
+  }
+  return { listeners, clients, fetchCalls, ports, register, request, get claims() { return claims; } };
+}
+
+
+const bridges: ServiceWorkerBridge[] = [];
+const workerPorts: MessagePort[] = [];
+afterEach(() => {
+  for (const bridge of bridges.splice(0)) bridge.stop();
+  for (const port of workerPorts.splice(0)) port.close();
+  vi.unstubAllGlobals();
+});
+
+function startPagesBridge(h: ReturnType<typeof createPagesHarness>, tunnelFetch: TunnelFetch) {
+  const container = new EventTarget() as EventTarget & { controller: unknown };
+  const worker = {
+    postMessage(data: { tab: string }, transfer: MessagePort[]) {
+      h.register(data.tab, transfer[0]); workerPorts.push(transfer[0]);
+    }
+  };
+  container.controller = worker;
+  vi.stubGlobal("navigator", { serviceWorker: container });
+  vi.stubGlobal("MessageChannel", NodeMessageChannel);
+  const bridge = startServiceWorkerBridge(tunnelFetch); bridges.push(bridge);
+  const client = {
+    id: "window-1",
+    postMessage(data: unknown) {
+      container.dispatchEvent(Object.defineProperties(new Event("message"), { data: { value: data }, source: { value: worker } }));
+    }
+  };
+  h.clients.push(client);
+  return { bridge, container, client };
+}
+
+function portPair() {
+  const pair = new NodeMessageChannel();
+  const port1 = pair.port1 as unknown as MessagePort;
+  const port2 = pair.port2 as unknown as MessagePort;
+  workerPorts.push(port1, port2);
+  return { port1, port2 };
+}
+const portTick = () => new Promise<void>(resolve => setTimeout(resolve, 10));
+
+describe("public-origin tunnel service worker", () => {
+  it("answers a prefixed request via the window with method, Range, body and streamed response", async () => {
+    const h = createPagesHarness(); const seen: Request[] = [];
+    const { bridge } = startPagesBridge(h, async request => {
+      seen.push(request); expect(await request.text()).toBe("upload");
+      return new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(new TextEncoder().encode("first")); controller.enqueue(new TextEncoder().encode("second")); controller.close();
+      } }), { status: 206, headers: { "content-range": "bytes 0-10/11" } });
+    });
+    await bridge.ready;
+    expect(bridge.tab).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    const response = await h.request(bridge.prefix + "res/a?x=1", { method: "POST", body: "upload", headers: { Range: "bytes=0-10" } })!;
+    expect(response.status).toBe(206); expect(response.headers.get("content-range")).toBe("bytes 0-10/11");
+    expect(await response.text()).toBe("firstsecond"); expect(seen[0].method).toBe("POST");
+    expect(new URL(seen[0].url).pathname + new URL(seen[0].url).search).toBe("/res/a?x=1");
+    expect(seen[0].headers.get("range")).toBe("bytes=0-10"); expect(h.fetchCalls).toEqual([]);
+  });
+  it("limits response delivery to eight chunks until the consumer supplies credit", async () => {
+    const h = createPagesHarness(); let reads = 0;
+    const { bridge } = startPagesBridge(h, async () => new Response(new ReadableStream({
+      pull(controller) { reads++; controller.enqueue(new Uint8Array([reads])); if (reads === 12) controller.close(); }
+    }, { highWaterMark: 0 })));
+    await bridge.ready;
+    const response = await h.request(bridge.prefix + "stream")!;
+    await portTick(); expect(reads).toBe(8);
+    const reader = response.body!.getReader(); expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    await portTick(); expect(reads).toBe(9);
+    const remaining: number[] = [];
+    while (true) { const part = await reader.read(); if (part.done) break; remaining.push(...part.value); }
+    expect(remaining).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(h.fetchCalls).toEqual([]);
+  });
+  it("recovers an unknown tab through clients.matchAll and a registration handshake", async () => {
+    const fresh = createPagesHarness(); const original = createPagesHarness();
+    const { bridge, container } = startPagesBridge(original, async () => new Response("recovered")); await bridge.ready;
+    const worker = { postMessage(data: { tab: string }, ports: MessagePort[]) { fresh.register(data.tab, ports[0]); workerPorts.push(ports[0]); } };
+    fresh.clients.push({ id: "window-1", postMessage(data) {
+      container.dispatchEvent(Object.defineProperties(new Event("message"), { data: { value: data }, source: { value: worker } }));
+    } });
+    const response = await fresh.request(bridge.prefix + "res/a")!;
+    expect(await response.text()).toBe("recovered"); expect(fresh.fetchCalls).toEqual([]);
+  });
+  it("shares one restart handshake across concurrent requests", async () => {
+    const original = createPagesHarness(); const fresh = createPagesHarness();
+    const { bridge, container } = startPagesBridge(original, async request => new Response(new URL(request.url).pathname));
+    await bridge.ready;
+    let discoveries = 0;
+    const worker = { postMessage(data: { tab: string }, ports: MessagePort[]) { fresh.register(data.tab, ports[0]); workerPorts.push(ports[0]); } };
+    fresh.clients.push({ id: "window-1", postMessage(data) {
+      discoveries++;
+      container.dispatchEvent(Object.defineProperties(new Event("message"), { data: { value: data }, source: { value: worker } }));
+    } });
+    const responses = await Promise.all([fresh.request(bridge.prefix + "a")!, fresh.request(bridge.prefix + "b")!]);
+    expect(await Promise.all(responses.map(response => response.text()))).toEqual(["/a", "/b"]);
+    expect(discoveries).toBe(1);
+  });
+  it("re-registers its stable tab on controllerchange", async () => {
+    const first = createPagesHarness(); const second = createPagesHarness();
+    const { bridge, container } = startPagesBridge(first, async () => new Response("new controller")); await bridge.ready;
+    container.controller = { postMessage(data: { tab: string }, ports: MessagePort[]) { second.register(data.tab, ports[0]); workerPorts.push(ports[0]); } };
+    container.dispatchEvent(new Event("controllerchange")); await portTick();
+    expect(await (await second.request(bridge.prefix + "x")!).text()).toBe("new controller");
+  });
+  it("keeps non-prefixed requests and direct host URLs on their existing paths", async () => {
+    const h = createPagesHarness();
+    expect(h.request("http://192.168.1.77:13337/res/a.png")).toBeUndefined();
+    expect(h.request("/catalog")).toBeUndefined(); expect(h.request("/ws")).toBeUndefined();
+    expect(h.request("/~h/invalid/res/a")).toBeUndefined();
+    expect(h.request("/boot.js", { method: "POST", body: "x" })).toBeUndefined();
+    expect(await (await h.request("/boot.js")!).text()).toBe("network");
+    expect(h.fetchCalls).toEqual(["https://pages.example.test/boot.js"]);
+  });
+  it("claims clients on activation and leaves unclaimed tabs as a network error", async () => {
+    const h = createPagesHarness(); let wait!: Promise<void>;
+    h.listeners.get("activate")!({ waitUntil(value: Promise<void>) { wait = value; } }); await wait;
+    expect(h.claims).toBe(1);
+    const response = await h.request(`/~h/${TAB}/missing`)!;
+    expect(response.type).toBe("error"); expect(h.fetchCalls).toEqual([]);
+  });
+  it("aborts the window request when the response stream is cancelled", async () => {
+    const h = createPagesHarness(); let signal!: AbortSignal;
+    let cancelled = false;
+    const { bridge } = startPagesBridge(h, async request => { signal = request.signal; return new Response(new ReadableStream({ pull() {}, cancel() { cancelled = true; } })); });
+    await bridge.ready; const response = await h.request(bridge.prefix + "stream")!;
+    await response.body!.cancel(); await portTick(); expect(signal.aborted).toBe(true); expect(cancelled).toBe(true);
+  });
+  it("surfaces window failure without trying a worker fetch", async () => {
+    const h = createPagesHarness(); const { bridge } = startPagesBridge(h, async () => { throw new Error("peer closed"); }); await bridge.ready;
+    await expect(h.request(bridge.prefix + "res/a")).rejects.toThrow("peer closed"); expect(h.fetchCalls).toEqual([]);
+  });
+  it("propagates an AbortSignal before response headers arrive", async () => {
+    const h = createPagesHarness(); let signal!: AbortSignal;
+    const { bridge } = startPagesBridge(h, request => new Promise((_, reject) => {
+      signal = request.signal;
+      request.signal.addEventListener("abort", () => reject(request.signal.reason));
+    }));
+    await bridge.ready;
+    const controller = new AbortController();
+    const response = h.request(bridge.prefix + "waiting", { signal: controller.signal })!;
+    const rejected = expect(response).rejects.toMatchObject({ name: "AbortError" });
+    await portTick(); controller.abort(); await rejected; await portTick(); expect(signal.aborted).toBe(true);
+  });
+  it("rejects an oversized upload without opening a tunnel request", async () => {
+    const h = createPagesHarness(); let calls = 0;
+    const { bridge } = startPagesBridge(h, async () => { calls++; return new Response("unused"); }); await bridge.ready;
+    const response = await h.request(bridge.prefix + "upload", { method: "POST", body: new Uint8Array(1024 * 1024 + 1) })!;
+    expect(response.status).toBe(413); expect(calls).toBe(0); expect(h.fetchCalls).toEqual([]);
+  });
+  it("errors a streamed body when its window producer fails after the headers", async () => {
+    const h = createPagesHarness();
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const { bridge } = startPagesBridge(h, async () => new Response(new ReadableStream({ start(value) { controller = value; } })));
+    await bridge.ready; const response = await h.request(bridge.prefix + "broken")!;
+    const failed = expect(response.text()).rejects.toThrow("body failed");
+    controller.error(new Error("body failed")); await failed; expect(h.fetchCalls).toEqual([]);
+  });
+  it("does not register malformed tab ids or accept a different client's replacement port", async () => {
+    const h = createPagesHarness(); const owner = portPair();
+    owner.port1.onmessage = event => {
+      if (event.data.type === "request") {
+        owner.port1.postMessage({ type: "response", id: event.data.id, status: 204, headers: [] });
+        owner.port1.postMessage({ type: "end", id: event.data.id });
+      }
+    };
+    h.register(TAB, owner.port2);
+    const other = portPair(); h.register(TAB, other.port2, "window-2"); h.register("bad", other.port1);
+    expect((await h.request(`/~h/${TAB}/empty`)!).status).toBe(204); expect(h.fetchCalls).toEqual([]);
   });
 });
