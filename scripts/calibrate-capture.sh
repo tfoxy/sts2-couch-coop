@@ -2,19 +2,26 @@
 # Calibrate and verify an executable offline; no game process is launched.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exe= game_build= steam_build= header= platform= version_name=MegaDot refresh=false
+exe= game_build= steam_build= header= platform= arch= version_name=MegaDot refresh=false
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == --refresh ]]; then refresh=true; shift; continue; fi
   [[ $# -ge 2 ]] || { echo 'calibrate capture: options require values' >&2; exit 2; }
   case "$1" in
     --exe) exe="$2" ;; --game-build) game_build="$2" ;;
     --steam-build) steam_build="$2" ;; --header) header="$2" ;; --version-name) version_name="$2" ;;
-    --platform) platform="$2" ;;
+    --platform) platform="$2" ;; --arch) arch="$2" ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift 2
 done
-[[ "$platform" == linux || "$platform" == windows ]] || { echo '--platform must be linux or windows' >&2; exit 2; }
+[[ "$platform" == linux || "$platform" == windows || "$platform" == macos ]] || { echo '--platform must be linux, windows or macos' >&2; exit 2; }
+arch_args=()
+if [[ "$platform" == macos ]]; then
+  [[ "$arch" == arm64 || "$arch" == x86_64 ]] || { echo 'macos --arch must be arm64 or x86_64' >&2; exit 2; }
+  arch_args=(--arch "$arch")
+else
+  [[ -z "$arch" ]] || { echo '--arch is only supported with --platform macos' >&2; exit 2; }
+fi
 [[ "$refresh" == true || -n "$game_build" ]] || { echo '--game-build is required for provenance' >&2; exit 2; }
 [[ -f "$exe" && -f "$header" ]] || { echo '--exe and --header must name existing files' >&2; exit 2; }
 gsw_root="${COUCHCOOP_GSW_ROOT:-$repo_root/../godot-scene-web}"
@@ -28,17 +35,23 @@ fi
 mkdir -p "$repo_root/.local" "$repo_root/eng/render-capture/$platform"
 work="$(mktemp -d "$repo_root/.local/$platform-calibration.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
-python3 -I "$calibrator" --binary "$exe" --header "$header" --version-name "$version_name" --out "$work/record"
+python3 -I "$calibrator" --binary "$exe" --header "$header" --version-name "$version_name" "${arch_args[@]}" --out "$work/record"
 if [[ "$platform" == windows ]]; then
   python3 -I "$calibrator" --pe-identity "$exe" > "$work/identity"
+elif [[ "$platform" == macos ]]; then
+  python3 -I - "$calibrator" "$exe" "$arch" > "$work/identity" <<'PY'
+import json, runpy, sys
+calibrator = runpy.run_path(sys.argv[1])
+print(json.dumps(calibrator['MachO'](sys.argv[2], sys.argv[3]).identity()))
+PY
 else
   readelf -n "$exe" > "$work/identity"
 fi
-python3 -I "$calibrator" --verify-record "$work/record" --binary "$exe" --header "$header" | tee "$work/verification"
+python3 -I "$calibrator" --verify-record "$work/record" --binary "$exe" --header "$header" "${arch_args[@]}" | tee "$work/verification"
 python3 -I -c 'import re, sys
 counts = re.findall(r"^verified: ([1-9][0-9]*)/([0-9]+)$", sys.stdin.read(), re.M)
 sys.exit(0 if len(counts) == 1 and counts[0][0] == counts[0][1] else "expected all checks verified")' < "$work/verification"
-python3 -I - "$work" "$repo_root/eng/render-capture/$platform" "$game_build" "$steam_build" "$(git -C "$gsw_root" rev-parse HEAD)" "$refresh" "$exe" <<'PY'
+python3 -I - "$work" "$repo_root/eng/render-capture/$platform" "$game_build" "$steam_build" "$(git -C "$gsw_root" rev-parse HEAD)" "$refresh" "$exe" "$arch" <<'PY'
 import hashlib, json, re, sys
 from pathlib import Path
 work, directory = map(Path, sys.argv[1:3])
@@ -49,8 +62,10 @@ record = json.loads(data)
 engine = record['engine']
 platform = directory.name
 refresh = sys.argv[6] == 'true'
-require(engine['platform'] == f'{platform}-x86_64', f'expected a {platform} x86_64 executable')
-require(engine['sha256'] == hashlib.sha256(Path(sys.argv[7]).read_bytes()).hexdigest(),
+arch = sys.argv[8] if platform == 'macos' else 'x86_64'
+require(engine['platform'] == f'{platform}-{arch}', f'expected a {platform} {arch} executable')
+exe_sha256 = hashlib.sha256(Path(sys.argv[7]).read_bytes()).hexdigest()
+require(engine['file_sha256' if platform == 'macos' else 'sha256'] == exe_sha256,
         'calibrated record differs from executable sha256')
 version = re.match(r'^MegaDot v(\d+\.\d+\.\d+)\.m\.(\d+)(?:\.|$)', engine['version_string'])
 require(version is not None, 'expected a MegaDot engine version')
@@ -63,6 +78,15 @@ if platform == 'windows':
     identity_key = 'peIdentity'
     executable_identity = {k: identity[k] for k in ('size_of_image', 'time_date_stamp', 'codeview_id', 'image_sha256')}
     require(engine['sha256'] == identity['sha256'], 'calibrated record differs from executable identity')
+elif platform == 'macos':
+    executable_identity = json.loads((work / 'identity').read_text())
+    uuid = engine['uuid']
+    require(isinstance(uuid, str) and re.fullmatch(r'[0-9a-f]{32}', uuid) is not None,
+            'expected a Mach-O UUID')
+    require(engine['cputype'] == {'arm64': 0x100000c, 'x86_64': 0x1000007}[arch],
+            'expected a Mach-O cputype matching --arch')
+    id8 = uuid[:8]
+    identity_key = 'machoIdentity'
 else:
     build_id = re.search(r'Build ID: ([0-9a-f]+)', (work / 'identity').read_text())
     require(build_id is not None, 'expected a GNU build-id')
@@ -79,6 +103,7 @@ source_path = directory / f'{engine_id}.source.json'
 calibrator = dict(version=record['calibrator']['version'], gswCommit=sys.argv[5],
                   headerSha256=record['calibrator']['header_sha256'])
 command = f'scripts/calibrate-capture.sh --platform {platform} --exe <executable> --header <godot-header>'
+if platform == 'macos': command += f' --arch {arch}'
 command += ' --refresh' if refresh else ' --game-build <game-build> --steam-build <steam-build>'
 if record_path.exists():
     previous_data = record_path.read_bytes()
@@ -88,7 +113,7 @@ if record_path.exists():
     require(source['schema'] == 'couchcoop-render-capture-record-source/2' and source['engineId'] == engine_id
             and source['recordSha256'] == hashlib.sha256(previous_data).hexdigest()
             and source['platform'] == engine['platform']
-            and source['exeSha256'] == engine['sha256'] and source[identity_key] == executable_identity
+            and source['exeSha256'] == exe_sha256 and source[identity_key] == executable_identity
             and previous_record['engine'] == engine,
             'existing engine source differs from record')
     if refresh:
@@ -107,7 +132,7 @@ else:
     require(not refresh, 'no existing engine record to refresh')
     require(not source_path.exists(), 'orphan source record; refusing to replace it')
     source = dict(schema='couchcoop-render-capture-record-source/2', engineId=engine_id,
-                  platform=engine['platform'], gameBuildsSeen=[seen], exeSha256=engine['sha256'],
+                  platform=engine['platform'], gameBuildsSeen=[seen], exeSha256=exe_sha256,
                   recordSha256=hashlib.sha256(data).hexdigest(), calibrator=calibrator,
                   provenance=dict(command=command), **{identity_key: executable_identity})
 record_path.write_bytes(data)

@@ -10,13 +10,25 @@ cat > "$work/gsw/experiments/render-stream/capture/tools/calibrate.py" <<'PY'
 import json, os, sys
 from pathlib import Path
 CALIBRATOR_VERSION = "9"
-data = Path(os.environ['CAPTURE_TEST_RECORD']).read_bytes()
-if '--out' in sys.argv:
-    Path(sys.argv[sys.argv.index('--out') + 1]).write_bytes(data)
-elif '--pe-identity' in sys.argv:
-    print(json.dumps(json.loads(data)['engine']))
-else:
-    print(os.environ.get('CAPTURE_TEST_VERIFICATION', 'verified: 37/37'))
+class MachO:
+    def __init__(self, path, arch):
+        self.engine = json.loads(Path(os.environ['CAPTURE_TEST_IDENTITY']).read_text())
+        assert self.engine['platform'] == f'macos-{arch}'
+    def identity(self):
+        return {k: self.engine[k] for k in ('uuid', 'cputype', 'cpusubtype', 'slice_offset', 'slice_size', 'sha256', 'file_sha256')}
+if __name__ == '__main__':
+    engine = json.loads(Path(os.environ['CAPTURE_TEST_RECORD']).read_text())['engine']
+    if engine['platform'].startswith('macos-') or '--arch' in sys.argv:
+        assert sys.argv[sys.argv.index('--arch') + 1] == json.loads(Path(os.environ['CAPTURE_TEST_IDENTITY']).read_text())['platform'][6:]
+    if '--out' in sys.argv:
+        assert sys.argv[sys.argv.index('--version-name') + 1] == 'MegaDot'
+    data = Path(os.environ['CAPTURE_TEST_RECORD']).read_bytes()
+    if '--out' in sys.argv:
+        Path(sys.argv[sys.argv.index('--out') + 1]).write_bytes(data)
+    elif '--pe-identity' in sys.argv:
+        print(json.dumps(json.loads(data)['engine']))
+    else:
+        print(os.environ.get('CAPTURE_TEST_VERIFICATION', 'verified: 37/37'))
 PY
 cat > "$work/bin/readelf" <<'SH'
 #!/usr/bin/env bash
@@ -28,12 +40,13 @@ git -C "$work/gsw" -c user.email=t@t -c user.name=t add -A
 git -C "$work/gsw" -c user.email=t@t -c user.name=t commit -qm fixture
 printf 'exe' > "$work/engine"
 printf 'header' > "$work/header.h"
-export CAPTURE_TEST_RECORD="$work/template" COUCHCOOP_GSW_ROOT="$work/gsw"
+export CAPTURE_TEST_IDENTITY="$work/identity" CAPTURE_TEST_RECORD="$work/template" COUCHCOOP_GSW_ROOT="$work/gsw"
 export PATH="$work/bin:$PATH"
 checks=0
+arch_args=()
 calibrate() {
   bash "$work/couch/scripts/calibrate-capture.sh" --platform "$platform" --exe "$work/engine" \
-    --header "$work/header.h" "$@" > "$work/output" 2>&1
+    --header "$work/header.h" "${arch_args[@]}" "$@" > "$work/output" 2>&1
 }
 accept() { if ! calibrate "$@"; then cat "$work/output"; exit 1; fi; checks=$((checks+1)); }
 reject() {
@@ -46,21 +59,39 @@ reject() {
   fi
   checks=$((checks+1))
 }
-for platform in linux windows; do
-  python3 -I - "$work" "$platform" <<'PY'
+platform=macos
+reject 'macos --arch must be arm64 or x86_64' --game-build v0.1.0
+reject 'macos --arch must be arm64 or x86_64' --arch sparc --game-build v0.1.0
+platform=linux
+reject '--arch is only supported with --platform macos' --arch arm64 --game-build v0.1.0
+for target in linux windows macos-arm64 macos-x86_64; do
+  platform="$target"; arch=x86_64; arch_args=()
+  if [[ "$target" == macos-* ]]; then
+    platform=macos; arch="${target#macos-}"; arch_args=(--arch "$arch")
+  fi
+  python3 -I - "$work" "$platform" "$arch" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
-work = Path(sys.argv[1]); platform = sys.argv[2]
-engine = dict(platform=f'{platform}-x86_64', sha256=hashlib.sha256((work / 'engine').read_bytes()).hexdigest(),
+work = Path(sys.argv[1]); platform, arch = sys.argv[2:]
+engine = dict(platform=f'{platform}-{arch}', sha256=hashlib.sha256((work / 'engine').read_bytes()).hexdigest(),
               version_string='MegaDot v4.5.1.m.14.mono.custom_build')
 if platform == 'windows':
     engine.update(size_of_image=8192, time_date_stamp=123, codeview_id='a'*32 + ':1', image_sha256='a'*64)
+elif platform == 'macos':
+    engine.update(uuid=('b' if arch == 'arm64' else 'c')*32,
+                  cputype=0x100000c if arch == 'arm64' else 0x1000007,
+                  cpusubtype=0 if arch == 'arm64' else 3, slice_offset=16, slice_size=3,
+                  file_sha256=engine['sha256'], sha256='a'*64)
+    (work / 'identity').write_text(json.dumps(engine))
 else:
     engine['build_id'] = 'd'*40
 record = dict(engine=engine, calibrator=dict(version='9', header_sha256='e'*64), slots=dict(old=1))
 (work / 'template').write_text(json.dumps(record))
 PY
-  if [[ "$platform" == linux ]]; then id8=dddddddd; else id8=aaaaaaaa; fi
+  case "$target" in
+    linux) id8=dddddddd ;; windows) id8=aaaaaaaa ;;
+    macos-arm64) id8=bbbbbbbb ;; macos-x86_64) id8=cccccccc ;;
+  esac
   record="$work/couch/eng/render-capture/$platform/megadot-4.5.1-m14-$id8.json"
   source="${record%.json}.source.json"
   rm -f "$work/record-before" "$work/source-before"
@@ -103,7 +134,9 @@ PY
   done
   unset CAPTURE_TEST_VERIFICATION
   # The filename remains the same for these mutations, but the executable identity does not.
-  for field in sha256 version_string platform old-identity; do
+  fields=(sha256 version_string platform old-identity)
+  if [[ "$platform" == macos ]]; then fields+=(file_sha256 cputype cpusubtype slice_offset slice_size uuid); fi
+  for field in "${fields[@]}"; do
     python3 -I - "$work" "$platform" "$field" <<'PY'
 import json, sys
 from pathlib import Path
@@ -112,12 +145,19 @@ record = json.loads((work / 'refreshed-template').read_text())
 if field == 'sha256': record['engine'][field] = '0'*64
 elif field == 'version_string': record['engine'][field] += '.changed'
 elif field == 'platform': record['engine'][field] = 'other-x86_64'
+elif platform == 'macos':
+    key = 'uuid' if field == 'old-identity' else field
+    value = record['engine'][key]
+    record['engine'][key] = value[:-1] + 'e' if isinstance(value, str) else value + 1
 elif platform == 'windows': record['engine']['time_date_stamp'] += 1
 else: record['engine']['build_id'] = 'd'*39 + 'e'
 (work / 'template').write_text(json.dumps(record))
 PY
     case "$field" in
-      sha256) reason='executable sha256' ;;
+      sha256) if [[ "$platform" == macos ]]; then reason='executable identity'; else reason='executable sha256'; fi ;;
+      file_sha256) reason='executable sha256' ;;
+      cputype) reason='cputype matching --arch' ;;
+      cpusubtype|slice_offset|slice_size|uuid) reason='executable identity' ;;
       version_string) reason='existing engine source differs' ;;
       platform) reason='expected a' ;;
       old-identity) if [[ "$platform" == windows ]]; then reason='existing engine source differs'; else reason='executable identity'; fi ;;
@@ -132,7 +172,7 @@ import hashlib, json, subprocess, sys
 from pathlib import Path
 source, before = (json.loads(Path(p).read_text()) for p in sys.argv[1:3])
 assert source['gameBuildsSeen'] == before['gameBuildsSeen']
-for key in ('engineId', 'platform', 'exeSha256', 'elfIdentity', 'peIdentity'):
+for key in ('engineId', 'platform', 'exeSha256', 'elfIdentity', 'peIdentity', 'machoIdentity'):
     assert source.get(key) == before.get(key)
 assert source['recordSha256'] == hashlib.sha256(Path(sys.argv[3]).read_bytes()).hexdigest()
 assert source['calibrator'] == dict(version='9', headerSha256='f'*64,
@@ -140,6 +180,10 @@ assert source['calibrator'] == dict(version='9', headerSha256='f'*64,
 assert source['provenance']['mergedSources'] == before['provenance']['mergedSources'] + [
     dict(calibrator=before['calibrator'], provenance=dict(command='original calibration'))]
 assert '--refresh' in source['provenance']['command']
+if source['platform'].startswith('macos-'):
+    assert '--arch ' + source['platform'][6:] in source['provenance']['command']
+    assert source['exeSha256'] == source['machoIdentity']['file_sha256']
+    assert source['exeSha256'] != source['machoIdentity']['sha256']
 PY
   checks=$((checks+1))
   cp "$record" "$work/record-before"

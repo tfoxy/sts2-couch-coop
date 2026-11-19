@@ -29,7 +29,7 @@ try:
     require(match is not None, 'cannot read GSW calibrator version')
     version = match.group(1)
     records = {}
-    for os, label in (('linux', 'Linux'), ('windows', 'Windows')):
+    for os, label in (('linux', 'Linux'), ('windows', 'Windows'), ('macos', 'macOS')):
         directory = root / 'eng/render-capture' / os
         identities = set()
         for path in sorted(directory.glob('*.source.json')):
@@ -46,8 +46,9 @@ try:
             require(name is not None, f'{prefix}: invalid engineId name')
             require(sha(path) == source['recordSha256'], f'{prefix}: record sha256')
             engine = record['engine']
-            require(engine['sha256'] == source['exeSha256'], f'{prefix}: exe sha256')
-            require(engine['platform'] == source['platform'] == f'{os}-x86_64', f'{prefix}: platform')
+            require(engine['file_sha256' if os == 'macos' else 'sha256'] == source['exeSha256'], f'{prefix}: exe sha256')
+            platforms = ('macos-arm64', 'macos-x86_64') if os == 'macos' else (f'{os}-x86_64',)
+            require(engine['platform'] == source['platform'] and engine['platform'] in platforms, f'{prefix}: platform')
             if os == 'linux':
                 build_id = engine['build_id']
                 require(isinstance(build_id, str) and re.fullmatch(r'[0-9a-f]{8,}', build_id) is not None
@@ -56,6 +57,25 @@ try:
                 require(record['calibrator']['header_sha256'] == source['calibrator']['headerSha256'],
                         f'{prefix}: calibrator header sha256')
                 identity, id8 = build_id, build_id[:8]
+            elif os == 'macos':
+                for key in ('uuid', 'cputype', 'cpusubtype', 'slice_offset', 'slice_size', 'sha256', 'file_sha256'):
+                    require(source['machoIdentity'][key] == engine[key], f'{prefix}: Mach-O {key}')
+                uuid = engine['uuid']
+                require(isinstance(uuid, str) and re.fullmatch(r'[0-9a-f]{32}', uuid) is not None,
+                        f'{prefix}: invalid Mach-O UUID')
+                arm64 = engine['platform'] == 'macos-arm64'
+                require(engine['cputype'] == (0x100000c if arm64 else 0x1000007), f'{prefix}: Mach-O cputype')
+                require(isinstance(engine['cpusubtype'], int) and
+                        engine['cpusubtype'] & 0xffffff == (0 if arm64 else 3), f'{prefix}: Mach-O cpusubtype')
+                for key in ('sha256', 'file_sha256'):
+                    require(isinstance(engine[key], str) and re.fullmatch(r'[0-9a-f]{64}', engine[key]) is not None,
+                            f'{prefix}: invalid Mach-O {key}')
+                require(isinstance(engine['slice_offset'], int) and engine['slice_offset'] >= 0
+                        and isinstance(engine['slice_size'], int) and engine['slice_size'] > 0,
+                        f'{prefix}: invalid Mach-O slice range')
+                require(record['calibrator']['header_sha256'] == source['calibrator']['headerSha256'],
+                        f'{prefix}: calibrator header sha256')
+                identity, id8 = (engine['cputype'], uuid), uuid[:8]
             else:
                 for key in ('size_of_image', 'time_date_stamp', 'codeview_id', 'image_sha256'):
                     require(source['peIdentity'][key] == engine[key], f'{prefix}: PE {key}')
@@ -87,7 +107,13 @@ if [[ ${#exes[@]} -gt 0 ]]; then
     engine_id="${value%%=*}"; exe="${value#*=}"
     record="$repo_root/eng/render-capture/linux/$engine_id.json"
     [[ -f "$record" ]] || record="$repo_root/eng/render-capture/windows/$engine_id.json"
-    output="$(python3 -I "$calibrator" --verify-record "$record" --binary "$exe" --header "$header")"
+    arch_args=()
+    if [[ ! -f "$record" ]]; then
+      record="$repo_root/eng/render-capture/macos/$engine_id.json"
+      arch="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["engine"]["platform"].removeprefix("macos-"))' "$record")"
+      arch_args=(--arch "$arch")
+    fi
+    output="$(python3 -I "$calibrator" --verify-record "$record" --binary "$exe" --header "$header" "${arch_args[@]}")"
     printf '%s\n' "$output"
     python3 -I -c 'import re, sys
 counts = re.findall(r"^verified: ([1-9][0-9]*)/([0-9]+)$", sys.stdin.read(), re.M)

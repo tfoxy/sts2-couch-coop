@@ -4,7 +4,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/couch/scripts" "$work/couch/eng/render-capture/"{linux,windows} "$work/gsw/experiments/render-stream/capture/tools"
+mkdir -p "$work/couch/scripts" "$work/couch/eng/render-capture/"{linux,windows,macos} "$work/gsw/experiments/render-stream/capture/tools"
 cp "$here/check-render-capture-records.sh" "$work/couch/scripts/"
 calibrator="$work/gsw/experiments/render-stream/capture/tools/calibrate.py"
 cat > "$calibrator" <<'PY'
@@ -16,38 +16,51 @@ record = Path(sys.argv[sys.argv.index('--verify-record') + 1])
 engine = json.loads(record.read_text())['engine']
 assert record.parent.name == engine['platform'].split('-')[0]
 binary = Path(sys.argv[sys.argv.index('--binary') + 1])
-assert hashlib.sha256(binary.read_bytes()).hexdigest() == engine['sha256']
+assert hashlib.sha256(binary.read_bytes()).hexdigest() == engine.get('file_sha256', engine['sha256'])
+if record.parent.name == 'macos':
+    assert sys.argv[sys.argv.index('--arch') + 1] == engine['platform'][6:]
 print('verified: 14/14')
 PY
 printf 'exe' > "$work/engine.exe"
 printf 'linux-exe' > "$work/engine-linux"
+printf 'macos-exe' > "$work/engine-macos"
 printf 'header' > "$work/header.h"
 windows_id=megadot-4.5.1-m12-aaaaaaaa
 linux_id=megadot-4.5.1-m14-dddddddd
+arm64_id=megadot-4.5.1-m14-bbbbbbbb
+x86_64_id=megadot-4.5.1-m14-cccccccc
 reset_fixture() {
-  rm -f "$work/couch/eng/render-capture/"{linux,windows}/*.json
+  rm -f "$work/couch/eng/render-capture/"{linux,windows,macos}/*.json
   sed -i -e 's/CALIBRATOR_VERSION = "10"/CALIBRATOR_VERSION = "9"/' \
     -e 's/verified: 13\/14/verified: 14\/14/' "$calibrator"
-  python3 -I - "$work" "$windows_id" "$linux_id" <<'PY'
+  python3 -I - "$work" "$windows_id" "$linux_id" "$arm64_id" "$x86_64_id" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
 work = Path(sys.argv[1])
 root = work / 'couch/eng/render-capture'
-for os, engine_id, version, binary in [('windows', sys.argv[2], 12, 'engine.exe'), ('linux', sys.argv[3], 14, 'engine-linux')]:
+for os, engine_id, version, binary in [('windows', sys.argv[2], 12, 'engine.exe'), ('linux', sys.argv[3], 14, 'engine-linux'),
+    ('macos', sys.argv[4], 14, 'engine-macos'), ('macos', sys.argv[5], 14, 'engine-macos')]:
     engine = dict(platform=f'{os}-x86_64', sha256=hashlib.sha256((work / binary).read_bytes()).hexdigest(),
                   version_string=f'MegaDot v4.5.1.m.{version}.mono.custom_build')
     if os == 'windows':
         engine.update(size_of_image=8192, time_date_stamp=123, codeview_id='a'*32 + ':1', image_sha256='a'*64)
+    elif os == 'macos':
+        arm64 = engine_id == sys.argv[4]
+        engine.update(platform='macos-arm64' if arm64 else 'macos-x86_64', uuid=('b' if arm64 else 'c')*32,
+                      cputype=0x100000c if arm64 else 0x1000007, cpusubtype=0 if arm64 else 3,
+                      slice_offset=16 if arm64 else 32, slice_size=3, file_sha256=engine['sha256'], sha256='a'*64)
     else:
         engine['build_id'] = 'd'*40
     record = dict(engine=engine, calibrator=dict(version='9', header_sha256='e'*64))
     data = json.dumps(record).encode()
     source = dict(schema='couchcoop-render-capture-record-source/2', engineId=engine_id, platform=engine['platform'],
         gameBuildsSeen=[dict(gameBuild='v0.0.1', steamBuildId='123', basis='Synthetic fixture.')],
-        exeSha256=engine['sha256'], recordSha256=hashlib.sha256(data).hexdigest(),
+        exeSha256=engine.get('file_sha256', engine['sha256']), recordSha256=hashlib.sha256(data).hexdigest(),
         calibrator=dict(version='9', headerSha256='e'*64, gswCommit='a'*40))
     if os == 'windows':
         source['peIdentity'] = {k: engine[k] for k in ('size_of_image', 'time_date_stamp', 'codeview_id', 'image_sha256')}
+    elif os == 'macos':
+        source['machoIdentity'] = {k: engine[k] for k in ('uuid', 'cputype', 'cpusubtype', 'slice_offset', 'slice_size', 'sha256', 'file_sha256')}
     else:
         source['elfIdentity'] = dict(build_id=engine['build_id'])
     (root / os / f'{engine_id}.json').write_bytes(data)
@@ -55,19 +68,29 @@ for os, engine_id, version, binary in [('windows', sys.argv[2], 12, 'engine.exe'
 PY
 }
 mutate() {
-  python3 -I - "$work/couch/eng/render-capture/${2:-windows}" "$1" "$windows_id" "$linux_id" <<'PY'
+  set -- "$1" "${2:-windows}"
+  python3 -I - "$work/couch/eng/render-capture/${2%%-*}" "$1" "$2" "$windows_id" "$linux_id" "$arm64_id" "$x86_64_id" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
-root = Path(sys.argv[1]); mode = sys.argv[2]
-engine_id = sys.argv[4] if root.name == 'linux' else sys.argv[3]
+root = Path(sys.argv[1]); mode, target = sys.argv[2:4]
+engine_id = dict(windows=sys.argv[4], linux=sys.argv[5], **{'macos-arm64': sys.argv[6], 'macos-x86_64': sys.argv[7]})[target]
 record_path = root / f'{engine_id}.json'; source_path = root / f'{engine_id}.source.json'
 record = json.loads(record_path.read_text()); source = json.loads(source_path.read_text())
+engine = record['engine']
 if mode == 'sha': record['extra'] = True
 elif mode == 'platform': record['engine']['platform'] = source['platform'] = 'unsupported-x86_64'
 elif mode == 'identity': source['elfIdentity']['build_id'] = 'f'*40
 elif mode.startswith('pe-'):
     key = mode[3:]
     source['peIdentity'][key] = 'wrong' if isinstance(source['peIdentity'][key], str) else 0
+elif mode.startswith('macho-'):
+    key = mode[6:]
+    source['machoIdentity'][key] = 'wrong' if isinstance(source['machoIdentity'][key], str) else -1
+elif mode in ('uuid', 'cputype', 'cpusubtype', 'slice_offset', 'slice_size', 'slice-sha', 'file-sha'):
+    key = {'slice-sha': 'sha256', 'file-sha': 'file_sha256'}.get(mode, mode)
+    value = '' if isinstance(engine[key], str) else -1
+    engine[key] = source['machoIdentity'][key] = value
+    if key == 'file_sha256': source['exeSha256'] = value
 elif mode == 'build-id': record['engine']['build_id'] = source['elfIdentity']['build_id'] = ''
 elif mode == 'codeview': record['engine']['codeview_id'] = source['peIdentity']['codeview_id'] = None
 elif mode == 'header': source['calibrator']['headerSha256'] = 'f'*64
@@ -102,10 +125,13 @@ reject() {
   checks=$((checks+1))
 }
 reset_fixture; accept
-[[ "$(wc -l < "$work/output")" -eq 2 ]]
+[[ "$(wc -l < "$work/output")" -eq 4 ]]
 grep -qx "Linux capture record: $linux_id ok" "$work/output"
 grep -qx "Windows capture record: $windows_id ok" "$work/output"
-accept --exe "$windows_id=$work/engine.exe" --exe "$linux_id=$work/engine-linux" --header "$work/header.h"
+grep -qx "macOS capture record: $arm64_id ok" "$work/output"
+grep -qx "macOS capture record: $x86_64_id ok" "$work/output"
+accept --exe "$arm64_id=$work/engine-macos" --exe "$x86_64_id=$work/engine-macos" \
+  --exe "$windows_id=$work/engine.exe" --exe "$linux_id=$work/engine-linux" --header "$work/header.h"
 reject '--header is required' --exe "$windows_id=$work/engine.exe"
 reject 'unknown --exe engineId: stable' --exe "stable=$work/engine.exe" --header "$work/header.h"
 reject 'unknown --exe engineId' --exe "$windows_id" --header "$work/header.h"
@@ -122,14 +148,18 @@ reset_fixture
 sed -i 's/verified: 14\/14/verified: 37\/37/' "$calibrator"
 accept --exe "$windows_id=$work/engine.exe" --header "$work/header.h"
 sed -i 's/verified: 37\/37/verified: 14\/14/' "$calibrator"
-for os in linux windows; do
+for target in linux windows macos-arm64 macos-x86_64; do
+  os="${target%%-*}"
   for pair in 'sha:record sha256' 'platform:platform' 'schema:source schema' 'engine-id:source engineId' \
     'exe:exe sha256' 'version:calibrator version' 'source-version:calibrator version' \
     'name:invalid engineId name' 'id8:engineId id8' 'duplicate:duplicate engine identity' 'engine-version:engineId version'; do
-    reset_fixture; mutate "${pair%%:*}" "$os"; reject "${pair#*:}"
+    reset_fixture; mutate "${pair%%:*}" "$target"; reject "${pair#*:}"
   done
-  reset_fixture; mutate provenance "$os"; accept
-  if [[ "$os" == linux ]]; then engine_id="$linux_id"; else engine_id="$windows_id"; fi
+  reset_fixture; mutate provenance "$target"; accept
+  case "$target" in
+    linux) engine_id="$linux_id" ;; windows) engine_id="$windows_id" ;;
+    macos-arm64) engine_id="$arm64_id" ;; macos-x86_64) engine_id="$x86_64_id" ;;
+  esac
   reset_fixture
   rm "$work/couch/eng/render-capture/$os/$engine_id.json"
   reject 'orphan source record'
@@ -145,6 +175,17 @@ done
 reset_fixture; mutate codeview; reject 'invalid PE codeview_id'
 for pair in 'identity:GNU build-id' 'build-id:invalid GNU build-id' 'header:calibrator header sha256'; do
   reset_fixture; mutate "${pair%%:*}" linux; reject "${pair#*:}"
+done
+
+for target in macos-arm64 macos-x86_64; do
+  for key in uuid cputype cpusubtype slice_offset slice_size sha256 file_sha256; do
+    reset_fixture; mutate "macho-$key" "$target"; reject "Mach-O $key"
+  done
+  for pair in 'uuid:invalid Mach-O UUID' 'cputype:Mach-O cputype' 'cpusubtype:Mach-O cpusubtype' \
+    'slice_offset:invalid Mach-O slice range' 'slice_size:invalid Mach-O slice range' \
+    'slice-sha:invalid Mach-O sha256' 'file-sha:invalid Mach-O file_sha256' 'header:calibrator header sha256'; do
+    reset_fixture; mutate "${pair%%:*}" "$target"; reject "${pair#*:}"
+  done
 done
 
 # Exercise calibration writes in the same isolated fixture; no executable or committed record is changed.

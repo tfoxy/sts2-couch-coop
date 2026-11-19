@@ -1,0 +1,31 @@
+{
+  "schema": "couchcoop-render-capture-record-source/2",
+  "engineId": "megadot-4.5.1-m14-f4e3bd3a",
+  "platform": "macos-x86_64",
+  "gameBuildsSeen": [
+    {
+      "gameBuild": "v0.111.1",
+      "steamBuildId": "26655341",
+      "basis": "Executable calibrated and verified offline."
+    }
+  ],
+  "exeSha256": "91839858c38c1b800f3e45752a1ab81f80c01833efca661774fa026a75256d99",
+  "recordSha256": "4583ae6aad26a2ab917072ad8feca74db40fd4d5d78b9a8a955b9d631e1f0013",
+  "calibrator": {
+    "version": "9",
+    "gswCommit": "bd8b1a595036fe935545c762223a497ef5209a3b",
+    "headerSha256": "3e01fb10af9abb6955314abacd65d45b697a8ea57c7bf651e59c29e8a399b9d7"
+  },
+  "provenance": {
+    "command": "scripts/calibrate-capture.sh --platform macos --exe <executable> --header <godot-header> --arch x86_64 --game-build <game-build> --steam-build <steam-build>"
+  },
+  "machoIdentity": {
+    "uuid": "f4e3bd3aec663e23b2fdbf9173971c57",
+    "cputype": 16777223,
+    "cpusubtype": 3,
+    "slice_offset": 16384,
+    "slice_size": 92884592,
+    "sha256": "1a9ff8baf5ef3808f4ef25862d0e69676072fb83d90c56ad2a479ef1131f012a",
+    "file_sha256": "91839858c38c1b800f3e45752a1ab81f80c01833efca661774fa026a75256d99"
+  }
+}
