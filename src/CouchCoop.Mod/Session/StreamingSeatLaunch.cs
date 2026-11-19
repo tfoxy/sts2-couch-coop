@@ -332,7 +332,9 @@ internal static class StreamingSeatLaunch
             // The carriers the hub serves (see the remarks): WebSocket always, WebTransport with the net module.
             ["GRC_LIVE_CARRIERS"] = config.NetModule is null ? "ws" : "ws,wt",
             ["GRC_STREAM_VERSION"] = StreamVersion.ToString(CultureInfo.InvariantCulture),
-            // No GRC_RESOURCE_HINTS: the capture's default (on) sends the hints the browser client prefetches from.
+            // Hints off: measured on a phone, the client's idle prefetch cut no cold-scene wait (hints arrive
+            // with demand) and cost host CPU and frame rate. Revisit when hints carry lead time.
+            ["GRC_RESOURCE_HINTS"] = "off",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = evidenceDirectory,
             ["GRC_LIVE_ALLOWED_ORIGINS"] = string.Join(',', allowedOrigins),

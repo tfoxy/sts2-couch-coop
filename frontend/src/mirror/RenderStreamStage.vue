@@ -343,7 +343,6 @@ function mountClient(): void {
       core: props.core,
       endpoint: props.endpoint,
       extensions: built.extensions,
-      resourceHints: true,
       creditWindow: 2,
       carrier: mirrorSettings.renderStreamCarrier,
       onStatus: (status) => { if (epoch === clientEpoch && !stopped) onStatus(status); }

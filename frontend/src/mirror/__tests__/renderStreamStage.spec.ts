@@ -230,7 +230,6 @@ describe("RenderStreamStage", () => {
     expect(options.endpoint).toEqual(endpoint);
     expect(options.core).toEqual(core);
     expect(options.carrier).toBe("auto");
-    expect(options.resourceHints).toBe(true);
     expect(clients[0].connects).toBe(1);
   });
 
