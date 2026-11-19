@@ -112,6 +112,42 @@ for job in macos_arm macos_intel; do
       selected { print }
     ' <<< "$mac_source"
   }
+  if [ "$job" = macos_arm ]; then
+    runtime_arch=arm64
+    runtime_sha=0deb23ac714dad69bf7d0c67e4253256d0845881b805cc8b9c6f2051283d5f9bbb000d363058523dce4c7361c2b460016a865b6d6baa5843c9263591d539eb20
+  else
+    runtime_arch=x64
+    runtime_sha=70eb472ab24f38a6a6e930661e09ac6635dda0cf054899040c25cf3332f24f1cbb3eec19e1cfcf2214b466d000f6ddc7d49448a6c6106c3b70fd0bf7063f6e6d
+  fi
+  runtime_source="$(fixture_step "Install the game's .NET runtime privately")"
+  for required in \
+    "archive=\"\$RUNNER_TEMP/dotnet-runtime-9.0.7-osx-$runtime_arch.tar.gz\"" \
+    'dotnet_root="$RUNNER_TEMP/couchcoop-dotnet-9.0.7"' \
+    'curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200' \
+    '--connect-timeout 15 --max-time 900 --output "$archive"' \
+    "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.7/dotnet-runtime-9.0.7-osx-$runtime_arch.tar.gz" \
+    "expected_sha=$runtime_sha" \
+    'test "$(shasum -a 512 "$archive" | awk '\''{print $1}'\'')" = "$expected_sha"' \
+    'mkdir -p "$dotnet_root"' \
+    'tar -xzf "$archive" -C "$dotnet_root"' \
+    'set -- "$dotnet_root"/shared/Microsoft.NETCore.App/*' \
+    'test "$#" -eq 1' \
+    'test "$1" = "$dotnet_root/shared/Microsoft.NETCore.App/9.0.7"' \
+    'test -d "$1"' \
+    'set -- "$dotnet_root"/host/fxr/*/libhostfxr.dylib' \
+    'test -f "$1"' \
+    'echo "COUCHCOOP_GODOT_DOTNET_ROOT=$dotnet_root" >> "$GITHUB_ENV"'; do
+    grep -Fq -- "$required" <<< "$runtime_source" \
+      || fail "$job private runtime must include: $required"
+  done
+  previous_step="$(awk '
+    /^      - name:/ {
+      if ($0 == "      - name: Install the game\047s .NET runtime privately") print previous
+      previous = $0
+    }
+  ' <<< "$mac_source")"
+  [ "$previous_step" = '      - name: Download the pinned universal Godot .NET runtime' ] \
+    || fail "$job private runtime install must follow the Godot download"
   build_source="$(fixture_step 'Build reference SDKs and public runtime fixtures')"
   grep -Fq 'id: build_fixtures' <<< "$build_source" \
     || fail "$job must expose the fixture build outcome"
@@ -122,6 +158,8 @@ for job in macos_arm macos_intel; do
   stock_source="$(fixture_step 'Run the stock Godot .NET Harmony fixture')"
   grep -Fq 'id: godot_fixture_stock' <<< "$stock_source" \
     || fail "$job must expose the stock fixture outcome"
+  grep -Fq 'ls "$COUCHCOOP_GODOT_DOTNET_ROOT/shared/Microsoft.NETCore.App" >"$diagnostics/fixture-dotnet-runtimes.txt"' <<< "$stock_source" \
+    || fail "$job stock fixture must record the private runtime versions"
   hardened_source="$(fixture_step 'Run the ad-hoc hardened Godot .NET fixture')"
   grep -Fq "if: \${{ !cancelled() && steps.build_fixtures.outcome == 'success' }}" <<< "$hardened_source" \
     || fail "$job hardened fixture must run after a stock failure when fixtures built"
@@ -136,6 +174,7 @@ for job in macos_arm macos_intel; do
     for required in \
       "diagnostics=\"\$RUNNER_TEMP/couchcoop-godot-harmony-fixture/$variant\"" \
       "--out \"\$RUNNER_TEMP/couchcoop-godot-harmony-fixture/$variant\"" \
+      '--dotnet-root "$COUCHCOOP_GODOT_DOTNET_ROOT" --expect-framework '\''.NET 9.0.7'\''' \
       "codesign --display --verbose=4 \"$fixture_app\"" \
       'for arch in arm64 x86_64; do' \
       "codesign --display --entitlements :- --arch \"\$arch\" \"$fixture_app\"" \
@@ -159,6 +198,11 @@ for job in macos_arm macos_intel; do
       || fail "$job fixture upload must include: $required"
   done
 done
+if grep -Eq '(^|[^[:alnum:]_])DOTNET_ROOT(_ARM64|_X64)?[[:space:]]*[:=]' "$workflow"; then
+  fail "workflow must not set job-wide DOTNET_ROOT; only the Godot child may use the private runtime"
+fi
+require_count '--dotnet-root "$COUCHCOOP_GODOT_DOTNET_ROOT" --expect-framework '\''.NET 9.0.7'\''' 4 \
+  "every Godot fixture invocation must pin its private runtime and expected framework"
 require_count 'for key in allow-jit allow-unsigned-executable-memory allow-dyld-environment-variables disable-library-validation; do' 2 \
   "both Mac jobs must verify the game's four entitlement keys"
 for key in allow-dyld-environment-variables allow-jit allow-unsigned-executable-memory disable-library-validation; do

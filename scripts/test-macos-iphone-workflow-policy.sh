@@ -79,10 +79,16 @@ for job in macos_arm macos_intel; do
 done
 
 for job in macos_arm macos_intel; do
-  for field in build-id stock-id hardened-condition stock-out hardened-out slice-facts upload-condition upload-path upload-retention entitlement-loop; do
+  for field in build-id stock-id hardened-condition stock-out hardened-out slice-facts upload-condition upload-path upload-retention entitlement-loop \
+    runtime-url runtime-sha runtime-dir runtime-count runtime-hostfxr runtime-export runtime-checksum runtime-order \
+    stock-dotnet-root stock-expect-framework hardened-dotnet-root hardened-expect-framework private-facts job-dotnet-root; do
     awk -v job="$job" -v field="$field" '
       /^  [a-z0-9_]+:$/ { selected = ($0 == "  " job ":") }
-      /^      - name:/ { upload = /Upload Godot Harmony fixture diagnostics/ }
+      /^      - name:/ {
+        upload = /Upload Godot Harmony fixture diagnostics/
+        stock = /Run the stock Godot .NET Harmony fixture/
+        hardened = /Run the ad-hoc hardened Godot .NET fixture/
+      }
       selected {
         if (field == "build-id") sub(/id: build_fixtures/, "id: removed_build")
         if (field == "stock-id") sub(/id: godot_fixture_stock/, "id: removed_stock")
@@ -94,8 +100,29 @@ for job in macos_arm macos_intel; do
         if (field == "upload-path" && upload) sub(/runner.temp/, "github.workspace")
         if (field == "upload-retention" && upload) sub(/retention-days: 7/, "retention-days: 3")
         if (field == "entitlement-loop") sub(/disable-library-validation; do/, "disable-library-validation extra; do")
+        if (field == "runtime-url") sub(/https:\/\/builds.dotnet.microsoft.com\/dotnet\/Runtime\/9.0.7\//, "https://invalid.example/")
+        if (field == "runtime-sha" && /expected_sha=/ && length($0) > 100) sub(/expected_sha=.*/, "expected_sha=deadbeef")
+        if (field == "runtime-dir") sub(/couchcoop-dotnet-9.0.7/, "couchcoop-dotnet-removed")
+        if (field == "runtime-count" && /test "\$#" -eq 1/) sub(/-eq 1/, "-ge 1")
+        if (field == "runtime-hostfxr") sub(/libhostfxr.dylib/, "removed.dylib")
+        if (field == "runtime-export" && /GITHUB_ENV/) sub(/COUCHCOOP_GODOT_DOTNET_ROOT=/, "REMOVED_ROOT=")
+        if (field == "runtime-checksum") sub(/shasum -a 512/, "shasum -a 256")
+        if (field == "runtime-order" && /Install the game/) {
+          print "      - name: Intervening step"
+          print "        timeout-minutes: 1"
+          print "        run: true"
+        }
+        if ((field == "stock-dotnet-root" && stock) || (field == "hardened-dotnet-root" && hardened))
+          sub(/--dotnet-root "\$COUCHCOOP_GODOT_DOTNET_ROOT" /, "")
+        if ((field == "stock-expect-framework" && stock) || (field == "hardened-expect-framework" && hardened))
+          sub(/--expect-framework .*/, "")
+        if (field == "private-facts" && /ls "\$COUCHCOOP_GODOT_DOTNET_ROOT/) next
       }
       { print }
+      selected && field == "job-dotnet-root" && /^    runs-on:/ {
+        print "    env:"
+        print "      DOTNET_ROOT: /tmp/forbidden-runtime"
+      }
     ' "$workflow" > "$tmp/$job-$field.yml"
     case "$field" in
       build-id) expected="$job must expose the fixture build outcome" ;;
@@ -106,6 +133,12 @@ for job in macos_arm macos_intel; do
       slice-facts) expected="$job stock fixture must include: for arch" ;;
       upload-*) expected="$job fixture upload must include:" ;;
       entitlement-loop) expected="both Mac jobs must verify the game's four entitlement keys" ;;
+      runtime-order) expected="$job private runtime install must follow the Godot download" ;;
+      runtime-*) expected="$job private runtime must include:" ;;
+      stock-dotnet-root|stock-expect-framework) expected="$job stock fixture must include: --dotnet-root" ;;
+      hardened-dotnet-root|hardened-expect-framework) expected="$job hardened fixture must include: --dotnet-root" ;;
+      private-facts) expected="$job stock fixture must record the private runtime versions" ;;
+      job-dotnet-root) expected="workflow must not set job-wide DOTNET_ROOT" ;;
     esac
     expect_reject "$job-$field" "$tmp/$job-$field.yml" "$expected"
   done

@@ -20,6 +20,7 @@ internal static class GodotHarmonyFixtureSupervisor
         Success,
         Timeout,
         SignalCrash,
+        RuntimeMismatch,
         PatchRefusal,
         MissingCallback,
         DuplicateCallback,
@@ -56,7 +57,7 @@ internal static class GodotHarmonyFixtureSupervisor
 
     internal sealed record RunResult(
         Outcome Outcome, int? ExitCode, bool TimedOut, string Output,
-        FixtureResult? Result, FixtureDiagnostics? Diag);
+        FixtureResult? Result, FixtureDiagnostics? Diag, string? ExpectedFramework);
 
     /// <summary>
     /// Hosted workflow code supplies the stock Godot executable and this fixture project path. The fake HOME and
@@ -65,13 +66,15 @@ internal static class GodotHarmonyFixtureSupervisor
     internal static async Task<RunResult> RunAsync(
         string godotExecutable,
         string fixtureProjectPath,
+        string? dotnetRoot = null,
+        string? expectedFramework = null,
         CancellationToken cancellationToken = default)
     {
         var fakeHome = Path.Combine(Path.GetTempPath(), "couchcoop godot fixture home " + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(fakeHome);
         try
         {
-            var startInfo = CreateStartInfo(godotExecutable, fixtureProjectPath, fakeHome);
+            var startInfo = CreateStartInfo(godotExecutable, fixtureProjectPath, fakeHome, dotnetRoot);
 
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("failed to start Godot Harmony fixture");
@@ -94,7 +97,7 @@ internal static class GodotHarmonyFixtureSupervisor
 
             var output = string.Concat(await stdout, "\n", await stderr);
             int? exitCode = timedOut ? null : process.ExitCode;
-            return CreateRunResult(exitCode, timedOut, output);
+            return CreateRunResult(exitCode, timedOut, output, expectedFramework);
         }
         finally
         {
@@ -102,12 +105,16 @@ internal static class GodotHarmonyFixtureSupervisor
         }
     }
 
-    internal static Outcome Classify(int? exitCode, bool timedOut, string output)
+    internal static Outcome Classify(int? exitCode, bool timedOut, string output, string? expectedFramework = null)
     {
         // Keep this order aligned with the workflow diagnosis contract: a watchdog or native crash is more useful
-        // than any half-written fixture marker; an explicit patch refusal is more useful than its expected 1 exit.
+        // than any half-written fixture marker; runtime identity must match before patch results are interpreted.
         if (timedOut || exitCode is null) return Outcome.Timeout;
         if (exitCode is >= 128 and <= 255) return Outcome.SignalCrash;
+
+        if (expectedFramework is not null
+            && !string.Equals(ParseDiagnostics(output)?.Framework, expectedFramework, StringComparison.Ordinal))
+            return Outcome.RuntimeMismatch;
 
         var result = ParseResult(output, out var markerCount);
         if (HasPatchRefusal(result)) return Outcome.PatchRefusal;
@@ -118,9 +125,9 @@ internal static class GodotHarmonyFixtureSupervisor
         return Outcome.Success;
     }
 
-    internal static RunResult CreateRunResult(int? exitCode, bool timedOut, string output) =>
-        new(Classify(exitCode, timedOut, output), exitCode, timedOut, output,
-            ParseResult(output, out _), ParseDiagnostics(output));
+    internal static RunResult CreateRunResult(int? exitCode, bool timedOut, string output, string? expectedFramework = null) =>
+        new(Classify(exitCode, timedOut, output, expectedFramework), exitCode, timedOut, output,
+            ParseResult(output, out _), ParseDiagnostics(output), expectedFramework);
 
     internal static FixtureResult? ParseResult(string output, out int markerCount) =>
         ParseMarker<FixtureResult>(output, MarkerPrefix, out markerCount);
@@ -154,6 +161,8 @@ internal static class GodotHarmonyFixtureSupervisor
         var text = new StringBuilder().AppendLine($"godot harmony fixture: {run.Outcome}");
         if (run.Outcome == Outcome.Success) return text.ToString();
 
+        if (run.ExpectedFramework is not null)
+            text.AppendLine($"expected framework: {run.ExpectedFramework}; actual framework: {run.Diag?.Framework ?? "unavailable"}");
         text.AppendLine("failures: " + JsonSerializer.Serialize(run.Result?.Failures ?? [], JsonOptions));
         text.AppendLine("refusalSources: " + JsonSerializer.Serialize(run.Result?.RefusalSources ?? [], JsonOptions));
         if (run.Diag is { } diag)
@@ -182,6 +191,7 @@ internal static class GodotHarmonyFixtureSupervisor
             outcome = run.Outcome.ToString(),
             run.ExitCode,
             run.TimedOut,
+            run.ExpectedFramework,
             run.Result,
             run.Diag,
         }, JsonOptions));
@@ -235,6 +245,35 @@ internal static class GodotHarmonyFixtureSupervisor
         Assert(Classify(0, false, good + "\n" + diag + "\n" + diag) == Outcome.Success,
             "invalid DIAG does not change result classification");
 
+        const string expectedFramework = ".NET 9.0.7";
+        var hostedDiag = diag.Replace(".NET 8.0", ".NET 11.0.0")
+            .Replace("System.InvalidOperationException", "System.PlatformNotSupportedException")
+            .Replace("refused patch", "CoreCLR version 11.0.0 is not supported");
+        var hostedRefusal = refused.Replace("\"callbacks\":2", "\"callbacks\":0");
+        var mismatch = CreateRunResult(1, false, hostedDiag + "\n" + hostedRefusal, expectedFramework);
+        Assert(mismatch.Outcome == Outcome.RuntimeMismatch, "wrong runtime beats the hosted patch refusal");
+        var mismatchDiagnosis = Describe(mismatch);
+        Assert(mismatchDiagnosis.Contains("expected framework: .NET 9.0.7; actual framework: .NET 11.0.0"),
+            "runtime mismatch diagnosis names expected and actual framework");
+        var matchingDiag = diag.Replace(".NET 8.0", expectedFramework);
+        Assert(Classify(0, false, good + "\n" + matchingDiag, expectedFramework) == Outcome.Success,
+            "matching framework and complete result succeed");
+        Assert(Classify(1, false, refused + "\n" + matchingDiag, expectedFramework) == Outcome.PatchRefusal,
+            "matching framework retains patch refusal diagnosis");
+        foreach (var callbacks in new[] { 1, 2, 3 })
+            Assert(Classify(1, false, good.Replace("\"callbacks\":2", $"\"callbacks\":{callbacks}") + "\n" + hostedDiag,
+                expectedFramework) == Outcome.RuntimeMismatch, "runtime mismatch beats callback and nonzero outcomes");
+        Assert(Classify(0, false, good, expectedFramework) == Outcome.RuntimeMismatch,
+            "missing DIAG cannot satisfy an expected framework");
+        Assert(Classify(0, false, good + "\n" + DiagnosticMarkerPrefix + "{}", expectedFramework) == Outcome.RuntimeMismatch,
+            "missing framework cannot satisfy an expected framework");
+        Assert(Classify(0, false, good + "\n" + matchingDiag + "\n" + matchingDiag, expectedFramework) == Outcome.RuntimeMismatch,
+            "duplicate DIAG cannot satisfy an expected framework");
+        Assert(Classify(0, true, good + "\n" + hostedDiag, expectedFramework) == Outcome.Timeout,
+            "timeout still wins over runtime mismatch");
+        Assert(Classify(139, false, good + "\n" + hostedDiag, expectedFramework) == Outcome.SignalCrash,
+            "signal crash still wins over runtime mismatch");
+
         var largeDiag = DiagnosticMarkerPrefix + JsonSerializer.Serialize(diagnostics with
         {
             Exceptions =
@@ -279,6 +318,11 @@ internal static class GodotHarmonyFixtureSupervisor
                 "step diagnosis prints parsed refusal and stack without native output");
             var success = Describe(CreateRunResult(0, false, good + "\n" + diag));
             Assert(success.TrimEnd() == "godot harmony fixture: Success", "success stays a one-line outcome");
+            WriteArtifacts(outputDirectory, mismatch);
+            using var mismatchArtifact = JsonDocument.Parse(File.ReadAllText(Path.Combine(outputDirectory, "result.json")));
+            Assert(mismatchArtifact.RootElement.GetProperty("expectedFramework").GetString() == expectedFramework
+                && mismatchArtifact.RootElement.GetProperty("outcome").GetString() == "RuntimeMismatch",
+                "result.json retains the expected framework and mismatch outcome");
         }
         finally
         {
@@ -289,9 +333,30 @@ internal static class GodotHarmonyFixtureSupervisor
         Assert(start.ArgumentList.SequenceEqual(["--headless", "--path", "/tmp/couchcoop fixture project"]),
             "ArgumentList preserves the project path with spaces");
         Assert(start.Environment["HOME"] == "/tmp/couchcoop fixture home", "fixture receives its fake HOME");
+        const string dotnetRoot = "/tmp/couchcoop private dotnet";
+        var rootedStart = CreateStartInfo("/opt/Godot", "/tmp/couchcoop fixture project", "/tmp/couchcoop fixture home", dotnetRoot);
+        foreach (var key in new[] { "DOTNET_ROOT", "DOTNET_ROOT_ARM64", "DOTNET_ROOT_X64" })
+            Assert(rootedStart.Environment[key] == dotnetRoot, "CreateStartInfo sets the private runtime root: " + key);
+        foreach (var key in new[] { "DOTNET_ROLL_FORWARD", "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "DOTNET_MULTILEVEL_LOOKUP" })
+            start.Environment[key] = "1";
+        SetDotnetRoot(start, dotnetRoot);
+        foreach (var key in new[] { "DOTNET_ROLL_FORWARD", "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "DOTNET_MULTILEVEL_LOOKUP" })
+            Assert(!start.Environment.ContainsKey(key), "private runtime strips inherited policy: " + key);
+
+        Assert(TryParseOptions([], out var defaults) && defaults == new FixtureOptions(null, null, null),
+            "fixture options remain optional");
+        Assert(TryParseOptions(["--expect-framework", expectedFramework, "--out", "artifact dir", "--dotnet-root", dotnetRoot], out var options)
+            && options == new FixtureOptions("artifact dir", dotnetRoot, expectedFramework),
+            "fixture options preserve values with spaces in any order");
+        foreach (var invalid in new[] {
+            new[] { "--dotnet-root" }, new[] { "--unknown", "value" },
+            new[] { "--out", "one", "--out", "two" }, new[] { "--out", "--dotnet-root" },
+        })
+            Assert(!TryParseOptions(invalid, out _), "malformed fixture options are rejected");
     }
 
-    internal static ProcessStartInfo CreateStartInfo(string godotExecutable, string fixtureProjectPath, string fakeHome)
+    internal static ProcessStartInfo CreateStartInfo(
+        string godotExecutable, string fixtureProjectPath, string fakeHome, string? dotnetRoot = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(godotExecutable);
         ArgumentException.ThrowIfNullOrWhiteSpace(fixtureProjectPath);
@@ -308,7 +373,39 @@ internal static class GodotHarmonyFixtureSupervisor
         startInfo.ArgumentList.Add("--path");
         startInfo.ArgumentList.Add(fixtureProjectPath);
         startInfo.Environment["HOME"] = fakeHome;
+        if (dotnetRoot is not null) SetDotnetRoot(startInfo, dotnetRoot);
         return startInfo;
+    }
+
+    private static void SetDotnetRoot(ProcessStartInfo startInfo, string dotnetRoot)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dotnetRoot);
+        foreach (var key in new[] { "DOTNET_ROOT", "DOTNET_ROOT_ARM64", "DOTNET_ROOT_X64" })
+            startInfo.Environment[key] = dotnetRoot;
+        foreach (var key in new[] { "DOTNET_ROLL_FORWARD", "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "DOTNET_MULTILEVEL_LOOKUP" })
+            startInfo.Environment.Remove(key);
+    }
+
+    internal sealed record FixtureOptions(string? OutputDirectory, string? DotnetRoot, string? ExpectedFramework);
+
+    internal static bool TryParseOptions(string[] options, out FixtureOptions parsed)
+    {
+        parsed = new(null, null, null);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < options.Length; i += 2)
+        {
+            if (i + 1 >= options.Length || string.IsNullOrWhiteSpace(options[i + 1])
+                || options[i + 1].StartsWith("--", StringComparison.Ordinal) || !seen.Add(options[i])) return false;
+            parsed = options[i] switch
+            {
+                "--out" => parsed with { OutputDirectory = options[i + 1] },
+                "--dotnet-root" => parsed with { DotnetRoot = options[i + 1] },
+                "--expect-framework" => parsed with { ExpectedFramework = options[i + 1] },
+                _ => parsed,
+            };
+            if (options[i] is not ("--out" or "--dotnet-root" or "--expect-framework")) return false;
+        }
+        return true;
     }
 
     private static bool HasPatchRefusal(FixtureResult? result) =>

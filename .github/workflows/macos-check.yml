@@ -347,6 +347,27 @@ jobs:
           echo "COUCHCOOP_GODOT_EXECUTABLE=$godot_executable" >> "$GITHUB_ENV"
           echo "COUCHCOOP_GODOT_APP=$godot_app" >> "$GITHUB_ENV"
 
+      - name: Install the game's .NET runtime privately
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/dotnet-runtime-9.0.7-osx-arm64.tar.gz"
+          dotnet_root="$RUNNER_TEMP/couchcoop-dotnet-9.0.7"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
+            --connect-timeout 15 --max-time 900 --output "$archive" \
+            https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.7/dotnet-runtime-9.0.7-osx-arm64.tar.gz
+          expected_sha=0deb23ac714dad69bf7d0c67e4253256d0845881b805cc8b9c6f2051283d5f9bbb000d363058523dce4c7361c2b460016a865b6d6baa5843c9263591d539eb20
+          test "$(shasum -a 512 "$archive" | awk '{print $1}')" = "$expected_sha"
+          mkdir -p "$dotnet_root"
+          tar -xzf "$archive" -C "$dotnet_root"
+          set -- "$dotnet_root"/shared/Microsoft.NETCore.App/*
+          test "$#" -eq 1
+          test "$1" = "$dotnet_root/shared/Microsoft.NETCore.App/9.0.7"
+          test -d "$1"
+          set -- "$dotnet_root"/host/fxr/*/libhostfxr.dylib
+          test -f "$1"
+          echo "COUCHCOOP_GODOT_DOTNET_ROOT=$dotnet_root" >> "$GITHUB_ENV"
+
       - name: Audit portable package fixtures and pinned reference lanes
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
@@ -434,9 +455,11 @@ jobs:
           done
           lipo -archs "$COUCHCOOP_GODOT_APP/Contents/MacOS/Godot" >"$diagnostics/lipo-archs.txt"
           dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"
+          ls "$COUCHCOOP_GODOT_DOTNET_ROOT/shared/Microsoft.NETCore.App" >"$diagnostics/fixture-dotnet-runtimes.txt"
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE" \
-            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock"
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock" \
+            --dotnet-root "$COUCHCOOP_GODOT_DOTNET_ROOT" --expect-framework '.NET 9.0.7'
 
       - name: Run the ad-hoc hardened Godot .NET fixture
         timeout-minutes: 15
@@ -482,7 +505,8 @@ jobs:
           fi
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE" \
-            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened"
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened" \
+            --dotnet-root "$COUCHCOOP_GODOT_DOTNET_ROOT" --expect-framework '.NET 9.0.7'
 
       - name: Upload Godot Harmony fixture diagnostics
         timeout-minutes: 3
@@ -667,6 +691,27 @@ jobs:
           echo "COUCHCOOP_GODOT_EXECUTABLE=$godot_executable" >> "$GITHUB_ENV"
           echo "COUCHCOOP_GODOT_APP=$godot_app" >> "$GITHUB_ENV"
 
+      - name: Install the game's .NET runtime privately
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/dotnet-runtime-9.0.7-osx-x64.tar.gz"
+          dotnet_root="$RUNNER_TEMP/couchcoop-dotnet-9.0.7"
+          curl --fail --location --retry 3 --retry-all-errors --retry-max-time 1200 \
+            --connect-timeout 15 --max-time 900 --output "$archive" \
+            https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.7/dotnet-runtime-9.0.7-osx-x64.tar.gz
+          expected_sha=70eb472ab24f38a6a6e930661e09ac6635dda0cf054899040c25cf3332f24f1cbb3eec19e1cfcf2214b466d000f6ddc7d49448a6c6106c3b70fd0bf7063f6e6d
+          test "$(shasum -a 512 "$archive" | awk '{print $1}')" = "$expected_sha"
+          mkdir -p "$dotnet_root"
+          tar -xzf "$archive" -C "$dotnet_root"
+          set -- "$dotnet_root"/shared/Microsoft.NETCore.App/*
+          test "$#" -eq 1
+          test "$1" = "$dotnet_root/shared/Microsoft.NETCore.App/9.0.7"
+          test -d "$1"
+          set -- "$dotnet_root"/host/fxr/*/libhostfxr.dylib
+          test -f "$1"
+          echo "COUCHCOOP_GODOT_DOTNET_ROOT=$dotnet_root" >> "$GITHUB_ENV"
+
       - name: Audit portable package fixtures and pinned reference lanes
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
@@ -754,9 +799,11 @@ jobs:
           done
           lipo -archs "$COUCHCOOP_GODOT_APP/Contents/MacOS/Godot" >"$diagnostics/lipo-archs.txt"
           dotnet --list-runtimes >"$diagnostics/dotnet-runtimes.txt"
+          ls "$COUCHCOOP_GODOT_DOTNET_ROOT/shared/Microsoft.NETCore.App" >"$diagnostics/fixture-dotnet-runtimes.txt"
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --godot-harmony-fixture "$COUCHCOOP_GODOT_EXECUTABLE" "$COUCHCOOP_GODOT_FIXTURE" \
-            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock"
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/stock" \
+            --dotnet-root "$COUCHCOOP_GODOT_DOTNET_ROOT" --expect-framework '.NET 9.0.7'
 
       - name: Run the ad-hoc hardened Godot .NET fixture
         timeout-minutes: 15
@@ -802,7 +849,8 @@ jobs:
           fi
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- \
             --godot-harmony-fixture "$signed_app/Contents/MacOS/Godot" "$COUCHCOOP_GODOT_FIXTURE" \
-            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened"
+            --out "$RUNNER_TEMP/couchcoop-godot-harmony-fixture/hardened" \
+            --dotnet-root "$COUCHCOOP_GODOT_DOTNET_ROOT" --expect-framework '.NET 9.0.7'
 
       - name: Upload Godot Harmony fixture diagnostics
         timeout-minutes: 3
