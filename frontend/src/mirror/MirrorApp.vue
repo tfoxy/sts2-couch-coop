@@ -1880,6 +1880,7 @@ onBeforeUnmount(() => {
         :revision="revision"
         :access-generation="hostAccess?.generation"
         :scene-ready="mirrorSceneReady"
+        :context-suspended="!showScene && showStream && renderStreamContext.firstFrame"
         :send-input="viewControls.sendInput"
         :send-action="viewControls.sendAction"
         :send-scroll="viewControls.sendScroll"

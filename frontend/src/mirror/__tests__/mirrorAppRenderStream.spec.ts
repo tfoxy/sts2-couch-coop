@@ -1294,6 +1294,30 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await settle();
   }
 
+  it.each(["switch", "failed", "ended"] as const)("suspends only after the stream draws and restores on %s", async (ending) => {
+    const seat = await showMirror();
+    expect(app!.getComponent(MirrorView).props("contextSuspended")).toBe(false);
+    await startStream(seat);
+    const view = app!.getComponent(MirrorView);
+    expect(view.props("contextSuspended")).toBe(false);
+    fail({ kind: "streaming", firstFrame: false });
+    await settle();
+    expect(view.props("contextSuspended")).toBe(false);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(view.props("contextSuspended")).toBe(true);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).toContain("mirror-scene-hidden");
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(view.props("contextSuspended")).toBe(true);
+    if (ending === "switch") await app!.get('[data-testid="mirror-renderer"]').setValue(false);
+    else if (ending === "failed") fail({ kind: "failed", reason: "connection", detail: "test disconnect" });
+    else fail({ kind: "ended" });
+    await settle();
+    expect(app!.getComponent(MirrorView).props("contextSuspended")).toBe(false);
+    expect(app!.get('[data-testid="mirror-scene-shell"]').classes()).not.toContain("mirror-scene-hidden");
+  });
+
   it("requires an explicit displayed epoch on QA input and waits for the matching FULL", async () => {
     const seat = await showMirror();
     const presentation = (epoch: number) => ({ state: "mirror", presentationEpoch: epoch,

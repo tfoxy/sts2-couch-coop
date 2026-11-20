@@ -295,6 +295,33 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     void submissionTail.then(() => { if (serial === tailSerial) tailSettled = true; });
   };
   let retainedPatchInFlight = false;
+  let contextSuspended = false;
+  let loseContextExtension: WEBGL_lose_context | null = null;
+  let contextLossObserved = false;
+  let contextRestoreRequested = false;
+  let contextReleases = 0, contextRestores = 0;
+  const contextUnavailable = () => contextSuspended || loseContextExtension !== null;
+  function restoreReleasedContext(): void {
+    if (!loseContextExtension || !contextLossObserved || contextRestoreRequested || contextSuspended || disposed) return;
+    contextRestoreRequested = true;
+    contextRestores++;
+    loseContextExtension.restoreContext();
+  }
+  function releaseContext(): void {
+    if (!contextSuspended || loseContextExtension || disposed) return;
+    // The Rust engine owns creation and attributes; this retrieves its existing context only.
+    const gl = canvas.getContext("webgl2");
+    const extension = gl?.getExtension("WEBGL_lose_context");
+    if (!extension) return;
+    loseContextExtension = extension;
+    contextLossObserved = false;
+    contextRestoreRequested = false;
+    ++presentationEpoch;
+    stats.contextReady = false;
+    presentationValid = false; stats.presentationValid = false;
+    contextReleases++;
+    extension.loseContext();
+  }
   let resizeFailure: string | null = null;
   const msdfAtlas = new MsdfAtlas();
   const msdfFallbackReasons: Record<string, number> = {};
@@ -313,11 +340,12 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     .filter((command) => command.kind === "glyphRun" && typeof command.atlas === "string")
     .map((command) => command.atlas as string) ?? [];
   function scheduleMsdfFrame(): void {
-    if (!msdfRuntime || disposed || msdfFrameScheduled) return;
+    if (!msdfRuntime || disposed || contextUnavailable() || msdfFrameScheduled) return;
     msdfFrameScheduled = true;
     requestAnimationFrame(() => {
       if (disposed) { msdfFrameScheduled = false; return; }
       const operation = submissionTail.then(() => {
+        if (disposed || contextUnavailable()) return 0;
         const lease = msdfRuntime.takeGeneration();
         if (lease) msdfAtlas.enqueue(lease.keys, lease.result.tiles,
           () => msdfRuntime.finishGeneration(lease));
@@ -343,8 +371,26 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     msdfAtlas.resetResidency();
     uploaded.clear(); uploadedPixels.clear();
     committedTypedScene = null; committedScene = null; committedRevision = null;
+    if (loseContextExtension) {
+      const extension = loseContextExtension;
+      // Restoration is allowed only after the canceled loss event finishes dispatching.
+      setTimeout(() => {
+        if (disposed || loseContextExtension !== extension) return;
+        contextLossObserved = true;
+        restoreReleasedContext();
+      }, 0);
+    }
   };
   const contextRestored = () => {
+    const restored = () => {
+      loseContextExtension = null;
+      contextLossObserved = false;
+      contextRestoreRequested = false;
+      resizeFailure = null;
+      stats.contextReady = true;
+      releaseContext();
+      if (!contextUnavailable()) { scheduleMsdfFrame(); onInvalidate(); }
+    };
     const operation = submissionTail.then(async () => {
       if (disposed) return;
       msdfAtlas.resetResidency();
@@ -355,9 +401,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       // latches GL off, and rebuilds on wgpu.
       if (backendName === GL_BACKEND_NAME && typeof engine.restore_context === "function") {
         if (engine.restore_context()) {
-          resizeFailure = null;
-          stats.contextReady = true;
-          onInvalidate();
+          if (loseContextExtension) engine.resize(surfaceWidth, surfaceHeight);
+          restored();
           return;
         }
         glRefused = true;
@@ -368,9 +413,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       engine = await createEngine();
       backendName = engine.backend;
       configureEngine(engine);
-      resizeFailure = null;
-      stats.contextReady = true;
-      onInvalidate();
+      restored();
     });
     setTail(operation);
     void operation.catch((error) => {
@@ -563,6 +606,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     rustDamagePresent: damagePresent, rustDamage: rustDamageStats && { ...rustDamageStats, last: rustLastDamage },
     rustPresentMode: rustLastPresentMode ?? appliedPresentMode,
     rustGlBackend: backendName === GL_BACKEND_NAME, rustGlRefused: glRefused, rustGlRefusals: { ...glRefusals },
+    contextSuspended, contextReleased: loseContextExtension !== null, contextReleases, contextRestores,
     rustBlitPixels: { total: rustBlitPixelsTotal, last: rustLastBlitPixels },
     retainedPatchEncodes, retainedPatchEncodeMs, retainedPatchQueueWaitMs, retainedPatchPresentWaitMs,
     textPatchCommits, textPatchResourceChanges,
@@ -1197,11 +1241,18 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   }
 
   async function presentResult(operationId?: number, identity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string; revision?: number; draws?: number; completedFrames?: number }> {
+    if (disposed || contextUnavailable()) return { presented: false, reason: "context suspended" };
+    const epoch = presentationEpoch;
     if (profile && identity) setProfileIdentity(identity);
     else if (executionPhases && operationId !== undefined) engine.set_phase_operation_id!(operationId);
     presentsInFlight++;
     let presentJson: string;
-    try { presentJson = await engine.present(); } finally { presentsInFlight--; }
+    try { presentJson = await engine.present(); }
+    catch (error) {
+      if (disposed || epoch !== presentationEpoch || contextUnavailable()) return { presented: false, reason: "presentation superseded" };
+      throw error;
+    } finally { presentsInFlight--; }
+    if (disposed || epoch !== presentationEpoch || contextUnavailable()) return { presented: false, reason: "presentation superseded" };
     const result = parse<{ presented: boolean; revision?: number | null; draws: number; resourcePending: number; unsupportedCommands: number; error?: string;
       drawCalls?: number; bufferCreations?: number; textureCreations?: number; uploadBytes?: number; completedPresents?: number; wasmCalls?: number;
       instanceUploadBytes?: number; incrementalPatches?: number; geometryRebuilds?: number; maxSampledTextures?: number;
@@ -1242,6 +1293,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   async function submit(list: DrawList<string>, text: readonly StageTextRecord[], plan?: StageScenePlan,
     diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string }> {
     if (disposed) return { presented: false, reason: "disposed" };
+    if (contextUnavailable()) return { presented: false, reason: "context suspended" };
     const epoch = presentationEpoch;
     // wgpu forbids mapping/consuming a zero-sized instance buffer. More importantly, an empty pre-scene
     // reconcile must not erase the last successfully presented image or its matching hit geometry.
@@ -1323,7 +1375,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     }
     if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "start" });
     const operation = submissionTail.then(async () => {
-      if (disposed || epoch !== presentationEpoch) return { presented: false, reason: "presentation superseded" };
+      if (disposed || epoch !== presentationEpoch || contextUnavailable()) return { presented: false, reason: "presentation superseded" };
       if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "end" });
       if (resizeFailure) return { presented: false, reason: `resize failed: ${resizeFailure}` };
       if (profile && profileIdentity) setProfileIdentity(profileIdentity);
@@ -1508,6 +1560,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
    * queued or a present is awaited (nothing was attempted). Synchronous: a presented frame is committed on return.
    */
   function presentIdle(tMs: number): number {
+    if (disposed || contextUnavailable()) return RUST_IDLE_BUSY;
     if (idleInstalledRevision === null || idleInstalledRevision !== committedRevision || !idleAnimsSupported()) return 0;
     if (idleBusyNow() || resizeFailure) { idleBusy++; return RUST_IDLE_BUSY; }
     const code = engine.present_idle!(tMs);
@@ -1628,6 +1681,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   function submitRetained(patch: ClipTranslatingScenePatch, diagnostic?: (event: ProducerExecutorEvent) => void,
     profileIdentity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string }> {
     if (disposed) return Promise.resolve({ presented: false, reason: "disposed" });
+    if (contextUnavailable()) return Promise.resolve({ presented: false, reason: "context suspended" });
     if (retainedPatchInFlight) return Promise.resolve({ presented: false, reason: "retained patch already in flight" });
     const epoch = presentationEpoch;
     const encoded = encodeRetainedPatch(patch);
@@ -1645,7 +1699,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const queuedAt = phaseTimingEnabled ? performance.now() : 0;
     if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "start" });
     const operation = submissionTail.then(async () => {
-      if (disposed || epoch !== presentationEpoch) return { presented: false, reason: "presentation superseded" };
+      if (disposed || epoch !== presentationEpoch || contextUnavailable()) return { presented: false, reason: "presentation superseded" };
       if (profile && profileIdentity) profile.emit(profileIdentity, { eventType: "phase-edge", phase: "couch.submission-queue.wait", edge: "end" });
       if (phaseTimingEnabled) retainedPatchQueueWaitMs += performance.now() - queuedAt;
       if (resizeFailure || disposed) return { presented: false, reason: resizeFailure ? `resize failed: ${resizeFailure}` : "disposed" };
@@ -1733,6 +1787,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   }
 
   return {
+    get contextReleased() { return loseContextExtension !== null; },
+    setContextSuspended(suspended) {
+      if (disposed || contextSuspended === suspended) return;
+      contextSuspended = suspended;
+      if (suspended) releaseContext();
+      else restoreReleasedContext();
+    },
     invalidatePendingPresentations() {
       ++presentationEpoch;
       committedScene = null;
@@ -1766,6 +1827,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       canvas.width = nextWidth; canvas.height = nextHeight;
       presentationValid = false; stats.presentationValid = false;
       const operation = submissionTail.then(() => {
+        if (disposed || contextUnavailable()) return;
         try {
           engine.resize(nextWidth, nextHeight); wasmResizeCalls++; resizeFailure = null;
         } catch (error) {
@@ -1784,6 +1846,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       return submitRetained(patch, diagnostic, profileIdentity);
     },
     presentScene(diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) {
+      if (disposed || contextUnavailable()) return { presented: false, reason: "context suspended" };
       if (profile && profileIdentity) {
         profile.outcome(profileIdentity, "accepted");
         profile.outcome(profileIdentity, "submitted");

@@ -61,6 +61,9 @@ type Readiness = "initializing" | "ready" | "failed";
 type PresentationResult = { presented: boolean; reason?: string; revision?: number; completedFrames?: number };
 type ExecutorOptions = { canvas: HTMLCanvasElement; width: number; height: number; designWidth: number; designHeight: number; startupRendererInstance?: number; onInvalidate: (reason?: "resource" | "present") => void; profile?: ReturnType<typeof createCouchCanvasProfile> };
 export interface MirrorDrawExecutor {
+  setContextSuspended?(suspended: boolean): void;
+  /** Stays true through the asynchronous restore, until the executor can draw again. */
+  readonly contextReleased?: boolean;
   readonly stats: StageDrawListRendererStats;
   resize(width: number, height: number, resolution?: number, designWidth?: number, designHeight?: number): void;
   prefetch(texture: string): void;
@@ -231,6 +234,8 @@ export function createStageMirrorRenderer(
   const onFontsLoaded = () => { if (producerReasons) resourceEpoch++; fontVersion++; if (state && readiness === "ready") { pendingTextureSource = "resource"; scheduler.scheduleTexturePaint(); } signalDiagnosticWake(); };
   stage.ownerDocument.fonts?.addEventListener?.("loadingdone", onFontsLoaded);
   let executor: MirrorDrawExecutor | null = null;
+  let contextSuspended = false;
+  const contextBlocked = () => contextSuspended || executor?.contextReleased === true;
   const attributionQuery = new URLSearchParams(window.location.search);
   const spreadAuditEnabled = attributionQuery.get("spreadAudit") === "1";
   const fast = resolveRustFastFlags(attributionQuery);
@@ -613,7 +618,7 @@ export function createStageMirrorRenderer(
     return null;
   };
   const scheduler = createCanvasFrameScheduler({
-    now: () => deterministicClock ?? performance.now(), state: () => state, disposed: () => disposed,
+    now: () => deterministicClock ?? performance.now(), state: () => contextBlocked() ? null : state, disposed: () => disposed,
     revisionAtFrame: () => snapshot?.stateRevision ?? -1,
     cpuIncremental: true,
     onFrameLifecycle: lifecycle ? (event, revision) => {
@@ -713,12 +718,12 @@ export function createStageMirrorRenderer(
   }
   const wakeForResource = () => { if (disposed) return; if (producerReasons) resourceEpoch++; pendingTextureSource = "resource"; scheduler.scheduleTexturePaint(); if (reconcilePull?.pending()) { traceWarmRenderer("renderer-pull-resource", state?.revision ?? null); reconcilePull.now(); } signalDiagnosticWake(); };
   const scheduleRefinement = () => {
-    if (refinementRaf !== null || disposed || state === null) return;
+    if (refinementRaf !== null || disposed || contextBlocked() || state === null) return;
     const epoch = transientEpoch;
     refinementPending = true;
     refinementRaf = requestAnimationFrame(() => {
       refinementRaf = null;
-      if (disposed || epoch !== transientEpoch || state === null || readiness !== "ready" || !executor || !snapshot) return;
+      if (disposed || contextBlocked() || epoch !== transientEpoch || state === null || readiness !== "ready" || !executor || !snapshot) return;
       refinementPending = false;
       beginLocalFrame("refinement");
       const phaseSubmissionId = rustExecutionPhaseMode
@@ -923,6 +928,7 @@ export function createStageMirrorRenderer(
   };
 
   function paint(next: MirrorState, source: ProducerBuildSource, decline = "direct-build"): boolean {
+    if (contextBlocked()) return false;
     // rustIdleInRust: the build reads the committed hit entries (tip scale); they must hold the drawn idle pose.
     idleLane?.sync();
     const profileIdentity = profile?.begin("full-build", next.revision, ++profileBuildAttempts);
@@ -2791,6 +2797,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
    * the diagnostic clock). False: the caller patches or builds it as before.
    */
   function presentIdleFrame(at: number): boolean {
+    if (contextBlocked()) return false;
     if (!idleLane || !state || !snapshot || snapshot.stateRevision !== state.revision || scheduler.buildRequired) return false;
     const presented = lifecycle ? lifecycle.phase("executor", () => idleLane!.tryFrame(at)) : idleLane.tryFrame(at);
     if (presented) publishIdleFrame(at);
@@ -2808,6 +2815,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
   }
 
   function tryRetainedPatch(at: number): boolean {
+    if (contextBlocked()) return false;
     if (!state || !snapshot || snapshot.stateRevision !== state.revision || !executor) {
       retainedDecline = "invalid-retained-state"; return false;
     }
@@ -2895,7 +2903,9 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
     : Promise.reject(new Error(failure || "2D text measurement context unavailable"));
   void init.then((created) => {
     if (disposed) { created.dispose(); return; }
-    executor = created; readiness = "ready"; resize();
+    executor = created; readiness = "ready";
+    executor.setContextSuspended?.(contextSuspended);
+    resize();
     startupEvent("renderer.initComplete", { contextReady: created.stats.contextReady,
       pending: created.stats.resourcePending, failed: created.stats.textureFailures });
     if (state) deferredPaint(state, "startup");
@@ -3168,6 +3178,25 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
   };
 
   const renderer: MirrorRenderer = {
+    setContextSuspended(suspended) {
+      if (contextSuspended === suspended) return;
+      contextSuspended = suspended;
+      retainedValid = false;
+      if (suspended) {
+        ++transientEpoch;
+        if (refinementRaf !== null) cancelAnimationFrame(refinementRaf);
+        refinementRaf = null;
+        refinementPending = false;
+        refinementFailure = null;
+        asyncPresentation.invalidate();
+        asyncPresentedRevision = null;
+        asyncSubmissionRevision = null;
+        asyncAwaitingAckRevision = null;
+        asyncPresentCompletion = null;
+      }
+      executor?.setContextSuspended?.(suspended);
+      if (!suspended) onInvalidate();
+    },
     resetTransientState() {
       ++transientEpoch;
       state = null;
@@ -3187,7 +3216,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
       lastSampleClock = null;
       lifecycle?.finish("skipped", completedDraws());
     },
-    reconcile(next) { lifecycle?.finish("skipped", completedDraws()); lifecycle?.begin("reconcile", next.revision, completedDraws()); lifecycle?.admit();
+    reconcile(next) {
       if (next.sceneRewrite) paintOrderCache.invalidateAll();
       paintOrderCache.noteChanged(next, next.changedIds);
       if (rewardCandidateIndex) {
@@ -3195,6 +3224,8 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
         rewardCandidateIndex.noteChanged(next.nodes, next.changedIds);
       }
       state = next; pendingViewRevision = next.revision;
+      if (contextBlocked()) return false;
+      lifecycle?.finish("skipped", completedDraws()); lifecycle?.begin("reconcile", next.revision, completedDraws()); lifecycle?.admit();
       // Eager-scroll anchors: re-derive each anchored offset against the bases this reconcile is about to draw, so a
       // wire move of a scroll container and the offset that cancels it go out in ONE submission (patch or build).
       // The view re-composes after the reconcile (eagerScroll.afterReconcile), but only once an async present has

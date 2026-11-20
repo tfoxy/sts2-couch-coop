@@ -1412,7 +1412,7 @@ describe("rustGlBackend executor backend choice", () => {
   const serializerSource = "export function encodeRustScene(){return {bytes:new Uint8Array([1])," +
     "scene:{version:2,revision:1,resources:[],commands:[]},resources:[],textUploads:[],unsupportedCommands:0}};" +
     "export function encodeRustPatch(){return null};export function encodeRustResources(){return new Uint8Array(0)}";
-  async function createWith(query: string, glue: { createWithGl?: (mode: string) => unknown }) {
+  async function createWith(query: string, glue: { createWithGl?: (mode: string) => unknown }, onInvalidate = () => {}) {
     window.history.replaceState({}, "", query);
     const calls: string[] = [];
     (globalThis as Record<string, unknown>).__rustGlTest = {
@@ -1429,13 +1429,190 @@ describe("rustGlBackend executor backend choice", () => {
     vi.stubEnv("VITE_RUST_SCENE_SERIALIZER_URL", moduleUrl(serializerSource));
     const canvas = document.createElement("canvas");
     const renderer = await createRustDrawListExecutor({ canvas, width: 1, height: 1,
-      designWidth: 1, designHeight: 1, onInvalidate: () => {} });
+      designWidth: 1, designHeight: 1, onInvalidate });
     return { renderer, calls, canvas, diagnostics: renderer as unknown as GlDiagnostics };
   }
   const loseAndRestore = (canvas: HTMLCanvasElement) => {
     canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
     canvas.dispatchEvent(new Event("webglcontextrestored"));
   };
+
+  function fakeContext(canvas: HTMLCanvasElement, dispatch = true) {
+    let lossDispatching = false;
+    const rejectedRestore = vi.fn();
+    const dispatchLost = () => {
+      lossDispatching = true;
+      try { canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true })); }
+      finally { lossDispatching = false; }
+    };
+    const extension = {
+      loseContext: vi.fn(() => { if (dispatch) queueMicrotask(dispatchLost); }),
+      restoreContext: vi.fn(() => {
+        if (lossDispatching) { rejectedRestore(); return; }
+        if (dispatch) queueMicrotask(() => canvas.dispatchEvent(new Event("webglcontextrestored")));
+      })
+    };
+    const getExtension = vi.fn(() => extension);
+    const getContext = vi.spyOn(canvas, "getContext").mockReturnValue({ getExtension } as never);
+    return { extension, getContext, getExtension, dispatchLost, rejectedRestore };
+  }
+
+  it("releases and restores once per visibility cycle using the same extension and existing restore path", async () => {
+    const restore = vi.fn(() => true), invalidate = vi.fn();
+    const gl = engine("webgl2-gl", { restore_context: restore });
+    const { renderer, canvas, diagnostics } = await createWith("/?rustDiagnostics=1", { createWithGl: () => gl }, invalidate);
+    const { extension, getExtension } = fakeContext(canvas);
+    try {
+      const list = createDrawList<string>(); const quad = createQuadView(); quad.w = quad.h = 1; list.pushQuad(quad);
+      expect(await renderer.render(list)).toBe(true);
+      expect(extension.loseContext).not.toHaveBeenCalled();
+      for (let cycle = 1; cycle <= 2; cycle++) {
+        renderer.setContextSuspended!(true);
+        renderer.setContextSuspended!(true);
+        await Promise.resolve();
+        expect(extension.loseContext).toHaveBeenCalledTimes(cycle);
+        expect(renderer.stats.contextReady).toBe(false);
+        renderer.setContextSuspended!(false);
+        renderer.setContextSuspended!(false);
+        await vi.waitFor(() => expect(invalidate).toHaveBeenCalledTimes(cycle));
+        expect(extension.restoreContext).toHaveBeenCalledTimes(cycle);
+        expect(restore).toHaveBeenCalledTimes(cycle);
+        expect(renderer.stats.contextReady).toBe(true);
+        expect(await renderer.render(list)).toBe(true);
+      }
+      expect(getExtension).toHaveBeenCalledTimes(2);
+      expect(diagnostics.rustGlRefusals).toEqual({ create: 0, restore: 0 });
+      expect(diagnostics.rustGlRefused).toBe(false);
+      expect((window as unknown as { __mirrorRustStats(): unknown }).__mirrorRustStats()).toMatchObject({
+        contextReleases: 2, contextRestores: 2, contextReleased: false, contextSuspended: false
+      });
+    } finally { renderer.dispose(); }
+  });
+
+  it("keeps full, patch, idle, resize and present-only calls quiet while deliberately released", async () => {
+    const present = vi.fn(async () => JSON.stringify({ presented: true, revision: 1, draws: 1, resourcePending: 0 }));
+    const resize = vi.fn(), admit = vi.fn();
+    const { renderer, canvas, diagnostics } = await createWith("/", { createWithGl: () => engine("webgl2-gl", {
+      present, resize, admit_scene: admit
+    }) });
+    fakeContext(canvas);
+    const info = vi.spyOn(console, "info"), warn = vi.spyOn(console, "warn");
+    try {
+      renderer.setContextSuspended!(true);
+      await Promise.resolve();
+      const list = createDrawList<string>(); const quad = createQuadView(); quad.w = quad.h = 1; list.pushQuad(quad);
+      for (let frame = 0; frame < 5; frame++) {
+        expect(await renderer.render(list)).toBe(false);
+        expect(await renderer.presentScene()).toMatchObject({ presented: false });
+        expect(await renderer.patchScene({} as never)).toMatchObject({ presented: false });
+        (renderer as unknown as { presentIdle(t: number): number }).presentIdle(frame);
+        renderer.resize(2, 2);
+      }
+      await Promise.resolve();
+      expect(present).not.toHaveBeenCalled(); expect(admit).not.toHaveBeenCalled(); expect(resize).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled(); expect(warn).not.toHaveBeenCalled();
+      expect(renderer.stats.scenePresentationFailures).toBe(0);
+      expect(diagnostics.rustGlRefusals).toEqual({ create: 0, restore: 0 });
+    } finally { renderer.dispose(); }
+  });
+
+  it("defers an early restore request until after loss dispatch finishes", async () => {
+    const restore = vi.fn(() => true), invalidate = vi.fn();
+    const { renderer, canvas } = await createWith("/", { createWithGl: () => engine("webgl2-gl", { restore_context: restore }) }, invalidate);
+    const { extension, rejectedRestore } = fakeContext(canvas);
+    try {
+      renderer.setContextSuspended!(true);
+      renderer.setContextSuspended!(false);
+      renderer.setContextSuspended!(false);
+      await Promise.resolve();
+      expect(extension.restoreContext).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(invalidate).toHaveBeenCalledOnce());
+      expect(rejectedRestore).not.toHaveBeenCalled();
+      expect(extension.restoreContext).toHaveBeenCalledOnce();
+      expect(restore).toHaveBeenCalledOnce();
+      expect(renderer.contextReleased).toBe(false);
+    } finally { renderer.dispose(); }
+  });
+
+  it.each(["suspended", "disposed"])("cancels a deferred restore when %s before its task runs", async (reason) => {
+    const { renderer, canvas } = await createWith("/", { createWithGl: () => engine("webgl2-gl") });
+    const { extension, dispatchLost } = fakeContext(canvas, false);
+    try {
+      renderer.setContextSuspended!(true);
+      renderer.setContextSuspended!(false);
+      dispatchLost();
+      if (reason === "disposed") renderer.dispose();
+      else renderer.setContextSuspended!(true);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(extension.restoreContext).not.toHaveBeenCalled();
+    } finally { renderer.dispose(); }
+  });
+
+  it("releases again when hidden during restoration", async () => {
+    const restore = vi.fn(() => true), invalidate = vi.fn();
+    const { renderer, canvas } = await createWith("/", { createWithGl: () => engine("webgl2-gl", { restore_context: restore }) }, invalidate);
+    const { extension, dispatchLost, rejectedRestore } = fakeContext(canvas, false);
+    try {
+      renderer.setContextSuspended!(true);
+      renderer.setContextSuspended!(false);
+      expect(extension.restoreContext).not.toHaveBeenCalled();
+      dispatchLost();
+      await vi.waitFor(() => expect(extension.restoreContext).toHaveBeenCalledOnce());
+      expect(rejectedRestore).not.toHaveBeenCalled();
+      // A new hide during restoration must release the restored context again.
+      renderer.setContextSuspended!(true);
+      canvas.dispatchEvent(new Event("webglcontextrestored"));
+      await vi.waitFor(() => expect(extension.loseContext).toHaveBeenCalledTimes(2));
+      expect(invalidate).not.toHaveBeenCalled();
+      canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+      renderer.setContextSuspended!(false);
+      await vi.waitFor(() => expect(extension.restoreContext).toHaveBeenCalledTimes(2));
+      canvas.dispatchEvent(new Event("webglcontextrestored"));
+      await vi.waitFor(() => expect(invalidate).toHaveBeenCalledOnce());
+      expect(restore).toHaveBeenCalledTimes(2);
+    } finally { renderer.dispose(); }
+  });
+
+  it("discards a present rejected by deliberate context loss without recording a failure", async () => {
+    let reject!: (error: Error) => void;
+    const present = vi.fn(() => new Promise<string>((_resolve, fail) => { reject = fail; }));
+    const { renderer, canvas, diagnostics } = await createWith("/", { createWithGl: () => engine("webgl2-gl", { present }) });
+    fakeContext(canvas);
+    try {
+      const pending = renderer.presentScene();
+      expect(present).toHaveBeenCalledOnce();
+      renderer.setContextSuspended!(true);
+      reject(new Error("context lost"));
+      expect(await pending).toMatchObject({ presented: false });
+      expect(renderer.stats.scenePresentationFailures).toBe(0);
+      expect(diagnostics.rustGlRefused).toBe(false);
+    } finally { renderer.dispose(); }
+  });
+
+  it("rebuilds the wgpu executor after a deliberate release through the same canvas events", async () => {
+    const invalidate = vi.fn();
+    const { renderer, canvas, calls } = await createWith("/", {}, invalidate);
+    const { extension } = fakeContext(canvas);
+    try {
+      renderer.setContextSuspended!(true);
+      await Promise.resolve();
+      renderer.setContextSuspended!(false);
+      await vi.waitFor(() => expect(invalidate).toHaveBeenCalledOnce());
+      expect(extension.loseContext).toHaveBeenCalledOnce();
+      expect(extension.restoreContext).toHaveBeenCalledOnce();
+      expect(calls).toEqual(["createWithPresent:preserved-desync", "createWithPresent:preserved-desync"]);
+    } finally { renderer.dispose(); }
+  });
+
+  it("does nothing when no WebGL stage context exists", async () => {
+    const { renderer, canvas, diagnostics } = await createWith("/", {});
+    vi.spyOn(canvas, "getContext").mockReturnValue(null);
+    renderer.setContextSuspended!(true);
+    renderer.setContextSuspended!(false);
+    expect(renderer.stats.contextReady).toBe(true);
+    expect(diagnostics.rustGlRefusals).toEqual({ create: 0, restore: 0 });
+    renderer.dispose();
+  });
 
   it("creates through createWithGl in the default present mode when the glue has it", async () => {
     const { renderer, calls, diagnostics } = await createWith("/", { createWithGl: () => engine("webgl2-gl") });

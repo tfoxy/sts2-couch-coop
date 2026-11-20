@@ -112,6 +112,7 @@ const props = withDefaults(defineProps<{
   onSceneRendered?: () => void;
   accessGeneration?: number;
   sceneReady?: boolean;
+  contextSuspended?: boolean;
   connectionAttemptId?: string | null;
   connected?: boolean;
   onFirstSceneFramePresented?: (attemptId: string) => void;
@@ -181,6 +182,7 @@ const frameWidth = ref(0);
 const frameHeight = ref(0);
 let observer: ResizeObserver | null = null;
 let renderer: MirrorRenderer | null = null;
+watch(() => props.contextSuspended, (suspended) => renderer?.setContextSuspended?.(suspended === true), { flush: "sync" });
 // STAGE-A "Static background": the renderer handle, provided to the browser-only slot controls (StaticBackground
 // needs setStaticBackgroundShown). A shallowRef mirror of the imperative `renderer` local above — assigned in the
 // same onMounted/onBeforeUnmount sites, so the two can never disagree.
@@ -803,6 +805,7 @@ function mountScene(): void {
     // recorder above and `inputCapture` below still measure against it. `canvasHost` is only WHERE THE CANVAS IS
     // LAID OUT; it is null on the DOM arm, which is exactly the "no host" the factory documents.
     renderer = createMirrorRendererFor(stage.value, defs.value, canvasHost.value);
+    renderer?.setContextSuspended?.(props.contextSuspended === true);
     rendererRef.value = renderer;
     if (!renderer || rendererRuntimeStatus.phase === "failed") return;
     // Offer the app's scheduled walk to a backend with its own frame loop (see ReconcilePull). Wired

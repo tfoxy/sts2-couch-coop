@@ -43,6 +43,7 @@ vi.mock("@/mirror/renderer/canvas/frameScheduler", async (importOriginal) => {
 import { createStageMirrorRenderer, type MirrorDrawExecutorFactory } from "@/mirror/renderer/stage/createStageMirrorRenderer";
 import { readRendererComparisonConfig, rendererComparisonConfig, rendererRuntimeStatus } from "@/mirror/rendererComparison";
 import type { WarmAckTraceEvent } from "@/mirror/warmAckTrace";
+import type { RewardFocusCandidates } from "@/mirror/rewardFocusSnapshot";
 
 function fakeAdapter(asynchronous = false) {
   let accept = true;
@@ -191,6 +192,118 @@ async function clockAt(ms: number) {
 describe("Stage composition initialization", () => {
   beforeEach(() => { rustExecutor.mockReset(); control.created.length = 0; rewardSpy.mockClear(); schedulerControl.arms.mockClear(); schedulerControl.ports = null; fontLoader.load.mockReset(); fontLoader.load.mockResolvedValue(undefined); document.body.replaceChildren(); window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); measureStub(); });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "/"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); });
+
+  it("seeds remounted hidden views before executor initialization and restores on showing", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    const state = textScene();
+    for (let mountIndex = 0; mountIndex < 2; mountIndex++) {
+      const pending = deferredExecutor();
+      vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((host, defs, canvasHost) =>
+        createStageMirrorRenderer(host, defs, canvasHost, undefined, { createExecutor: () => pending.promise }));
+      const wrapper = mount(MirrorView, { props: { state, revision: state.revision, contextSuspended: true } });
+      const adapter = { ...fakeAdapter(true), setContextSuspended: vi.fn() };
+      pending.resolve(adapter);
+      try {
+        await vi.waitFor(() => expect(adapter.setContextSuspended).toHaveBeenCalledWith(true));
+        expect(adapter.admitScene).not.toHaveBeenCalled();
+        expect(adapter.presentScene).not.toHaveBeenCalled();
+        await wrapper.setProps({ contextSuspended: false });
+        await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+        expect(adapter.setContextSuspended.mock.calls).toEqual([[true], [false]]);
+      } finally { wrapper.unmount(); }
+    }
+  });
+
+  it("keeps hidden reconciles and an in-flight refusal from failing the stage", async () => {
+    const adapter = { ...fakeAdapter(true), setContextSuspended: vi.fn() };
+    let finish!: (result: { presented: boolean; reason: string }) => void;
+    adapter.admitScene.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const statuses: string[] = [];
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { createExecutor: async () => adapter as never });
+    try {
+      await vi.waitFor(() => expect(statuses).not.toEqual([]));
+      const state = textScene();
+      renderer.reconcile(state);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
+      renderer.setContextSuspended!(true);
+      finish({ presented: false, reason: "context suspended" });
+      await Promise.resolve(); await Promise.resolve();
+      for (let frame = 0; frame < 5; frame++) expect(renderer.reconcile(state)).toBe(false);
+      expect(adapter.admitScene).toHaveBeenCalledOnce();
+      expect(schedulerControl.ports.state()).toBeNull();
+      expect(statuses).not.toContain("failed");
+      renderer.setContextSuspended!(false);
+      renderer.reconcile(state);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledTimes(2));
+      expect(statuses).not.toContain("failed");
+    } finally { renderer.dispose(); }
+  });
+
+  it("returns pending view credit once after a hidden delta is presented on resume", async () => {
+    const adapter = fakeAdapter(true);
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
+    const state = animatedColorScene(); state.revision = 30;
+    const acks: number[] = [];
+    const retry = vi.fn(() => {
+      if (renderer.reconcile(state) === false) return "pending" as const;
+      acks.push(state.revision);
+      return "presented" as const;
+    });
+    renderer.setReconcilePull?.({ pending: () => false, now: retry, retryNow: retry });
+    try {
+      expect(renderer.reconcile(state)).toBe(false);
+      await clockAt(1000);
+      expect(acks).toEqual([30]);
+      renderer.setContextSuspended!(true);
+      state.revision = 31;
+      state.nodes.get("root")!.modulate = { r: 1, g: 0, b: 0, a: 1, html: "#ff0000ff" };
+      state.changedIds.add("root");
+      expect(renderer.reconcile(state)).toBe(false);
+      const admissions = adapter.admitScene.mock.calls.length;
+      expect(acks).toEqual([30]);
+      renderer.setContextSuspended!(false);
+      await clockAt(1036);
+      expect(adapter.admitScene).toHaveBeenCalledTimes(admissions + 1);
+      expect(retry).toHaveBeenCalledTimes(2);
+      expect(acks).toEqual([30, 31]);
+      await clockAt(1072);
+      expect(acks).toEqual([30, 31]);
+    } finally { renderer.dispose(); }
+  });
+
+  it.each([false, true])("indexes reward nodes added while hidden before resumed paint clears changes (rewrite=%s)", async (rewrite) => {
+    const adapter = fakeAdapter(true);
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
+    const state = textScene();
+    state.nodes.get("root")!.nodeType = "NRewardsScreen";
+    const candidates = () => (rewardSpy.mock.calls.at(-1) as unknown as [unknown, unknown, unknown, unknown, RewardFocusCandidates])[4];
+    try {
+      renderer.reconcile(state);
+      await clockAt(1000);
+      renderer.rewardFocusSnapshot();
+      expect(candidates().screens.has("root")).toBe(true);
+      expect(candidates().buttons.size).toBe(0);
+      renderer.setContextSuspended!(true);
+      applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: rewrite, screenType: "run",
+        orderedIds: ["root", "label", "reward"], upserts: [
+          ...(rewrite ? [...state.nodes.values()] : []),
+          { id: "reward", parentId: "root", name: "Reward", nodeType: "NRewardButton", visible: true,
+            transform: { xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x: 50, y: 50 } },
+            localRect: { position: { x: 0, y: 0 }, size: { x: 200, y: 60 } } }
+        ] })!);
+      expect(renderer.reconcile(state)).toBe(false);
+      renderer.setContextSuspended!(false);
+      await clockAt(1036);
+      expect(state.changedIds.size).toBe(0);
+      expect(state.sceneRewrite).toBe(false);
+      renderer.rewardFocusSnapshot();
+      expect(candidates().screens.has("root")).toBe(true);
+      expect(candidates().buttons.has("reward")).toBe(true);
+    } finally { renderer.dispose(); }
+  });
 
   async function createReadyHandRenderer() {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
