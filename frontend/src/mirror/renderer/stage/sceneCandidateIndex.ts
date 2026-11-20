@@ -14,7 +14,7 @@
 // ONE NODE, ONE CLASSIFICATION: `classify` reads a node's OWN fields only (type, a style flag — never an ancestor
 // or sibling), because an id only ever re-enters `changedIds` when ITS OWN upsert/removal arrives. A predicate
 // that also depends on an ancestor (the static-background skip-root rule, for one) cannot be indexed this way; see
-// the per-node `WeakMap` memo `createPixiMirrorRenderer.ts` uses for that case instead.
+// the per-node `WeakMap` memo `createStageMirrorRenderer.ts` uses for that case instead.
 
 import type { MirrorNode } from "@/mirror/sceneTree";
 

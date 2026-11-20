@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { RUST_FAST_SWITCHES, resolveRustFastFlags, resolveRustPresentMode } from "./rustFastFlags";
 
-const flags = (query: string, backend: "pixi" | "rust" = "rust") => resolveRustFastFlags(new URLSearchParams(query), backend);
+const flags = (query: string) => resolveRustFastFlags(new URLSearchParams(query));
 const items = Object.keys(RUST_FAST_SWITCHES) as Array<keyof typeof RUST_FAST_SWITCHES>;
-const presentMode = (query: string, backend: "pixi" | "rust" = "rust") => resolveRustPresentMode(new URLSearchParams(query), backend);
+const presentMode = (query: string) => resolveRustPresentMode(new URLSearchParams(query));
 
 describe("resolveRustFastFlags", () => {
   it("is all on by default for Rust, but never verify", () => {
@@ -36,7 +36,6 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustCoalescedBuilds=0").coalescedBuilds).toBe(false);
     expect(flags("rustCoalescedBuilds=0").heldOverridePatch).toBe(true);
     expect(flags("rustFast=0&rustCoalescedBuilds=1").coalescedBuilds).toBe(true);
-    expect(flags("rustFast=1", "pixi").coalescedBuilds).toBe(false);
   });
 
   it("turns the cosmetic-offset patch off on its own", () => {
@@ -49,7 +48,6 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustWireSpreadPatch=0").wireSpreadPatch).toBe(false);
     expect(flags("rustWireSpreadPatch=0").offsetPatch).toBe(true);
     expect(flags("rustFast=0&rustWireSpreadPatch=1").wireSpreadPatch).toBe(true);
-    expect(flags("rustFast=1", "pixi").wireSpreadPatch).toBe(false);
   });
 
   it("turns the direct-GL backend off on its own", () => {
@@ -57,28 +55,24 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustGlBackend=0").damagePresent).toBe(true);
     expect(flags("").glBackend).toBe(true);
     expect(flags("rustFast=0&rustGlBackend=1").glBackend).toBe(true);
-    expect(flags("rustFast=1", "pixi").glBackend).toBe(false);
   });
 
   it("turns the damage present off on its own", () => {
     expect(flags("rustDamagePresent=0").damagePresent).toBe(false);
     expect(flags("rustDamagePresent=0").tweenRootPatch).toBe(true);
     expect(flags("rustFast=0&rustDamagePresent=1").damagePresent).toBe(true);
-    expect(flags("rustFast=1", "pixi").damagePresent).toBe(false);
   });
 
   it("turns the tween-root patch off on its own", () => {
     expect(flags("rustTweenRootPatch=0").tweenRootPatch).toBe(false);
     expect(flags("rustTweenRootPatch=0").heldOverridePatch).toBe(true);
     expect(flags("rustFast=0&rustTweenRootPatch=1").tweenRootPatch).toBe(true);
-    expect(flags("rustFast=1", "pixi").tweenRootPatch).toBe(false);
   });
 
   it("turns the bounded Bitmap text cache off on its own", () => {
     expect(flags("rustTextEvict=0").textEvict).toBe(false);
     expect(flags("rustTextEvict=0").tweenRootPatch).toBe(true);
     expect(flags("rustFast=0&rustTextEvict=1").textEvict).toBe(true);
-    expect(flags("rustFast=1", "pixi").textEvict).toBe(false);
   });
 
   it("turns the text-only patch off on its own", () => {
@@ -87,7 +81,6 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustTextPatch=0").textEvict).toBe(true);
     expect(flags("rustFast=0").textPatch).toBe(false);
     expect(flags("rustFast=0&rustTextPatch=1").textPatch).toBe(true);
-    expect(flags("rustFast=1", "pixi").textPatch).toBe(false);
   });
 
   it("turns the idle scheduler off on its own", () => {
@@ -96,7 +89,6 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustIdleScheduler=0").coalescedBuilds).toBe(true);
     expect(flags("rustFast=0").idleScheduler).toBe(false);
     expect(flags("rustFast=0&rustIdleScheduler=1").idleScheduler).toBe(true);
-    expect(flags("rustFast=1", "pixi").idleScheduler).toBe(false);
   });
 
   it("turns the due-frame idle wake off on its own", () => {
@@ -105,7 +97,6 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustIdleDueFrame=0").idleScheduler).toBe(true);
     expect(flags("rustFast=0").idleDueFrame).toBe(false);
     expect(flags("rustFast=0&rustIdleDueFrame=1").idleDueFrame).toBe(true);
-    expect(flags("rustFast=1", "pixi").idleDueFrame).toBe(false);
   });
 
   it("turns the undrawn-wire skip off on its own", () => {
@@ -114,7 +105,6 @@ describe("resolveRustFastFlags", () => {
     expect(flags("rustSkipUndrawnWire=0").idleDueFrame).toBe(true);
     expect(flags("rustFast=0").skipUndrawnWire).toBe(false);
     expect(flags("rustFast=0&rustSkipUndrawnWire=1").skipUndrawnWire).toBe(true);
-    expect(flags("rustFast=1", "pixi").skipUndrawnWire).toBe(false);
   });
 
   it("enables one item without the umbrella", () => {
@@ -124,13 +114,6 @@ describe("resolveRustFastFlags", () => {
     expect(resolved.verify).toBe(true);
   });
 
-  it("keeps Pixi on its own paint-order switch only", () => {
-    expect(flags("rustFast=1", "pixi").paintOrderReuse).toBe(false);
-    const pixi = flags("rustFast=1&ccPaintOrderReuse=1&rustLazyComposition=1&rustFastVerify=1", "pixi");
-    expect(pixi.paintOrderReuse).toBe(true);
-    expect(pixi.lazyComposition).toBe(false);
-    expect(pixi.verify).toBe(false);
-  });
 });
 
 describe("resolveRustPresentMode", () => {
@@ -146,10 +129,6 @@ describe("resolveRustPresentMode", () => {
 
   it("falls back to preserved-desync on an unrecognized value", () => {
     expect(presentMode("rustPresent=bogus")).toBe("preserved-desync");
-  });
-
-  it("stays surface for Pixi regardless of the query", () => {
-    expect(presentMode("rustPresent=direct", "pixi")).toBe("surface");
   });
 
   it("reads independently of rustFast=0, unlike the umbrella items", () => {

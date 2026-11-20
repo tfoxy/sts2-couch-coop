@@ -25,7 +25,7 @@ import { loopPhaseAt } from "@/mirror/canvas/tweenLoop";
 import type { LocalAnim } from "@/mirror/canvas/buildDrawList";
 import type { HitEntry } from "@/mirror/canvas/hitTest";
 import type { Affine } from "@/mirror/affine";
-import type { RetainedIdlePlan, RetainedPixiComposition } from "./retainedComposition";
+import type { RetainedIdlePlan, RetainedStageComposition } from "./retainedComposition";
 import { RUST_IDLE_BUSY, RUST_IDLE_FULL, RUST_IDLE_PARTIAL, RUST_IDLE_SKIP, RUST_IDLE_UNCHANGED, type IdleRootSpec } from "./rustIdleDescriptor";
 
 /** The executor half (`createRustDrawListExecutor`). */
@@ -41,7 +41,7 @@ export interface RustIdleExecutor {
 
 export interface RustIdleLanePorts {
   visual: Pick<CanvasVisualState, "localAnims" | "idleGeneration" | "idlePlan" | "loop">;
-  composition(): RetainedPixiComposition | null;
+  composition(): RetainedStageComposition | null;
   executor(): RustIdleExecutor | null;
   /** Bumped on every published build or patch: the committed scene an installed set was built against. */
   commitKey(): number;
@@ -91,7 +91,7 @@ export function createRustIdleLane(ports: RustIdleLanePorts): RustIdleLane {
   /** The installed descriptors: valid for one commit, idle generation and animated set. */
   let installed: { key: number; generation: number; specs: Map<string, IdleRootSpec> } | null = null;
   /** A structural refusal, kept until the composition, the idle generation or the animated set changes. */
-  let refused: { composition: RetainedPixiComposition; generation: number; ids: string; reason: string } | null = null;
+  let refused: { composition: RetainedStageComposition; generation: number; ids: string; reason: string } | null = null;
   /** The clock of the last idle frame Rust presented that the composition has not replayed yet. */
   let drawnAt: number | null = null;
   const sample = createIdleAnimSample();
@@ -114,7 +114,7 @@ export function createRustIdleLane(ports: RustIdleLanePorts): RustIdleLane {
     return specs;
   }
 
-  function install(executor: RustIdleExecutor, composition: RetainedPixiComposition): string | null {
+  function install(executor: RustIdleExecutor, composition: RetainedStageComposition): string | null {
     const generation = ports.visual.idleGeneration;
     const ids = [...ports.visual.localAnims.keys()].join("\u0000");
     if (refused && refused.composition === composition && refused.generation === generation && refused.ids === ids)

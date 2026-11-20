@@ -1,6 +1,6 @@
 import type { DrawList } from "@godot-scene-web/canvas";
-import type { PixiDrawListRenderer, PixiDrawListRendererStats, PixiScenePlan, PixiScenePatch, PixiTextOutcomes, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
-import type { ClipTranslatingScenePatch, MirrorDrawExecutorFactory } from "./createPixiMirrorRenderer";
+import type { StageDrawListRendererStats, StageScenePlan, StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
+import type { ClipTranslatingScenePatch, MirrorDrawExecutorFactory } from "./createStageMirrorRenderer";
 import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLayout";
 import { createBitmapTextMethod } from "./textMethods/bitmap";
 import { createTextResourceEvictionTracker } from "./textMethods/textResourceEviction";
@@ -57,14 +57,14 @@ type RetainedPatchEncoding = { bytes: Uint8Array; scene: RustSceneSnapshot; chan
   /** rustTextPatch (newer GSW only): raster pixels the patched labels draw, and whether the resource list changed. */
   textUploads?: readonly ResourcePixels[]; resourcesChanged?: boolean;
   /** rustTextPatch: the records this patch re-emitted and the carriers it resolved for them (kept for verify). */
-  preparedTexts?: readonly { record: PixiTextRecord; carrier: RustTextCarrier }[] };
+  preparedTexts?: readonly { record: StageTextRecord; carrier: RustTextCarrier }[] };
 type RustSceneSnapshot = { version: 2; revision: number; width: number; height: number; designWidth: number; designHeight: number; resources: { key: string; width: number; height: number }[]; commands: Record<string, unknown>[] };
 type Serializer = {
   encodeRustScene(input: {
     drawList: DrawList<string>; revision: number; width: number; height: number; designWidth: number; designHeight: number;
     resolveTexture(texture: string): { key: string; width: number; height: number } | null;
-    texts: readonly PixiTextRecord[]; resolveText(record: PixiTextRecord): RustTextCarrier | null;
-    plan?: PixiScenePlan;
+    texts: readonly StageTextRecord[]; resolveText(record: StageTextRecord): RustTextCarrier | null;
+    plan?: StageScenePlan;
     /** rustFast `fastSerializer` (being added in parallel in GSW). Feature-detected by always being optional. */
     fast?: boolean;
   }): { bytes: Uint8Array; scene: RustSceneSnapshot; resources: { key: string; width: number; height: number }[]; textUploads: ResourcePixels[];
@@ -75,7 +75,7 @@ type Serializer = {
   encodeRustRetainedPatch?(base: RustSceneSnapshot, revision: number,
     updates: readonly { id: string; command: Record<string, unknown>; localTransform?: readonly number[] }[],
     groupTransforms?: readonly { id: string; transform: readonly number[] }[], profile?: undefined,
-    options?: { texts?: readonly { record: PixiTextRecord; carrier: RustTextCarrier }[] }): RetainedPatchEncoding | null;
+    options?: { texts?: readonly { record: StageTextRecord; carrier: RustTextCarrier }[] }): RetainedPatchEncoding | null;
   /** rustTextPatch: the serializer encodes `options.texts` (a re-prepared label). Absent on an older GSW. */
   RUST_RETAINED_TEXT_PATCH?: boolean;
   /**
@@ -93,12 +93,11 @@ type Serializer = {
 
 
 
-const blankStats = (): PixiDrawListRendererStats => ({ frames: 0, completedFrames: 0, objects: 0, created: 0, updated: 0, destroyed: 0,
+const blankStats = (): StageDrawListRendererStats => ({ frames: 0, completedFrames: 0, objects: 0, created: 0, updated: 0, destroyed: 0,
   textures: 0, frameTextures: 0, gpuTextures: 0, gpuTextureSlots: 0, textureLoads: 0, textureFailures: 0, resourcePending: 0,
   textRasterizations: 0, textInvalidations: 0, refusedEffects: 0, refusedGlyphs: 0, blockedPendingFrames: 0, blockedRefusedFrames: 0,
   sceneAdmissions: 0, scenePatches: 0, sceneChangedObjects: 0, scenePreflightFailures: 0, scenePresentationFailures: 0,
-  contextReady: true, presentationValid: false, omittedClipMasksLastSubmission: 0, omittedClipMasksTotalSubmissions: 0,
-  skippedGlSubmissions: 0, diagnosticQuadSubmissions: 0 });
+  contextReady: true, presentationValid: false });
 
 function parse<T>(value: string): T { return JSON.parse(value) as T; }
 const rustDebug = new URLSearchParams(window.location.search).get("rustDebug") === "1";
@@ -111,9 +110,9 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const startupResourceHook = (window as unknown as { __benchStartupResourceEvent?: unknown }).__benchStartupResourceEvent;
   const startupResourceEvent = typeof startupResourceHook === "function"
     ? startupResourceHook as (name: string, detail: unknown) => void : null;
-  const fast = rustFastFlagsFromLocation("rust");
+  const fast = rustFastFlagsFromLocation();
   // rustPresent: not part of `fast`, so `rustFast=0` never changes the present path (see rustFastFlags.ts).
-  const presentMode = rustPresentModeFromLocation("rust");
+  const presentMode = rustPresentModeFromLocation();
   const zeroCopyPixels = new URLSearchParams(window.location.search).get("rustZeroCopyPixels") === "1";
   // On unless `=0`: a GPU-backed ink canvas makes every Bitmap text miss a synchronous GPU readback queued behind the
   // stage's own WebGL2 work (tens of ms each on a mobile GPU). `=0` is the A/B.
@@ -381,7 +380,6 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   };
   canvas.addEventListener("webglcontextlost", contextLost);
   canvas.addEventListener("webglcontextrestored", contextRestored);
-  let textCount = 0;
   type TextInkSubmission = { revision: number; sceneRevision: number | null; cacheMisses: number; rasters: TextInkRaster[] };
   const textInkDiagnosticEventLimit = 512;
   const textInkDiagnosticEvents: TextInkRaster[] = [];
@@ -423,18 +421,16 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   let textPatchCommits = 0, textPatchResourceChanges = 0;
   // rustTextPatch under rustFastVerify: the record and carrier each committed text patch emitted, by command id.
   // A full admission re-emits every label, so it clears these.
-  const committedTextCarriers = new Map<string, { record: PixiTextRecord; carrier: RustTextCarrier }>();
+  const committedTextCarriers = new Map<string, { record: StageTextRecord; carrier: RustTextCarrier }>();
   let retainedPatchApplyMs = 0, sceneEncodeMs = 0, sceneDiffMs = 0, scenePatchApplyMs = 0;
   // rustFast counters: style-string cache (`textPrepCache`) and prefetch-skip (`snapshotReuse`) hit counts.
   let styleCacheHits = 0, styleCacheMisses = 0, prefetchSkips = 0;
-  const styleStringCache = new WeakMap<PixiTextRecord["style"], string>();
+  const styleStringCache = new WeakMap<StageTextRecord["style"], string>();
   let rustDrawCalls: number | null = null, rustBufferCreations: number | null = null, rustTextureCreations: number | null = null;
   let rustUploadBytes: number | null = null, rustCompletedPresents: number | null = null, rustWasmCalls: number | null = null;
   let rustInstanceUploadBytes: number | null = null, rustIncrementalPatches: number | null = null, rustGeometryRebuilds: number | null = null;
   let rustMaxSampledTextures: number | null = null;
   let firstPresentMs: number | null = null;
-  let appGl: WebGLRenderingContext | null = null;
-  const app = { renderer: { get gl() { return appGl; } } } as unknown as PixiDrawListRenderer<string>["app"];
   const globals = window as unknown as { __mirrorRustFixture?: () => unknown; __mirrorRustFixtureChunk?: (kind: "scene" | "resources", offset: number, length: number) => unknown;
     __mirrorRustGpuTimerCapability?: unknown;
     __mirrorRustStats?: () => unknown; __mirrorRustRollbackProbe?: () => Promise<unknown>;
@@ -477,8 +473,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   const sha256 = async (bytes: Uint8Array): Promise<string> => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource))]
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
   const textBytes = (value: string) => new TextEncoder().encode(value);
-  const fontInfo = (record: PixiTextRecord): Omit<CorpusInput, "record"> => {
-    const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
+  const fontInfo = (record: StageTextRecord): Omit<CorpusInput, "record"> => {
+    const style = record.style as StageTextRecord["style"] & Record<string, unknown>;
     const size = Number(style.fontSize ?? 16);
     const family = String(style.fontFamily ?? "sans-serif");
     const font = [style.fontStyle, style.fontVariant, style.fontWeight, `${size}px`, family].filter(Boolean).join(" ");
@@ -507,13 +503,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     return { font, fontReady: document.fonts?.check(font, inkText) ?? false,
       fontSetStatus: document.fonts?.status ?? null, fontAsset, fontFaces };
   };
-  const fontMismatchSide = (info: Omit<CorpusInput, "record">, record: PixiTextRecord): FontMismatchSide => {
+  const fontMismatchSide = (info: Omit<CorpusInput, "record">, record: StageTextRecord): FontMismatchSide => {
     const normalize = (value: string) => value.trim().replace(/^["']+|["']+$/g, "").toLowerCase();
     const normalizeWeight = (value: string) => {
       const weight = normalize(value);
       return weight === "normal" ? "400" : weight === "bold" ? "700" : weight;
     };
-    const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
+    const style = record.style as StageTextRecord["style"] & Record<string, unknown>;
     const family = normalize(info.fontAsset?.family ?? String(style.fontFamily ?? "sans-serif"));
     const weight = normalizeWeight(info.fontAsset?.weight ?? String(style.fontWeight ?? "normal"));
     const faceStyle = normalize(info.fontAsset?.style ?? String(style.fontStyle ?? "normal"));
@@ -738,7 +734,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
   // own text-prep cache is also on (see rustTextPreparation.ts's `PreparedTextRun.style`) — with the renderer's
   // cache off this WeakMap simply never hits and costs one extra `.get`/`.set` per call, which is why this half
   // is keyed off the identical `fast.textPrepCache` switch rather than a switch of its own.
-  const styleJson = (style: PixiTextRecord["style"]): string => {
+  const styleJson = (style: StageTextRecord["style"]): string => {
     if (!fast.textPrepCache) return JSON.stringify(style);
     const cached = styleStringCache.get(style);
     if (cached !== undefined) { styleCacheHits++; return cached; }
@@ -747,13 +743,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     styleStringCache.set(style, json);
     return json;
   };
-  const textResourceKey = (record: PixiTextRecord) => {
+  const textResourceKey = (record: StageTextRecord) => {
     const revision = record.resourceRevision ?? record.contentKey ?? "";
     // `record.msdf.baselinePx` can shift without touching anything else in this key: a SIBLING rich-text run on
     // the same line changing face (e.g. a role falling back) moves the shared line box's `lineMetrics`, which
     // shifts THIS run's `rasterBaseline` even though its own text/style/tint/resourceRevision are unchanged.
     // Without the baseline in the key, Bitmap would keep serving the old raster at the old (now wrong) origin.
-    const baselinePx = (record as PixiTextRecord & { msdf?: { baselinePx?: number } }).msdf?.baselinePx;
+    const baselinePx = (record as StageTextRecord & { msdf?: { baselinePx?: number } }).msdf?.baselinePx;
     return `text:${record.key}:${revision}:${record.text}:${styleJson(record.style)}:${record.tint ?? 0xffffff}:${baselinePx ?? ""}`;
   };
   const bitmap = createBitmapTextMethod({
@@ -811,8 +807,8 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     const evicted = textEvictionTracker.commit(referenced, bitmap.cachedKeys());
     if (evicted.length) releaseTextResources(evicted);
   }
-  type InlineImageRecord = PixiTextRecord & { inlineImage?: { url: string; width: number; height: number } };
-  function rasterText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
+  type InlineImageRecord = StageTextRecord & { inlineImage?: { url: string; width: number; height: number } };
+  function rasterText(record: StageTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array; width: number; height: number; transform: readonly number[]; alpha?: number } | null {
     const inline = (record as InlineImageRecord).inlineImage;
     if (inline) {
       const pixels = textures.get(inline.url);
@@ -823,7 +819,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     let row: CorpusRow | null = null;
     if (textInkCorpus && !corpusSealed && !bitmap.hasCached(textResourceKey(record))) {
       if (corpusRows.length >= corpusLimit) { corpusOverflow = true; throw new Error(`Rust text corpus limit exceeded (${corpusLimit})`); }
-      const input = { record: JSON.parse(canonical(record)) as PixiTextRecord, ...fontInfo(record) };
+      const input = { record: JSON.parse(canonical(record)) as StageTextRecord, ...fontInfo(record) };
       corpusBytes += textBytes(canonical(input)).byteLength;
       if (corpusBytes > corpusByteLimit) { corpusOverflow = true; throw new Error("Rust text corpus byte limit exceeded"); }
       row = { input, measurements: null, diagnostic: null, width: null, height: null, rgba: null };
@@ -846,13 +842,13 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
    */
   const msdfFallbackLabels: Record<string, number> = {};
   let msdfFallbackLabelCount = 0;
-  function noteMsdfFallbackLabel(reason: string, record: PixiTextRecord): void {
+  function noteMsdfFallbackLabel(reason: string, record: StageTextRecord): void {
     if (!statsEnabled) return;
     const key = `${reason}:${record.labelId ?? record.key}`;
     if (key in msdfFallbackLabels) msdfFallbackLabels[key]++;
     else if (msdfFallbackLabelCount < 256) { msdfFallbackLabels[key] = 1; msdfFallbackLabelCount++; }
   }
-  function resolveText(record: PixiTextRecord): RustTextCarrier | null {
+  function resolveText(record: StageTextRecord): RustTextCarrier | null {
     if (msdfRuntime && !(record as InlineImageRecord).inlineImage) {
       const shaped = msdfRuntime.shape(record as MsdfRunRecord);
       if ("run" in shaped) {
@@ -1243,7 +1239,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       completedFrames: stats.completedFrames };
   }
 
-  async function submit(list: DrawList<string>, text: readonly PixiTextRecord[], plan?: PixiScenePlan,
+  async function submit(list: DrawList<string>, text: readonly StageTextRecord[], plan?: StageScenePlan,
     diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity): Promise<{ presented: boolean; reason?: string }> {
     if (disposed) return { presented: false, reason: "disposed" };
     const epoch = presentationEpoch;
@@ -1298,7 +1294,6 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     if (profileCardAtlas) startupEvent!("cardAtlas.sceneSerialized", { key: cardAtlasKey, scope: "wholeScene", revision,
       durationMs: performance.now() - encodeStarted, sceneBytes: encoded.bytes.byteLength,
       commands: list.count, resources: encoded.resources.length });
-    textCount = text.length;
     for (const [kind, count] of Object.entries(encoded.omittedKinds ?? {})) {
       omittedKinds[kind] = (omittedKinds[kind] ?? 0) + count;
     }
@@ -1611,7 +1606,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     if ((patch.groups?.some((group) => group.alpha !== undefined) ?? false) || groups.some((group) => !group.transform)) return null;
     // rustTextPatch: each re-prepared label resolves through the full build's own text method (a Bitmap raster or an
     // MSDF glyph run); the serializer then emits the command a full build would for it.
-    let texts: { record: PixiTextRecord; carrier: RustTextCarrier }[] | undefined;
+    let texts: { record: StageTextRecord; carrier: RustTextCarrier }[] | undefined;
     if (patch.texts?.length) {
       if (!patchesText()) return null;
       texts = [];
@@ -1747,7 +1742,7 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       committedRevision = null;
       idleInstalledRevision = null;
     },
-    app, stats,
+    stats,
     get translatesClips() { return translatesClips(); },
     // rustTextEvict diagnostics: `resources` stays flat while the switch is on (bounded by the eviction pool
     // plus whatever the committed scene currently references) and grows without bound while it is off.
@@ -1780,10 +1775,10 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
       });
       setTail(operation);
     },
-    render(list: DrawList<string>, text: readonly PixiTextRecord[] = [], profileIdentity?: ProfileIdentity) { stats.objects = list.count;
+    render(list: DrawList<string>, text: readonly StageTextRecord[] = [], profileIdentity?: ProfileIdentity) { stats.objects = list.count;
       const result = submit(list, text, undefined, undefined, profileIdentity);
       return startupResourceEvent ? result : result.then((value) => value.presented); },
-    admitScene(list: DrawList<string>, text: readonly PixiTextRecord[] = [], plan: PixiScenePlan,
+    admitScene(list: DrawList<string>, text: readonly StageTextRecord[] = [], plan: StageScenePlan,
       diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) { stats.objects = list.count; return submit(list, text, plan, diagnostic, profileIdentity); },
     patchScene(patch: ClipTranslatingScenePatch, diagnostic?: (event: ProducerExecutorEvent) => void, profileIdentity?: ProfileIdentity) {
       return submitRetained(patch, diagnostic, profileIdentity);
@@ -1826,15 +1821,15 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     idlePoses(tMs: number) { return idleInstalledRevision === committedRevision ? engine.idle_poses?.(tMs) ?? null : null; },
     get rustIdleStats() { return idleAnimsSupported() ? { executor: { installs: idleInstalls, presents: idlePresents, busy: idleBusy,
       refusals: idleRefusals }, engine: JSON.parse(engine.idle_stats?.() ?? "null") as unknown } : null; },
-    verifyTextCommands(records: readonly PixiTextRecord[]): string[] {
+    verifyTextCommands(records: readonly StageTextRecord[]): string[] {
       // Side-effect free: no resolve. The rebuilt record must ask for exactly what the patch's record asked for
       // (the Bitmap resource key's inputs, MSDF shaping inputs, placement), and the committed command must be the
       // one the patch's own carrier produces.
       const scene = committedTypedScene, notes: string[] = [];
       if (!scene) return ["no committed scene"];
       const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-      const asks = (record: PixiTextRecord) => {
-        const extra = record as PixiTextRecord & Record<string, unknown>;
+      const asks = (record: StageTextRecord) => {
+        const extra = record as StageTextRecord & Record<string, unknown>;
         return JSON.stringify([record.key, record.resourceRevision ?? record.contentKey ?? "", record.text, record.style,
           record.tint ?? 0xffffff, record.alpha, extra.runs, extra.msdf, extra.inlineImage, record.transform,
           extra.localTransform]);
@@ -1877,13 +1872,6 @@ export const createRustDrawListExecutor: MirrorDrawExecutorFactory = async ({ ca
     },
     textureSize(key: string) { const item = textures.get(key); return item ? { width: item.width, height: item.height } : null; },
     textureFailureDetails() { return [...failures].map(([key, reason]) => `${key}: ${reason}`); },
-    textOutcomes(): PixiTextOutcomes { return { requested: "native", actual: "native", native: textCount, slug: 0, slugCached: 0, reasons: {} }; },
-    armDiagnosticSkipGl() { return false; }, armDiagnosticSingleQuad() { return false; }, pollDiagnostics() {},
     dispose() { if (disposed) return; disposed = true; canvas.removeEventListener("webglcontextlost", contextLost); canvas.removeEventListener("webglcontextrestored", contextRestored); if (fixtureEnabled) { delete globals.__mirrorRustFixture; delete globals.__mirrorRustFixtureChunk; } if (statsEnabled) delete globals.__mirrorRustStats; delete globals.__mirrorRustGpuTimerCapability; delete globals.__mirrorRustTextCorpus; delete globals.__mirrorRustRollbackProbe; delete (window as unknown as { __mirrorRustPixelControl?: boolean }).__mirrorRustPixelControl; msdfAtlas.dispose(); msdfRuntime?.dispose(); engine.dispose(); textures.clear(); bitmap.dispose(); pixelRevisions.clear(); uploaded.clear(); uploadedPixels.clear(); inFlightTextKeys.clear(); pending.clear(); failures.clear(); committedResources = []; committedScene = null; committedTypedScene = null; committedCommandIndexes.clear(); committedResourceBuffer = null; committedRevision = null; },
-  } as unknown as PixiDrawListRenderer<string> & {
-    render(list: DrawList<string>, text?: readonly PixiTextRecord[]): Promise<boolean>;
-    admitScene(list: DrawList<string>, text: readonly PixiTextRecord[], plan: PixiScenePlan): Promise<{ presented: boolean; reason?: string }>;
-    patchScene(patch: PixiScenePatch<string>): Promise<{ presented: boolean; reason?: string }>;
-    presentScene(diagnostic?: (event: ProducerExecutorEvent) => void): Promise<{ presented: boolean; reason?: string }>;
   };
 };

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createClipRectView, createDrawList, createNinePatchView, createPolylineView, createQuadView, createTexturedMeshView,
   type DrawList } from "@godot-scene-web/canvas";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import type { DrawListBuild, LocalAnimFrame } from "@/mirror/canvas/buildDrawList";
 import type { PaintOrderEntry } from "@/mirror/canvas/paintOrder";
 import type { HitEntry } from "@/mirror/canvas/hitTest";
-import { createRetainedPixiComposition, isPureTranslation, type RetainedPixiComposition, type RetainedPixiCompositionOptions } from "./retainedComposition";
+import { createRetainedStageComposition, isPureTranslation, type RetainedStageComposition, type RetainedStageCompositionOptions } from "./retainedComposition";
 import type { Affine } from "@/mirror/affine";
 
 const identity = (): [number, number, number, number, number, number] => [1, 0, 0, 1, 0, 0];
@@ -51,10 +51,10 @@ function siblingFixture(count: number, animated: readonly number[], breaks: read
   return { list, build, hits };
 }
 
-describe.each([false, true])("retained Pixi composition (lazy patch index %s)", (lazyPatchIndex) => {
-  const create = (list: DrawList<string>, build: DrawListBuild, texts: readonly PixiTextRecord[],
-    owners: ReadonlyMap<string, string>, spread: ReadonlyMap<string, number>, options: RetainedPixiCompositionOptions = {}) =>
-    createRetainedPixiComposition(list, build, texts, owners, spread, { ...options, lazyPatchIndex, strictInputs: true });
+describe.each([false, true])("retained Stage composition (lazy patch index %s)", (lazyPatchIndex) => {
+  const create = (list: DrawList<string>, build: DrawListBuild, texts: readonly StageTextRecord[],
+    owners: ReadonlyMap<string, string>, spread: ReadonlyMap<string, number>, options: RetainedStageCompositionOptions = {}) =>
+    createRetainedStageComposition(list, build, texts, owners, spread, { ...options, lazyPatchIndex, strictInputs: true });
 
   it("moves an eligible subtree through a render group from an absolute reference past 120 steps", () => {
     const { list, build, hit } = fixture(false);
@@ -145,7 +145,7 @@ describe.each([false, true])("retained Pixi composition (lazy patch index %s)", 
 
   it("leaves filtered sprites and text-separated singletons on the primitive path", () => {
     const { list, build } = siblingFixture(3, [0, 2], [], [2]);
-    const text = { key: "between", insertionIndex: 1, transform: identity(), text: "between", style: {} } as PixiTextRecord;
+    const text = { key: "between", insertionIndex: 1, transform: identity(), text: "between", style: {} } as StageTextRecord;
     const retained = create(list, build, [text], new Map(), new Map());
     expect(retained.plan.groups).toHaveLength(0);
   });
@@ -158,7 +158,7 @@ describe.each([false, true])("retained Pixi composition (lazy patch index %s)", 
 
   it("does not group a singleton that owns text at its sprite insertion index", () => {
     const { list, build } = siblingFixture(2, [0]);
-    const text = { key: "own", insertionIndex: 0, transform: identity(), text: "own", style: {} } as PixiTextRecord;
+    const text = { key: "own", insertionIndex: 0, transform: identity(), text: "own", style: {} } as StageTextRecord;
     const retained = create(list, build, [text], new Map([["own", "node0"]]), new Map());
     expect(retained.plan.groups).toHaveLength(0);
   });
@@ -205,7 +205,7 @@ describe.each([false, true])("retained Pixi composition (lazy patch index %s)", 
     const texts = [
       { key: "staticLabel", insertionIndex: 2, transform: identity(), text: "label", style: {} },
       { key: "movingLabel", insertionIndex: 4, transform: identity(), text: "move", style: {} },
-    ] as PixiTextRecord[];
+    ] as StageTextRecord[];
     const textOwners = new Map([["staticLabel", "staticB"], ["movingLabel", "movingChild"]]);
     const spread = new Map([["staticRoot", 8], ["staticA", 8], ["staticB", 8]]);
     const originalTexts = texts.map((text) => ({ ...text }));
@@ -238,10 +238,10 @@ describe.each([false, true])("retained Pixi composition (lazy patch index %s)", 
       const { encodeRustScene } = await vi.importActual<{
         encodeRustScene(input: unknown): { scene: { commands: Record<string, unknown>[] } };
       }>(modulePath);
-      const encode = (plan: typeof original.plan, records: PixiTextRecord[]) => encodeRustScene({
+      const encode = (plan: typeof original.plan, records: StageTextRecord[]) => encodeRustScene({
         drawList: list, revision: 1, width: 100, height: 100, designWidth: 100, designHeight: 100,
         resolveTexture: (texture: string) => ({ key: texture, width: 10, height: 10 }),
-        texts: records, resolveText: (record: PixiTextRecord) => ({
+        texts: records, resolveText: (record: StageTextRecord) => ({
           resource: { key: record.key, width: 10, height: 10 }, pixels: new Uint8Array(400),
           width: 10, height: 10, transform: record.transform,
         }), plan,
@@ -252,12 +252,12 @@ describe.each([false, true])("retained Pixi composition (lazy patch index %s)", 
 });
 
 type Inputs = {
-  list: DrawList<string>; build: DrawListBuild; texts: PixiTextRecord[];
-  owners: Map<string, string>; spread: Map<string, number>; options?: RetainedPixiCompositionOptions;
+  list: DrawList<string>; build: DrawListBuild; texts: StageTextRecord[];
+  owners: Map<string, string>; spread: Map<string, number>; options?: RetainedStageCompositionOptions;
 };
 
 const textRecord = (key: string, insertionIndex: number, transform = identity()) =>
-  ({ key, insertionIndex, transform, text: key, style: {} }) as PixiTextRecord;
+  ({ key, insertionIndex, transform, text: key, style: {} }) as StageTextRecord;
 
 function staticFixture(includeStaticPixelCaches: boolean): Inputs {
   const list = createDrawList<string>();
@@ -341,7 +341,7 @@ function mixedFixture(split: boolean): Inputs {
 
 const sibling = (count: number, animated: readonly number[], breaks: readonly number[] = [], filtered: readonly number[] = []) => {
   const { list, build } = siblingFixture(count, animated, breaks, filtered);
-  return { list, build, texts: [] as PixiTextRecord[], owners: new Map<string, string>(), spread: new Map<string, number>() };
+  return { list, build, texts: [] as StageTextRecord[], owners: new Map<string, string>(), spread: new Map<string, number>() };
 };
 
 const equivalenceFixtures: Array<[string, () => Inputs]> = [
@@ -365,7 +365,7 @@ const equivalenceFixtures: Array<[string, () => Inputs]> = [
 ];
 
 /** One fixed call sequence over every composition method; returns every answer in order. */
-function exercise(retained: RetainedPixiComposition, inputs: Inputs): unknown[] {
+function exercise(retained: RetainedStageComposition, inputs: Inputs): unknown[] {
   const out: unknown[] = [];
   const primitiveIds = [...retained.plan.primitives.map(({ id }) => id), ...inputs.texts.map(({ key }) => `text:${key}`), "missing"];
   const nodeIds = [...inputs.build.order.ids, "missing"];
@@ -413,7 +413,7 @@ describe("translate patch (rustOffsetPatch)", () => {
   it("moves a node's commands, texts, hits and node matrix but never its game pose", () => {
     const animated = mixedFixture(false);
     const inputs = { ...animated, build: { ...animated.build, localAnimFrames: new Map() } as unknown as DrawListBuild };
-    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
+    const retained = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
     const patch = retained.patchTranslate(new Map([["sprite", [7, -3] as const], ["mesh", [1, 2] as const], ["other", [0, 0] as const]]))!;
     expect(patch.primitives).toEqual([
       { id: "sprite:quad:0", transform: [0.5, 0, 0, 0.5, 27, 7] },
@@ -426,14 +426,14 @@ describe("translate patch (rustOffsetPatch)", () => {
     retained.commit(patch);
     expect(retained.logicalMatrix("sprite:quad:0")).toEqual([0.5, 0, 0, 0.5, 27, 7]);
     // Inside a local-animation root's span the primitives are posed against the root: refused.
-    const withRoots = createRetainedPixiComposition(animated.list, animated.build, animated.texts, animated.owners, animated.spread);
+    const withRoots = createRetainedStageComposition(animated.list, animated.build, animated.texts, animated.owners, animated.spread);
     expect(withRoots.patchTranslate(new Map([["sprite", [1, 1] as const]]))).toBeNull();
   });
 
   it("translates an animated root's span through its frame, once for a nested root, and keeps the total", () => {
     // `panel` is an animated root holding the nested animated root `sprite`.
     const inputs = mixedFixture(true);
-    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, new Map());
+    const retained = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, new Map());
     const shifted = retained.patch(new Map(), new Map([["panel", [3, 4] as const]]))!;
     expect(shifted.rootTranslations).toEqual(new Map([["panel", [3, 4]]]));
     const byId = new Map(shifted.primitives.map((entry) => [entry.id, entry.transform]));
@@ -458,7 +458,7 @@ describe("translate patch (rustOffsetPatch)", () => {
 
   it("moves a span's clips by one shared translation test, and refuses a clip move it cannot express", () => {
     const inputs = clippedInputs();
-    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
+    const retained = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
     // A linear part a rounding step off identity is still a translation, for the caller and here alike.
     const nearly = [1 - Number.EPSILON / 2, 0, 0, 1 + 2 * Number.EPSILON, 4, 5] as Affine;
     expect(isPureTranslation(nearly)).toBe(true);
@@ -483,7 +483,7 @@ describe("translate patch (rustOffsetPatch)", () => {
 describe("lazy retained composition index", () => {
   it.each(equivalenceFixtures)("matches the eager composition for %s", (_name, make) => {
     const eagerInputs = make(), lazyInputs = make(), verifiedInputs = make();
-    const create = (inputs: Inputs, options: RetainedPixiCompositionOptions) => createRetainedPixiComposition(
+    const create = (inputs: Inputs, options: RetainedStageCompositionOptions) => createRetainedStageComposition(
       inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread, { ...inputs.options, ...options });
     let indexBuilds = 0;
     const mismatches: string[] = [];
@@ -507,14 +507,14 @@ describe("lazy retained composition index", () => {
   it("refuses, or throws when strict, once its inputs moved before first use", () => {
     let generation = 1;
     const strictInputs = mixedFixture(false);
-    const strict = createRetainedPixiComposition(strictInputs.list, strictInputs.build, strictInputs.texts,
+    const strict = createRetainedStageComposition(strictInputs.list, strictInputs.build, strictInputs.texts,
       strictInputs.owners, strictInputs.spread, { lazyPatchIndex: true, strictInputs: true });
     strictInputs.list.reset();
     expect(() => strict.patch(new Map())).toThrow(/inputs changed before its patch index was built/);
     expect(() => strict.logicalMatrix("panel:ninePatch:0")).toThrow(/inputs changed/);
 
     const inputs = mixedFixture(false);
-    const refusing = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread,
+    const refusing = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread,
       { lazyPatchIndex: true, inputGeneration: () => generation });
     generation++;
     expect(refusing.patch(new Map())).toBeNull();
@@ -528,7 +528,7 @@ describe("lazy retained composition index", () => {
     expect(refusing.patch(new Map())).toBeNull();
 
     const textInputs = mixedFixture(false);
-    const textChecked = createRetainedPixiComposition(textInputs.list, textInputs.build, textInputs.texts,
+    const textChecked = createRetainedStageComposition(textInputs.list, textInputs.build, textInputs.texts,
       textInputs.owners, textInputs.spread, { lazyPatchIndex: true, strictInputs: true });
     textInputs.texts.length = 0;
     expect(() => textChecked.patch(new Map())).toThrow(/inputs changed/);
@@ -537,7 +537,7 @@ describe("lazy retained composition index", () => {
   it("keeps a built index across a later producer reset, so an in-flight patch can still commit", () => {
     let generation = 1;
     const inputs = mixedFixture(false);
-    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread,
+    const retained = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread,
       { lazyPatchIndex: true, strictInputs: true, inputGeneration: () => generation });
     const patch = retained.patch(new Map([["other", { pre: [1, 0, 0, 1, 5, 0], post: null }]]))!;
     expect(patch.hits.map(({ matrix }) => matrix[4])).toEqual([105]);
@@ -551,9 +551,9 @@ describe("lazy retained composition index", () => {
     const inputs = mixedFixture(true);
     const reference = mixedFixture(true);
     const mismatches: string[] = [];
-    const verified = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread,
+    const verified = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread,
       { lazyPatchIndex: true, verify: { onMismatch: (method, detail) => mismatches.push(`${method}: ${detail}`) } });
-    const eager = createRetainedPixiComposition(reference.list, reference.build, reference.texts, reference.owners,
+    const eager = createRetainedStageComposition(reference.list, reference.build, reference.texts, reference.owners,
       reference.spread);
     const anims = new Map([["panel", { pre: [1, 0, 0, 1, 3, 0], post: null }]]);
     // Moving a command after admission is exactly what the lazy twin must notice; the eager twin read it earlier.
@@ -561,7 +561,7 @@ describe("lazy retained composition index", () => {
     expect(verified.patch(anims)).toEqual(eager.patch(anims));
     expect(mismatches).toEqual(["patch: lazy result differs from the eager result"]);
     const lateInputs = mixedFixture(true);
-    const late = createRetainedPixiComposition(lateInputs.list, lateInputs.build, lateInputs.texts, lateInputs.owners,
+    const late = createRetainedStageComposition(lateInputs.list, lateInputs.build, lateInputs.texts, lateInputs.owners,
       lateInputs.spread, { lazyPatchIndex: true, verify: { onMismatch: (method, detail) => mismatches.push(`${method}: ${detail}`) } });
     lateInputs.list.pushQuad(createQuadView(), "late.png");
     expect(late.patch(new Map())).not.toBeNull();
@@ -573,11 +573,11 @@ describe("text patch (rustTextPatch)", () => {
   it("admits a label untouched since admission, re-references its committed records, and refuses one a patch moved", () => {
     const animated = mixedFixture(false);
     const inputs = { ...animated, build: { ...animated.build, localAnimFrames: new Map() } as unknown as DrawListBuild };
-    const retained = createRetainedPixiComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
+    const retained = createRetainedStageComposition(inputs.list, inputs.build, inputs.texts, inputs.owners, inputs.spread);
     expect(retained.textPatchable("mesh")).toBe(true);
     expect(retained.textPatchable("sprite")).toBe(false); // draws no text
     const label = inputs.texts.find((text) => text.key === "meshLabel")!;
-    const replaced = { ...label, text: "changed", transform: [1, 0, 0, 1, 9, 9] } as PixiTextRecord;
+    const replaced = { ...label, text: "changed", transform: [1, 0, 0, 1, 9, 9] } as StageTextRecord;
     retained.commit({ primitives: [], groups: [], hits: [], nodeMatrices: [], sourceReferences: [], movedRoots: 0,
       rootPoses: new Map(), texts: [replaced] });
     expect(retained.logicalMatrix("text:meshLabel")).toEqual([1, 0, 0, 1, 9, 9]);
@@ -588,7 +588,7 @@ describe("text patch (rustTextPatch)", () => {
     retained.commit(moved);
     expect(retained.textPatchable("mesh")).toBe(false);
     // Inside a local-animation root's span (`panel` animates over `mesh`) the label is posed by the root: refused.
-    const withRoots = createRetainedPixiComposition(animated.list, animated.build, animated.texts, animated.owners, animated.spread);
+    const withRoots = createRetainedStageComposition(animated.list, animated.build, animated.texts, animated.owners, animated.spread);
     expect(withRoots.textPatchable("mesh")).toBe(false);
   });
 });

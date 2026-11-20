@@ -1,3 +1,4 @@
+import type { StageTextRecord as TestStageText } from "@/mirror/renderer/stage/stageTypes";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createQuadView, type DrawList } from "@godot-scene-web/canvas";
@@ -9,17 +10,12 @@ import * as rendererFactory from "@/mirror/rendererFactory";
 import { applyKeyframe, holderId, holderSpec, positionHint, slot, update } from "./handStageHarness";
 
 const control = vi.hoisted(() => ({
-  pending: null as null | { resolve(value: unknown): void; reject(error: unknown): void },
   created: [] as Array<Record<string, unknown>>,
-  options: null as Record<string, unknown> | null,
-  glyphReady: false,
-  glyphOnReady: null as null | (() => void),
-  glyphBlockCalls: 0,
-  resizeObserver: null as null | (() => void),
 }));
 const rewardSpy = vi.hoisted(() => vi.fn((_nodes: unknown) => ({ screenId: null, rows: [] })));
 const schedulerControl = vi.hoisted(() => ({ arms: vi.fn(), ports: null as any }));
 const fontLoader = vi.hoisted(() => ({ load: vi.fn() }));
+const rustExecutor = vi.hoisted(() => vi.fn());
 
 vi.mock("@/render/quality", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/render/quality")>(),
@@ -30,23 +26,8 @@ vi.mock("@/mirror/mirrorSettings", async (importOriginal) => ({
   mirrorSettings: { ...(await importOriginal<typeof import("@/mirror/mirrorSettings")>()).mirrorSettings,
     shaderMode: "off", particleMode: "off", staticBgEnabled: true, spineMode: "static" }
 }));
-vi.mock("@godot-scene-web/canvas/pixi", () => ({
-  createPixiDrawListRenderer: (options: Record<string, unknown>) => new Promise((resolve, reject) => {
-    control.options = options; control.pending = { resolve, reject };
-  })
-}));
-vi.mock("@/mirror/canvas/glyphPass", () => ({ createGlyphPassRegistry: (options: { onReady?: () => void }) => {
-  control.glyphOnReady = options.onReady ?? null;
-  let refusedNotReady = 0;
-  const borrowed = { runCount: 1, origins: new Float32Array([0, 16]), spans: new Int32Array([0, 2]),
-    colors: new Float32Array([1, 1, 1, 1]), spreads: new Float32Array([0]), slots: new Int32Array([7, 8, 99]),
-    positions: new Float32Array([0, 0, 10, 0, 99, 99]), pixelsPerEm: 20, blockScale: 1 };
-  return { pass: { drawRun: () => ({ glyphs: 2, drawCalls: 1 }) }, invalidate: vi.fn(), restore: vi.fn(() => true), dispose: vi.fn(),
-    stats: () => ({ ready: control.glyphReady, facesPending: 0, refusedNotReady }),
-    blockFor: () => { control.glyphBlockCalls++; return control.glyphReady ? borrowed : (refusedNotReady++, null); },
-    boundsFor: () => ({ x: 0, y: 0, width: 20, height: 20 }) };
-} }));
 vi.mock("@/mirror/fonts", () => ({ ensureNodeFonts: vi.fn(), fontFaceInjectionVersion: () => 0, loadMirrorFont: (...args: unknown[]) => fontLoader.load(...args) }));
+vi.mock("@/mirror/renderer/stage/createRustDrawListExecutor", () => ({ createRustDrawListExecutor: rustExecutor }));
 vi.mock("@/mirror/rewardFocusSnapshot", () => ({ rewardFocusSnapshotFromScene: rewardSpy }));
 vi.mock("@/mirror/renderer/canvas/frameScheduler", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/mirror/renderer/canvas/frameScheduler")>();
@@ -59,42 +40,26 @@ vi.mock("@/mirror/renderer/canvas/frameScheduler", async (importOriginal) => {
   } };
 });
 
-import { createPixiMirrorRenderer } from "@/mirror/renderer/pixi/createPixiMirrorRenderer";
-import { __setStageBackendForTest, createMirrorRendererFor } from "@/mirror/rendererFactory";
+import { createStageMirrorRenderer, type MirrorDrawExecutorFactory } from "@/mirror/renderer/stage/createStageMirrorRenderer";
 import { readRendererComparisonConfig, rendererComparisonConfig, rendererRuntimeStatus } from "@/mirror/rendererComparison";
 import type { WarmAckTraceEvent } from "@/mirror/warmAckTrace";
-
-type TestPixiText = { labelId?: string; key: string; glyph?: { block: { slots: Int32Array }; inkBounds: unknown; cacheEligible?: boolean };
-  fallbackReason?: string; nativeFallback?: readonly TestPixiText[] };
 
 function fakeAdapter(asynchronous = false) {
   let accept = true;
   const outcome = <T>(value: T) => asynchronous ? Promise.resolve(value) : value;
-  let outcomes = { requested: "native", actual: "native", native: 0, slug: 0, slugCached: 0, reasons: {} as Record<string, number> };
   const adapter = {
     stats: { completedFrames: 0, frames: 0, resourcePending: 0, textureFailures: 0, textures: 0,
       contextReady: true, presentationValid: false },
-    app: { renderer: {} }, resize: vi.fn(() => { adapter.stats.presentationValid = false; }), dispose: vi.fn(),
+    resize: vi.fn(() => { adapter.stats.presentationValid = false; }), dispose: vi.fn(),
     textureSize: vi.fn((_url: string): { width: number; height: number } | null => null),
-    setTraceFrameId: vi.fn(),
     prefetch: vi.fn(), textureFailureDetails: vi.fn(() => []),
     render: vi.fn(() => { adapter.stats.frames++; if (accept && adapter.stats.contextReady) adapter.stats.completedFrames++;
       adapter.stats.presentationValid = accept && adapter.stats.contextReady; return adapter.stats.presentationValid; }),
-    admitScene: vi.fn((_list: unknown, texts: readonly TestPixiText[], _plan: unknown) => {
+    admitScene: vi.fn((_list: unknown, _texts: readonly unknown[], _plan: unknown) => {
       adapter.stats.frames++; if (accept && adapter.stats.contextReady) {
         adapter.stats.completedFrames++;
         adapter.stats.presentationValid = true;
-        const labels = new Map(texts.map((item) => [item.labelId ?? item.key, item]));
-        const mode = (control.options?.textMode as string) ?? "native";
-        let native = 0, slug = 0, slugCached = 0;
-        const reasons: Record<string, number> = {};
-        for (const item of labels.values()) {
-          if (mode !== "native" && item.glyph) {
-            if (mode === "slug-cached") slugCached++; else slug++;
-          }
-          else { native++; if (item.fallbackReason) reasons[item.fallbackReason] = (reasons[item.fallbackReason] ?? 0) + 1; }
-        }
-        outcomes = { requested: mode, actual: (slug || slugCached) && native ? "mixed" : (slug || slugCached) ? mode : "native", native, slug, slugCached, reasons };
+
       }
       else adapter.stats.presentationValid = false;
       return outcome({ presented: accept && adapter.stats.contextReady, reason: accept && adapter.stats.contextReady ? undefined : "test presentation refused" });
@@ -110,11 +75,19 @@ function fakeAdapter(asynchronous = false) {
       return outcome({ presented: adapter.stats.presentationValid, reason: adapter.stats.presentationValid ? undefined : "test presentation refused" });
     }),
     setAccept(next: boolean) { accept = next; },
-    setTextOutcomes(next: typeof outcomes) { outcomes = next; },
-    textOutcomes: vi.fn(() => outcomes),
   };
   control.created.push(adapter);
   return adapter;
+}
+
+function deferredExecutor() {
+  let resolve!: (adapter: ReturnType<typeof fakeAdapter>) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<Awaited<ReturnType<MirrorDrawExecutorFactory>>>((accept, decline) => {
+    resolve = (adapter) => accept(adapter as never);
+    reject = decline;
+  });
+  return { promise, resolve, reject };
 }
 
 function stage() {
@@ -208,15 +181,15 @@ function measureStub() {
 
 const diagnostic = () => (window as unknown as {
   __mirrorRendererDiagnostics(): { draw: Record<string, number>; effective: Record<string, number>; frameIdentity: unknown;
-    asyncSubmissionRevision: number | null; glyphs: { ready: boolean | null; refusedNotReady: number } | null };
+    asyncSubmissionRevision: number | null };
 }).__mirrorRendererDiagnostics();
 
 async function clockAt(ms: number) {
   return (window as unknown as { __mirrorSetDiagnosticClock(ms: number): Promise<unknown> }).__mirrorSetDiagnosticClock(ms);
 }
 
-describe("Pixi composition initialization", () => {
-  beforeEach(() => { control.pending = null; control.options = null; control.glyphReady = false; control.glyphOnReady = null; control.glyphBlockCalls = 0; control.resizeObserver = null; control.created.length = 0; rewardSpy.mockClear(); schedulerControl.arms.mockClear(); schedulerControl.ports = null; fontLoader.load.mockReset(); fontLoader.load.mockResolvedValue(undefined); document.body.replaceChildren(); window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); measureStub(); });
+describe("Stage composition initialization", () => {
+  beforeEach(() => { rustExecutor.mockReset(); control.created.length = 0; rewardSpy.mockClear(); schedulerControl.arms.mockClear(); schedulerControl.ports = null; fontLoader.load.mockReset(); fontLoader.load.mockResolvedValue(undefined); document.body.replaceChildren(); window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); measureStub(); });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState(null, "", "/"); Object.assign(rendererComparisonConfig, readRendererComparisonConfig()); });
 
   async function createReadyHandRenderer() {
@@ -225,8 +198,8 @@ describe("Pixi composition initialization", () => {
     vi.stubGlobal("__benchDiagnosticClockMs", 1000);
     measureStub();
     const adapter = fakeAdapter(true);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     const state = handScene();
     renderer.setRaiseHandCards(true);
     expect(renderer.reconcile(state)).toBe(false);
@@ -252,8 +225,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?stage=canvas&spreadAudit=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
-    const create = () => createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const create = () => createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     const probes = window as unknown as {
       __mirrorHandPoses?: () => { stage: string; holders: unknown[] };
       __mirrorLandingLog?: () => { rows: unknown[] };
@@ -294,8 +267,8 @@ describe("Pixi composition initialization", () => {
       events.push(event);
       throw new Error("observer failed");
     });
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       const state = animatedColorScene(); state.revision = 31;
@@ -402,8 +375,8 @@ describe("Pixi composition initialization", () => {
     let rejectFont!: (reason: Error) => void;
     fontLoader.load.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFont = reject; }));
     const statuses: string[] = [];
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      (phase) => statuses.push(phase), { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { createExecutor: async () => fakeAdapter(true) as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       expect(renderer.reconcile(textScene())).toBe(false);
@@ -426,8 +399,8 @@ describe("Pixi composition initialization", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     const statuses: string[] = [];
     const createExecutor = vi.fn(async () => fakeAdapter(true) as never);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      (phase) => statuses.push(phase), { backend: "rust", createExecutor });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { createExecutor });
     try {
       await vi.waitFor(() => expect(statuses).toContain("failed"));
       expect(createExecutor).not.toHaveBeenCalled();
@@ -448,14 +421,14 @@ describe("Pixi composition initialization", () => {
     state.orderedIds.push(unsupported.id);
     state.changedIds.add(unsupported.id);
     const statuses: string[] = [];
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      (phase) => statuses.push(phase), { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { createExecutor: async () => fakeAdapter(true) as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       expect(renderer.reconcile(state)).toBe(false);
       await vi.waitFor(() => expect(statuses).toContain("ready"));
       const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
-      const submitted = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestPixiText[];
+      const submitted = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestStageText[];
       expect(submitted.some((record) => record.labelId === "label")).toBe(true);
       expect(submitted.some((record) => record.labelId === "unsupported")).toBe(false);
       expect(statuses).not.toContain("failed");
@@ -471,8 +444,8 @@ describe("Pixi composition initialization", () => {
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     const state = cardEffectScene();
     const adapter = fakeAdapter(true);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     try {
       expect(renderer.reconcile(state)).toBe(false);
       await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
@@ -514,8 +487,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?stage=canvas&rustFast=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     const adapter = fakeAdapter(true);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     try {
       expect(renderer.reconcile(cardEffectScene(0))).toBe(false);
       await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
@@ -543,13 +516,13 @@ describe("Pixi composition initialization", () => {
     const adapter = fakeAdapter(true);
     adapter.textureSize.mockImplementation((url: string) => url.includes("energy.png") ? { width: 24, height: 24 } : null);
     const statuses: string[] = [];
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      (phase) => statuses.push(phase), { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { createExecutor: async () => adapter as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       expect(renderer.reconcile(state)).toBe(false);
       await vi.waitFor(() => expect(statuses).toContain("ready"));
-      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestPixiText[];
+      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestStageText[];
       expect(records.some((record) => record.key.startsWith("label:") &&
         (record as unknown as { style: { fontFamily: string } }).style.fontFamily === "BoldFace")).toBe(true);
       expect(records.some((record) => "inlineImage" in record)).toBe(true);
@@ -569,12 +542,12 @@ describe("Pixi composition initialization", () => {
     label.mouseFilter = 0;
     label.text = { ...label.text!, text: "[u]Pick[/u] [shake]this[/shake][br][unknown]again" };
     const adapter = fakeAdapter(true);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     try {
       expect(renderer.reconcile(state)).toBe(false);
       await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly (TestPixiText & { text: string })[];
+      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly (TestStageText & { text: string })[];
       const words = records.filter((record) => record.labelId === "label").map((record) => record.text).join(" ");
       expect(words).toContain("Pick");
       expect(words).toContain("this");
@@ -602,13 +575,13 @@ describe("Pixi composition initialization", () => {
     label.richBoldFont = { family: "BoldFace", url: "/bold.ttf", weight: null, style: null };
     label.text = { ...label.text!, text: "[b]Event choice[/b]" };
     const adapter = fakeAdapter(true);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       expect(renderer.reconcile(state)).toBe(false);
       await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestPixiText[];
+      const records = adapter.admitScene.mock.calls.at(-1)?.[1] as readonly TestStageText[];
       expect(records.some((record) => (record as unknown as { style: { fontFamily: string } }).style.fontFamily ===
         "TestFont")).toBe(true);
       expect((window as unknown as { __mirrorRendererDiagnostics(): { degradations?: Record<string, string> } })
@@ -621,13 +594,13 @@ describe("Pixi composition initialization", () => {
   });
 
   it("does not synthesize a view completion when no retry callback is installed", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&pixiScene=retained");
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
     const events: WarmAckTraceEvent[] = [];
     vi.stubGlobal("__benchWarmAckTrace", (event: WarmAckTraceEvent) => events.push(event));
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     const pull = vi.fn();
     renderer.setReconcilePull?.({ pending: () => false, now: pull });
     try {
@@ -659,8 +632,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     const newer = animatedColorScene(); newer.revision = 31;
     const ack = vi.fn();
     const now = vi.fn(() => {
@@ -699,8 +672,8 @@ describe("Pixi composition initialization", () => {
     let release!: (value: typeof adapter) => void;
     const executor = new Promise<typeof adapter>((resolve) => { release = resolve; });
     vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((host, defs, canvasHost) =>
-      createPixiMirrorRenderer(host, defs, canvasHost, undefined,
-        { backend: "rust", createExecutor: () => executor as never }));
+      createStageMirrorRenderer(host, defs, canvasHost, undefined,
+        { createExecutor: () => executor as never }));
     const ack = vi.fn();
     const wrapper = mount(MirrorView, { props: { state, revision: state.revision, onSceneRendered: ack } });
     try {
@@ -743,8 +716,8 @@ describe("Pixi composition initialization", () => {
     let release!: (result: { presented: boolean }) => void;
     adapter.admitScene.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }) as never);
     vi.spyOn(rendererFactory, "createMirrorRendererFor").mockImplementation((host, defs, canvasHost) =>
-      createPixiMirrorRenderer(host, defs, canvasHost, undefined,
-        { backend: "rust", createExecutor: async () => adapter as never }));
+      createStageMirrorRenderer(host, defs, canvasHost, undefined,
+        { createExecutor: async () => adapter as never }));
     const trace: WarmAckTraceEvent[] = [];
     vi.stubGlobal("__benchWarmAckTrace", (event: WarmAckTraceEvent) => trace.push(event));
     const wrapper = mount(MirrorView, { props: { state: client.state, revision: client.state.revision,
@@ -773,8 +746,8 @@ describe("Pixi composition initialization", () => {
     measureStub();
     const host = stage();
     const adapter = Object.assign(fakeAdapter(), { invalidatePendingPresentations: vi.fn() });
-    const renderer = createPixiMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     const retry = vi.fn(() => "pending" as const);
     renderer.setReconcilePull?.({ pending: () => false, now: retry, retryNow: retry });
     try {
@@ -804,8 +777,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     const newer = animatedColorScene(); newer.revision = 31;
     const latest = animatedColorScene(); latest.revision = 32;
     const pulled: number[] = [];
@@ -840,8 +813,8 @@ describe("Pixi composition initialization", () => {
     const oldAdapter = fakeAdapter(true);
     let releaseOld!: (result: { presented: boolean }) => void;
     oldAdapter.admitScene.mockImplementationOnce(() => new Promise((resolve) => { releaseOld = resolve; }) as never);
-    const oldRenderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => oldAdapter as never });
+    const oldRenderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => oldAdapter as never });
     const oldPull = vi.fn(() => "presented" as const);
     oldRenderer.setReconcilePull?.({ pending: () => false, now: oldPull, retryNow: oldPull });
     const oldState = animatedColorScene(); oldState.revision = 30;
@@ -856,8 +829,8 @@ describe("Pixi composition initialization", () => {
       expect(oldPull).not.toHaveBeenCalled();
 
       const freshAdapter = fakeAdapter(true);
-      const freshRenderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-        undefined, { backend: "rust", createExecutor: async () => freshAdapter as never });
+      const freshRenderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+        undefined, { createExecutor: async () => freshAdapter as never });
       const freshAck = vi.fn();
       const retryFresh = () => {
         if (freshRenderer.reconcile(nextState) === false) return "pending";
@@ -877,8 +850,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     const newer = animatedColorScene(); newer.revision = 31;
     const ack = vi.fn();
     let first = true;
@@ -913,8 +886,8 @@ describe("Pixi composition initialization", () => {
     vi.stubGlobal("__benchBusyStartupEvent", (name: string, detail: Record<string, unknown>) => {
       events.push({ name, detail });
     });
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       const state = animatedColorScene();
       expect(renderer.reconcile(state)).toBe(false);
@@ -929,7 +902,7 @@ describe("Pixi composition initialization", () => {
   });
 
   it("maps the successful backend presentation to its committed scene before completion", async () => {
-    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&pixiScene=retained");
+    window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     vi.stubGlobal("__benchDocumentNonce", "document-1");
     const calls: Array<{ kind: string; detail?: Record<string, unknown> }> = [];
@@ -942,8 +915,8 @@ describe("Pixi composition initialization", () => {
       adapter.stats.presentationValid = true;
       return { presented: true, reason: undefined, revision: 7, completedFrames: 7 };
     });
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => adapter as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => adapter as never });
     try {
       const state = animatedColorScene(); state.revision = 172;
       expect(renderer.reconcile(state)).toBe(false);
@@ -958,65 +931,45 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
-  it("joins sparse Couch build and Pixi submission markers only when requested", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&ccTraceFrames=1");
-    const stamps = vi.fn();
-    vi.stubGlobal("console", Object.assign(Object.create(console), { timeStamp: stamps }));
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      renderer.reconcile(createMirrorState());
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-      const labels = stamps.mock.calls.map(([label]) => label);
-      const buildStart = labels.find((label) => /cc:frame:\d+\.1:couch:build:start/.test(label));
-      expect(buildStart).toBeDefined();
-      const id = buildStart!.split(":")[2];
-      expect(labels).toContain(`cc:frame:${id}:couch:build:end`);
-      expect(labels).toContain(`cc:frame:${id}:couch:submit:start`);
-      expect(labels).toContain(`cc:frame:${id}:couch:submit:end`);
-      expect(adapter.setTraceFrameId).toHaveBeenNthCalledWith(1, id);
-      expect(adapter.setTraceFrameId).toHaveBeenNthCalledWith(2, null);
-    } finally { renderer.dispose(); }
-  });
-
-  it("admits the first scene when Pixi initialization finishes before any reconcile", async () => {
+  it("admits the first scene when Rust initialization finishes before any reconcile", async () => {
     const statuses: string[] = [];
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      (phase) => statuses.push(phase));
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      (phase) => statuses.push(phase), { createExecutor: () => executor.promise });
+    const adapter = fakeAdapter(); executor.resolve(adapter);
     await vi.waitFor(() => expect(statuses).toContain("initializing"));
     expect(adapter.admitScene).not.toHaveBeenCalled();
     expect(renderer.reconcile(createMirrorState())).toBeUndefined();
     expect(adapter.admitScene).toHaveBeenCalledOnce();
-    expect(adapter.setTraceFrameId).not.toHaveBeenCalled();
     expect(statuses.at(-1)).toBe("ready");
     renderer.dispose();
   });
 
-  it("reports an asynchronous Pixi failure without claiming an active preset", async () => {
-    __setStageBackendForTest("pixi");
-    const renderer = createMirrorRendererFor(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"))!;
-    expect(rendererRuntimeStatus.phase).toBe("initializing");
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    control.pending!.reject(new Error("no WebGL"));
-    await vi.waitFor(() => expect(rendererRuntimeStatus.phase).toBe("failed"));
-    expect(rendererRuntimeStatus.actualBackend).toBe("pixi");
-    expect(rendererRuntimeStatus.actualConfig).toBeNull();
-    expect(rendererRuntimeStatus.reason).toBe("no WebGL");
-    renderer.dispose();
-    __setStageBackendForTest("dom");
+  it("reports an asynchronous Rust failure without claiming an active preset", async () => {
+    const executor = deferredExecutor();
+    rustExecutor.mockReturnValueOnce(executor.promise);
+    rendererFactory.__setStageBackendForTest("rust");
+    const renderer = rendererFactory.createMirrorRendererFor(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"))!;
+    try {
+      expect(rendererRuntimeStatus.phase).toBe("initializing");
+      expect(rustExecutor).toHaveBeenCalledOnce();
+      executor.reject(new Error("no WebGL"));
+      await vi.waitFor(() => expect(rendererRuntimeStatus.phase).toBe("failed"));
+      expect(rendererRuntimeStatus.actualBackend).toBe("rust");
+      expect(rendererRuntimeStatus.actualConfig).toBeNull();
+      expect(rendererRuntimeStatus.reason).toBe("no WebGL");
+    } finally { renderer.dispose(); rendererFactory.__setStageBackendForTest("dom"); }
   });
 
   it("holds offers during initialization and admits only the latest state", async () => {
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
     const first = createMirrorState(); first.revision = 1;
     const latest = createMirrorState(); latest.revision = 2;
     expect(renderer.reconcile(first)).toBe(false);
     expect(renderer.reconcile(latest)).toBe(false);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
+    const adapter = fakeAdapter(); executor.resolve(adapter);
     await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
     expect((window as unknown as { __mirrorRendererDiagnostics(): { admittedRevision?: number } }).__mirrorRendererDiagnostics().admittedRevision).toBe(2);
     renderer.dispose();
@@ -1024,11 +977,12 @@ describe("Pixi composition initialization", () => {
 
   it("keeps production-clock animation running after asynchronous first admission", async () => {
     measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
     try {
       expect(renderer.reconcile(textScene(true))).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
+      const adapter = fakeAdapter(); executor.resolve(adapter);
       await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(0));
       const initial = diagnostic();
       await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThanOrEqual(initial.draw.completedFrames + 3));
@@ -1043,12 +997,249 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
+  it("stays unready across context loss until a post-restore scene presents", async () => {
+    measureStub();
+    let onInvalidate!: Parameters<MirrorDrawExecutorFactory>[0]["onInvalidate"];
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: (options) => { onInvalidate = options.onInvalidate; return executor.promise; } });
+    try {
+      expect(renderer.reconcile(textScene())).toBe(false);
+      const adapter = fakeAdapter(); executor.resolve(adapter);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
+      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(true);
+      const identity = diagnostic().frameIdentity;
+      adapter.stats.contextReady = false; adapter.stats.presentationValid = false;
+      onInvalidate("resource");
+      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(false);
+      expect(diagnostic().frameIdentity).toEqual(identity);
+
+      adapter.stats.contextReady = true; adapter.setAccept(false);
+      onInvalidate("resource");
+      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(3));
+      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(false);
+      adapter.setAccept(true);
+      onInvalidate("resource");
+      await vi.waitFor(() => expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(true));
+      expect(adapter.stats.completedFrames).toBeGreaterThan(1);
+    } finally { renderer.dispose(); }
+  });
+
+  it("repaints a stationary scene once after a real resize and ignores unchanged observer calls", async () => {
+    let resizeObserver!: () => void;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resizeObserver = () => callback([], this as unknown as ResizeObserver); }
+      observe() {} disconnect() {}
+    });
+    const host = stage(); let hostWidth = 1920;
+    host.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: hostWidth, bottom: 1080,
+      width: hostWidth, height: 1080, toJSON() {} });
+    measureStub();
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    try {
+      expect(renderer.reconcile(textScene())).toBe(false);
+      const adapter = fakeAdapter(); executor.resolve(adapter);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
+      const admissions = adapter.admitScene.mock.calls.length, resizes = adapter.resize.mock.calls.length;
+      resizeObserver?.();
+      expect(adapter.resize).toHaveBeenCalledTimes(resizes);
+      expect(adapter.admitScene).toHaveBeenCalledTimes(admissions);
+
+      hostWidth = 960; resizeObserver?.();
+      expect(adapter.resize).toHaveBeenCalledTimes(resizes + 1);
+      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(false);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledTimes(admissions + 1));
+      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(true);
+      resizeObserver?.();
+      expect(adapter.resize).toHaveBeenCalledTimes(resizes + 1);
+      expect(adapter.admitScene).toHaveBeenCalledTimes(admissions + 1);
+      renderer.dispose();
+      hostWidth = 720; resizeObserver?.();
+      expect(adapter.resize).toHaveBeenCalledTimes(resizes + 1);
+    } finally { renderer.dispose(); }
+  });
+
+  it("fails closed on initialization rejection without constructing a DOM fallback", async () => {
+    const host = stage();
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    executor.reject(new Error("no WebGL"));
+    await vi.waitFor(() => expect((window as unknown as { __mirrorRendererDiagnostics(): { readiness: string } }).__mirrorRendererDiagnostics().readiness).toBe("failed"));
+    expect(host.querySelectorAll("canvas")).toHaveLength(1);
+    expect(renderer.reconcile(createMirrorState())).toBe(false);
+    renderer.dispose();
+  });
+
+  it("disposes a renderer whose asynchronous initialization resolves after teardown", async () => {
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    renderer.dispose();
+    const adapter = fakeAdapter(); executor.resolve(adapter);
+    await vi.waitFor(() => expect(adapter.dispose).toHaveBeenCalledOnce());
+    expect("__mirrorRendererDiagnostics" in window).toBe(false);
+  });
+
+  it("keeps the completed frame identity and hit snapshot while a newer offer is blocked", async () => {
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    const first = createMirrorState(); first.revision = 1;
+    renderer.reconcile(first);
+    const adapter = fakeAdapter(); executor.resolve(adapter);
+    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+    const identity = (window as unknown as { __mirrorFrameIdentity(): unknown }).__mirrorFrameIdentity();
+    const hits = renderer.touchStackAt(100, 100);
+
+    adapter.setAccept(false);
+    const blocked = createMirrorState(); blocked.revision = 2;
+    expect(renderer.reconcile(blocked)).toBe(false);
+    expect((window as unknown as { __mirrorFrameIdentity(): unknown }).__mirrorFrameIdentity()).toEqual(identity);
+    expect(renderer.touchStackAt(100, 100)).toEqual(hits);
+    renderer.rewardFocusSnapshot();
+    expect(rewardSpy.mock.calls.at(-1)?.[0]).not.toBe(blocked.nodes);
+    renderer.dispose();
+  });
+
+  it("publishes successful delta consumption after admission", async () => {
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    const next = createMirrorState(); next.revision = 3; next.sceneRewrite = true; next.changedIds.add("changed");
+    renderer.reconcile(next);
+    const adapter = fakeAdapter(); executor.resolve(adapter);
+    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+    expect(renderer.reconcile(next)).toBeUndefined();
+    expect(next.sceneRewrite).toBe(false); expect(next.changedIds.size).toBe(0);
+    expect(schedulerControl.arms).toHaveBeenCalled();
+
+    adapter.setAccept(false);
+    const completedBefore = adapter.stats.completedFrames;
+    expect(schedulerControl.ports!.animation.runBuild(next)).toBe(false);
+    expect(adapter.stats.completedFrames).toBe(completedBefore);
+
+    renderer.dispose();
+  });
+
+  it("starts and repeats the production idle frame chain after an admitted reconcile", async () => {
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    const next = createMirrorState(); next.revision = 4;
+    renderer.reconcile(next);
+    const adapter = fakeAdapter(); executor.resolve(adapter);
+    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+    schedulerControl.ports.deadlines.passiveDeadline = () => performance.now();
+    const before = adapter.stats.completedFrames;
+    expect(renderer.reconcile(next)).toBeUndefined();
+    await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(before + 1));
+    renderer.dispose();
+  });
+
+  it("keeps booking the idle chain on a browser-coarsened real clock, with no pinned diagnostic clock", async () => {
+    // Tor/Firefox resistFingerprinting clamps performance.now() resolution (16.67-100 ms): consecutive
+    // display frames can read the exact identical value on a REAL, unpinned clock. Unlike a genuinely pinned
+    // diagnostic/bench clock (deterministicClock, set only by __mirrorSetDiagnosticClock), a repeat here must
+    // never be mistaken for "nothing changed" — isIdleSampleStale's `pinned` argument must stay false, or the
+    // idle chain would freeze for good (it does not re-arm once it reports stale) until unrelated input woke
+    // it, the exact bug this test exists to catch.
+    vi.spyOn(performance, "now").mockReturnValue(1000);
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    const next = createMirrorState(); next.revision = 4;
+    renderer.reconcile(next);
+    const adapter = fakeAdapter(); executor.resolve(adapter);
+    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+    schedulerControl.ports.deadlines.passiveDeadline = () => performance.now();
+    const before = adapter.stats.completedFrames;
+    expect(renderer.reconcile(next)).toBeUndefined();
+    // __mirrorSetDiagnosticClock is never called: deterministicClock stays null throughout.
+    await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(before + 1));
+    renderer.dispose();
+  });
+
+  it("keeps the drawn identity on failed retained presentation and admits a retry", async () => {
+    let onInvalidate!: Parameters<MirrorDrawExecutorFactory>[0]["onInvalidate"];
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: (options) => { onInvalidate = options.onInvalidate; return executor.promise; } });
+    const state = textScene(); renderer.reconcile(state);
+    const adapter = fakeAdapter(); executor.resolve(adapter);
+    try {
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      renderer.reconcile(state);
+      const before = diagnostic();
+      const presentations = adapter.presentScene.mock.calls.length;
+      adapter.setAccept(false);
+      // Rust waits for a successful presentation: a refusal must keep both the clock and drawn snapshot pending.
+      let settled = false;
+      const clock = clockAt(1000).then(() => { settled = true; });
+      await vi.waitFor(() => expect(adapter.presentScene.mock.calls.length).toBeGreaterThan(presentations));
+      expect(settled).toBe(false);
+      expect(diagnostic().frameIdentity).toEqual(before.frameIdentity);
+      expect(diagnostic().draw.completedFrames).toBe(before.draw.completedFrames);
+      adapter.setAccept(true); onInvalidate("resource");
+      await clock;
+      expect(diagnostic().draw.completedFrames).toBeGreaterThan(before.draw.completedFrames);
+      expect(diagnostic().frameIdentity).toMatchObject({ clock: 1000 });
+      expect(diagnostic().frameIdentity).not.toEqual(before.frameIdentity);
+    } finally { renderer.dispose(); }
+  });
+
+  it("remeasures native text after font readiness changes and removes its listener on disposal", async () => {
+    measureStub();
+    const original = Object.getOwnPropertyDescriptor(document, "fonts");
+    const fonts = Object.assign(new EventTarget(), { check: () => true, load: vi.fn(async () => []) });
+    const remove = vi.spyOn(fonts, "removeEventListener");
+    Object.defineProperty(document, "fonts", { configurable: true, value: fonts });
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    try {
+      const state = textScene(); renderer.reconcile(state);
+      const adapter = fakeAdapter(); executor.resolve(adapter);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      const layouts = diagnostic().draw.nativeLayouts;
+      // loadingdone increments fontVersion, so Rust textPrepCache must miss for the unchanged font object.
+      fonts.dispatchEvent(new Event("loadingdone"));
+      expect(renderer.reconcile(state)).toBeUndefined();
+      expect(diagnostic().draw.nativeLayouts).toBe(layouts + 1);
+    } finally {
+      renderer.dispose(); expect(remove).toHaveBeenCalledWith("loadingdone", expect.any(Function));
+      if (original) Object.defineProperty(document, "fonts", original);
+      else Reflect.deleteProperty(document, "fonts");
+    }
+  });
+
+  it("invalidates native layout when the font resource changes under the same CSS family", async () => {
+    measureStub();
+    const executor = deferredExecutor();
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: () => executor.promise });
+    try {
+      const state = textScene(); renderer.reconcile(state);
+      const adapter = fakeAdapter(); executor.resolve(adapter);
+      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
+      const layouts = diagnostic().draw.nativeLayouts;
+      const label = state.nodes.get("label")!;
+      state.nodes.set(label.id, { ...label, font: { ...label.font!, url: "/replacement-font.ttf" } });
+      state.changedIds.add(label.id); state.revision++;
+      expect(renderer.reconcile(state)).toBeUndefined();
+      expect(diagnostic().draw.nativeLayouts).toBe(layouts + 1);
+    } finally { renderer.dispose(); }
+  });
+
   it("samples a Rust pinned idle animation from retained commands without another producer build", async () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       vi.stubGlobal("__benchDiagnosticClockMs", 1000);
       const state = animatedColorScene();
@@ -1072,8 +1263,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     vi.stubGlobal("__benchDiagnosticClockMs", 1000);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       const state = animatedColorScene(); state.revision = 21;
       expect(renderer.reconcile(state)).toBe(false);
@@ -1105,8 +1296,8 @@ describe("Pixi composition initialization", () => {
     const committedScenes: number[] = [];
     vi.stubGlobal("__benchStartupCommittedPresentation", (detail: { sceneRevision: number }) =>
       committedScenes.push(detail.sceneRevision));
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
@@ -1135,8 +1326,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     let onInvalidate!: (reason: "resource" | "present") => void;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async (options) => {
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async (options) => {
         onInvalidate = options.onInvalidate;
         return fakeAdapter(true) as never;
       } });
@@ -1155,7 +1346,7 @@ describe("Pixi composition initialization", () => {
       await vi.waitFor(() => expect(diagnostic().asyncSubmissionRevision).toBeNull());
       const clock = clockAt(500);
       await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(3));
-      // Pinning the clock wakes the scheduler's own idle chain once (see createPixiMirrorRenderer's
+      // Pinning the clock wakes the scheduler's own idle chain once (see createStageMirrorRenderer's
       // `__mirrorSetDiagnosticClock`), which settles back to stale/quiet after one more genuine attempt. Let
       // that one-time transient finish before capturing the baseline the "no growth" check below compares
       // against, so it is not mistaken for the start of a retry storm.
@@ -1182,8 +1373,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     let onInvalidate!: (reason: "resource" | "present") => void;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async (options) => {
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async (options) => {
         onInvalidate = options.onInvalidate;
         return fakeAdapter(true) as never;
       } });
@@ -1210,8 +1401,8 @@ describe("Pixi composition initialization", () => {
   it("ends a stalled Rust diagnostic clock on disposal without certifying an older picture", async () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     await vi.waitFor(() => expect(control.created).toHaveLength(1));
     const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
     const first = animatedColorScene(); first.revision = 44;
@@ -1229,8 +1420,8 @@ describe("Pixi composition initialization", () => {
   it("applies one deadline even when a Rust presentation promise never settles", async () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
@@ -1250,8 +1441,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     let onInvalidate!: (reason: "resource" | "present") => void;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async (options) => {
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async (options) => {
         onInvalidate = options.onInvalidate;
         return fakeAdapter(true) as never;
       } });
@@ -1283,8 +1474,8 @@ describe("Pixi composition initialization", () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
     let onInvalidate!: (reason: "resource" | "present") => void;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async (options) => {
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async (options) => {
         onInvalidate = options.onInvalidate;
         return fakeAdapter(true) as never;
       } });
@@ -1318,8 +1509,8 @@ describe("Pixi composition initialization", () => {
   it("leaves diagnostic clock requests uncertified until Rust has a committed picture", async () => {
     window.history.replaceState(null, "", "/?rendererCompare=1&stage=rust&rustDiagnostics=1");
     Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => fakeAdapter(true) as never });
+    const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => fakeAdapter(true) as never });
     try {
       await vi.waitFor(() => expect(control.created).toHaveLength(1));
       const adapter = control.created[0] as ReturnType<typeof fakeAdapter>;
@@ -1339,440 +1530,4 @@ describe("Pixi composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
-  it("stays unready across context loss until a post-restore scene presents", async () => {
-    measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      expect(renderer.reconcile(textScene())).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(true);
-      const identity = diagnostic().frameIdentity;
-      adapter.stats.contextReady = false; adapter.stats.presentationValid = false;
-      (control.options!.onInvalidate as (reason?: string) => void)("resource");
-      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(2));
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(false);
-      expect(diagnostic().frameIdentity).toEqual(identity);
-
-      adapter.stats.contextReady = true; adapter.setAccept(false);
-      (control.options!.onInvalidate as (reason?: string) => void)("resource");
-      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(3));
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(false);
-      adapter.setAccept(true);
-      (control.options!.onInvalidate as (reason?: string) => void)("resource");
-      await vi.waitFor(() => expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(true));
-      expect(adapter.stats.completedFrames).toBeGreaterThan(1);
-    } finally { renderer.dispose(); }
-  });
-
-  it("repaints a stationary scene once after a real resize and ignores unchanged observer calls", async () => {
-    vi.stubGlobal("ResizeObserver", class {
-      constructor(callback: ResizeObserverCallback) { control.resizeObserver = () => callback([], this as unknown as ResizeObserver); }
-      observe() {} disconnect() {}
-    });
-    const host = stage(); let hostWidth = 1920;
-    host.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: hostWidth, bottom: 1080,
-      width: hostWidth, height: 1080, toJSON() {} });
-    measureStub();
-    const renderer = createPixiMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      expect(renderer.reconcile(textScene())).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      const admissions = adapter.admitScene.mock.calls.length, resizes = adapter.resize.mock.calls.length;
-      control.resizeObserver?.();
-      expect(adapter.resize).toHaveBeenCalledTimes(resizes);
-      expect(adapter.admitScene).toHaveBeenCalledTimes(admissions);
-
-      hostWidth = 960; control.resizeObserver?.();
-      expect(adapter.resize).toHaveBeenCalledTimes(resizes + 1);
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(false);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledTimes(admissions + 1));
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { ready: boolean }).ready).toBe(true);
-      control.resizeObserver?.();
-      expect(adapter.resize).toHaveBeenCalledTimes(resizes + 1);
-      expect(adapter.admitScene).toHaveBeenCalledTimes(admissions + 1);
-      renderer.dispose();
-      hostWidth = 720; control.resizeObserver?.();
-      expect(adapter.resize).toHaveBeenCalledTimes(resizes + 1);
-    } finally { renderer.dispose(); }
-  });
-
-  it("reports one native fallback label, then admits a glyph when the shared provider becomes ready", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&pixiText=slug");
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      expect(renderer.reconcile(textScene())).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      expect(control.options?.textMode).toBe("slug");
-      (control.options!.createGlyphProvider as (gl: unknown) => unknown)({});
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      const fallback = adapter.admitScene.mock.calls[0][1];
-      expect(fallback).toHaveLength(1);
-      expect(fallback[0].nativeFallback).toHaveLength(1);
-      expect(fallback[0].fallbackReason).toBe("glyph-not-ready");
-      expect(rendererRuntimeStatus.pixiText).toMatchObject({ requested: "slug", actual: "native", native: 1,
-        slug: 0, reasons: { "glyph-not-ready": 1 } });
-      expect(diagnostic().glyphs).toMatchObject({ ready: false, refusedNotReady: 1 });
-      const layouts = diagnostic().draw.nativeLayouts;
-
-      control.glyphReady = true;
-      control.glyphOnReady?.();
-      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(2));
-      const glyph = adapter.admitScene.mock.lastCall![1][0];
-      expect(glyph.glyph?.block.slots).toEqual(new Int32Array([7, 8]));
-      expect(glyph.glyph?.inkBounds).toEqual({ x: 0, y: 0, width: 20, height: 20 });
-      expect(rendererRuntimeStatus.pixiText).toMatchObject({ requested: "slug", actual: "slug", native: 0, slug: 1, reasons: {} });
-      expect(diagnostic().glyphs).toMatchObject({ ready: true, refusedNotReady: 1 });
-      expect(diagnostic().draw.nativeLayouts).toBe(layouts);
-    } finally { renderer.dispose(); }
-  });
-
-  it("keeps committed glyph outcomes and frame identity when a fallback re-admission fails", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&pixiText=slug-cached");
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    measureStub(); control.glyphReady = true;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      expect(renderer.reconcile(textScene())).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      (control.options!.createGlyphProvider as (gl: unknown) => unknown)({});
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      const before = diagnostic().frameIdentity;
-      const textBefore = { ...rendererRuntimeStatus.pixiText };
-      expect(textBefore.actual).toBe("slug-cached");
-      adapter.setAccept(false); control.glyphReady = false; control.glyphOnReady?.();
-      await vi.waitFor(() => expect(adapter.admitScene.mock.calls.length).toBeGreaterThanOrEqual(2));
-      expect(diagnostic().frameIdentity).toEqual(before);
-      expect(rendererRuntimeStatus.pixiText).toEqual(textBefore);
-    } finally { renderer.dispose(); }
-  });
-
-  it("keeps label modulation on the carrier and native fallback runs neutral", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&pixiText=slug");
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    measureStub(); control.glyphReady = true;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      const state = textScene(); state.nodes.get("label")!.canvasBlendMode = 1;
-      expect(renderer.reconcile(state)).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      (control.options!.createGlyphProvider as (gl: unknown) => unknown)({});
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      const carrier = adapter.admitScene.mock.lastCall![1][0];
-      expect((carrier as typeof carrier & { blend: number }).blend).toBe(1);
-      expect((carrier.nativeFallback![0] as typeof carrier & { blend: number }).blend).toBe(0);
-      expect((carrier.nativeFallback![0] as typeof carrier & { alpha: number }).alpha).toBe(1);
-      expect((carrier.nativeFallback![0] as typeof carrier & { tint: number }).tint).toBe(0xffffff);
-      expect(carrier.glyph?.cacheEligible).toBe(false);
-    } finally { renderer.dispose(); }
-  });
-
-  it("keeps colored rich spans native with a per-label glyph refusal", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&pixiText=slug");
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    measureStub(); control.glyphReady = true;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      const state = textScene(); const label = state.nodes.get("label")!;
-      label.richText = true; label.text = { ...label.text!, text: "[color=#ff0000]Red[/color] white" };
-      expect(renderer.reconcile(state)).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      (control.options!.createGlyphProvider as (gl: unknown) => unknown)({});
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      const carrier = adapter.admitScene.mock.lastCall![1][0];
-      expect(carrier.fallbackReason).toBe("glyph-rich-spans");
-      expect(carrier.glyph).toBeUndefined();
-      expect(carrier.nativeFallback?.length).toBeGreaterThan(1);
-      expect(control.glyphBlockCalls).toBe(0);
-      expect(rendererRuntimeStatus.pixiText).toMatchObject({ actual: "native", native: 1, reasons: { "glyph-rich-spans": 1 } });
-    } finally { renderer.dispose(); }
-  });
-
-  it("refines deferred glyph caches with a direct presentation and no scene rebuild", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&pixiText=slug-cached");
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    measureStub(); control.glyphReady = true;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      expect(renderer.reconcile(textScene())).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      (control.options!.createGlyphProvider as (gl: unknown) => unknown)({});
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      const before = diagnostic();
-      adapter.setTextOutcomes({ requested: "slug-cached", actual: "slug", native: 0, slug: 1, slugCached: 0, reasons: {} });
-      (control.options!.onInvalidate as (reason: string) => void)("present");
-      await vi.waitFor(() => expect(adapter.presentScene).toHaveBeenCalledOnce());
-      const after = diagnostic();
-      expect(adapter.admitScene).toHaveBeenCalledOnce();
-      expect(after.effective.buildEpoch).toBe(before.effective.buildEpoch);
-      expect(after.draw.nativeLayouts).toBe(before.draw.nativeLayouts);
-      expect((after.frameIdentity as { presentEpoch: number }).presentEpoch)
-        .toBe((before.frameIdentity as { presentEpoch: number }).presentEpoch + 1);
-      expect(rendererRuntimeStatus.pixiText?.actual).toBe("slug");
-
-      adapter.setAccept(false);
-      (control.options!.onInvalidate as (reason: string) => void)("present");
-      await vi.waitFor(() => expect(adapter.presentScene).toHaveBeenCalledTimes(2));
-      expect(diagnostic().frameIdentity).toEqual(after.frameIdentity);
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { refinementFailure?: string }).refinementFailure).toBe("test presentation refused");
-      expect(diagnostic().draw.refinementPending).toBe(1);
-
-      adapter.setAccept(true);
-      (control.options!.onInvalidate as (reason: string) => void)("present");
-      await vi.waitFor(() => expect(adapter.presentScene).toHaveBeenCalledTimes(3));
-      expect(diagnostic().draw.refinementPending).toBe(0);
-      expect((diagnostic() as ReturnType<typeof diagnostic> & { refinementFailure?: string }).refinementFailure).toBeUndefined();
-    } finally { renderer.dispose(); }
-  });
-
-  it("fails closed on initialization rejection without constructing a DOM fallback", async () => {
-    const host = stage();
-    const renderer = createPixiMirrorRenderer(host, document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    control.pending!.reject(new Error("no WebGL"));
-    await vi.waitFor(() => expect((window as unknown as { __mirrorRendererDiagnostics(): { readiness: string } }).__mirrorRendererDiagnostics().readiness).toBe("failed"));
-    expect(host.querySelectorAll("canvas")).toHaveLength(1);
-    expect(renderer.reconcile(createMirrorState())).toBe(false);
-    renderer.dispose();
-  });
-
-  it("disposes a renderer whose asynchronous initialization resolves after teardown", async () => {
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    renderer.dispose();
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.dispose).toHaveBeenCalledOnce());
-    expect("__mirrorRendererDiagnostics" in window).toBe(false);
-  });
-
-  it("keeps the completed frame identity and hit snapshot while a newer offer is blocked", async () => {
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    const first = createMirrorState(); first.revision = 1;
-    renderer.reconcile(first);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-    const identity = (window as unknown as { __mirrorFrameIdentity(): unknown }).__mirrorFrameIdentity();
-    const hits = renderer.touchStackAt(100, 100);
-
-    adapter.setAccept(false);
-    const blocked = createMirrorState(); blocked.revision = 2;
-    expect(renderer.reconcile(blocked)).toBe(false);
-    expect((window as unknown as { __mirrorFrameIdentity(): unknown }).__mirrorFrameIdentity()).toEqual(identity);
-    expect(renderer.touchStackAt(100, 100)).toEqual(hits);
-    renderer.rewardFocusSnapshot();
-    expect(rewardSpy.mock.calls.at(-1)?.[0]).not.toBe(blocked.nodes);
-    renderer.dispose();
-  });
-
-  it("publishes successful delta consumption and resolves diagnostic clocks at a frame boundary", async () => {
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    const next = createMirrorState(); next.revision = 3; next.sceneRewrite = true; next.changedIds.add("changed");
-    renderer.reconcile(next);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-    expect(renderer.reconcile(next)).toBeUndefined();
-    expect(next.sceneRewrite).toBe(false); expect(next.changedIds.size).toBe(0);
-    expect(schedulerControl.arms).toHaveBeenCalled();
-
-    adapter.setAccept(false);
-    const completedBefore = adapter.stats.completedFrames;
-    expect(schedulerControl.ports!.animation.runBuild(next)).toBe(false);
-    expect(adapter.stats.completedFrames).toBe(completedBefore);
-
-    let frame: FrameRequestCallback | null = null;
-    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { frame = callback; return 1; });
-    let settled = false;
-    const promise = (window as unknown as { __mirrorSetDiagnosticClock(ms: number): Promise<unknown> }).__mirrorSetDiagnosticClock(500).then(() => { settled = true; });
-    await Promise.resolve(); expect(settled).toBe(false);
-    expect(frame).not.toBeNull(); (frame as unknown as FrameRequestCallback)(500); await promise; expect(settled).toBe(true);
-    raf.mockRestore(); renderer.dispose();
-  });
-
-  it("starts and repeats the production idle frame chain after an admitted reconcile", async () => {
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    const next = createMirrorState(); next.revision = 4;
-    renderer.reconcile(next);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-    schedulerControl.ports.deadlines.passiveDeadline = () => performance.now();
-    const before = adapter.stats.completedFrames;
-    expect(renderer.reconcile(next)).toBeUndefined();
-    await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(before + 1));
-    renderer.dispose();
-  });
-
-  it("keeps booking the idle chain on a browser-coarsened real clock, with no pinned diagnostic clock", async () => {
-    // Tor/Firefox resistFingerprinting clamps performance.now() resolution (16.67-100 ms): consecutive
-    // display frames can read the exact identical value on a REAL, unpinned clock. Unlike a genuinely pinned
-    // diagnostic/bench clock (deterministicClock, set only by __mirrorSetDiagnosticClock), a repeat here must
-    // never be mistaken for "nothing changed" — isIdleSampleStale's `pinned` argument must stay false, or the
-    // idle chain would freeze for good (it does not re-arm once it reports stale) until unrelated input woke
-    // it, the exact bug this test exists to catch.
-    vi.spyOn(performance, "now").mockReturnValue(1000);
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    const next = createMirrorState(); next.revision = 4;
-    renderer.reconcile(next);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-    schedulerControl.ports.deadlines.passiveDeadline = () => performance.now();
-    const before = adapter.stats.completedFrames;
-    expect(renderer.reconcile(next)).toBeUndefined();
-    // __mirrorSetDiagnosticClock is never called: deterministicClock stays null throughout.
-    await vi.waitFor(() => expect(adapter.stats.completedFrames).toBeGreaterThan(before + 1));
-    renderer.dispose();
-  });
-
-  it("retains native layout beyond 120 diagnostic presentations and invalidates changed text", async () => {
-    const measure = measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    const state = textScene(true); renderer.reconcile(state);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-    expect(renderer.reconcile(state)).toBeUndefined();
-    const before = diagnostic(); const measured = measure.mock.calls.length;
-    expect(before.draw.nativeLayouts).toBeGreaterThan(0);
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      queueMicrotask(() => callback(0)); return 1;
-    });
-    try {
-      for (let i = 0; i < 179; i++) await clockAt(1000 + i * 1000 / 60);
-      expect(diagnostic().effective.buildEpoch).toBe(before.effective.buildEpoch);
-      expect(diagnostic().draw.retainedPatches - before.draw.retainedPatches).toBe(179);
-      expect(measure.mock.calls.length).toBe(measured);
-      const poses = adapter.patchScene.mock.calls.flatMap(([value]) => {
-        const patch = value as { primitives?: Array<{ transform?: readonly number[] }>; groups?: Array<{ transform?: readonly number[] }> };
-        return [...(patch.primitives ?? []), ...(patch.groups ?? [])].filter((item) => item.transform).map((item) => JSON.stringify(item.transform));
-      });
-      expect(new Set(poses).size).toBeGreaterThan(1);
-      state.revision++;
-      expect(renderer.reconcile(state)).toBeUndefined();
-      expect(diagnostic().effective.buildEpoch).toBe(before.effective.buildEpoch);
-      const label = state.nodes.get("label")!;
-      state.nodes.set(label.id, { ...label, text: { ...label.text!, text: "Changed label" } });
-      state.changedIds.add(label.id); state.revision++;
-      expect(renderer.reconcile(state)).toBeUndefined();
-      expect(diagnostic().draw.nativeLayouts).toBe(before.draw.nativeLayouts + 1);
-      expect(state.changedIds.size).toBe(0);
-    } finally { renderer.dispose(); }
-  });
-
-  it("reuses one shaped glyph block through 179 retained animation presentations", async () => {
-    window.history.replaceState(null, "", "/?stage=pixi&pixiScene=retained&pixiText=slug");
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    const measure = measureStub(); control.glyphReady = true;
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      const state = textScene(true); expect(renderer.reconcile(state)).toBe(false);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      (control.options!.createGlyphProvider as (gl: unknown) => unknown)({});
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalledOnce());
-      expect(control.glyphBlockCalls).toBe(1);
-      const before = diagnostic(); const measurements = measure.mock.calls.length;
-      vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-        queueMicrotask(() => callback(0)); return 1;
-      });
-      for (let i = 0; i < 179; i++) await clockAt(1000 + i * 1000 / 60);
-      expect(control.glyphBlockCalls).toBe(1);
-      expect(measure.mock.calls.length).toBe(measurements);
-      expect(diagnostic().draw.nativeLayouts).toBe(before.draw.nativeLayouts);
-      expect(diagnostic().effective.buildEpoch).toBe(before.effective.buildEpoch);
-      expect(diagnostic().draw.retainedPatches - before.draw.retainedPatches).toBe(179);
-      expect(adapter.admitScene).toHaveBeenCalledOnce();
-    } finally { renderer.dispose(); }
-  });
-
-  it("keeps the drawn identity on failed retained presentation and admits a retry", async () => {
-    measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    const state = textScene(); renderer.reconcile(state);
-    await vi.waitFor(() => expect(control.pending).not.toBeNull());
-    const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-    await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-    renderer.reconcile(state);
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      queueMicrotask(() => callback(0)); return 1;
-    });
-    try {
-      const before = diagnostic();
-      adapter.setAccept(false); await clockAt(1000);
-      expect(diagnostic().frameIdentity).toEqual(before.frameIdentity);
-      expect(diagnostic().draw.completedFrames).toBe(before.draw.completedFrames);
-      adapter.setAccept(true); await clockAt(1100);
-      expect(diagnostic().draw.completedFrames).toBe(before.draw.completedFrames + 1);
-      expect(diagnostic().frameIdentity).not.toEqual(before.frameIdentity);
-    } finally { renderer.dispose(); }
-  });
-
-  it("remeasures native text after font readiness changes and removes its listener on disposal", async () => {
-    measureStub();
-    const original = Object.getOwnPropertyDescriptor(document, "fonts");
-    const fonts = Object.assign(new EventTarget(), { check: () => true, load: vi.fn(async () => []) });
-    const remove = vi.spyOn(fonts, "removeEventListener");
-    Object.defineProperty(document, "fonts", { configurable: true, value: fonts });
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      const state = textScene(); renderer.reconcile(state);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-      const layouts = diagnostic().draw.nativeLayouts;
-      fonts.dispatchEvent(new Event("loadingdone"));
-      expect(renderer.reconcile(state)).toBeUndefined();
-      expect(diagnostic().draw.nativeLayouts).toBe(layouts + 1);
-    } finally {
-      renderer.dispose(); expect(remove).toHaveBeenCalledWith("loadingdone", expect.any(Function));
-      if (original) Object.defineProperty(document, "fonts", original);
-      else Reflect.deleteProperty(document, "fonts");
-    }
-  });
-
-  it("invalidates native layout when the font resource changes under the same CSS family", async () => {
-    measureStub();
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      const state = textScene(); renderer.reconcile(state);
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.admitScene).toHaveBeenCalled());
-      const layouts = diagnostic().draw.nativeLayouts;
-      const label = state.nodes.get("label")!;
-      state.nodes.set(label.id, { ...label, font: { ...label.font!, url: "/replacement-font.ttf" } });
-      state.changedIds.add(label.id); state.revision++;
-      expect(renderer.reconcile(state)).toBeUndefined();
-      expect(diagnostic().draw.nativeLayouts).toBe(layouts + 1);
-    } finally { renderer.dispose(); }
-  });
-
-  // `cmpIdle=display` is a historical URL param (idle animation is always display-paced now, with no
-  // `idleCadence` config field to drive a scheduler toggle); this still proves it is accepted and ignored
-  // rather than breaking the mount.
-  it.each(["legacy", "retained"])("mounts the %s scene control with a historical cmpIdle param", async (scene) => {
-    window.history.replaceState(null, "", `/?rendererCompare=1&stage=pixi&pixiScene=${scene}&cmpIdle=display`);
-    Object.assign(rendererComparisonConfig, readRendererComparisonConfig());
-    const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"));
-    try {
-      await vi.waitFor(() => expect(control.pending).not.toBeNull());
-      const adapter = fakeAdapter(); control.pending!.resolve(adapter);
-      await vi.waitFor(() => expect(adapter.resize).toHaveBeenCalled());
-      await vi.waitFor(() => expect(diagnostic().effective.pixiScene).toBe(scene));
-      expect(renderer.reconcile(createMirrorState())).toBeUndefined();
-      expect(scene === "legacy" ? adapter.render : adapter.admitScene).toHaveBeenCalledOnce();
-    } finally { renderer.dispose(); }
-  });
 });

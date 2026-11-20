@@ -4,14 +4,13 @@
 
 import { createMirrorRenderer } from "@/mirror/mirrorRenderer";
 import { createCanvasMirrorRenderer } from "@/mirror/canvas/canvasRenderer";
-import { createPixiMirrorRenderer } from "@/mirror/renderer/pixi/createPixiMirrorRenderer";
-import { createRustMirrorRenderer } from "@/mirror/renderer/pixi/createRustMirrorRenderer";
+import { createRustMirrorRenderer } from "@/mirror/renderer/stage/createRustMirrorRenderer";
 import type { MirrorRenderer } from "@/mirror/renderer/contracts";
 import { isGeoclipPlaybackEnabled } from "@/mirror/spineAttributes";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { normalizedComparisonConfig, rendererBackendForPageLoad, rendererComparisonConfig, setRendererRuntimeStatus } from "@/mirror/rendererComparison";
 
-export type StageBackend = "dom" | "canvas" | "pixi" | "rust";
+export type StageBackend = "dom" | "canvas" | "rust";
 
 function readStageBackend(): StageBackend {
   const search = typeof window === "undefined" ? "" : window.location.search;
@@ -61,7 +60,7 @@ export function createMirrorRendererFor(
   const backend = stageBackend;
   activeBackend = backend === "canvas" && !legacyCanvasTestOverride ? "rust" : backend;
   setRendererRuntimeStatus({ requested: { ...rendererComparisonConfig, backend },
-    actualBackend: null, actualConfig: null, phase: "initializing", reason: null, pixiText: null });
+    actualBackend: null, actualConfig: null, phase: "initializing", reason: null });
 
   if (backend === "dom") {
     noteGeoclipBackend("dom");
@@ -89,9 +88,7 @@ export function createMirrorRendererFor(
   try {
     const renderer = import.meta.env.MODE === "test" && legacyCanvasTestOverride && backend === "canvas"
       ? createCanvasMirrorRenderer(stage, defs, canvasHost)
-      : actual === "pixi"
-        ? createPixiMirrorRenderer(stage, defs, canvasHost, status)
-        : createRustMirrorRenderer(stage, defs, canvasHost, status);
+      : createRustMirrorRenderer(stage, defs, canvasHost, status);
     if (legacyCanvasTestOverride && backend === "canvas") noteGeoclipBackend("canvas");
     const canvas = (canvasHost ?? stage).querySelector<HTMLCanvasElement>(`canvas.mirror-${actual}-stage`);
     const contextLost = (event: Event): void => { event.preventDefault(); fail("WebGL context lost"); };

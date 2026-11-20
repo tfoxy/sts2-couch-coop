@@ -11,7 +11,7 @@ function apply(state: MirrorState, upserts: Array<Record<string, unknown>>, remo
   applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full, screenType: "combat", upserts, removedIds })!);
 }
 
-/** By-leaf-type classifier — the same shape `createPixiMirrorRenderer.ts` uses for reward focus. */
+/** By-leaf-type classifier — the same shape `createStageMirrorRenderer.ts` uses for reward focus. */
 const byType = (node: MirrorNode): readonly string[] => [nodeTypeLeaf(node.nodeType)];
 
 /** Full scan, independent of the index, the ground truth every assertion below checks the index against. */

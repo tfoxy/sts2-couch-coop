@@ -19,7 +19,7 @@ vi.mock("@/mirror/mirrorSettings", async (importOriginal) => ({
 }));
 vi.mock("@/mirror/fonts", () => ({ ensureNodeFonts: vi.fn(), fontFaceInjectionVersion: () => 0, loadMirrorFont: vi.fn(async () => undefined) }));
 
-import { createPixiMirrorRenderer } from "@/mirror/renderer/pixi/createPixiMirrorRenderer";
+import { createStageMirrorRenderer } from "@/mirror/renderer/stage/createStageMirrorRenderer";
 import { readRendererComparisonConfig, rendererComparisonConfig } from "@/mirror/rendererComparison";
 import { HELD_CARD_DRAG_LIFT_PX } from "@/mirror/raise/constants";
 
@@ -172,8 +172,8 @@ async function setup(query: string, options: SetupOptions = {}) {
     "clearInterval", ...(options.fakeClock ? ["performance" as const] : [])] });
   const log: Submission[] = [];
   const control: Control = { sync: false };
-  const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-    undefined, { backend: "rust", createExecutor: async () => recordingExecutor(log, control) as never });
+  const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+    undefined, { createExecutor: async () => recordingExecutor(log, control) as never });
   const state: MirrorState = createMirrorState();
   const rows = sceneNodes(options);
   applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: true, screenType: "combat", upserts: rows,

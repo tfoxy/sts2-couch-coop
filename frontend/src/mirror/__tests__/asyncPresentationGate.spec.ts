@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createAsyncPresentationGate } from "@/mirror/renderer/pixi/asyncPresentationGate";
+import { createAsyncPresentationGate } from "@/mirror/renderer/stage/asyncPresentationGate";
 
 describe("async presentation commit gate", () => {
   it("commits a delayed success only while its ticket is current", async () => {

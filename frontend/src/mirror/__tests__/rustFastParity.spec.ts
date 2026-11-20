@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DrawList } from "@godot-scene-web/canvas";
 import { createClipRectView, createNinePatchView, createQuadView, createTexturedMeshView } from "@godot-scene-web/canvas";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import * as rustScene from "@godot-scene-web/canvas/rust-prototype";
 import { applySceneDelta, createMirrorState, parseSceneDelta, type MirrorState } from "@/mirror/sceneTree";
 
@@ -26,8 +26,8 @@ vi.mock("@/mirror/mirrorSettings", async (importOriginal) => ({
 }));
 vi.mock("@/mirror/fonts", () => ({ ensureNodeFonts: vi.fn(), fontFaceInjectionVersion: () => 0, loadMirrorFont: vi.fn(async () => undefined) }));
 
-import { createPixiMirrorRenderer } from "@/mirror/renderer/pixi/createPixiMirrorRenderer";
-import { resolveRustFastFlags } from "@/mirror/renderer/pixi/rustFastFlags";
+import { createStageMirrorRenderer } from "@/mirror/renderer/stage/createStageMirrorRenderer";
+import { resolveRustFastFlags } from "@/mirror/renderer/stage/rustFastFlags";
 import { readRendererComparisonConfig, rendererComparisonConfig } from "@/mirror/rendererComparison";
 
 const PARITY_QUERIES = [
@@ -151,12 +151,12 @@ function recordingExecutor(log: Submission[]) {
     bindPixelTexture: () => {}, pollDiagnostics: () => {},
     textOutcomes: () => ({ requested: "native", actual: "native", native: 0, slug: 0, slugCached: 0, reasons: {} }),
     render: () => { throw new Error("the retained Rust path never submits a legacy render"); },
-    admitScene: (list: DrawList<string>, texts: readonly PixiTextRecord[], plan: unknown) => {
+    admitScene: (list: DrawList<string>, texts: readonly StageTextRecord[], plan: unknown) => {
       if (executorRefusesAdmits > 0) { executorRefusesAdmits--; log.push({ call: "admit", refused: true, list: [], texts: [], plan: { primitives: [], groups: [] } });
         return Promise.resolve({ presented: false, reason: "pending resource" }); }
       const encoded = encodeRustScene({ drawList: list, revision: 1, width: 1920, height: 1080, designWidth: 1920,
         designHeight: 1080, resolveTexture: (texture: string) => ({ key: texture, width: 64, height: 64 }), texts, plan,
-        resolveText: (record: PixiTextRecord) => ({ resource: { key: `text:${record.key}`, width: 4, height: 4 },
+        resolveText: (record: StageTextRecord) => ({ resource: { key: `text:${record.key}`, width: 4, height: 4 },
           pixels: new Uint8Array(64), width: 4, height: 4, transform: record.transform, alpha: record.alpha }) });
       log.push({ call: "admit", encoded: JSON.stringify(encoded.scene), list: dumpList(list),
         texts: structuredClone(texts), plan: structuredClone(plan) });
@@ -183,7 +183,7 @@ const clockAt = (ms: number) => (window as unknown as { __mirrorSetDiagnosticClo
   .__mirrorSetDiagnosticClock(ms);
 
 /** What a scenario script drives: the scene, plus one reconcile (`offer`) or one clock frame (`tick`) per step. */
-type ScenarioContext = { state: MirrorState; renderer: ReturnType<typeof createPixiMirrorRenderer>;
+type ScenarioContext = { state: MirrorState; renderer: ReturnType<typeof createStageMirrorRenderer>;
   offer(step: string): Promise<void>; tick(step: string, at: number): Promise<void> };
 type HiddenMemoDiagnostics = { builds: number; bypassedBuilds: number; hits: number; replayedNodes: number;
   verified: number; verifyMismatches: number; missReasons: Record<string, number> };
@@ -207,8 +207,8 @@ async function runScenario(query: string, script?: (context: ScenarioContext) =>
   vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
   const log: Submission[] = [];
   const steps: unknown[] = [];
-  const renderer = createPixiMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-    undefined, { backend: "rust", createExecutor: async () => recordingExecutor(log) as never });
+  const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+    undefined, { createExecutor: async () => recordingExecutor(log) as never });
   const state = createMirrorState();
   const observe = (step: string, result: unknown) => {
     const rects = renderer.interactiveRects().map(({ id, transform, localRect, spreadDx, renderedWidth, raiseDy }) =>
@@ -423,7 +423,7 @@ describe("Rust producer controls submit the same scene stream", () => {
   it.each(PARITY_QUERIES)("with %s", async (query) => {
     const baseline = await runScenario("rustFast=0");
     const candidate = await runScenario(query);
-    const flags = resolveRustFastFlags(new URLSearchParams(query), "rust");
+    const flags = resolveRustFastFlags(new URLSearchParams(query));
     const calls = (log: Submission[], call: Submission["call"]) => log.filter((entry) => entry.call === call).length;
 
     // The scenario must reach every lane it claims to cover.
@@ -586,7 +586,7 @@ describe("held transform overrides (rustHeldOverridePatch)", () => {
   it.each(HELD_QUERIES)("patch held overrides and match the full-build picture with %s", async (query) => {
     const baseline = await runScenario("rustFast=0", heldScript);
     const candidate = await runScenario(query, heldScript);
-    const flags = resolveRustFastFlags(new URLSearchParams(query), "rust");
+    const flags = resolveRustFastFlags(new URLSearchParams(query));
     const callAt = (result: ScenarioResult, name: string) => {
       const index = result.steps.findIndex((step) => (step as { step: string }).step === name);
       const before = index > 0 ? (result.steps[index - 1] as { submissions: number }).submissions : 0;
@@ -686,7 +686,7 @@ describe("held transform overrides (rustHeldOverridePatch)", () => {
     };
     const baseline = await runScenario("rustFast=0", script);
     const candidate = await runScenario(query, script);
-    const flags = resolveRustFastFlags(new URLSearchParams(query), "rust");
+    const flags = resolveRustFastFlags(new URLSearchParams(query));
     expectSamePicture(candidate, baseline, flags.omitStaticPixelCaches);
     const steps = (result: ScenarioResult) => new Map(result.steps.map((row) => {
       const { step, submissions } = row as { step: string; submissions: number };

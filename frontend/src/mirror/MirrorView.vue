@@ -157,7 +157,7 @@ watch(() => props.connected, (connected) => {
  * this cannot wait for the factory's answer. A failed canvas construction leaves this host empty,
  * and no DOM scene is mounted in its place.
  */
-const canvasHostLayout = requestedStageBackend() === "canvas" || requestedStageBackend() === "pixi" || requestedStageBackend() === "rust";
+const canvasHostLayout = requestedStageBackend() === "canvas" || requestedStageBackend() === "rust";
 /**
  * THE DISPLAY-SPACE LAYOUT GRANT. `?stageFit=display` asks for DOM boxes in real display px and a stage with no
  * scale transform (stageFit.ts); it is granted only on the DOM backend, for the two reasons stageFit's header

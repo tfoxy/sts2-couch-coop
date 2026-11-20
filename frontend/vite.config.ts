@@ -266,7 +266,6 @@ export default defineConfig({
       // the scene root but never re-renders as lazy scenes/resources settle (symptom: frozen at the
       // single root node). Explicit absolute aliases win regardless of which source tree imports.
       vue: fromHere("./node_modules/vue"),
-      "@vue/reactivity": fromHere("./node_modules/@vue/reactivity"),
       "@vue/runtime-core": fromHere("./node_modules/@vue/runtime-core"),
       "@vue/runtime-dom": fromHere("./node_modules/@vue/runtime-dom"),
       "@vue/shared": fromHere("./node_modules/@vue/shared"),
@@ -310,10 +309,6 @@ export default defineConfig({
       "@godot-scene-web/canvas/msdf-worker-runtime": gsw("canvas/src/msdf-generator-worker-runtime.ts"),
       "@godot-scene-web/canvas/atlas-pages": gsw("canvas/src/rust-atlas-pages.ts"),
       "@couchcoop/rust-prototype-glue": rustPrototypeGlue,
-      "@godot-scene-web/canvas/pixi": gsw("canvas/src/pixi-renderer.ts"),
-      // The Pixi adapter is aliased to gsw source, whose own canvas package owns this dependency.
-      // Pin resolution there too so Vite can eagerly optimize it before the lazy adapter is first used.
-      "pixi.js": gsw("canvas/node_modules/pixi.js"),
       "@godot-scene-web/canvas-effects/webgl": gsw("canvas-effects/src/webgl.ts"),
       "@godot-scene-web/canvas-effects/webgpu": gsw("canvas-effects/src/webgpu.ts"),
       "@godot-scene-web/canvas": gsw("canvas/src/index.ts"),
@@ -339,19 +334,10 @@ export default defineConfig({
       "@godot-scene-web/project": gsw("project/src/fetch.ts"),
       "@godot-scene-web/vue": gsw("vue/src/index.ts")
     },
-    // Footgun: the aliased sibling source trees each carry their OWN copies of the Vue
-    // packages (gsw has `vue`; spirectl/web has `@vue/reactivity`), so without deduping the
-    // live render would bind to a SECOND reactivity instance and never re-render when a lazy
-    // scene/resource settles (symptom: frozen at the single root node). Force a single copy —
-    // this app's own — for every importer regardless of source tree.
-    dedupe: ["vue", "@vue/reactivity"]
+    dedupe: ["vue"]
   },
   // The aliased source packages are linked TS (not registry installs); don't pre-bundle them.
   optimizeDeps: {
-    // Pixi is first reached through the comparison renderer's lazy import. Discovering it at
-    // that moment makes Vite re-optimize dependencies and reload the entire page, which closes
-    // an active co-op seat. Resolve it through the aliased canvas source during server startup.
-    include: ["pixi.js"],
     exclude: [
       "@godot-scene-web/vue",
       "@godot-scene-web/canvas"

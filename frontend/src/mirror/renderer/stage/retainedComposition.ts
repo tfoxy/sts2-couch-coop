@@ -1,5 +1,5 @@
 import { createNinePatchView, createQuadView, createTexturedMeshView, type DrawList } from "@godot-scene-web/canvas";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import { affineInverse, affineMul, type Affine } from "@/mirror/affine";
 import { composeLocalAnimGlobal, type DrawListBuild, type LocalAnim } from "@/mirror/canvas/buildDrawList";
 import type { HitEntry } from "@/mirror/canvas/hitTest";
@@ -10,7 +10,7 @@ type PrimitivePatch = { id: string; transform?: Pose; alpha?: number; source?: {
 type GroupPatch = { id: string; transform: Pose };
 type Reference = { id: string; owner: string; matrix: Affine };
 
-export interface RetainedPixiPlan {
+export interface RetainedStagePlan {
   primitives: Primitive[];
   groups: Array<{ id: string; firstIndex: number; endIndex: number; transform: Pose; renderGroup: boolean; cacheAsTexture?: boolean }>;
 }
@@ -32,7 +32,7 @@ export function isPureTranslation(delta: ArrayLike<number>): boolean {
     Math.abs(delta[2]) < PURE_TRANSLATION_EPSILON && Math.abs(delta[3] - 1) < PURE_TRANSLATION_EPSILON;
 }
 
-export interface RetainedPixiPatch {
+export interface RetainedStagePatch {
   /** Clip rects this patch translates. Only an executor that can move a clip may be handed one. */
   clips?: ClipTranslation[];
   primitives: PrimitivePatch[];
@@ -52,7 +52,7 @@ export interface RetainedPixiPatch {
    * `rustTextPatch`: text records whose label changed, re-prepared from the committed build's paint record. The
    * executor re-emits each record's command; committing the patch makes each record's transform its reference.
    */
-  texts?: PixiTextRecord[];
+  texts?: StageTextRecord[];
 }
 
 export interface WireTransformOptions {
@@ -88,7 +88,7 @@ export interface RetainedIdlePlan {
   primitives: Array<{ id: string; chain: Array<{ root: number; offset: number }>; reference: Affine }>;
 }
 
-export interface RetainedPixiCompositionOptions {
+export interface RetainedStageCompositionOptions {
   includeStaticPixelCaches?: boolean;
   onStaticAdmission?: (edge: "start" | "end") => void;
   /**
@@ -115,15 +115,15 @@ export interface RetainedPixiCompositionOptions {
 export type PatchRefusal = "index-stale" | "anim-unknown" | "shift-unknown" | "root-unspanned" | "root-singular" |
   "root-spread-rebased";
 
-export interface RetainedPixiComposition {
-  plan: RetainedPixiPlan;
+export interface RetainedStageComposition {
+  plan: RetainedStagePlan;
   /**
    * `rootShifts` (`rustOffsetPatch`): a design-space translation of a local-animation root's whole span, on top of
    * what committed patches already applied. The root's `outer` carries its inherited cosmetic offset as its
    * translation, so the span re-poses as `T · outer · raw`: one left-multiplied translation, the animation untouched.
    */
   patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>,
-    options?: { unfiltered?: boolean }): RetainedPixiPatch | null;
+    options?: { unfiltered?: boolean }): RetainedStagePatch | null;
   /** `rustIdleInRust`: the inputs `patch()` would read right now (see {@link RetainedIdlePlan}); null where it refuses. */
   idlePlan(): RetainedIdlePlan | null;
   /**
@@ -132,7 +132,7 @@ export interface RetainedPixiComposition {
    *
    * `rustWireSpreadPatch`: see {@link WireTransformOptions}.
    */
-  patchWireTransform(id: string, delta: Affine, options?: WireTransformOptions): RetainedPixiPatch | null;
+  patchWireTransform(id: string, delta: Affine, options?: WireTransformOptions): RetainedStagePatch | null;
   /**
    * `rustOffsetPatch`: translate each listed node's OWN commands, text records, hit poses (`mFinal` only, never
    * `mGame`) and node matrix by its design-space delta. The caller accumulates a subtree's inherited offsets into
@@ -140,8 +140,8 @@ export interface RetainedPixiComposition {
    * posed relative to their group, which a plain translation cannot express. A listed clipper's clip rect moves
    * by its delta when `clips` is set (the executor can move one); without it a clipper is refused (null).
    */
-  patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options?: { clips?: boolean }): RetainedPixiPatch | null;
-  commit(patch: RetainedPixiPatch): void;
+  patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options?: { clips?: boolean }): RetainedStagePatch | null;
+  commit(patch: RetainedStagePatch): void;
   /**
    * `rustTextPatch`: whether `owner`'s text records still sit exactly where the build placed them, so records
    * re-prepared from that build's paint record land where a rebuild would put them. False when the owner is inside
@@ -156,15 +156,15 @@ export interface RetainedPixiComposition {
 }
 
 /** A build-time index. Sampling visits animation spans, never the whole command list. */
-export function createRetainedPixiComposition(
-  list: DrawList<string>, build: DrawListBuild, texts: readonly PixiTextRecord[],
+export function createRetainedStageComposition(
+  list: DrawList<string>, build: DrawListBuild, texts: readonly StageTextRecord[],
   textOwners: ReadonlyMap<string, string>, spreadDxByNode: ReadonlyMap<string, number>,
-  options: RetainedPixiCompositionOptions = {},
-): RetainedPixiComposition {
+  options: RetainedStageCompositionOptions = {},
+): RetainedStageComposition {
   if (options.lazyPatchIndex && options.verify)
     return createVerifiedComposition(list, build, texts, textOwners, spreadDxByNode, options, options.verify);
   const ownerByIndex = new Map<number, string>();
-  const plan: RetainedPixiPlan = { primitives: [], groups: [] };
+  const plan: RetainedStagePlan = { primitives: [], groups: [] };
   const quad = createQuadView();
   const nine = createNinePatchView();
   const mesh = createTexturedMeshView();
@@ -203,7 +203,7 @@ export function createRetainedPixiComposition(
     for (const primitive of plan.primitives) if (primitive.index >= first && primitive.index < end)
       (primitive as Primitive & { parentId?: string }).parentId = id;
     for (const text of texts) if (text.insertionIndex >= first && text.insertionIndex < end)
-      (text as PixiTextRecord & { parentId?: string }).parentId = id;
+      (text as StageTextRecord & { parentId?: string }).parentId = id;
   };
   for (const root of roots) {
     const span = root.span;
@@ -312,7 +312,7 @@ export function createRetainedPixiComposition(
         plan.groups.push({ id, firstIndex: first, endIndex: end, transform: [1, 0, 0, 1, 0, 0], renderGroup: false, cacheAsTexture: true });
         for (const primitive of plan.primitives) if (primitive.index >= first && primitive.index < end)
           (primitive as Primitive & { parentId?: string }).parentId = id;
-        for (const text of groupTexts) (text as PixiTextRecord & { parentId?: string }).parentId = id;
+        for (const text of groupTexts) (text as StageTextRecord & { parentId?: string }).parentId = id;
       }
     }
   } finally {
@@ -395,7 +395,7 @@ export function createRetainedPixiComposition(
    * the last committed one, and no early return for an unchanged frame. Never commit an unfiltered patch.
    */
   function patch(anims: ReadonlyMap<string, LocalAnim>, rootShifts?: ReadonlyMap<string, readonly [number, number]>,
-    patchOptions: { unfiltered?: boolean } = {}): RetainedPixiPatch | null {
+    patchOptions: { unfiltered?: boolean } = {}): RetainedStagePatch | null {
     const unfiltered = patchOptions.unfiltered === true;
     const refuse = (reason: PatchRefusal, id: string | null): null => { options.onPatchRefused?.(reason, id); return null; };
     if (!ensureIndex()) return refuse("index-stale", null);
@@ -503,7 +503,7 @@ export function createRetainedPixiComposition(
     }
     return plan;
   }
-  function commit(result: RetainedPixiPatch): void {
+  function commit(result: RetainedStagePatch): void {
     // A committed patch came from patch() or patchWireTransform(), so its index already exists.
     if (!ensureIndex()) return;
     for (const [id, matrix] of result.rootPoses) lastRootPoses.set(id, matrix);
@@ -558,7 +558,7 @@ export function createRetainedPixiComposition(
     }
     return clips;
   }
-  function patchWireTransform(id: string, delta: Affine, options: WireTransformOptions = {}): RetainedPixiPatch | null {
+  function patchWireTransform(id: string, delta: Affine, options: WireTransformOptions = {}): RetainedStagePatch | null {
     // A clip moves by the translation alone, so a delta with any other part would leave it behind its children.
     if (options.clips && (options.nodeDeltas || (options.uniformDrawn && options.uniformDrawn !== delta) ||
       !isPureTranslation(delta))) return null;
@@ -572,8 +572,8 @@ export function createRetainedPixiComposition(
     // root would change the animation's immutable build-time reference.
     if (roots.some((root) => root.span && root.span.spanStart < span.spanEnd && span.spanStart < root.span.spanEnd)) return null;
     const primitives: PrimitivePatch[] = [];
-    const hits: RetainedPixiPatch["hits"] = [];
-    const nodeMatrices: RetainedPixiPatch["nodeMatrices"] = [];
+    const hits: RetainedStagePatch["hits"] = [];
+    const nodeMatrices: RetainedStagePatch["nodeMatrices"] = [];
     for (let order = span.spanStart; order < span.spanEnd; order++) {
       const owner = build.order.ids[order];
       const own = nodeDeltas?.get(owner);
@@ -599,13 +599,13 @@ export function createRetainedPixiComposition(
     return { ...(clips?.length ? { clips } : {}), primitives, groups: [], hits, nodeMatrices, sourceReferences: [],
       movedRoots: 1, rootPoses: new Map() };
   }
-  function patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options: { clips?: boolean } = {}): RetainedPixiPatch | null {
+  function patchTranslate(deltas: ReadonlyMap<string, readonly [number, number]>, options: { clips?: boolean } = {}): RetainedStagePatch | null {
     if (!ensureIndex()) return null;
     const clips = clipTranslations(deltas);
     if (clips.length && !options.clips) return null;
     const primitives: PrimitivePatch[] = [];
-    const hits: RetainedPixiPatch["hits"] = [];
-    const nodeMatrices: RetainedPixiPatch["nodeMatrices"] = [];
+    const hits: RetainedStagePatch["hits"] = [];
+    const nodeMatrices: RetainedStagePatch["nodeMatrices"] = [];
     for (const [owner, [dx, dy]] of deltas) {
       if (dx === 0 && dy === 0) continue;
       const entry = build.order.entries.get(owner);
@@ -679,16 +679,16 @@ export function createRetainedPixiComposition(
  * answer comes from the twin, and any difference (or a lazy tripwire) is reported instead of thrown.
  */
 function createVerifiedComposition(
-  list: DrawList<string>, build: DrawListBuild, texts: readonly PixiTextRecord[],
+  list: DrawList<string>, build: DrawListBuild, texts: readonly StageTextRecord[],
   textOwners: ReadonlyMap<string, string>, spreadDxByNode: ReadonlyMap<string, number>,
-  options: RetainedPixiCompositionOptions, verify: NonNullable<RetainedPixiCompositionOptions["verify"]>,
-): RetainedPixiComposition {
-  const lazy = createRetainedPixiComposition(list, build, texts, textOwners, spreadDxByNode,
+  options: RetainedStageCompositionOptions, verify: NonNullable<RetainedStageCompositionOptions["verify"]>,
+): RetainedStageComposition {
+  const lazy = createRetainedStageComposition(list, build, texts, textOwners, spreadDxByNode,
     { ...options, verify: undefined, strictInputs: true });
-  const eager = createRetainedPixiComposition(list, build, texts, textOwners, spreadDxByNode,
+  const eager = createRetainedStageComposition(list, build, texts, textOwners, spreadDxByNode,
     { includeStaticPixelCaches: options.includeStaticPixelCaches });
   if (!sameValue(lazy.plan, eager.plan)) verify.onMismatch("plan", "lazy plan differs from the eager plan");
-  const check = <T>(method: string, run: (composition: RetainedPixiComposition) => T): T => {
+  const check = <T>(method: string, run: (composition: RetainedStageComposition) => T): T => {
     const expected = run(eager);
     try {
       if (!sameValue(run(lazy), expected)) verify.onMismatch(method, "lazy result differs from the eager result");

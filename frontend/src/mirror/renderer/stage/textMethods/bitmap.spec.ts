@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import { createBitmapTextMethod, type BitmapEnvironment } from "./bitmap";
 
 interface DrawCall { method: "fillText" | "strokeText"; text: string; x: number; y: number }
@@ -38,7 +38,7 @@ function createEnv(calls: DrawCall[]): BitmapEnvironment {
 // Stroke width 4 (strokeHalf 2) and a line pitch (40) well past the 18px font box (ascent 14 + descent 4), so
 // a wrong fallback would show up as a wrong y too — the regression this round fixed combined an x shift (the
 // missing `strokeHalf` inset) with a y shift (half-leading) on any label whose pitch exceeds its font box.
-function strokedRecord(baselinePx?: number): PixiTextRecord {
+function strokedRecord(baselinePx?: number): StageTextRecord {
   return {
     key: "label:0:0", insertionIndex: 0, text: "Hi", runs: [{ text: "Hi" }],
     transform: [1, 0, 0, 1, 0, 0],
@@ -46,7 +46,7 @@ function strokedRecord(baselinePx?: number): PixiTextRecord {
       stroke: { color: "#000000", width: 4 }, lineHeight: 40 },
     ...(baselinePx !== undefined
       ? { msdf: { url: "/res/x.ttf", faceKey: "x", measuredAdvance: 16, baselinePx } } : {}),
-  } as unknown as PixiTextRecord;
+  } as unknown as StageTextRecord;
 }
 
 describe("Bitmap text raster origin", () => {

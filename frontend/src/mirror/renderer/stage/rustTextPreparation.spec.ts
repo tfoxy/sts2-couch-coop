@@ -379,7 +379,7 @@ describe("resolveSemanticTextSpec + buildPreparedText — the pure half", () => 
       .toEqual(["Alpha Beta", "Gamma Delta"]);
   });
 
-  it("resolves a shadow into a pixi color/alpha pair and threads it into every run's style", () => {
+  it("resolves a shadow into a stage color/alpha pair and threads it into every run's style", () => {
     const root = node("root", null, { sceneFilePath: "res://scenes/ui/x.tscn" });
     const label = node("label", "root", { shadow: { colorHtml: "#00000080", offsetX: 2, offsetY: 3 } });
     const prepared = assertPrepared(resolve(label, nodeMap([root, label])));
@@ -495,7 +495,7 @@ describe("composePreparedTextRecords", () => {
     expect(records[0].style).toBe(prepared.runs[0].style);
     const again = composePreparedTextRecords(prepared, "label", 9, record, 2);
     expect(again[0].style).toBe(records[0].style);
-    expect(again[0]).not.toBe(records[0]); // the PixiTextRecord itself is a fresh object every call —
+    expect(again[0]).not.toBe(records[0]); // the StageTextRecord itself is a fresh object every call —
     // retainedComposition.ts stamps `parentId` directly onto it, so two builds must never share one.
   });
 });

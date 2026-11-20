@@ -1,5 +1,5 @@
 import type { MirrorRenderer } from "@/mirror/renderer/contracts";
-import { createPixiMirrorRenderer } from "./createPixiMirrorRenderer";
+import { createStageMirrorRenderer } from "./createStageMirrorRenderer";
 import { createRustDrawListExecutor } from "./createRustDrawListExecutor";
 
 /** Reuses Couch's production scene producer, scheduler, resource gates, and interaction runtime. */
@@ -9,5 +9,5 @@ export function createRustMirrorRenderer(
   canvasHost?: HTMLElement | null,
   onStatus?: (phase: "initializing" | "ready" | "failed", reason?: string) => void,
 ): MirrorRenderer {
-  return createPixiMirrorRenderer(stage, defs, canvasHost, onStatus, { backend: "rust", createExecutor: createRustDrawListExecutor });
+  return createStageMirrorRenderer(stage, defs, canvasHost, onStatus, { createExecutor: createRustDrawListExecutor });
 }

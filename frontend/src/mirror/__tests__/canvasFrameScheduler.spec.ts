@@ -232,7 +232,7 @@ describe("canvas frame scheduler", () => {
     // A pinned diagnostic/bench clock: passive demand is always "due now" (immediate booking never stops on
     // its own), but `isIdleSampleStale` reports that this exact instant was already accepted. Booking an
     // empty rAF forever while nothing can change would be a poll, so the stale tick must NOT re-arm itself —
-    // `createPixiMirrorRenderer`'s diagnostic-clock mover calls `armAnimation` explicitly once the clock
+    // `createStageMirrorRenderer`'s diagnostic-clock mover calls `armAnimation` explicitly once the clock
     // actually moves, which is the hook that resumes the chain.
     const h = createHarness();
     h.passiveDue = h.now;

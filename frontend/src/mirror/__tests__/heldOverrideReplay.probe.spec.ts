@@ -24,7 +24,7 @@ vi.mock("@/mirror/spineClip", async (importOriginal) => ({
     retain() {}, release() {}, dispose() {} })),
 }));
 
-import { createPixiMirrorRenderer } from "@/mirror/renderer/pixi/createPixiMirrorRenderer";
+import { createStageMirrorRenderer } from "@/mirror/renderer/stage/createStageMirrorRenderer";
 import { readRendererComparisonConfig, rendererComparisonConfig } from "@/mirror/rendererComparison";
 
 const recording = process.env.COUCHCOOP_HELD_REPLAY;
@@ -61,8 +61,8 @@ describe.skipIf(!recording)("held-override replay probe", () => {
     Object.defineProperties(element, { clientWidth: { value: 1920 }, clientHeight: { value: 1080 } });
     element.getBoundingClientRect = () => ({ x: 0, y: 0, left: 0, top: 0, right: 1920, bottom: 1080, width: 1920, height: 1080, toJSON() {} });
     document.body.append(element);
-    const renderer = createPixiMirrorRenderer(element, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
-      undefined, { backend: "rust", createExecutor: async () => executor() as never });
+    const renderer = createStageMirrorRenderer(element, document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,
+      undefined, { createExecutor: async () => executor() as never });
     const globals = window as unknown as { __mirrorRendererDiagnostics(): { effective: Record<string, unknown>; readiness: string; failure?: string };
       __mirrorSetDiagnosticClock(ms: number): Promise<unknown> };
     const state = createMirrorState();

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { createClipRectView, createDrawList, createQuadView } from "@godot-scene-web/canvas";
-import type { PixiScenePlan, PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageScenePlan, StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import type { ProducerExecutorEvent } from "./producerBuildReasons";
 import { createRustDrawListExecutor } from "./createRustDrawListExecutor";
 import { createCouchCanvasProfile } from "./couchCanvasProfile";
@@ -286,11 +286,11 @@ describe("Rust image byte ownership", () => {
         dispose: () => {},
       },
       encode: (input: { drawList: ReturnType<typeof createDrawList<string>>; revision: number;
-        resolveText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
+        resolveText(record: StageTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
         const text = input.resolveText({ key: "label", insertionIndex: 2, text: "T", runs: [{ text: "T", color: "#804020" }],
           transform: [1, 0, 0, 1, 0, 0],
           resourceRevision: '1:{"family":"Test","url":"/font.ttf","weight":"400","style":"normal"}',
-          style: { fontFamily: "Test", fontSize: 16, fill: "#ffffff" }, tint: 0x8040ff } as PixiTextRecord);
+          style: { fontFamily: "Test", fontSize: 16, fill: "#ffffff" }, tint: 0x8040ff } as StageTextRecord);
         const resources = ["canvas", "bitmap"].map((key) => ({ key, width: 1, height: 1 }));
         return { bytes: new Uint8Array([input.revision]), scene: { version: 2, revision: input.revision,
           width: 1, height: 1, designWidth: 1, designHeight: 1, commands: [], resources: [...resources, text!.resource] },
@@ -324,7 +324,7 @@ describe("Rust image byte ownership", () => {
     const text = { key: "label", insertionIndex: 2, text: "T", runs: [{ text: "T", color: "#804020" }],
       transform: [1, 0, 0, 1, 0, 0],
       resourceRevision: '1:{"family":"Test","url":"/font.ttf","weight":"400","style":"normal"}',
-      style: { fontFamily: "Test", fontSize: 16, fill: "#ffffff" }, tint: 0x8040ff } as PixiTextRecord;
+      style: { fontFamily: "Test", fontSize: 16, fill: "#ffffff" }, tint: 0x8040ff } as StageTextRecord;
     const beforeRenderMs = performance.now();
     await expect(renderer.render(list, [text])).rejects.toThrow("upload failed");
     expect(await renderer.render(list, [text])).toBe(true);
@@ -410,7 +410,7 @@ describe("Rust image byte ownership", () => {
         prepareFonts(corpus?: unknown): Promise<{ accepted: boolean; unresolved: number[] }>;
         snapshot(): Promise<{ id: string; count: number; preparedRows: Array<{ rgbaSha256: string; rgbaBytes: number }>;
           preparedFontManifest: { assets: Array<{ sha256: string }> };
-          productionCssBeforePreparation: unknown; rows: Array<{ input: { record: PixiTextRecord;
+          productionCssBeforePreparation: unknown; rows: Array<{ input: { record: StageTextRecord;
           fontAsset: { url: string }; fontSetStatus: string; fontReady: boolean }; measurements: { runAdvances: number[] };
           diagnostic: { requestedInkWillReadFrequently: boolean }; rgbaSha256: string; rgbaBytes: number }> }>;
         replay(corpus: unknown, ink: boolean): Promise<{ sourceId: string; rows: Array<{ rgbaSha256: string;
@@ -667,8 +667,8 @@ describe("Rust scene viewport", () => {
     const list = createDrawList<string>();
     const quad = createQuadView(); quad.w = quad.h = quad.srcW = quad.srcH = 10; list.pushQuad(quad);
     const firstEvents: ProducerExecutorEvent[] = [], secondEvents: ProducerExecutorEvent[] = [];
-    expect(await renderer.admitScene(list, [], {} as PixiScenePlan, (event) => firstEvents.push(event))).toMatchObject({ presented: true });
-    expect(await renderer.admitScene(list, [], {} as PixiScenePlan, (event) => secondEvents.push(event))).toMatchObject({ presented: true });
+    expect(await renderer.admitScene(list, [], {} as StageScenePlan, (event) => firstEvents.push(event))).toMatchObject({ presented: true });
+    expect(await renderer.admitScene(list, [], {} as StageScenePlan, (event) => secondEvents.push(event))).toMatchObject({ presented: true });
     expect(firstEvents.map((event) => [event.stage, event.operationId, event.mode])).toEqual([
       ["encoded", 1, "full-scene"], ["api-attempt", 1, "full-scene"],
       ["api-accepted", 1, "full-scene"], ["presented", 1, "full-scene"],
@@ -905,8 +905,8 @@ describe("rustFast WP3 executor switches", () => {
         admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
         apply_patch: () => "{}",
         present: async () => JSON.stringify({ presented: true, revision: 1, draws: 2, resourcePending: 0, unsupportedCommands: 0 }) },
-      encode: (input: { texts: readonly PixiTextRecord[];
-        resolveText: (record: PixiTextRecord) => { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
+      encode: (input: { texts: readonly StageTextRecord[];
+        resolveText: (record: StageTextRecord) => { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
         const results = input.texts.map((record) => input.resolveText(record)!);
         return { bytes: new Uint8Array([1]), scene: { version: 2, revision: 1, resources: [], commands: [] },
           resources: results.map((r) => r.resource),
@@ -920,9 +920,9 @@ describe("rustFast WP3 executor switches", () => {
       designWidth: 1, designHeight: 1, onInvalidate: () => {} });
     const style = { fontFamily: "Test", fontSize: 16, fill: "#ffffff" };
     const textA = { key: "a", insertionIndex: 0, text: "Hi", transform: [1, 0, 0, 1, 0, 0],
-      resourceRevision: "1:font", style } as PixiTextRecord;
+      resourceRevision: "1:font", style } as StageTextRecord;
     const textB = { key: "b", insertionIndex: 1, text: "Yo", transform: [1, 0, 0, 1, 0, 0],
-      resourceRevision: "1:font", style } as PixiTextRecord; // the SAME style object reference as `textA`
+      resourceRevision: "1:font", style } as StageTextRecord; // the SAME style object reference as `textA`
     expect(await renderer.render(createDrawList<string>(), [textA, textB])).toBe(true);
     const stats = (window as unknown as { __mirrorRustStats(): { styleCacheHits: number; styleCacheMisses: number } })
       .__mirrorRustStats();
@@ -939,8 +939,8 @@ describe("rustFast WP3 executor switches", () => {
         admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
         apply_patch: () => "{}",
         present: async () => JSON.stringify({ presented: true, revision: 1, draws: 2, resourcePending: 0, unsupportedCommands: 0 }) },
-      encode: (input: { texts: readonly PixiTextRecord[];
-        resolveText: (record: PixiTextRecord) => { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
+      encode: (input: { texts: readonly StageTextRecord[];
+        resolveText: (record: StageTextRecord) => { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
         const results = input.texts.map((record) => input.resolveText(record)!);
         return { bytes: new Uint8Array([1]), scene: { version: 2, revision: 1, resources: [], commands: [] },
           resources: results.map((r) => r.resource),
@@ -954,9 +954,9 @@ describe("rustFast WP3 executor switches", () => {
       designWidth: 1, designHeight: 1, onInvalidate: () => {} });
     const style = { fontFamily: "Test", fontSize: 16, fill: "#ffffff" };
     const textA = { key: "a", insertionIndex: 0, text: "Hi", transform: [1, 0, 0, 1, 0, 0],
-      resourceRevision: "1:font", style } as PixiTextRecord;
+      resourceRevision: "1:font", style } as StageTextRecord;
     const textB = { key: "b", insertionIndex: 1, text: "Yo", transform: [1, 0, 0, 1, 0, 0],
-      resourceRevision: "1:font", style } as PixiTextRecord;
+      resourceRevision: "1:font", style } as StageTextRecord;
     expect(await renderer.render(createDrawList<string>(), [textA, textB])).toBe(true);
     const stats = (window as unknown as { __mirrorRustStats(): { styleCacheHits: number; styleCacheMisses: number } })
       .__mirrorRustStats();
@@ -1526,9 +1526,9 @@ describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
 
   // A one-label scene whose `text` changes every commit, like the idle-combat clock: each commit's resource
   // list carries only the CURRENT text's key, so the previous one becomes unreferenced one commit later.
-  const labelRecord = (text: string): PixiTextRecord => ({ key: "label", insertionIndex: 0, text,
+  const labelRecord = (text: string): StageTextRecord => ({ key: "label", insertionIndex: 0, text,
     runs: [{ text }], transform: [1, 0, 0, 1, 0, 0],
-    style: { fontFamily: "sans-serif", fontSize: 16, fill: "#ffffff" } } as PixiTextRecord);
+    style: { fontFamily: "sans-serif", fontSize: 16, fill: "#ffffff" } } as StageTextRecord);
 
   function setUpRenderer(releaseCalls: Array<ReadonlyArray<{ operation: string; key: string }>>,
     uploadCalls: string[][] = []) {
@@ -1538,8 +1538,8 @@ describe("rustFast WP1 bounded Bitmap text cache (rustTextEvict)", () => {
         admit_scene: () => JSON.stringify({ accepted: true, revision: 1, unsupportedCommands: 0, resourcePending: 0 }),
         apply_patch: () => { throw new Error("unexpected patch"); },
         present: async () => JSON.stringify({ presented: true, revision: 1, draws: 1, resourcePending: 0, unsupportedCommands: 0 }) },
-      encode: (input: { revision: number; texts: readonly PixiTextRecord[];
-        resolveText(record: PixiTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
+      encode: (input: { revision: number; texts: readonly StageTextRecord[];
+        resolveText(record: StageTextRecord): { resource: { key: string; width: number; height: number }; pixels: Uint8Array } | null }) => {
         const resolved = input.resolveText(input.texts[0])!;
         return { bytes: new Uint8Array([1]), scene: { version: 2, revision: input.revision, width: 1, height: 1,
           designWidth: 1, designHeight: 1, commands: [], resources: [resolved.resource] },
@@ -1670,9 +1670,9 @@ describe("rustTextPatch executor", () => {
       } as unknown as CanvasRenderingContext2D;
     }) as never);
   }
-  const clock = (text: string): PixiTextRecord => ({ key: "clock:0:0", insertionIndex: 1, text, labelId: "clock",
+  const clock = (text: string): StageTextRecord => ({ key: "clock:0:0", insertionIndex: 1, text, labelId: "clock",
     runs: [{ text }], transform: [1, 0, 0, 1, 4, 4],
-    style: { fontFamily: "sans-serif", fontSize: 16, fill: "#ffffff" } } as PixiTextRecord);
+    style: { fontFamily: "sans-serif", fontSize: 16, fill: "#ffffff" } } as StageTextRecord);
   // The real serializer; an engine that logs every call and accepts whatever it is handed.
   async function setUp(engineExtras: Record<string, unknown> = { patch_resources: true }) {
     const calls: Array<{ call: string; body?: Record<string, unknown>; bytes?: number }> = [];
@@ -1722,11 +1722,11 @@ describe("rustTextPatch executor", () => {
       expect(newKey).toContain(":04:01:");
       // The verify hook, side-effect free: the committed command is the one the patch's own carrier produces, and
       // a rebuilt record asking for anything else (here other text, hence another raster key) is reported.
-      const verify = (renderer as unknown as { verifyTextCommands(records: PixiTextRecord[]): string[] }).verifyTextCommands;
+      const verify = (renderer as unknown as { verifyTextCommands(records: StageTextRecord[]): string[] }).verifyTextCommands;
       const uploadsBefore = calls.length;
       expect(verify([clock("04:01")])).toEqual([]);
       expect(verify([clock("04:59")])).toEqual(["tclock:0:0: patched record differs from the rebuilt one"]);
-      expect(verify([{ ...clock("04:01"), key: "nope:0:0" } as PixiTextRecord])).toEqual(["tnope:0:0: no command"]);
+      expect(verify([{ ...clock("04:01"), key: "nope:0:0" } as StageTextRecord])).toEqual(["tnope:0:0: no command"]);
       expect(calls.length).toBe(uploadsBefore);
       expect(patch.resources.map((resource) => resource.key)).toContain(newKey);
       expect(patch.resources.map((resource) => resource.key)).not.toContain(oldKey);
@@ -1749,9 +1749,9 @@ describe("rustTextPatch executor", () => {
       const oldKey = (admitted.resources as Array<{ key: string }>).find((resource) => resource.key.startsWith("text:"))!.key;
       // Same text, with an outline added this time; this alone already changes the resource key (the stroke
       // is part of `record.style`), so this patch is only the setup for the real proof below.
-      const outlined = (text: string, baselinePx: number): PixiTextRecord => ({ ...clock(text),
+      const outlined = (text: string, baselinePx: number): StageTextRecord => ({ ...clock(text),
         style: { ...clock(text).style, stroke: { color: "#000000", width: 4 } },
-        msdf: { url: "/res/fixture.ttf", faceKey: "fixture", measuredAdvance: 40, baselinePx } } as PixiTextRecord);
+        msdf: { url: "/res/fixture.ttf", faceKey: "fixture", measuredAdvance: 40, baselinePx } } as StageTextRecord);
       calls.length = 0;
       expect(await renderer.patchScene({ primitives: [], groups: [], texts: [outlined("04:00", 18)] }))
         .toMatchObject({ presented: true });

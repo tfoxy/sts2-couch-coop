@@ -1,4 +1,4 @@
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import type { TextInkRaster, CorpusRow } from "./types";
 
 export interface RustTextResource { key: string; width: number; height: number; pixels: Uint8Array }
@@ -22,7 +22,7 @@ export interface RustTextPrepareOptions {
 }
 export interface RustTextMethod<Carrier> {
   readonly id: string;
-  prepare(record: PixiTextRecord, options?: RustTextPrepareOptions): Carrier | null;
+  prepare(record: StageTextRecord, options?: RustTextPrepareOptions): Carrier | null;
   resourceKeys(carrier: Carrier): readonly string[];
   uploads(carrier: Carrier, maxBytes: number): readonly RustTextResource[];
   stats(): Readonly<Record<string, number>>;

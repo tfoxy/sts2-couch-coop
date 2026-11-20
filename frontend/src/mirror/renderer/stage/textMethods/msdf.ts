@@ -1,10 +1,10 @@
 import type { HbGpuFont, HbGpuShapedGlyph } from "@godot-scene-web/hb-gpu";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import { MsdfGenerator, type MsdfGeneration } from "@godot-scene-web/canvas/msdf-generator";
 import type { RustGlyphTextCarrier } from "@godot-scene-web/canvas/rust-prototype";
 
 /** The producer's measured run is the placement authority; these values come from its exact role face. */
-export interface MsdfRunRecord extends PixiTextRecord {
+export interface MsdfRunRecord extends StageTextRecord {
   msdf?: { url: string; faceKey: string; measuredAdvance: number; baselinePx: number };
 }
 
@@ -66,7 +66,7 @@ function tinted(color: readonly [number, number, number, number], tint: number,
 export function carrierForMsdfRun(record: MsdfRunRecord, run: ShapedMsdfRun,
   placements: ReadonlyMap<number, MsdfPlacement>, gammaBlend: boolean): RustGlyphTextCarrier | null {
   const linear = !gammaBlend;
-  const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
+  const style = record.style as StageTextRecord["style"] & Record<string, unknown>;
   const fill = rgba(style.fill ?? "#ffffff");
   if (!fill) return null;
   const tint = record.tint ?? 0xffffff;
@@ -113,7 +113,7 @@ export function shapeMsdfRun(record: MsdfRunRecord, font: HbGpuFont): MsdfShapeR
   const meta = record.msdf;
   if (!meta?.url || !Number.isFinite(meta.measuredAdvance) || !Number.isFinite(meta.baselinePx))
     return { ok: false, reason: "font-source" };
-  const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
+  const style = record.style as StageTextRecord["style"] & Record<string, unknown>;
   const fontPx = Number(style.fontSize);
   if (!Number.isFinite(fontPx) || fontPx <= 0 || font.upem <= 0)
     return { ok: false, reason: "metrics" };

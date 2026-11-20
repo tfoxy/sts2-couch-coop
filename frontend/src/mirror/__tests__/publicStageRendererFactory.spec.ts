@@ -3,14 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const backendMocks = vi.hoisted(() => ({
   dom: vi.fn(),
   canvas: vi.fn(),
-  pixi: vi.fn(),
   rust: vi.fn()
 }));
 
 vi.mock("@/mirror/mirrorRenderer", () => ({ createMirrorRenderer: backendMocks.dom }));
 vi.mock("@/mirror/canvas/canvasRenderer", () => ({ createCanvasMirrorRenderer: backendMocks.canvas }));
-vi.mock("@/mirror/renderer/pixi/createPixiMirrorRenderer", () => ({ createPixiMirrorRenderer: backendMocks.pixi }));
-vi.mock("@/mirror/renderer/pixi/createRustMirrorRenderer", () => ({ createRustMirrorRenderer: backendMocks.rust }));
+vi.mock("@/mirror/renderer/stage/createRustMirrorRenderer", () => ({ createRustMirrorRenderer: backendMocks.rust }));
 
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import {
@@ -37,7 +35,6 @@ function hosts(): { stage: HTMLElement; defs: SVGElement } {
 beforeEach(() => {
   backendMocks.dom.mockReset().mockReturnValue(fakeRenderer);
   backendMocks.canvas.mockReset();
-  backendMocks.pixi.mockReset();
   backendMocks.rust.mockReset().mockReturnValue(fakeRenderer);
   fakeRenderer.dispose.mockReset();
   mirrorSettings.stage = "dom";
@@ -79,7 +76,7 @@ describe("GPU stage failure without DOM fallback", () => {
     }
   });
 
-  it.each(["canvas", "pixi", "rust"] as const)("keeps %s selected after a construction failure", (backend) => {
+  it.each(["canvas", "rust"] as const)("keeps %s selected after a construction failure", (backend) => {
     setComparisonStageBackend(backend);
     backendMocks[backend === "canvas" ? "rust" : backend].mockImplementationOnce(() => { throw new Error("WebGL2 unavailable"); });
     const { stage, defs } = hosts();
@@ -93,7 +90,7 @@ describe("GPU stage failure without DOM fallback", () => {
     if (backend === "canvas") expect(mirrorSettings.runtimeStage).toBe("canvas");
   });
 
-  it.each(["canvas", "pixi", "rust"] as const)("keeps %s mounted after a runtime failure", (backend) => {
+  it.each(["canvas", "rust"] as const)("keeps %s mounted after a runtime failure", (backend) => {
     setComparisonStageBackend(backend);
     const revision = rendererComparisonViewRevision.value;
     let onStatus!: (phase: "initializing" | "ready" | "failed", reason?: string) => void;
@@ -116,7 +113,7 @@ describe("GPU stage failure without DOM fallback", () => {
     renderer.dispose();
   });
 
-  it.each(["canvas", "pixi", "rust"] as const)("reports %s context loss without switching backends", (backend) => {
+  it.each(["canvas", "rust"] as const)("reports %s context loss without switching backends", (backend) => {
     setComparisonStageBackend(backend);
     const actual = backend === "canvas" ? "rust" : backend;
     backendMocks[actual].mockImplementationOnce((stage: HTMLElement) => {

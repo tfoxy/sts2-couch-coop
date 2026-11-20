@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import { planTextPatch, textOnlyChange, type TextPatchContext } from "./textPatchPlan";
 
@@ -41,7 +41,7 @@ describe("textOnlyChange", () => {
 
 describe("planTextPatch", () => {
   const record = (key: string, text: string, extra: Record<string, unknown> = {}) =>
-    ({ key, insertionIndex: 3, text, transform: [1, 0, 0, 1, 10, 4], labelId: "clock", style: {}, ...extra } as PixiTextRecord);
+    ({ key, insertionIndex: 3, text, transform: [1, 0, 0, 1, 10, 4], labelId: "clock", style: {}, ...extra } as StageTextRecord);
   const committed = new Map([["clock:0:0", record("clock:0:0", "04:00", { parentId: "static:bar" })]]);
   const context = (overrides: Partial<TextPatchContext> = {}): TextPatchContext => ({
     keysOf: (id) => (id === "clock" ? ["clock:0:0"] : undefined),

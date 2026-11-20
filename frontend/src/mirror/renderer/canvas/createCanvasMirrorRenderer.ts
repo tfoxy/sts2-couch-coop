@@ -404,7 +404,7 @@ export function createCanvasMirrorRenderer(
         return;
       }
       state = next;
-      // Eager-scroll anchors follow the bases this reconcile draws (see the Pixi renderer's reconcile).
+      // Eager-scroll anchors follow the bases this reconcile draws (see the Stage renderer's reconcile).
       interaction.rebaseLocalTargets(next);
       const at = nowMs();
 

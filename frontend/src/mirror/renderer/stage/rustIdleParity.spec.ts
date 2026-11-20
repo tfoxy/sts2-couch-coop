@@ -8,7 +8,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDrawList, createQuadView, type DrawList } from "@godot-scene-web/canvas";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import * as serializer from "@godot-scene-web/canvas/rust-prototype";
 import type { RustTextCarrier } from "@godot-scene-web/canvas/rust-prototype";
 import * as glue from "@couchcoop/rust-prototype-glue";
@@ -18,7 +18,7 @@ import type { PaintOrderEntry } from "@/mirror/canvas/paintOrder";
 import { createIdleAnimSample, idleAnimPlanFor, sampleIdleAnim, type IdleAnimPlan } from "@/mirror/canvas/idleAnim";
 import { loopPhaseAt, type LoopTiming } from "@/mirror/canvas/tweenLoop";
 import { affineMul, type Affine } from "@/mirror/affine";
-import { createRetainedPixiComposition, type RetainedPixiComposition } from "./retainedComposition";
+import { createRetainedStageComposition, type RetainedStageComposition } from "./retainedComposition";
 import { buildRustIdleSet, type IdleRootSpec, type RustIdleSetInput } from "./rustIdleDescriptor";
 
 type Serializer = typeof serializer & {
@@ -103,7 +103,7 @@ function fixture() {
   const texts = [
     { key: "dmg", insertionIndex: 2, transform: [0.9, 0, 0, 0.9, 40.25, 6.5], text: "12", style: {} },
     { key: "lbl", insertionIndex: 6, transform: [1.1, 0.05, -0.05, 1.1, 702.5, 99.75], text: "x2", style: {} },
-  ] as unknown as PixiTextRecord[];
+  ] as unknown as StageTextRecord[];
   const owners = new Map([["dmg", "iconB"], ["lbl", "label"]]);
   const spread = new Map([["outer", 4], ["inner", 7.5]]);
   return { list, build, texts, owners, spread, roots };
@@ -111,7 +111,7 @@ function fixture() {
 
 /** The executor's patch encoding (`encodeRetainedPatch`): a quad takes the pose as `m`, a text as `localTransform`. */
 function patchPathMatrices(scene: serializer.RustSceneSnapshot, revision: number,
-  patch: NonNullable<ReturnType<RetainedPixiComposition["patch"]>>) {
+  patch: NonNullable<ReturnType<RetainedStageComposition["patch"]>>) {
   const indexes = gsw.rustSceneCommandIndex(scene);
   const toRustId = (id: string) => id.startsWith("text:") ? `t${id.slice(5)}` : id;
   const updates = patch.primitives.map((change) => {
@@ -129,7 +129,7 @@ function patchPathMatrices(scene: serializer.RustSceneSnapshot, revision: number
 describe.skipIf(!available)("rustIdleInRust parity (Rust idleEvaluate vs the retained patch path)", () => {
   it("evaluates every target's command matrix bit for bit, across clocks and committed patches", () => {
     const { list, build, texts, owners, spread, roots } = fixture();
-    const composition = createRetainedPixiComposition(list as DrawList<string>, build, texts, owners, spread);
+    const composition = createRetainedStageComposition(list as DrawList<string>, build, texts, owners, spread);
     // The fixture exercises each mode: the holder and the orb are groups, the label, outer and inner are primitives.
     expect(composition.plan.groups.map(({ id }) => id).sort()).toEqual(["anim:holder", "anim:orb"]);
     const carriers = new Map<string, RustTextCarrier>(texts.map((record) => [record.key, {

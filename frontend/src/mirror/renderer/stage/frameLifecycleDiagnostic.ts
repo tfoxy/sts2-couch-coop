@@ -1,6 +1,6 @@
 /** Opt-in, bounded frame attribution. Times use the ordinary performance clock. */
 export type FrameSource = "animation" | "reconcile" | "texture" | "refinement" | "local" | "clock";
-export type FramePhase = "input" | "sample" | "prepare" | "patch" | "build" | "pixi" | "publish";
+export type FramePhase = "input" | "sample" | "prepare" | "patch" | "build" | "executor" | "publish";
 
 export interface FrameLifecycleRow {
   id: number;

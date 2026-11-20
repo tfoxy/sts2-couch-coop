@@ -7,20 +7,20 @@ import { baselineOf, type TextLineMetrics } from "@/mirror/canvas/textLayout";
 
 export function nativeTextOriginCorrection(pitchPx:number, outlinePx:number, metrics:TextLineMetrics) {
   const strokeHalf=outlinePx/2,fontBox=metrics.ascent+metrics.descent;
-  const pixiBaseline=strokeHalf+metrics.ascent+Math.max(0,(pitchPx-fontBox)/2);
-  return { x:-strokeHalf, y:baselineOf(0,pitchPx,metrics)-pixiBaseline };
+  const stageBaseline=strokeHalf+metrics.ascent+Math.max(0,(pitchPx-fontBox)/2);
+  return { x:-strokeHalf, y:baselineOf(0,pitchPx,metrics)-stageBaseline };
 }
 
-/** Pixi drop shadows keep colour and alpha in separate fields. */
-export function pixiShadowColor(color: string): { color: string; alpha: number } | null {
+/** Stage drop shadows keep colour and alpha in separate fields. */
+export function stageShadowColor(color: string): { color: string; alpha: number } | null {
   const hex = color.startsWith("#") ? color.slice(1) : color;
   if (!/^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(hex)) return null;
   return { color: `#${hex.slice(0, 6)}`, alpha: hex.length === 8 ? parseInt(hex.slice(6), 16) / 255 : 1 };
 }
 
-/** Canvas carriers need the Pixi shadow's color alpha in the shadow paint only, not on glyph paint. */
+/** Canvas carriers need the stage shadow's color alpha in the shadow paint only, not on glyph paint. */
 export function rustTextShadowCssColor(color: string, alpha: number): string | null {
-  const parsed = pixiShadowColor(color);
+  const parsed = stageShadowColor(color);
   if (!parsed || !Number.isFinite(alpha)) return null;
   const hex = parsed.color.slice(1);
   const a = Math.max(0, Math.min(1, parsed.alpha * alpha));

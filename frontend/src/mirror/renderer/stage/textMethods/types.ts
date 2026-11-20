@@ -1,4 +1,4 @@
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 
 export type TextInkRaster = {
   recordKey: string; resourceKey: string; submissionRevision: number; sceneRevision: number | null;
@@ -9,7 +9,7 @@ export type TextInkRaster = {
   inkDrawMs: number | null; scratchConversionMs: number | null; scratchDrawMs: number | null;
   getImageDataMs: number | null; pixelViewMs: number | null; outcome: string;
 };
-export type CorpusInput = { record: PixiTextRecord; font: string; fontReady: boolean; fontSetStatus: string | null;
+export type CorpusInput = { record: StageTextRecord; font: string; fontReady: boolean; fontSetStatus: string | null;
   fontAsset: { family: string; url: string; weight: string | null; style: string | null } | null;
   fontFaces: { family: string; style: string; weight: string; stretch: string; status: string }[] };
 type CorpusMeasurements = { width: number; actualBoundingBoxAscent: number; actualBoundingBoxDescent: number;

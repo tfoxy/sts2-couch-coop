@@ -4,8 +4,6 @@
  * designed to leave the submitted scene unchanged; `rustFastVerify=1` shadow-checks that at a CPU cost,
  * so it is never part of the umbrella.
  *
- * The Pixi backend ignores every Rust item. `ccPaintOrderReuse` predates this bundle and keeps applying
- * to both backends on its own.
  */
 export interface RustFastFlags {
   omitStaticPixelCaches: boolean;
@@ -80,22 +78,20 @@ export const RUST_FAST_SWITCHES = {
   glBackend: "rustGlBackend",
 } as const satisfies Record<Exclude<keyof RustFastFlags, "verify">, string>;
 
-export function resolveRustFastFlags(query: URLSearchParams, backend: "pixi" | "rust"): RustFastFlags {
-  const rust = backend === "rust";
-  const umbrella = rust && query.get("rustFast") !== "0";
-  const item = (name: string, applies: boolean) => {
-    if (!applies) return false;
+export function resolveRustFastFlags(query: URLSearchParams): RustFastFlags {
+  const umbrella = query.get("rustFast") !== "0";
+  const item = (name: string) => {
     const value = query.get(name);
     return value === "1" || (umbrella && value !== "0");
   };
-  const flags = { verify: rust && query.get("rustFastVerify") === "1" } as RustFastFlags;
+  const flags = { verify: query.get("rustFastVerify") === "1" } as RustFastFlags;
   for (const [key, name] of Object.entries(RUST_FAST_SWITCHES) as Array<[keyof typeof RUST_FAST_SWITCHES, string]>)
-    flags[key] = item(name, rust || key === "paintOrderReuse");
+    flags[key] = item(name);
   return flags;
 }
 
-export function rustFastFlagsFromLocation(backend: "pixi" | "rust"): RustFastFlags {
-  return resolveRustFastFlags(new URLSearchParams(window.location.search), backend);
+export function rustFastFlagsFromLocation(): RustFastFlags {
+  return resolveRustFastFlags(new URLSearchParams(window.location.search));
 }
 
 /**
@@ -110,12 +106,11 @@ export function rustFastFlagsFromLocation(backend: "pixi" | "rust"): RustFastFla
 export type RustPresentMode = "surface" | "direct" | "preserved" | "preserved-desync";
 const RUST_PRESENT_MODES = new Set<RustPresentMode>(["surface", "direct", "preserved", "preserved-desync"]);
 
-export function resolveRustPresentMode(query: URLSearchParams, backend: "pixi" | "rust"): RustPresentMode {
-  if (backend !== "rust") return "surface";
+export function resolveRustPresentMode(query: URLSearchParams): RustPresentMode {
   const value = query.get("rustPresent");
   return RUST_PRESENT_MODES.has(value as RustPresentMode) ? value as RustPresentMode : "preserved-desync";
 }
 
-export function rustPresentModeFromLocation(backend: "pixi" | "rust"): RustPresentMode {
-  return resolveRustPresentMode(new URLSearchParams(window.location.search), backend);
+export function rustPresentModeFromLocation(): RustPresentMode {
+  return resolveRustPresentMode(new URLSearchParams(window.location.search));
 }

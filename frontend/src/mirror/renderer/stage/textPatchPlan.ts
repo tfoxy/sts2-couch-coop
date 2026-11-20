@@ -1,8 +1,8 @@
 // rustTextPatch — the pure half of the text-only retained patch: which wire changes are text-only, and whether a
-// changed label can be re-prepared in place. `createPixiMirrorRenderer.ts` supplies the committed build's state
+// changed label can be re-prepared in place. `createStageMirrorRenderer.ts` supplies the committed build's state
 // through `TextPatchContext`; nothing here reads the DOM or the renderer, so every refusal is unit-testable.
 
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import type { MirrorNode } from "@/mirror/sceneTree";
 import { sameFieldValue } from "./heldOverrides";
 
@@ -31,7 +31,7 @@ export interface TextPatchContext {
   /** The committed build's text record keys for a label, in order (none: it drew no text). */
   keysOf(id: string): readonly string[] | undefined;
   /** The committed record for a key. */
-  committedText(key: string): PixiTextRecord | undefined;
+  committedText(key: string): StageTextRecord | undefined;
   /** Whether the committed build prepared this label (its paint record is retained). */
   built(id: string): boolean;
   /** Paint-order position of the label in the committed build. */
@@ -47,7 +47,7 @@ export interface TextPatchContext {
   /** Whether a committed patch changed this record's alpha since the build. */
   committedAlpha(key: string): boolean;
   /** Re-prepare the label from its committed paint record, as the build's `semanticText` would. */
-  prepare(id: string): { records: PixiTextRecord[] } | { refusal: string };
+  prepare(id: string): { records: StageTextRecord[] } | { refusal: string };
 }
 
 /**
@@ -61,8 +61,8 @@ export interface TextPatchContext {
  * - `text-prep:<reason>`: preparation refused (a pending font, unresolved text);
  * - `text-shape`: a different record shape (line or run count, keys) or an inline image.
  */
-export function planTextPatch(ids: Iterable<string>, ctx: TextPatchContext): PixiTextRecord[] | string {
-  const records: PixiTextRecord[] = [];
+export function planTextPatch(ids: Iterable<string>, ctx: TextPatchContext): StageTextRecord[] | string {
+  const records: StageTextRecord[] = [];
   for (const id of ids) {
     const keys = ctx.keysOf(id), order = ctx.orderOf(id);
     if (!keys?.length || !ctx.built(id) || order === undefined) return "text-not-drawn";
@@ -81,8 +81,8 @@ export function planTextPatch(ids: Iterable<string>, ctx: TextPatchContext): Pix
       if (record.key !== keys[i] || !committed || (record as { inlineImage?: unknown }).inlineImage ||
         (committed as { inlineImage?: unknown }).inlineImage) return "text-shape";
       // The composition stamped the committed record's group; the re-prepared one draws through the same group.
-      const parentId = (committed as PixiTextRecord & { parentId?: string }).parentId;
-      if (parentId !== undefined) (record as PixiTextRecord & { parentId?: string }).parentId = parentId;
+      const parentId = (committed as StageTextRecord & { parentId?: string }).parentId;
+      if (parentId !== undefined) (record as StageTextRecord & { parentId?: string }).parentId = parentId;
       records.push(record);
     }
   }

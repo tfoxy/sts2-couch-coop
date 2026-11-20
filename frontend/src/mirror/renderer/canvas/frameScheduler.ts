@@ -895,7 +895,7 @@ export function createCanvasFrameScheduler<TState extends CanvasFrameSchedulerSt
     // No authored cadence cap: an idle-only tick is always booked (see armAnimation), so without this check a
     // pinned diagnostic clock would resample and retry a blocked admission on every one of those bookings
     // forever. This does NOT re-arm — booking an empty rAF forever while nothing can change is a poll, which
-    // this scheduler's contract forbids — so the chain goes fully quiet. `createPixiMirrorRenderer`'s
+    // this scheduler's contract forbids — so the chain goes fully quiet. `createStageMirrorRenderer`'s
     // diagnostic-clock mover calls `armAnimation` itself the instant it changes the clock, which is the hook
     // that resumes it. `isIdleSampleStale`'s own contract keeps this inert on the renderer's real clock, even
     // a browser-coarsened one that CAN repeat `at` across genuinely distinct frames (unlike a pinned one,

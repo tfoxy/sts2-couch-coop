@@ -1,7 +1,7 @@
 import { computed, isReactive } from "vue";
 import { describe, expect, it } from "vitest";
 
-import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/pixi/textMethods";
+import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/stage/textMethods";
 
 import type { GpuInfo } from "@godot-scene-web/html";
 

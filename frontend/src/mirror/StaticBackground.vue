@@ -69,7 +69,7 @@ const renderer = inject(MIRROR_RENDERER_KEY, shallowRef(null));
 // leaves this slot without a DOM image until the viewer retries or selects DOM.
 const usesStageTexture = computed(
   () =>
-    (requestedStageBackend() === "canvas" || requestedStageBackend() === "pixi" || requestedStageBackend() === "rust") &&
+    (requestedStageBackend() === "canvas" || requestedStageBackend() === "rust") &&
     (renderer.value === null || renderer.value?.setStaticBackgroundSource !== undefined)
 );
 

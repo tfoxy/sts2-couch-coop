@@ -87,7 +87,7 @@ function canvasBackendRequested(): boolean {
     return false;
   }
   const backend = new URLSearchParams(window.location.search).get("stage");
-  return backend === "canvas" || backend === "pixi" || backend === "rust";
+  return backend === "canvas" || backend === "rust";
 }
 
 let mode: StageFitMode = readStageFit();

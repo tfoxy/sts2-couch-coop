@@ -1,4 +1,4 @@
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 import { drawRustTextRuns } from "../rustTextRaster";
 import { offsetRustTextCarrierTransform } from "@/mirror/renderer/semanticTextLayout";
 import type { RustTextMethod, BitmapTextCarrier, RustTextResource } from "./RustTextMethod";
@@ -9,13 +9,13 @@ import type { TextInkRaster, CorpusRow } from "./types";
  * the SAME field MSDF reads — see `msdf.ts`'s `MsdfRunRecord`). It already bakes in `strokeHalf` and the
  * line's half-leading, so a record carrying it is placed by it directly rather than re-derived here.
  */
-interface BitmapRunRecord extends PixiTextRecord {
+interface BitmapRunRecord extends StageTextRecord {
   msdf?: { baselinePx: number };
 }
 
 export interface BitmapEnvironment {
   canvas: HTMLCanvasElement;
-  textResourceKey(record: PixiTextRecord): string;
+  textResourceKey(record: StageTextRecord): string;
   readPixels(source: CanvasImageSource, key: string, width: number, height: number,
     raster?: TextInkRaster, zeroCopy?: boolean, emitResourceEvent?: boolean): RustTextResource;
   textInkDiagnostics: boolean;
@@ -71,8 +71,8 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
         else { env.textInkCurrentSubmission!.rasters.push(raster); env.textInkDiagnosticEvents.push(raster); }
       }
       try {
-        const style = record.style as PixiTextRecord["style"] & Record<string, unknown>;
-        // The accepted producer emits one positioned record per line/run. Do not silently flatten Pixi-only
+        const style = record.style as StageTextRecord["style"] & Record<string, unknown>;
+        // The accepted producer emits one positioned record per line/run. Do not silently flatten unsupported
         // typography that this Canvas2D carrier cannot reproduce.
         if ((style.align ?? "left") !== "left" || style.wordWrap === true ||
             Number(style.leading ?? 0) !== 0 || style.breakWords === true) {
@@ -116,7 +116,7 @@ export function createBitmapTextMethod(env: BitmapEnvironment): BitmapTextMethod
         const inkAscent = Math.max(metrics.actualBoundingBoxAscent, metrics.fontBoundingBoxAscent || size);
         const inkDescent = Math.max(metrics.actualBoundingBoxDescent, metrics.fontBoundingBoxDescent || size * 0.25);
         // `record.msdf.baselinePx` is the producer's authority on where this run's baseline sits in its line box
-        // (`rustTextPreparation.ts:231-237`'s `rasterBaseline`, in Pixi's `CanvasTextGenerator` convention): the
+        // (`rustTextPreparation.ts`'s `rasterBaseline`, in the stage's raster convention): the
         // pen starts at `strokeHalf` and the baseline is `strokeHalf + fontAscent + halfLeading` below it. The
         // fallback (no `msdf`, e.g. a record built outside full text preparation) recomputes the same formula
         // from THIS run's own face metrics — `fontBoundingBoxAscent || size`, the SAME ascent preparation's

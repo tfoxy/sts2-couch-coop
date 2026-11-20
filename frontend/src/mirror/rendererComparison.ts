@@ -1,15 +1,11 @@
 import { reactive, ref } from "vue";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 
-export type ComparisonBackend = "dom" | "canvas" | "pixi" | "rust";
+export type ComparisonBackend = "dom" | "canvas" | "rust";
 export type ComparisonPixels = "direct" | "dirty" | "dirty-preserved" | "dirty-copy" | "layers" | "surfaces";
-export type ComparisonPixiScene = "legacy" | "retained";
-export type ComparisonPixiText = "native" | "slug" | "slug-cached";
 
 export interface RendererComparisonConfig {
   backend: ComparisonBackend;
-  pixiScene: ComparisonPixiScene;
-  pixiText: ComparisonPixiText;
   cpuIncremental: boolean;
   gpuCommands: boolean;
   textCache: "off" | "gpu";
@@ -20,16 +16,15 @@ export interface RendererComparisonConfig {
   animationReferenceReuse: boolean;
 }
 
-export type ComparisonPresetId = "dom" | "canvas" | "text" | "pixi" | "rust" | "full" | "cpu" | "gpu" | "dirty" | "layers" | "surfaces" | "preserved" | "copy" | "cpuPrep" | "sourceFrame" | "cpuBest";
+export type ComparisonPresetId = "dom" | "canvas" | "text" | "rust" | "full" | "cpu" | "gpu" | "dirty" | "layers" | "surfaces" | "preserved" | "copy" | "cpuPrep" | "sourceFrame" | "cpuBest";
 const canvasPreset = (changes: Partial<RendererComparisonConfig> = {}): RendererComparisonConfig => ({
-  backend: "canvas", cpuIncremental: true, gpuCommands: true, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native", ...changes
+  backend: "canvas", cpuIncremental: true, gpuCommands: true, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, ...changes
 });
 export const RENDERER_COMPARISON_PRESETS: Record<ComparisonPresetId, RendererComparisonConfig> = {
-  dom: { backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
+  dom: { backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false },
   canvas: canvasPreset(), text: canvasPreset({ textCache: "gpu" }),
-  pixi: { backend: "pixi", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
   // Exploratory adapter over the same DrawList producer; intentionally has no independent CPU/pixel switches.
-  rust: { backend: "rust", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native" },
+  rust: { backend: "rust", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false },
   full: canvasPreset({ cpuIncremental: false, gpuCommands: false }),
   cpu: canvasPreset({ gpuCommands: false }), gpu: canvasPreset({ cpuIncremental: false }),
   dirty: canvasPreset({ pixels: "dirty" }), layers: canvasPreset({ pixels: "layers" }),
@@ -44,26 +39,16 @@ export const RENDERER_COMPARISON_PRESETS: Record<ComparisonPresetId, RendererCom
 
 export type RendererPhase = "initializing" | "active" | "failed";
 
-export interface PixiTextRuntimeStatus {
-  requested: ComparisonPixiText;
-  actual: ComparisonPixiText | "mixed";
-  native: number;
-  slug: number;
-  slugCached: number;
-  reasons: Readonly<Record<string, number>>;
-}
-
 export interface RendererRuntimeStatus {
   requested: RendererComparisonConfig;
   actualBackend: ComparisonBackend | null;
   actualConfig: RendererComparisonConfig | null;
   phase: RendererPhase;
   reason: string | null;
-  pixiText: PixiTextRuntimeStatus | null;
 }
 
 const DEFAULT_CONFIG: RendererComparisonConfig = {
-  backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false, pixiScene: "retained", pixiText: "native"
+  backend: "dom", cpuIncremental: false, gpuCommands: false, textCache: "off", pixels: "direct", structureReuse: false, textPreparationReuse: false, sourceFrameReuse: false, animationReferenceReuse: false
 };
 
 export function comparisonEnabled(search = typeof window === "undefined" ? "" : window.location.search): boolean {
@@ -71,7 +56,7 @@ export function comparisonEnabled(search = typeof window === "undefined" ? "" : 
 }
 
 /**
- * Public settings intentionally persist only DOM/Canvas. The developer-only Pixi and Rust routes are
+ * Public settings intentionally persist only DOM/Canvas. The developer-only Rust route is
  * honored on a comparison URL load without changing the saved public stage choice.
  */
 export function rendererBackendForPageLoad(
@@ -80,7 +65,7 @@ export function rendererBackendForPageLoad(
 ): ComparisonBackend {
   const params = new URLSearchParams(search);
   const requested = params.get("stage");
-  if (comparisonEnabled(search) && (requested === "pixi" || requested === "rust")) return requested;
+  if (comparisonEnabled(search) && requested === "rust") return requested;
   return publicStage;
 }
 
@@ -89,9 +74,7 @@ export function readRendererComparisonConfig(search = typeof window === "undefin
   const backend = params.get("stage");
   const pixels = params.get("cmpPixels");
   const config: RendererComparisonConfig = {
-    backend: backend === "canvas" || backend === "pixi" || (backend === "rust" && comparisonEnabled(search)) ? backend : "dom",
-    pixiScene: params.get("pixiScene") === "legacy" ? "legacy" : "retained",
-    pixiText: pixiTextMode(params.get("pixiText")),
+    backend: backend === "canvas" || (backend === "rust" && comparisonEnabled(search)) ? backend : "dom",
     cpuIncremental: comparisonEnabled(search) ? params.get("cmpCpu") !== "off" : true,
     gpuCommands: comparisonEnabled(search) ? params.get("cmpGpu") !== "off" : true,
     textCache: params.get("canvasTextCache") === "gpu" ? "gpu" : "off",
@@ -106,7 +89,7 @@ export function readRendererComparisonConfig(search = typeof window === "undefin
   return normalizedComparisonConfig(config);
 }
 
-/** The current view-mount contract shared by the Canvas and Pixi runtimes. */
+/** The current view-mount contract shared by the Canvas and Rust runtimes. */
 const initialSearch = typeof window === "undefined" ? "" : window.location.search;
 export const rendererComparisonConfig = reactive({
   ...readRendererComparisonConfig(initialSearch),
@@ -125,14 +108,14 @@ export function applyViewerStage(stage: "dom" | "canvas", win = window): void {
   const next = normalizedComparisonConfig({ ...rendererComparisonConfig, backend: stage });
   Object.assign(rendererComparisonConfig, next);
   setRendererRuntimeStatus({ requested: { ...next }, actualBackend: null, actualConfig: null,
-    phase: "initializing", reason: null, pixiText: null });
+    phase: "initializing", reason: null });
   rendererComparisonViewRevision.value++;
 }
 
 /** Recreate only the scene view after a device-local renderer choice changes. */
 export function remountViewerRenderer(): void {
   setRendererRuntimeStatus({ requested: { ...rendererComparisonConfig }, actualBackend: null, actualConfig: null,
-    phase: "initializing", reason: null, pixiText: null });
+    phase: "initializing", reason: null });
   rendererComparisonViewRevision.value++;
 }
 
@@ -156,7 +139,7 @@ export function registerRendererComparisonApply(handler: (next: RendererComparis
 /** Runtime evidence, separate from what the URL requested. Renderers publish actual admission here. */
 export const rendererRuntimeStatus = reactive<RendererRuntimeStatus>({
   requested: rendererComparisonConfig, actualBackend: null, actualConfig: null,
-  phase: "initializing", reason: null, pixiText: null
+  phase: "initializing", reason: null
 });
 
 export function setRendererRuntimeStatus(next: Partial<RendererRuntimeStatus>): void {
@@ -165,20 +148,6 @@ export function setRendererRuntimeStatus(next: Partial<RendererRuntimeStatus>): 
   if (next.phase !== undefined && next.phase !== rendererRuntimeStatus.phase) rendererRuntimeStatus.phase = next.phase;
   if (next.reason !== undefined && next.reason !== rendererRuntimeStatus.reason) rendererRuntimeStatus.reason = next.reason;
   if (next.actualConfig !== undefined && !sameConfig(rendererRuntimeStatus.actualConfig, next.actualConfig)) rendererRuntimeStatus.actualConfig = next.actualConfig;
-  if (next.pixiText !== undefined && !samePixiTextStatus(rendererRuntimeStatus.pixiText, next.pixiText)) {
-    rendererRuntimeStatus.pixiText = next.pixiText ? { ...next.pixiText, reasons: { ...next.pixiText.reasons } } : null;
-  }
-}
-
-function samePixiTextStatus(a: PixiTextRuntimeStatus | null, b: PixiTextRuntimeStatus | null): boolean {
-  return a === b || (a !== null && b !== null && a.requested === b.requested && a.actual === b.actual &&
-    a.native === b.native && a.slug === b.slug && a.slugCached === b.slugCached &&
-    Object.keys(a.reasons).length === Object.keys(b.reasons).length &&
-    Object.keys(a.reasons).every((key) => a.reasons[key] === b.reasons[key]));
-}
-
-function pixiTextMode(value: unknown): ComparisonPixiText {
-  return value === "slug" || value === "slug-cached" ? value : "native";
 }
 
 function sameConfig(a: RendererComparisonConfig | null, b: RendererComparisonConfig | null): boolean {
@@ -186,19 +155,15 @@ function sameConfig(a: RendererComparisonConfig | null, b: RendererComparisonCon
     a.cpuIncremental === b.cpuIncremental && a.gpuCommands === b.gpuCommands &&
     a.textCache === b.textCache && a.pixels === b.pixels &&
     a.structureReuse === b.structureReuse && a.textPreparationReuse === b.textPreparationReuse &&
-    a.sourceFrameReuse === b.sourceFrameReuse && a.animationReferenceReuse === b.animationReferenceReuse && a.pixiScene === b.pixiScene && a.pixiText === b.pixiText);
+    a.sourceFrameReuse === b.sourceFrameReuse && a.animationReferenceReuse === b.animationReferenceReuse);
 }
 
 export function normalizedComparisonConfig(config: RendererComparisonConfig): RendererComparisonConfig {
-  if (config.backend === "pixi") {
-    return { ...DEFAULT_CONFIG, backend: "pixi",
-      pixiScene: config.pixiScene === "legacy" ? "legacy" : "retained", pixiText: pixiTextMode(config.pixiText) };
-  }
   if (config.backend === "rust") {
     return { ...DEFAULT_CONFIG, backend: "rust" };
   }
   if (config.backend === "dom") return { ...DEFAULT_CONFIG };
-  return { ...config, pixiScene: "retained", pixiText: "native", sourceFrameReuse: config.cpuIncremental && config.sourceFrameReuse,
+  return { ...config, sourceFrameReuse: config.cpuIncremental && config.sourceFrameReuse,
     animationReferenceReuse: config.cpuIncremental && config.animationReferenceReuse };
 }
 
@@ -208,13 +173,6 @@ export function comparisonUrl(href: string, config: RendererComparisonConfig): s
   const value = normalizedComparisonConfig(config);
   url.searchParams.set("rendererCompare", "1");
   url.searchParams.set("stage", value.backend);
-  if (value.backend === "pixi") {
-    url.searchParams.set("pixiScene", value.pixiScene);
-    url.searchParams.set("pixiText", value.pixiText);
-  } else {
-    url.searchParams.delete("pixiScene");
-    url.searchParams.delete("pixiText");
-  }
   url.searchParams.set("cmpCpu", value.cpuIncremental ? "on" : "off");
   url.searchParams.set("cmpGpu", value.gpuCommands ? "on" : "off");
   url.searchParams.set("cmpPixels", value.pixels);
@@ -241,6 +199,6 @@ export function applyRendererComparisonConfig(config: RendererComparisonConfig,
   env.history.replaceState(env.history.state ?? null, "", comparisonUrl(env.location.href, next));
   Object.assign(rendererComparisonConfig, next);
   setRendererRuntimeStatus({ requested: { ...next }, actualBackend: null, actualConfig: null,
-    phase: "initializing", reason: null, pixiText: null });
+    phase: "initializing", reason: null });
   if (!applyInPlace?.(next)) rendererComparisonViewRevision.value++;
 }

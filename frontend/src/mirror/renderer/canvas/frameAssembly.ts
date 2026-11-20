@@ -138,7 +138,7 @@ export function createCanvasFrameAssembly(
     );
   }
   /**
-   * This stage has no pinned/deterministic-clock mode at all (unlike the Rust/Pixi stage's diagnostic clock):
+   * This stage has no pinned/deterministic-clock mode at all (unlike the Rust/Stage stage's diagnostic clock):
    * `ports.now()` is always the real `performance.now()`. `visualState.isIdleSampleStale`'s own contract
    * requires `pinned` to be false on a real clock — even a browser-coarsened one, which CAN repeat `at`
    * across genuinely distinct display frames (Tor/Firefox resistFingerprinting clamps resolution) — because

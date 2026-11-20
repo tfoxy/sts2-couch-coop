@@ -1,4 +1,4 @@
-import type { PixiTextRun } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRun } from "@/mirror/renderer/stage/stageTypes";
 import { rustTextShadowCssColor } from "@/mirror/renderer/semanticTextLayout";
 
 export interface RustTextPaintStyle {
@@ -7,10 +7,10 @@ export interface RustTextPaintStyle {
   shadow?: { color: string; alpha: number; blur: number; offsetX: number; offsetY: number } | null;
 }
 
-/** Draw one supported Pixi text carrier while keeping shadow opacity off its stroke and glyphs. */
+/** Draw one supported Stage text carrier while keeping shadow opacity off its stroke and glyphs. */
 export function drawRustTextRuns(
   context: CanvasRenderingContext2D,
-  runs: readonly PixiTextRun[],
+  runs: readonly StageTextRun[],
   style: RustTextPaintStyle,
   startX: number,
   baselineY: number,
@@ -34,7 +34,7 @@ export function drawRustTextRuns(
       context.lineWidth = style.stroke.width;
       context.strokeStyle = style.stroke.color;
       context.strokeText(run.text, x, baselineY);
-      // Pixi shadows the complete outlined glyph once. Canvas would composite two shadows if both the
+      // Stage shadows the complete outlined glyph once. Canvas would composite two shadows if both the
       // strokeText and fillText calls had a shadow, so the outlined pass owns it and the fill only paints ink.
       context.shadowColor = "transparent";
       context.shadowBlur = 0;

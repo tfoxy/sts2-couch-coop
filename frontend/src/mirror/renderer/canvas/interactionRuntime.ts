@@ -154,10 +154,10 @@ export interface CanvasInteractionRuntime {
   readonly cosmeticOffsets: ReadonlyMap<string, CosmeticOffset>;
   readonly handHolderIds: ReadonlySet<string>;
   /** See `ports.sceneIndexVerify`: mismatches between the candidate-restricted and full-scan answers. Always 0
-   *  off verify; used by `createPixiMirrorRenderer.ts` to fold into its own `sceneIndexVerifyMismatches`. */
+   *  off verify; used by `createStageMirrorRenderer.ts` to fold into its own `sceneIndexVerifyMismatches`. */
   readonly sceneIndexVerifyMismatches: number;
   /** See `ports.raiseIndexCacheVerify`: mismatches between a cached raise-index answer and a from-scratch
-   *  recompute, folded by `createPixiMirrorRenderer.ts` into its own raise-index diagnostics. */
+   *  recompute, folded by `createStageMirrorRenderer.ts` into its own raise-index diagnostics. */
   readonly raiseIndexCacheVerifyMismatches: number;
   readonly cosmeticVersion: number;
   readonly cosmeticVersionAtBuild: number;

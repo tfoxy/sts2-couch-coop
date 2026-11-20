@@ -136,9 +136,8 @@ export function canvasRaiseIndex(
 // them fresh on every call, cache hit or not — see `planHandRaise`'s own `holderLocalY(id)` calls.
 //
 // Rust-only by construction: a non-null `cache` slot and `verify=true` only ever come from a caller that read them
-// off `rustFastFlags.resolveRustFastFlags`'s `rustRaiseIndexCache`/`rustFastVerify`, which it restricts to
-// `backend === "rust"` — the Pixi canvas backend always calls `canvasRaiseIndex`/`planCanvasHandRaise` with
-// `cache: null` (their default), so this cache never engages for it.
+// off `rustFastFlags.resolveRustFastFlags`'s `rustRaiseIndexCache`/`rustFastVerify`. Other callers use
+// `cache: null` (the default), so this cache never engages for them.
 
 /**
  * Per-RUNTIME storage for the cache above — owned by the caller (one per `createCanvasInteractionRuntime`

@@ -1,6 +1,6 @@
 // rustFast WP3 — the PURE half of semantic text preparation, plus two small caches around it.
 //
-// `createPixiMirrorRenderer.ts`'s `semanticText` used to do five expensive things inline for every text node on
+// `createStageMirrorRenderer.ts`'s `semanticText` used to do five expensive things inline for every text node on
 // every producer build: walk the node's scene ancestry (`resolveSceneInfo`), resolve its text-scale declarations,
 // resolve its raster spec (`resolveTextSpec`, plus a second pass for a rich label), ask `document.fonts.check`
 // whether the face is ready, and `JSON.stringify` a layout key plus `node.font` per rich run. A DevTools profile of
@@ -12,7 +12,7 @@
 // `buildPreparedText` are pure functions of their arguments, and the two caches take a fake `FontFaceSet` / a plain
 // `Map`-backed node graph instead of touching `document` or `window`.
 //
-// `createPixiMirrorRenderer.ts` still owns the IMPURE half: kicking off `loadMirrorFont`, tracking which fonts are
+// `createStageMirrorRenderer.ts` still owns the IMPURE half: kicking off `loadMirrorFont`, tracking which fonts are
 // pending/failed, pushing into `texts`/`textOwners`, and the `fast.textPrepCache` / `fast.fontCheckCache` on/off
 // switch itself. This module only has to be right about what a node's label looks like, not about when to ask it.
 
@@ -33,9 +33,9 @@ import {
   type TextRun
 } from "@/mirror/canvas/textLayout";
 import { resolveTextScaleDecls } from "@/mirror/textScaleClasses";
-import { nativeTextOriginCorrection, pixiShadowColor } from "@/mirror/renderer/semanticTextLayout";
+import { nativeTextOriginCorrection, stageShadowColor } from "@/mirror/renderer/semanticTextLayout";
 import { mirrorResourceUrl, type MirrorFont, type MirrorNode } from "@/mirror/sceneTree";
-import type { PixiTextRecord } from "@godot-scene-web/canvas/pixi";
+import type { StageTextRecord } from "@/mirror/renderer/stage/stageTypes";
 
 /** Why this label cannot be rastered — mirrors the `semanticFailures` strings `semanticText` has always used. */
 export interface TextPrepRefusal {
@@ -148,7 +148,7 @@ export interface PreparedTextRun {
    * own style-string cache (`createRustDrawListExecutor.ts`'s `textResourceKey`) is keyed on THIS object's
    * identity, so a fresh literal here would defeat it even with `fast.textPrepCache` on.
    */
-  style: PixiTextRecord["style"];
+  style: StageTextRecord["style"];
   /** The exact face and measured placement used by this run, independent of CSS family lookup. */
   msdf: { url: string; faceKey: string; measuredAdvance: number; baselinePx: number };
   inlineImage?: { url: string; width: number; height: number };
@@ -215,7 +215,7 @@ export function buildPreparedText(
         !Number.isFinite(line.width) || line.width < 0 || line.width > spec.contentW)
       return { refusal: resolved.fittingUnbreakableRefusal };
   }
-  const shadow = spec.shadow ? pixiShadowColor(spec.shadow.color) : null;
+  const shadow = spec.shadow ? stageShadowColor(spec.shadow.color) : null;
   if (spec.shadow && !shadow) return { refusal: "invalid-shadow-color" };
   const resourceRevision = `${fontVersion}:${JSON.stringify(roles || resolvedImages
     ? [font, roleFaces, resolvedImages] : font)}`;
@@ -274,7 +274,7 @@ export function buildPreparedText(
 }
 
 /**
- * Turn a `PreparedText` into this build's `PixiTextRecord`s. Always called fresh, cache hit or miss: a retained
+ * Turn a `PreparedText` into this build's `StageTextRecord`s. Always called fresh, cache hit or miss: a retained
  * composition later STAMPS `parentId` directly onto these objects (`retainedComposition.ts`), so every record must
  * be its own object every build even though `run.style` inside it may be a carried-over reference.
  */
@@ -284,13 +284,13 @@ export function composePreparedTextRecords(
   insertionIndex: number,
   record: { transform: readonly number[]; opacity: number; tintR: number; tintG: number; tintB: number },
   blend: number
-): PixiTextRecord[] {
+): StageTextRecord[] {
   const m = record.transform;
   const scale = prepared.spec.blockScale;
   const tint = (Math.round(Math.max(0, Math.min(1, record.tintR)) * 255) << 16) |
     (Math.round(Math.max(0, Math.min(1, record.tintG)) * 255) << 8) |
     Math.round(Math.max(0, Math.min(1, record.tintB)) * 255);
-  const out: PixiTextRecord[] = [];
+  const out: StageTextRecord[] = [];
   for (const run of prepared.runs) {
     if (run.text === "\uFFFC" && !run.inlineImage) continue;
     const transform = [m[0] * scale, m[1] * scale, m[2] * scale, m[3] * scale,
@@ -301,7 +301,7 @@ export function composePreparedTextRecords(
       alpha: record.opacity, blend, tint,
       msdf: run.msdf,
       ...(run.inlineImage ? { inlineImage: run.inlineImage } : {}),
-    } as PixiTextRecord);
+    } as StageTextRecord);
   }
   return out;
 }

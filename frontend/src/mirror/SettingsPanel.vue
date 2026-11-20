@@ -9,7 +9,7 @@ import SettingsHelpTip from "@/mirror/SettingsHelpTip.vue";
 import { hostBase } from "@/join/hostBase";
 import { applyViewerStage, applyViewerTextMethod, rendererRuntimeStatus } from "@/mirror/rendererComparison";
 import { setComparisonStageBackend } from "@/mirror/rendererFactory";
-import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/pixi/textMethods";
+import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/stage/textMethods";
 import {
   EFFECT_MODES,
   TEXT_METHODS,
