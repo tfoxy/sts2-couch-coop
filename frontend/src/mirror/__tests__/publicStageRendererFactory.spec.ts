@@ -132,6 +132,36 @@ describe("GPU stage failure without DOM fallback", () => {
     renderer.dispose();
   });
 
+  it("ignores deliberate loss until restoration but still reports a later unexpected loss", () => {
+    setComparisonStageBackend("rust");
+    let released = false;
+    let onStatus!: (phase: "initializing" | "ready" | "failed") => void;
+    backendMocks.rust.mockImplementationOnce((stage: HTMLElement, _defs, _host, callback) => {
+      onStatus = callback;
+      const canvas = document.createElement("canvas");
+      canvas.className = "mirror-rust-stage";
+      stage.append(canvas);
+      return { ...fakeRenderer, get contextReleased() { return released; } };
+    });
+    const { stage, defs } = hosts();
+    const renderer = createMirrorRendererFor(stage, defs)!;
+    try {
+      onStatus("ready");
+      released = true;
+      // A loss event can arrive after resume was requested, while restoration is still pending.
+      expect(renderer.contextReleased).toBe(true);
+      const expectedLoss = new Event("webglcontextlost", { cancelable: true });
+      stage.querySelector("canvas")!.dispatchEvent(expectedLoss);
+      expect(expectedLoss.defaultPrevented).toBe(true);
+      expect(rendererRuntimeStatus.phase).toBe("active");
+      released = false;
+      expect(renderer.contextReleased).toBe(false);
+      stage.querySelector("canvas")!.dispatchEvent(new Event("webglcontextrestored"));
+      stage.querySelector("canvas")!.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+      expect(rendererRuntimeStatus).toMatchObject({ phase: "failed", reason: "WebGL context lost" });
+    } finally { renderer.dispose(); }
+  });
+
   it("ignores a failed initialization callback from a disposed Rust renderer", async () => {
     setComparisonStageBackend("canvas");
     mirrorSettings.stage = "canvas";

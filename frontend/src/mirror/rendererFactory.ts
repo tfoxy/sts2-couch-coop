@@ -91,10 +91,14 @@ export function createMirrorRendererFor(
       : createRustMirrorRenderer(stage, defs, canvasHost, status);
     if (legacyCanvasTestOverride && backend === "canvas") noteGeoclipBackend("canvas");
     const canvas = (canvasHost ?? stage).querySelector<HTMLCanvasElement>(`canvas.mirror-${actual}-stage`);
-    const contextLost = (event: Event): void => { event.preventDefault(); fail("WebGL context lost"); };
+    const contextLost = (event: Event): void => {
+      event.preventDefault();
+      // Deliberate release restores in place. Latching failure here would stop the view's reconcile/ACK path.
+      if (renderer.contextReleased !== true) fail("WebGL context lost");
+    };
     canvas?.addEventListener("webglcontextlost", contextLost);
     console.info(`[mirror] stage backend: ${actual}${backend === "canvas" ? " canvas" : ""}`);
-    return { ...renderer, dispose() {
+    return { ...renderer, get contextReleased() { return renderer.contextReleased; }, dispose() {
       live = false;
       canvas?.removeEventListener("webglcontextlost", contextLost);
       renderer.dispose();

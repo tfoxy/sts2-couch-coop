@@ -273,6 +273,114 @@ describe("Stage composition initialization", () => {
     } finally { renderer.dispose(); }
   });
 
+  it.each([false, true])("rebuilds after asynchronous context restoration and returns credit for later wire deltas (admission reset=%s)", async (resetAdmission) => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+    const frame = async () => {
+      for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+      vi.advanceTimersToNextFrame();
+      for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+    };
+    const state = animatedColorScene();
+    state.nodes.get("root")!.pinnedLoopAnim = null;
+    const adapter = fakeAdapter(true);
+    const admissions: number[] = [];
+    const presents: number[] = [];
+    const acks: Array<{ revision: number; presents: number }> = [];
+    let released = false;
+    let committed: number | null = null;
+    let finishRestore!: () => void;
+    const restoration = new Promise<void>(resolve => { finishRestore = resolve; });
+    let finishPresent!: () => void;
+    let holdPresent = false;
+    let canvas!: HTMLCanvasElement;
+    const executor = {
+      ...adapter,
+      get contextReleased() { return released; },
+      setContextSuspended(suspended: boolean) {
+        if (suspended) {
+          released = true;
+          committed = null;
+          adapter.stats.contextReady = false;
+          adapter.stats.presentationValid = false;
+          queueMicrotask(() => canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true })));
+        }
+      },
+      admitScene: vi.fn(async (list: DrawList<string>) => {
+        const quad = createQuadView();
+        list.readQuad(0, quad);
+        const x = quad.m[4];
+        admissions.push(x);
+        if (released) return { presented: false, reason: "context suspended" };
+        if (holdPresent) await new Promise<void>(resolve => { finishPresent = resolve; });
+        committed = x;
+        presents.push(x);
+        adapter.stats.frames++;
+        adapter.stats.completedFrames++;
+        adapter.stats.presentationValid = true;
+        return { presented: true };
+      }),
+      patchScene: vi.fn(async () => ({ presented: committed !== null })),
+      presentScene: vi.fn(async () => ({ presented: committed !== null })),
+    };
+    const previousBackend = rendererFactory.requestedStageBackend();
+    rendererFactory.setComparisonStageBackend("rust");
+    rustExecutor.mockImplementation(async (options) => {
+      canvas = options.canvas;
+      void restoration.then(() => {
+        released = false;
+        adapter.stats.contextReady = true;
+        canvas.dispatchEvent(new Event("webglcontextrestored"));
+        options.onInvalidate();
+      });
+      return executor;
+    });
+    const wrapper = mount(MirrorView, { props: { state, revision: state.revision,
+      onSceneRendered: () => acks.push({ revision: state.revision, presents: adapter.stats.completedFrames }) } });
+    const delta = async (x: number, color = "#ffffffff") => {
+      applySceneDelta(state, parseSceneDelta({ type: "scene-delta", full: false,
+        upserts: [{ id: "root", parentId: null, name: "Root", nodeType: "ColorRect", visible: true,
+          transform: { xAxis: { x: 1, y: 0 }, yAxis: { x: 0, y: 1 }, origin: { x, y: 30 } },
+          localRect: { position: { x: 0, y: 0 }, size: { x: 180, y: 110 } }, fillColor: { html: color } }] })!);
+      await wrapper.setProps({ revision: state.revision });
+      await frame();
+    };
+    try {
+      await frame();
+      expect(presents).toEqual([20]);
+      expect(acks).toEqual([{ revision: state.revision, presents: 1 }]);
+      await wrapper.setProps({ contextSuspended: true, ...(resetAdmission ? { sceneReady: false } : {}) });
+      await delta(120);
+      expect(acks).toHaveLength(1);
+      expect(committed).toBeNull();
+      await wrapper.setProps({ contextSuspended: false, ...(resetAdmission ? { sceneReady: true } : {}) });
+      await frame(); // The resume wake runs before the GL restore completes.
+      expect(admissions).toEqual([20]);
+      expect(acks).toHaveLength(1);
+      holdPresent = true;
+      finishRestore();
+      await frame();
+      expect(admissions).toEqual([20, 120]);
+      expect(presents).toEqual([20]);
+      expect(acks).toHaveLength(1);
+      finishPresent();
+      await frame();
+      expect(presents).toEqual([20, 120]);
+      expect(acks).toEqual([{ revision: 1, presents: 1 }, { revision: 2, presents: 2 }]);
+      holdPresent = false;
+      // A content change needs a new admission; retained patches cannot stand in for the restore build.
+      await delta(220, "#00ff00ff");
+      expect(presents).toEqual([20, 120, 220]);
+      expect(acks).toEqual([{ revision: 1, presents: 1 }, { revision: 2, presents: 2 }, { revision: 3, presents: 3 }]);
+      expect(adapter.stats.completedFrames).toBe(3);
+      expect(rendererRuntimeStatus.phase).toBe("active");
+    } finally {
+      wrapper.unmount();
+      rendererFactory.setComparisonStageBackend(previousBackend);
+      vi.useRealTimers();
+    }
+  });
+
   it.each([false, true])("indexes reward nodes added while hidden before resumed paint clears changes (rewrite=%s)", async (rewrite) => {
     const adapter = fakeAdapter(true);
     const renderer = createStageMirrorRenderer(stage(), document.createElementNS("http://www.w3.org/2000/svg", "defs"), null,

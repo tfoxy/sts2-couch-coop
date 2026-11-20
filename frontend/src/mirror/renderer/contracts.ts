@@ -124,6 +124,8 @@ export interface RewardFocusSnapshot {
 export interface MirrorRenderer {
   /** Release an old stage's GPU context while another renderer covers it. DOM has no context. */
   setContextSuspended?(suspended: boolean): void;
+  /** Deliberately released, including the asynchronous interval between resume and restoration. */
+  readonly contextReleased?: boolean;
   /**
    * `false` means a strict stage-owned source is still loading: no frame or wire ack happened. `"applied"` means the
    * delta was applied to the renderer's committed state and may be acknowledged, but no frame was presented: nothing

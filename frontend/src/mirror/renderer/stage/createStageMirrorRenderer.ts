@@ -3178,6 +3178,7 @@ if (isPromiseLike<PresentationResult>(result)) { trackAsyncRetainedPatch(result,
   };
 
   const renderer: MirrorRenderer = {
+    get contextReleased() { return executor?.contextReleased === true; },
     setContextSuspended(suspended) {
       if (contextSuspended === suspended) return;
       contextSuspended = suspended;
