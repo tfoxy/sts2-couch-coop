@@ -36,18 +36,23 @@ internal static class StreamStaticParticlesTests
             (false, 20, 0, 20),
             (false, -1, 0, 0),
             (false, double.NaN, 0, 0),
-            (true, 3, 0, 3),
+            (true, 3, 0, 1.5),
             (true, 3, 1, 1.5),
-            (true, 3, 0.5, 2.25),
+            (true, 3, 0.5, 1.5),
+            (true, 1, 0, 0.5),
             (true, 0, 0, 0),
             (true, -1, 0, 0),
-            (true, 100, 0, 100),
+            (true, 100, 0, 50),
             (true, double.PositiveInfinity, 0, 0),
             (true, 1, double.NaN, 0),
         ];
         foreach (var (oneShot, lifetime, explosiveness, expected) in warmups)
             Assert(CouchCoopStreamStaticParticles.WarmupSeconds(oneShot, lifetime, explosiveness) == expected,
-                "loopers prewarm one lifetime; bursts use half their active time");
+                "loopers prewarm one lifetime; bursts stop at half a particle lifetime, within half their active time");
+        Assert(Math.Abs(CouchCoopStreamStaticParticles.WarmupSeconds(true, 1, 0, 0.8) - 0.18) < 1e-9,
+            "lifetime randomness shortens a burst's warmup so its shortest particle is still alive");
+        Assert(Math.Abs(CouchCoopStreamStaticParticles.RemovalDelaySeconds(1, 0, 1, 0.8) - 1.82) < 1e-9,
+            "the deadline covers the active window left after a shortened warmup");
         Assert(CouchCoopStreamStaticParticles.ActiveTimeSeconds(3, 0) == 6, "spread burst active time");
         Assert(CouchCoopStreamStaticParticles.ActiveTimeSeconds(3, 1) == 3, "explosive burst active time");
         RemovalDurationUsesSpeedAndClamps();
@@ -70,21 +75,21 @@ internal static class StreamStaticParticlesTests
     {
         (double Lifetime, double Explosiveness, double Speed, double Expected)[] durations =
         [
-            (2, 0, 1, 2), (2, 1, 1, 1),
-            (2, 0, 0.5, 4), (2, 1, 0.5, 2),
-            (2, 0, 2, 1), (2, 1, 2, 0.5),
-            (3, 0.5, 1.5, 1.5),
+            (2, 0, 1, 3), (2, 1, 1, 1),
+            (2, 0, 0.5, 6), (2, 1, 0.5, 2),
+            (2, 0, 2, 1.5), (2, 1, 2, 0.5),
+            (3, 0.5, 1.5, 2),
             (0.01, 1, 1, 0.5), (100, 0, 1, 10),
             (0, 0, 1, 0.5), (-1, 0, 1, 0.5),
             (1, 0, 0, 10), (1, 0, -1, 10),
-            (0.001, 0, 0, 1),
+            (0.001, 0, 0, 1.5),
             (double.NaN, 0, 1, 0.5), (double.PositiveInfinity, 0, 1, 0.5),
             (1, double.NaN, 1, 0.5), (1, 0, double.NaN, 0.5),
             (1, 0, double.PositiveInfinity, 0.5),
         ];
         foreach (var (lifetime, explosiveness, speed, expected) in durations)
             Assert(CouchCoopStreamStaticParticles.RemovalDelaySeconds(lifetime, explosiveness, speed) == expected,
-                "the deadline uses the remaining half-burst divided by speed, clamped to 0.5–10 seconds");
+                "the deadline uses the active window left after warmup divided by speed, clamped to 0.5–10 seconds");
     }
 
     internal static void StartTargetsResolveWithoutTheEngine()

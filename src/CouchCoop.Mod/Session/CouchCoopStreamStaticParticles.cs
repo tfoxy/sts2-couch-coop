@@ -40,13 +40,27 @@ public static class CouchCoopStreamStaticParticles
         return double.IsFinite(active) ? Math.Max(0, active) : 0;
     }
 
-    internal static double WarmupSeconds(bool oneShot, double lifetime, double explosiveness)
-        => oneShot ? ActiveTimeSeconds(lifetime, explosiveness) / 2
-            : double.IsFinite(lifetime) ? Math.Max(0, lifetime) : 0;
-
-    internal static double RemovalDelaySeconds(double lifetime, double explosiveness, double speedScale)
+    // A one-shot is caught at half a particle lifetime (shortened by lifetime randomness), never later than half
+    // its active window. Half the active window alone can equal a whole particle lifetime for a spread burst, which
+    // would freeze a single-particle burst after its only particle died.
+    internal static double WarmupSeconds(bool oneShot, double lifetime, double explosiveness, double lifetimeRandomness = 0)
     {
-        var remaining = lifetime * (2 - explosiveness) / 2 / Math.Max(speedScale, 0.001);
+        if (!double.IsFinite(lifetime) || lifetime <= 0) return 0;
+        if (!oneShot) return lifetime;
+        var randomness = double.IsFinite(lifetimeRandomness) ? Math.Clamp(lifetimeRandomness, 0, 1) : 0;
+        var particleMid = lifetime * Math.Min(0.5, 0.9 * (1 - randomness));
+        return Math.Max(0, Math.Min(ActiveTimeSeconds(lifetime, explosiveness) / 2, particleMid));
+    }
+
+    // Simulated seconds left in a one-shot's active window after its warmup.
+    internal static double RemainingSeconds(double lifetime, double explosiveness, double lifetimeRandomness = 0)
+        => Math.Max(0, ActiveTimeSeconds(lifetime, explosiveness)
+            - WarmupSeconds(true, lifetime, explosiveness, lifetimeRandomness));
+
+    internal static double RemovalDelaySeconds(double lifetime, double explosiveness, double speedScale,
+        double lifetimeRandomness = 0)
+    {
+        var remaining = RemainingSeconds(lifetime, explosiveness, lifetimeRandomness) / Math.Max(speedScale, 0.001);
         return double.IsFinite(remaining) ? Math.Clamp(remaining, 0.5, 10) : 0.5;
     }
 
@@ -217,16 +231,17 @@ public static class CouchCoopStreamStaticParticles
         emitter.Pending = true;
         emitter.OneShot = node.OneShot;
         var revision = emitter.Revision;
-        var warmup = WarmupSeconds(node.OneShot, node.Lifetime, node.Explosiveness);
+        var warmup = WarmupSeconds(node.OneShot, node.Lifetime, node.Explosiveness, node.LifetimeRandomness);
         _updatingEmitter = true;
         try { node.RequestParticlesProcess((float)warmup); }
         finally { _updatingEmitter = false; }
         if (emitter.OneShot)
         {
-            var delay = RemovalDelaySeconds(node.Lifetime, node.Explosiveness, node.SpeedScale);
+            var delay = RemovalDelaySeconds(node.Lifetime, node.Explosiveness, node.SpeedScale, node.LifetimeRandomness);
+            var remaining = RemainingSeconds(node.Lifetime, node.Explosiveness, node.LifetimeRandomness);
             var elapsedSinceStart = emitter.StartedAtMsec is { } startedAt
                 ? Math.Max(0, System.Environment.TickCount64 - startedAt) / 1000d : 0;
-            Deadlines.Replace(emitter.Id, Math.Max(0, delay - elapsedSinceStart), () => FinishBurst(emitter, warmup));
+            Deadlines.Replace(emitter.Id, Math.Max(0, delay - elapsedSinceStart), () => FinishBurst(emitter, remaining));
         }
         NextFrame(() => NextFrame(() =>
         {
