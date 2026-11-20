@@ -106,7 +106,9 @@ public sealed record SettingsMessage(
     // null leaves the connection unchanged. Independent of the node-mirror walk-skip vote.
     string? StreamStaticBgReady = null,
     // Demand for the host still, before the image has loaded. Independent of readiness and StaticBg.
-    bool? StreamStaticBg = null)
+    bool? StreamStaticBg = null,
+    // Per-page CPU particle freeze vote. Omit-null preserves the faithful stream's settings bytes.
+    bool? StreamStaticParticles = null)
 {
     public string Type => "settings";
 }

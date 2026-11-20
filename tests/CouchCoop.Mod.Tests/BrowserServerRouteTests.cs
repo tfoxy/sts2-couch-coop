@@ -60,6 +60,13 @@ if (args is ["stream-spine", ..])
     return;
 }
 
+if (args is ["stream-static-particles", ..])
+{
+    StreamStaticParticlesTests.Run();
+    await BrowserServerRouteTests.RunStreamStaticParticlesAsync();
+    return;
+}
+
 if (args is ["suspender-enable", ..])
 {
     HeadlessSuspenderEnableTests.Run();
@@ -919,6 +926,7 @@ if (args is ["beta-targets", ..])
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
     Leg(nameof(HeadlessAssetLoadingActivityTests), HeadlessAssetLoadingActivityTests.TargetsResolve);
     Leg(nameof(HeadlessViewportTests), HeadlessViewportTests.TargetsResolve);
+    Leg(nameof(StreamStaticParticlesTests), StreamStaticParticlesTests.StartTargetsResolveWithoutTheEngine);
     Leg(nameof(StreamDesignPlacementTests), StreamDesignPlacementTests.TargetsResolve);
     Leg(nameof(StreamMapDrawingToolsTests), StreamMapDrawingToolsTests.TargetsResolve);
     Leg(nameof(StreamHandPlacementTests), StreamHandPlacementTests.TargetsResolve);
@@ -1088,6 +1096,8 @@ HeadlessParticleFreezeExemptionTests.Run();
 // (a node whose ProcessMode came back used to be skipped forever; see the file header).
 HeadlessSpineFreezeTests.Run();
 StreamSpineStillsTests.Run();
+StreamStaticParticlesTests.Run();
+await BrowserServerRouteTests.RunStreamStaticParticlesAsync();
 await HeadlessAssetLoadingActivityTests.RunAsync();
 // Geoclip round: all three freeze walks skip an OFF-SCREEN EXTRACTION subtree (they DFS from SceneTree.Root, so
 // they otherwise freeze the detached rig a bake is posing and it returns one pose repeated) — and skip nothing
@@ -2540,6 +2550,64 @@ internal sealed partial class BrowserServerRouteTests
         tracker.SetDesiredStreamHide(null);
         Expect(tracker.DesiredStreamHideForTest is null, "stream restore latches without engine calls");
         Console.WriteLine("stream background truth table: ok (14 scenarios, 4 tracker checks)");
+    }
+
+    internal static async Task RunStreamStaticParticlesAsync()
+    {
+        using var root = new TempStaticRoot();
+        var renderer = new StaticBackgroundRendererHost();
+        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+        await using var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(root.Path),
+            new CapturingAssetAdapter(), runtime.NewEnvelopeFactory(), isHeadlessClient: true,
+            rendererSwapHost: renderer, log: _ => { });
+        var baseUri = await server.StartAsync();
+        async Task Send(ClientWebSocket socket, object message)
+        {
+            await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(message), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "ping" }), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            _ = await ReadNextWsMessageOfTypeAsync(socket, "pong");
+        }
+        async Task Connect(ClientWebSocket socket)
+        {
+            await socket.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws",
+                Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+            _ = await ReadWsMessageAsync(socket);
+            await Send(socket, new { type = "renderer", renderer = "stream", rendererProtocol = 2 });
+        }
+        async Task Desired(bool expected, string message)
+            => Expect(await WaitForAsync(() => server.StreamParticleFreezeDesiredForTest == expected), message);
+
+        using var first = new ClientWebSocket();
+        await Connect(first);
+        await Desired(false, "a page without the field stays faithful");
+        await Send(first, new { type = "settings", streamStaticParticles = true });
+        await Desired(true, "settings reach the seat aggregate");
+        await Send(first, new { type = "settings", staticBg = false });
+        await Desired(true, "absent particle demand leaves the vote intact");
+        using var second = new ClientWebSocket();
+        await Connect(second);
+        await Desired(false, "a new non-demanding page restores live particles");
+        await Send(second, new { type = "settings", streamStaticParticles = true });
+        await Desired(true, "every stream page opted in");
+        await Send(second, new { type = "settings", streamStaticParticles = false });
+        await Desired(false, "one page retracting restores live particles");
+        await CloseWebSocketSilentlyAsync(second);
+        await Desired(true, "disconnect removes the non-demanding page");
+        renderer.SetArmed(false);
+        await Desired(false, "disarming releases the aggregate");
+        renderer.SetArmed(true);
+        await Desired(true, "arming recomputes retained page demand");
+        await Send(first, new { type = "renderer", renderer = "mirror" });
+        await Desired(false, "leaving the stream removes demand");
+        await Send(first, new { type = "renderer", renderer = "stream", rendererProtocol = 2 });
+        await Desired(false, "returning to the stream has reset the page vote");
+        await Send(first, new { type = "settings", streamStaticParticles = true });
+        await Desired(true, "the page can opt in again");
+        await server.StopGenerationAsync("test", CancellationToken.None);
+        await Desired(false, "server teardown releases demand");
+        Console.WriteLine("stream static particles socket lifecycle: 13 checks passed");
     }
 
     private sealed class StaticBackgroundRendererHost : IHotRendererSwapHost, IHotSelfRenderStreamHost

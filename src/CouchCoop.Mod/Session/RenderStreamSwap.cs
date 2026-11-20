@@ -321,7 +321,11 @@ internal sealed class RenderStreamSwap : IDisposable
             // Restore outside the capture signal, before resuming the mirror's visual suspender.
             deferSignal: Defer, deferPresentation: Defer,
             trySetPresentationWidth: HeadlessViewportConfigurator.TrySetStreamPresentationWidth,
-            setStreamSpinesArmed: CouchCoopStreamSpineStills.SetArmed);
+            setStreamSpinesArmed: armed =>
+            {
+                CouchCoopStreamSpineStills.SetArmed(armed);
+                CouchCoopStreamStaticParticles.SetArmed(armed);
+            });
         HeadlessViewportConfigurator.PresentationInvalidated += swap.InvalidatePresentation;
         HeadlessViewportConfigurator.PresentationReasserted += swap.ReassertedPresentation;
         swap._unsubscribeViewport = () =>

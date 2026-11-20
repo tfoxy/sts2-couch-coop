@@ -536,12 +536,17 @@ public sealed partial class CouchCoopBrowserServer(
         var gatedStaticBg = 0;
         var streamStaticBg = 0;
         var streamPages = new List<(bool WantsStaticBg, string? Ready)>();
+        var particlePages = new List<bool>();
         foreach (var connection in _connections.Values)
         {
             var wantsSceneStream = connection.WantsSceneStream;
             var wantsStaticBg = connection.WantsStaticBg;
             if (connection.WantsStreamStaticBg) streamStaticBg++;
-            if (connection.IsRenderStreamPage) streamPages.Add((connection.WantsStreamStaticBg, connection.StreamStaticBgReady));
+            if (connection.IsRenderStreamPage)
+            {
+                streamPages.Add((connection.WantsStreamStaticBg, connection.StreamStaticBgReady));
+                particlePages.Add(connection.WantsStreamStaticParticles);
+            }
             if (NeedsBgStream(wantsSceneStream, wantsStaticBg))
             {
                 needed++;
@@ -562,6 +567,9 @@ public sealed partial class CouchCoopBrowserServer(
         var descriptorId = CouchCoopStaticBackgroundTracker.Published?.Id;
         var streamHide = ComputeStreamBgHideDesired(!_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", descriptorId, needed, streamPages);
         _staticBgTracker?.SetDesiredStreamHide(streamHide ? descriptorId : null);
+        _streamParticleFreezeDesired = ComputeStreamParticleFreezeDesired(
+            !_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", particlePages);
+        CouchCoopStreamStaticParticles.SetDesired(_streamParticleFreezeDesired);
 
         var desired = ComputeBgSkipDesired(_streamingMirrorConnectionCount, needed);
         if (desired == _bgSkipDesired)
@@ -579,6 +587,12 @@ public sealed partial class CouchCoopBrowserServer(
         bool armed, string? descriptorId, int liveBgNeeded, IReadOnlyList<(bool WantsStaticBg, string? Ready)> pages)
         => armed && !string.IsNullOrEmpty(descriptorId) && liveBgNeeded == 0 && pages.Count > 0
             && pages.All(page => page.WantsStaticBg);
+
+    private volatile bool _streamParticleFreezeDesired;
+    internal bool StreamParticleFreezeDesiredForTest => _streamParticleFreezeDesired;
+
+    internal static bool ComputeStreamParticleFreezeDesired(bool armed, IReadOnlyList<bool> pages)
+        => armed && pages.Count > 0 && pages.All(wantsStaticParticles => wantsStaticParticles);
 
     private bool HasAnyStaticBgViewer
         => _streamStaticBgViewerCount > 0
@@ -1470,6 +1484,8 @@ public sealed partial class CouchCoopBrowserServer(
         lock (_observerGate)
         {
             _generationStopped = true;
+            _streamParticleFreezeDesired = false;
+            CouchCoopStreamStaticParticles.SetDesired(false);
             _rendererSubscription?.Dispose();
             _rendererSubscription = null;
             _mirrorConnectionCount = 0;

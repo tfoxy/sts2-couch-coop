@@ -777,6 +777,17 @@ describe("persistMirrorSetting / readStoredMirrorSettings", () => {
 });
 
 describe("serverSettingsPayload", () => {
+  it.each(["mirror", "stream"] as const)("sends static particle demand only under stream + static (%s)", (renderer) => {
+    const s = build(quality({}));
+    s.runtimeRenderer = renderer;
+    for (const mode of ["dynamic", "static"] as const) {
+      s.streamParticleMode = mode;
+      const payload = serverSettingsPayload(s);
+      if (renderer === "stream" && mode === "static") expect(payload.streamStaticParticles).toBe(true);
+      else expect(payload).not.toHaveProperty("streamStaticParticles");
+    }
+  });
+
   it("extracts ONLY the server-side fields (no client render modes / UI state)", () => {
     const s = build(quality({ shadersEnabled: false }));
     s.refreshRate = 30;

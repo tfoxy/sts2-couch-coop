@@ -592,11 +592,14 @@ function pushServerSettings(c: MirrorClient): boolean {
   // initial push (or its deduplication entry) until the watch acknowledgement permits it.
   if (c === hostClient && (!c.watching || !c.hostAccess.allowed)) return false;
   const payload = serverSettingsPayload(mirrorSettings, streamStaticBgReady.value);
+  // Omit the new vote on the faithful path; retract it explicitly after this socket opted in.
+  if (!payload.streamStaticParticles && streamStaticParticlesDeclared.has(c)) payload.streamStaticParticles = false;
   const encoded = JSON.stringify(payload);
   if (lastSettingsSent.get(c) === encoded) return true;
   lastSettingsSent.set(c, encoded);
   staticBgDeclared.set(c, payload.staticBg ?? false);
   streamStaticBgDeclared.set(c, payload.streamStaticBg ?? false);
+  if (payload.streamStaticParticles) streamStaticParticlesDeclared.add(c);
   c.sendSettings(payload);
   return true;
 }
@@ -604,6 +607,7 @@ function pushServerSettings(c: MirrorClient): boolean {
 // The `staticBg` value each connection was last told — its connect URL's, then any `settings` message since.
 const staticBgDeclared = new WeakMap<MirrorClient, boolean>();
 const streamStaticBgDeclared = new WeakMap<MirrorClient, boolean>();
+const streamStaticParticlesDeclared = new WeakSet<MirrorClient>();
 
 // KEEP THE HOST SOCKET'S `staticBg` CURRENT FOR A SEAT VIEWER. The gated host socket is what tells the host this
 // device shows the host's stills (it warms them on publish for such a viewer), and after a redirect the store
@@ -1429,7 +1433,7 @@ watch(
 // Watching the value list fires exactly when one of the fields changes; the client no-ops if the socket isn't
 // open yet (values are held; the on-connect push in makeClient carries them once connected).
 watch(
-  () => [mirrorSettings.runtimeRenderer, mirrorSettings.streamStaticBg, streamStaticBgReady.value,
+  () => [mirrorSettings.runtimeRenderer, mirrorSettings.streamStaticBg, mirrorSettings.streamParticleMode, streamStaticBgReady.value,
     ...SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
     ? staticBgWireValue(mirrorSettings) : mirrorSettings[key])],
   () => {

@@ -17,6 +17,7 @@ internal static class EnvelopeTests
         PointerInstanceRoundTrips();
         StreamFreezeSpinesRoundTrips();
         StreamStaticBackgroundReadyRoundTrips();
+        StreamStaticParticlesRoundTrips();
     }
 
     private static void ParsesAFullSessionEnvelope()
@@ -332,6 +333,24 @@ internal static class EnvelopeTests
             if (value is null)
                 Check.Equal(json, """{"freezeSpines":true,"type":"settings"}""",
                     "absent stream spine field keeps the old settings bytes");
+        }
+    }
+
+    private static void StreamStaticParticlesRoundTrips()
+    {
+        foreach (var demand in new bool?[] { null, false, true })
+        {
+            var message = new SettingsMessage(StreamStaticParticles: demand);
+            var json = ProtocolJson.Serialize(message);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            Check.That(JsonSerializer.Deserialize<SettingsMessage>(json, options) == message,
+                "particle demand round-trips absent, false and true");
+            var request = JsonSerializer.Deserialize<BrowserSettingsRequestEnvelope>(json, options)!;
+            Check.Equal(request.StreamStaticParticles, demand, "server reads the per-page particle demand");
+            using var doc = JsonDocument.Parse(json);
+            Check.That(doc.RootElement.TryGetProperty("streamStaticParticles", out _) == demand.HasValue,
+                "absent particle demand is omitted but an explicit retraction survives");
+            if (demand is null) Check.Equal(json, """{"type":"settings"}""", "off preserves the old settings bytes");
         }
     }
 

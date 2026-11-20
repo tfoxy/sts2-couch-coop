@@ -1556,6 +1556,7 @@ internal sealed class FrozenNodeStates<T>
     public int Count => _prior.Count;
     public bool Contains(ulong id) => _prior.ContainsKey(id);
     public bool Remember(ulong id, T state) => _prior.TryAdd(id, state);
+    public bool TryRemove(ulong id, out T state) => _prior.Remove(id, out state!);
 
     public void Restore(Action<ulong, T> restore)
     {

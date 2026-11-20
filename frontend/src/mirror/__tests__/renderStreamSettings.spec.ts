@@ -166,10 +166,12 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(true);
     expect(effectivePanelSetting(settings, "particleMode")).toBe("static");
     expect(effectivePanelSetting(settings, "freezeSpines")).toBe(true);
-    expect(serverSettingsPayload(settings)).toEqual({ ...streamPayload, streamFreezeSpines: true, streamStaticBg: true });
+    expect(serverSettingsPayload(settings)).toEqual({ ...streamPayload, streamFreezeSpines: true, streamStaticBg: true,
+      streamStaticParticles: true });
     expect(streamPayload).toHaveProperty("streamFreezeSpines", false);
     expect(streamPayload).not.toHaveProperty("streamShaderMode");
     expect(effectivePanelSetting(settings, "shaderMode")).toBe("static");
+    expect(streamPayload).not.toHaveProperty("streamStaticParticles");
     expect(streamPayload).not.toHaveProperty("streamParticleMode");
     expect(streamPayload).toHaveProperty("streamStaticBg", false);
     settings.runtimeRenderer = "mirror";

@@ -148,7 +148,7 @@ export function emptyMirrorLatency(): MirrorLatency {
 
 // The SERVER-side settings the panel controls, sent over the `settings` control channel. Every optional field is
 // a partial update: an omitted field leaves the server-side connection state unchanged. Client-only render toggles
-// (shaders/particles) are NOT here — those apply purely in the browser and never touch the game.
+// (such as shaders) are NOT here — those apply purely in the browser and never touch the game.
 export interface MirrorSettingsPayload {
   refreshRate?: number;
   freezeParticles?: boolean;
@@ -158,6 +158,7 @@ export interface MirrorSettingsPayload {
   // absent leaves the connection's vote unchanged. Separate from the node mirror's staticBg walk-skip vote.
   streamStaticBgReady?: string;
   streamStaticBg?: boolean;
+  streamStaticParticles?: boolean;
   freezeDecor?: boolean;
   tweenReplay?: boolean;
   // Stage-B walk skip: this viewer's "Static background" setting, independent of image readiness or failure.

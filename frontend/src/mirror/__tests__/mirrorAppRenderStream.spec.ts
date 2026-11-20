@@ -280,6 +280,27 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(app!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
   });
 
+  it("sends particle demand to the seat and retracts it on toggle or renderer change", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamParticleMode: "static" });
+    const seat = await joinSeat();
+    const host = MockWebSocket.instances[0];
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticParticles: true });
+    expect(host.ofType("settings").every((s) => !("streamStaticParticles" in s))).toBe(true);
+
+    seat.sent.length = 0;
+    mirrorSettings.streamParticleMode = "dynamic";
+    await settle();
+    expect(seat.ofType("settings")).toHaveLength(1);
+    expect(seat.ofType("settings")[0]).toMatchObject({ streamStaticParticles: false });
+    mirrorSettings.streamParticleMode = "static";
+    await settle();
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticParticles: true });
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticParticles: false });
+  });
+
   it.each(["mirror", "arming", "armed", "disarming"])("seeds stream spine truth while %s and forwards later viewer changes", async (state) => {
     streamAvailable();
     mirrorSettings.renderer = "stream";

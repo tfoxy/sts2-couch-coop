@@ -873,7 +873,8 @@ export function serverSettingsPayload(settings: MirrorSettings, streamStaticBgRe
       streamStaticBg: settings.streamStaticBg,
       streamFreezeSpines: settings.streamFreezeSpines,
       streamStaticBgReady: settings.streamStaticBg ? streamStaticBgReady : ""
-    } : {})
+    } : {}),
+    ...(stream && settings.streamParticleMode === "static" ? { streamStaticParticles: true } : {})
   };
 }
 

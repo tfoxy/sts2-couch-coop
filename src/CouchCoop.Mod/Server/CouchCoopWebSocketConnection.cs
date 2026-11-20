@@ -46,6 +46,7 @@ public sealed class CouchCoopWebSocketConnection
     // the server's aggregate recompute under its own gate.
     private volatile bool _wantsStaticBg;
     private volatile bool _wantsStreamStaticBg;
+    private volatile bool _wantsStreamStaticParticles;
     private string? _streamStaticBgReady;
     // A socket cannot be written concurrently; this gate serializes the scene fan-out (background thread)
     // against the connection's own replies (session / action-result).
@@ -275,6 +276,7 @@ public sealed class CouchCoopWebSocketConnection
     public bool WantsStaticBg => _wantsStaticBg;
 
     public bool WantsStreamStaticBg => !_closing && _wantsStreamStaticBg;
+    public bool WantsStreamStaticParticles => !_closing && _wantsStreamStaticParticles;
     public string? StreamStaticBgReady => Volatile.Read(ref _streamStaticBgReady);
     public bool IsRenderStreamPage => !_closing && IsSelfRenderStreamPage
         && _rendererSwapHost?.WantsRenderStream(RendererPageId) == true
@@ -1195,6 +1197,11 @@ public sealed class CouchCoopWebSocketConnection
                         }
 
                         var streamChanged = false;
+                        if (settings.StreamStaticParticles is bool streamStaticParticles && streamStaticParticles != _wantsStreamStaticParticles)
+                        {
+                            _wantsStreamStaticParticles = streamStaticParticles;
+                            streamChanged = true;
+                        }
                         if (settings.StreamStaticBg is bool streamStaticBg && streamStaticBg != _wantsStreamStaticBg)
                         {
                             _wantsStreamStaticBg = streamStaticBg;
@@ -1376,6 +1383,7 @@ public sealed class CouchCoopWebSocketConnection
     {
         if (!stream)
         {
+            _wantsStreamStaticParticles = false;
             _wantsStreamStaticBg = false;
             Volatile.Write(ref _streamStaticBgReady, null);
         }

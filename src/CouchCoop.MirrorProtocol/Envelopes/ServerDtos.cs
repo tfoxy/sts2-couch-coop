@@ -232,7 +232,9 @@ public sealed record BrowserSettingsRequestEnvelope(
     // null leaves the connection unchanged. Independent of the node-mirror walk-skip vote.
     string? StreamStaticBgReady = null,
     // Demand for the host still, before the image has loaded. Independent of readiness and StaticBg.
-    bool? StreamStaticBg = null);
+    bool? StreamStaticBg = null,
+    // Per-page CPU particle freeze vote; null leaves this connection unchanged.
+    bool? StreamStaticParticles = null);
 
 public sealed record BrowserServerReloadEnvelope(
     string Type,
