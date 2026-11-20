@@ -13,6 +13,7 @@ public sealed class QrSelectionModel
     public string Method { get; private set; } = "ipv4";
     public QrHostOption? Selected => Resolve(Method);
     public Uri? Url => Selected is { Enabled: true, Port: > 0 } option ? option.ToUri() : null;
+    public Uri? DisplayUrl => Selected is { Enabled: true, Port: > 0 } option ? option.ToDisplayUri() : null;
     public QrSelectionMemory Memory => new(Method, Network?.Adapter?.Address.ToString(), Network?.SelectionKey);
 
     /// <summary>The method row's destination; a pending HTTPS preview is not yet a usable QR URL.</summary>

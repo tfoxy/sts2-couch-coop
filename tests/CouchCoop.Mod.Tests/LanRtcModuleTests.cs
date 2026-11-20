@@ -18,6 +18,7 @@ internal static unsafe class LanRtcModuleTests
         SerializedDestroy(fixture);
         FailedCreate(fixture);
         InboundQueues(fixture);
+        QuietMessageBurst(fixture);
         var path = Environment.GetEnvironmentVariable(LanRtcModule.LibraryEnvironmentVariable);
         if (string.IsNullOrEmpty(path)) Console.WriteLine("LanRtcModuleTests: native smoke skipped (COUCHCOOP_LAN_RTC_LIB unset)");
         else
@@ -28,7 +29,7 @@ internal static unsafe class LanRtcModuleTests
             module!.ReceiveDatagram(new(IPAddress.Parse("192.0.2.2"), 45000), fixture.Candidate.Address, [0, 0, 0]);
             Expect(module.Buffered(1, 1) == 0 && module.Send(1, 1, true, [1]) == -2, "real library tolerates unknown channels");
         }
-        Console.WriteLine($"LanRtcModuleTests: {(!string.IsNullOrEmpty(path) ? 8 : 7)} cases passed");
+        Console.WriteLine($"LanRtcModuleTests: {(!string.IsNullOrEmpty(path) ? 9 : 8)} cases passed");
         return Task.CompletedTask;
     }
 
@@ -37,6 +38,35 @@ internal static unsafe class LanRtcModuleTests
         var logs = new List<string>();
         Expect(LanRtcModule.TryCreate(f.Identity, f.Candidate, f.Socket, logs.Add,
             libraryPath: Path.Combine(f.Root, "missing.so")) is null && logs.Count == 1, "missing library is off with one log");
+    }
+
+    private static void QuietMessageBurst(Fixture f)
+    {
+        using var fake = new Fake();
+        var logs = new List<string>();
+        using var module = LanRtcModule.Create(fake.Api, f.Identity, f.Candidate, f.Socket, logs.Add);
+        var callbacks = fake.Callbacks;
+        void Log(string text, int level = 2)
+        {
+            var data = Encoding.UTF8.GetBytes(text);
+            fixed (byte* bytes = data) callbacks.Log(callbacks.User, level, bytes, (nuint)data.Length);
+        }
+        for (var index = 0; index < 1000; index++)
+        {
+            Log("{\"event\":\"dc-message\",\"detail\":{\"bytes\":16384}}");
+            Log("{\"event\":\"dc-low\",\"detail\":{\"dc\":1}}");
+            callbacks.Low(callbacks.User, 1, 1);
+        }
+        Expect(logs.Count == 0, "message and drain bursts are silent by default");
+        const string peer = "{\"event\":\"peer\",\"detail\":{\"state\":1,\"remote\":\"192.0.2.2:45000\"}}";
+        Log(peer);
+        Log(peer.Replace("\"state\":1", "\"state\":0"));
+        Log("{\"event\":\"protocol-error\"}", 0);
+        Log("{\"event\":\"budget-rejected\"}", 1);
+        Log("{\"event\":\"dc-message\",\"error\":\"failed\"}", 0);
+        Log("unstructured native warning", 1);
+        Expect(logs.Count == 6 && logs[0].Contains("192.0.2.2:45000") && logs[^1].Contains("warning"),
+            "peer addresses, lifecycle, budget warnings and channel errors remain logged");
     }
 
     private static void MissingExport(Fixture f)

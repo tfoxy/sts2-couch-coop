@@ -87,7 +87,27 @@ internal static class QrSelectionModelTests
         finally { File.Delete(path); }
         DirectIpSelectionAndCopy();
         PresentationSeparatesSetupFromAvailability();
+        WebsiteDisplayOmitsFingerprint();
         Console.WriteLine("QrSelectionModelTests: ok");
+    }
+
+    private static void WebsiteDisplayOmitsFingerprint()
+    {
+        var adapter = new QrAdapterInfo("Ethernet", QrAdapterKind.Ethernet, IPAddress.Parse("192.168.1.5"));
+        var direct = new QrHostOption("192.168.1.5", 13337, QrHostOptionKind.Interface, adapter);
+        var web = QrHostOptions.DescribeWebFor(adapter, 13337, "https://example.org",
+            lanRtcAvailable: true, lanRtcFingerprint: new string('a', 43))!;
+        var model = new QrSelectionModel();
+        model.Refresh([direct, web], null);
+        Expect(model.ChooseMethod("web") && model.Url!.Query.Contains("&f="), "Website QR retains its tunnel fingerprint");
+        Expect(model.DisplayUrl!.Query == "?h=192.168.1.5:13337", "display and copy retain the host without a fingerprint");
+        Expect(OfflineQrCode.EncodeJoinUrl(model.Url!).Payload == model.Url!.ToString(), "QR normalization keeps the fingerprint");
+        Expect(QrMethodPresentation.For(model.Selected).Subtitle.Resolve() == model.DisplayUrl.ToString(),
+            "Website picker text also uses the short fallback");
+        model.ChooseMethod("ipv4");
+        Expect(model.DisplayUrl == model.Url, "direct text and QR remain identical");
+        model.Refresh([], null);
+        Expect(model.DisplayUrl is null, "unavailable choices have no copy payload");
     }
 
     private static void DirectIpSelectionAndCopy()

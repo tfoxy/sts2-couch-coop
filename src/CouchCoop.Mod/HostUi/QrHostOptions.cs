@@ -507,9 +507,7 @@ public sealed record QrHostOption(
     public bool Selectable => Enabled || CanSelectWhenUnavailable;
 
     /// <summary>
-    /// The exact payload the QR encodes and the URL label prints. Built the same way
-    /// <see cref="OfflineQrCode"/> normalises a payload, so the scanned code and the typed fallback can
-    /// never disagree.
+    /// The exact payload the QR encodes, including the optional tunnel fingerprint.
     /// </summary>
     /// <remarks>
     /// The scheme is derived from <see cref="Kind"/> rather than passed in, so a caller cannot construct a
@@ -524,6 +522,18 @@ public sealed record QrHostOption(
             Kind is QrHostOptionKind.Secure or QrHostOptionKind.DirectIpSecure ? Uri.UriSchemeHttps : Uri.UriSchemeHttp,
             Host,
             Port) { Path = "/" }.Uri;
+
+    /// <summary>The typed and copied Website fallback omits the QR's tunnel fingerprint.</summary>
+    public Uri ToDisplayUri()
+    {
+        var uri = ToUri();
+        if (Kind != QrHostOptionKind.Web) return uri;
+        return new UriBuilder(uri)
+        {
+            Query = string.Join("&", uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+                .Where(part => Uri.UnescapeDataString(part.Split('=')[0]) != "f")),
+        }.Uri;
+    }
 
     /// <summary>
     /// The stable identity used for dedupe, re-selection across a refresh, and the persisted

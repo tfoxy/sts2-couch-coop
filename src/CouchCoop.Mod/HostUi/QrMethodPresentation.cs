@@ -26,7 +26,7 @@ internal sealed record QrMethodPresentation(QrMethodReadiness State, CouchCoopTe
     private static QrMethodPresentation Describe(QrHostOption? option, DirectIpHttpsState? directState)
     {
         if (option is { Enabled: true, Port: > 0 })
-            return new(QrMethodReadiness.Ready, CouchCoopText.FromLiteral(option.ToUri().ToString()),
+            return new(QrMethodReadiness.Ready, CouchCoopText.FromLiteral(option.ToDisplayUri().ToString()),
                 option.Kind == QrHostOptionKind.DirectIpSecure ? new("couchcoop_https_device_action") : (CouchCoopText?)null);
         if (option is not { Selectable: true })
             return new(QrMethodReadiness.Unavailable, new("couchcoop_qr_unavailable_title"));

@@ -15,10 +15,11 @@ internal static class LanRtcTunnelTests
 
     public static async Task RunAsync()
     {
+        await RelayedResourceAsync();
         foreach (var method in new[] { "GET", "HEAD", "POST" }) await MethodAsync(method);
         await BurstUploadAsync();
         await OversizedFetchAsync();
-        await RequestStreamingAsync();
+        await RequestFramingAsync();
         await LargeResponseAsync();
         await ChunkedAsync();
         await CloseDelimitedAsync();
@@ -33,7 +34,32 @@ internal static class LanRtcTunnelTests
         await RealServerAsync();
         await LifecyclePostAsync();
         await ControlWhileInboxFullAsync();
-        Console.WriteLine("LanRtcTunnelTests: 20 cases passed");
+        Console.WriteLine("LanRtcTunnelTests: 21 cases passed");
+    }
+
+    private static async Task RelayedResourceAsync()
+    {
+        const string path = "/render-stream/0123456789abcdef0123456789abcdef/resources/sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        var transport = new FakeTransport();
+        await using var tunnel = new LanRtcTunnel(transport, async (stream, _, token) =>
+        {
+            var request = (await CouchCoopHttpRequest.TryReadAsync(stream, token))!;
+            Expect(request.Target == path, "resource route reaches the relay");
+            using var upstream = new LanRtcHttpStream();
+            using var client = upstream.CreateClientStream();
+            var answer = Task.Run(async () =>
+            {
+                await CouchCoopHttpRequest.TryReadAsync(upstream, token);
+                await Task.Delay(50, token);
+                await upstream.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: application/octet-stream\r\n\r\nresource"u8.ToArray(), token);
+                upstream.CompleteResponse();
+            }, token);
+            await RenderStreamRelay.ForwardAsync(client, stream, request,
+                RenderStreamRelay.RequestHeader(request, path, "localhost", CouchCoopWebOrigin.Resolve()), token);
+            await answer;
+        }, Candidate);
+        transport.Request("GET", path);
+        AssertResponse(await transport.ResponseAsync(), 200, "resource"u8.ToArray());
     }
 
     private static async Task MethodAsync(string method)
@@ -45,9 +71,9 @@ internal static class LanRtcTunnelTests
         {
             var request = await CouchCoopHttpRequest.TryReadAsync(stream, token);
             Expect(request!.Method == method && request.Target == "/test?q=1" && remote.Equals(Peer), "method, path and authenticated address");
-            using var body = new MemoryStream();
-            await stream.CopyToAsync(body, token);
-            Expect(request.Header("Content-Length") is null && body.ToArray().SequenceEqual(upload), "POST body streams to FIN without trusting a length");
+            var body = new byte[int.Parse(request.Header("Content-Length")!)];
+            await stream.ReadExactlyAsync(body, token);
+            Expect(body.SequenceEqual(upload), "verified Content-Length frames the complete upload");
             await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Length: {content.Length}\r\nX-Test: yes\r\n\r\n"), token);
             if (method != "HEAD") await stream.WriteAsync(content, token);
         }, Candidate);
@@ -61,30 +87,19 @@ internal static class LanRtcTunnelTests
     private static async Task BurstUploadAsync()
     {
         var transport = new FakeTransport(eventCapacity: 4);
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = LanRtcTunnel.FetchBodyLimit;
         var received = 0;
         await using var tunnel = new LanRtcTunnel(transport, async (stream, _, token) =>
         {
-            await CouchCoopHttpRequest.TryReadAsync(stream, token);
-            entered.TrySetResult();
-            await resume.Task.WaitAsync(token);
-            var buffer = new byte[4096];
-            int count;
-            while ((count = await stream.ReadAsync(buffer, token)) != 0)
-            {
-                Expect(buffer.AsSpan(0, count).IndexOfAnyExcept((byte)42) < 0, "burst bytes retained in order");
-                received += count;
-            }
+            var request = (await CouchCoopHttpRequest.TryReadAsync(stream, token))!;
+            var body = new byte[int.Parse(request.Header("Content-Length")!)];
+            await stream.ReadExactlyAsync(body, token);
+            Expect(body.AsSpan().IndexOfAnyExcept((byte)42) < 0, "burst bytes retained in order");
+            received = body.Length;
             await stream.WriteAsync("HTTP/1.1 204 No Content\r\n\r\n"u8.ToArray(), token);
         }, Candidate);
         transport.Request("POST", "/", finish: false);
-        await entered.Task.WaitAsync(Timeout);
-        var upload = transport.BodyAsync(new byte[expected].Select(_ => (byte)42).ToArray());
-        await upload.WaitAsync(Timeout);
-        resume.TrySetResult();
-        await upload.WaitAsync(Timeout);
+        await transport.BodyAsync(Enumerable.Repeat((byte)42, expected).ToArray()).WaitAsync(Timeout);
         AssertResponse(await transport.ResponseAsync(), 204, []);
         Expect(received == expected, "a queued upload exactly at the 1 MiB limit is delivered completely");
     }
@@ -104,25 +119,26 @@ internal static class LanRtcTunnelTests
         Expect(logs.Count == 1 && logs[0].Contains("413"), "oversized fetch logs once and closes");
     }
 
-    private static async Task RequestStreamingAsync()
+    private static async Task RequestFramingAsync()
     {
         var transport = new FakeTransport();
-        var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var served = false;
         await using var tunnel = new LanRtcTunnel(transport, async (stream, _, token) =>
         {
-            await CouchCoopHttpRequest.TryReadAsync(stream, token);
-            var first = new byte[3];
-            await stream.ReadExactlyAsync(first, token);
-            Expect(first.SequenceEqual("abc"u8.ToArray()), "body is available before FIN");
-            firstRead.TrySetResult();
-            using var rest = new MemoryStream();
-            await stream.CopyToAsync(rest, token);
-            Expect(rest.ToArray().SequenceEqual("def"u8.ToArray()), "remaining body follows initial chunk");
+            served = true;
+            var request = (await CouchCoopHttpRequest.TryReadAsync(stream, token))!;
+            Expect(request.Header("Content-Length") == "6" && request.Header("Transfer-Encoding") is null,
+                "only the verified body length is used for HTTP framing");
+            var body = new byte[6];
+            await stream.ReadExactlyAsync(body, token);
+            Expect(body.SequenceEqual("abcdef"u8.ToArray()), "all fragments reach the handler in order");
+            var next = stream.ReadAsync(new byte[1], token).AsTask();
+            Expect(!next.IsCompleted, "body FIN does not half-close the viewer stream");
             await stream.WriteAsync("HTTP/1.1 204 No Content\r\n\r\n"u8.ToArray(), token);
         }, Candidate);
-        transport.Request("POST", "/", finish: false);
+        transport.Request("POST", "/", headers: [["Content-Length", "999"], ["Transfer-Encoding", "chunked"]], finish: false);
         transport.Emit(new(LanRtcEventKind.Message, 1, 1, Binary: true, Data: [2, 97, 98, 99]));
-        await firstRead.Task.WaitAsync(Timeout);
+        Expect(!served, "an unfinished upload cannot choose an HTTP length");
         transport.Emit(new(LanRtcEventKind.Message, 1, 1, Binary: true, Data: [128, 100, 101, 102]));
         AssertResponse(await transport.ResponseAsync(), 204, []);
     }
@@ -171,22 +187,15 @@ internal static class LanRtcTunnelTests
 
     private static async Task AbortedRequestAsync()
     {
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var transport = new FakeTransport();
-        await using var tunnel = new LanRtcTunnel(transport, async (stream, _, token) =>
-        {
-            await CouchCoopHttpRequest.TryReadAsync(stream, token);
-            entered.TrySetResult();
-            try { await stream.CopyToAsync(Stream.Null, token); }
-            finally { stopped.TrySetResult(); }
-        }, Candidate);
+        var served = false;
+        await using var tunnel = new LanRtcTunnel(transport, (_, _, _) =>
+        { served = true; return Task.CompletedTask; }, Candidate);
         transport.Request("POST", "/", finish: false);
-        await entered.Task.WaitAsync(Timeout);
+        transport.Emit(new(LanRtcEventKind.Message, 1, 1, Binary: true, Data: [2, 97]));
         transport.Emit(new(LanRtcEventKind.Closed, 1, 1));
         var response = await transport.ResponseAsync();
-        Expect(response.Count == 0, "early close aborts the streaming request without a response FIN");
-        await stopped.Task.WaitAsync(Timeout);
+        Expect(response.Count == 0 && !served, "early close aborts an unfinished upload without serving it or sending FIN");
     }
 
     private static async Task TruncatedResponseAsync()
@@ -210,7 +219,7 @@ internal static class LanRtcTunnelTests
         {
             var request = (await CouchCoopHttpRequest.TryReadAsync(stream, token))!;
             Expect(request.Header("Host") == Candidate.ToString() && request.Header("Origin") == CouchCoopWebOrigin.Resolve()
-                && request.Header("Connection") == "close" && request.Header("Content-Length") is null, "trusted headers stamped");
+                && request.Header("Connection") == "close" && request.Header("Content-Length") == "0", "trusted headers stamped");
             foreach (var name in new[] { "X-Secret", "Keep-Alive", "Sec-WebSocket-Key", "Sec-WebSocket-Protocol", "Content-Encoding", "Transfer-Encoding", "Forwarded", "X-Forwarded-For" })
                 Expect(request.Header(name) is null, "untrusted " + name + " stripped");
             Expect(request.Header("Range") == "bytes=2-8" && request.Header("Authorization") == "Bearer retained", "end-to-end headers retained");
@@ -481,7 +490,7 @@ internal static class LanRtcTunnelTests
                 transport.Request("POST", BrowserLifecycleDiagnostics.Route, new byte[BrowserLifecycleDiagnostics.MaximumRequestBytes + 1]);
                 var response = await transport.ResponseAsync();
                 using var rejected = JsonDocument.Parse(response[0].Data);
-                Expect(rejected.RootElement.GetProperty("s").GetInt32() == 400, "streaming diagnostics retains the bounded body limit");
+                Expect(rejected.RootElement.GetProperty("s").GetInt32() == 404, "framed diagnostics rejects oversized bodies like direct HTTP");
             }
         }
         finally { Directory.Delete(root, true); }
@@ -501,7 +510,6 @@ internal static class LanRtcTunnelTests
             sent.TrySetResult();
         }, Candidate);
         transport.Request("POST", "/", finish: false);
-        await entered.Task.WaitAsync(Timeout);
         var frame = new byte[16385]; frame[0] = 2;
         for (var index = 0; index < 40; index++)
         {
@@ -509,6 +517,7 @@ internal static class LanRtcTunnelTests
             frame = new byte[16385];
         }
         transport.Emit(new(LanRtcEventKind.Message, 1, 1, Binary: true, Data: [128]));
+        await entered.Task.WaitAsync(Timeout);
         await transport.Full.Task.WaitAsync(Timeout);
         transport.BlockSend = false;
         transport.Emit(new(LanRtcEventKind.Low, 1, 1));

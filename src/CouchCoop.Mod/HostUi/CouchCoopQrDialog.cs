@@ -154,9 +154,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         // Hidden until a selection has actually rendered an address, so the focus ring built at Install()
         // time cannot have a stop on a button with nothing behind it.
         _copy.Visible = false;
-        // The selected option stays the single source of truth for what gets copied, exactly as it is for
-        // what the QR encodes and what the label prints — the button holds no address of its own.
-        _copy.Payload = () => _selection.Url?.ToString();
+        // Copy the selected option's displayed fallback; the QR retains its full connection payload.
+        _copy.Payload = () => _selection.DisplayUrl?.ToString();
         _copy.Engaged = engaged => ShowTip(_copy, engaged && !_select.IsOpen && !_methodSelect.IsOpen, CouchCoopQrHoverTips.ShowCopyLink);
 
         Card.AddChild(_title);
@@ -442,9 +441,9 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         _setupAction.AccessibilityName = _setupAction.Text;
         _copy.ResetFeedback();
 
-        // ONE code, whose payload is the selected row and nothing else. The URL label and the QR
-        // texture are both built from this one value, so the scanned code and the typed fallback
-        // cannot disagree even in principle.
+        // ONE code, whose payload is the selected row and nothing else. The QR texture encodes the
+        // full URL (for the Website row that includes the tunnel fingerprint f); the label and copy
+        // use the display URL, which drops only f, so host and port always agree with the code.
         if (_selection.Url is not { } uri)
         {
             _url.Text = string.Empty;
@@ -469,7 +468,7 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         }
 
         _unavailable.Visible = false;
-        _url.Text = uri.ToString();
+        _url.Text = _selection.DisplayUrl!.ToString();
         _qr.Visible = true;
         _copy.Visible = true;
 

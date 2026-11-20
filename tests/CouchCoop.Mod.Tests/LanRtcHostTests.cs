@@ -290,10 +290,10 @@ internal static class LanRtcHostTests
         public async Task ServeAsync(Stream stream, bool isSecure, IPAddress remoteAddress, CancellationToken token)
         {
             Calls++; Remote = remoteAddress; Secure = isSecure;
-            Expect(stream is ILanRtcRequestStream, "tunnel body capability survives a generation boundary");
-            await CouchCoopHttpRequest.TryReadAsync(stream, token);
-            using var body = new MemoryStream();
-            await stream.CopyToAsync(body, token); Body = Encoding.UTF8.GetString(body.ToArray());
+            Expect(stream is not ILanRtcRequestStream, "tunnel uses HTTP framing across a generation boundary");
+            var request = (await CouchCoopHttpRequest.TryReadAsync(stream, token))!;
+            var body = new byte[int.Parse(request.Header("Content-Length")!)];
+            await stream.ReadExactlyAsync(body, token); Body = Encoding.UTF8.GetString(body);
             await stream.WriteAsync("HTTP/1.1 204 No Content\r\n\r\n"u8.ToArray(), token);
         }
     }

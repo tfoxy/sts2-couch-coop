@@ -140,10 +140,13 @@ internal sealed class LanRtcTunnel : IAsyncDisposable
                 _webSocket = upgrade is not null;
                 if (!_webSocket) _signals.ConfigureFetch();
                 var overflow = !_webSocket ? WatchOverflowAsync(token) : Task.CompletedTask;
-                var header = BuildRequestHeader(request, method, path, _owner._host, upgrade);
+                // The browser does not supply a trusted length. Buffer the bounded upload to frame
+                // it ourselves; upload FIN ends the body, not the viewer's connection to the relay.
+                var body = upgrade is null ? await ReadBodyAsync(token).ConfigureAwait(false) : [];
+                var header = BuildRequestHeader(request, method, path, _owner._host, upgrade, body.Length);
                 using var stream = new LanRtcHttpStream();
                 await stream.FeedRequestAsync(Encoding.ASCII.GetBytes(header), token).ConfigureAwait(false);
-                var upload = upgrade is null ? FeedBodyAsync(stream, token) : Task.CompletedTask;
+                var upload = stream.FeedRequestAsync(body, token).AsTask();
                 var serving = ServeAsync(stream, token, drainRequest: upgrade is null);
                 try
                 {
@@ -201,25 +204,21 @@ internal sealed class LanRtcTunnel : IAsyncDisposable
             }
         }
 
-        private async Task FeedBodyAsync(LanRtcHttpStream stream, CancellationToken token)
+        private async Task<byte[]> ReadBodyAsync(CancellationToken token)
         {
-            try
+            using var body = new MemoryStream();
+            var initial = true;
+            while (true)
             {
-                var initial = true;
-                while (true)
-                {
-                    var message = await _signals.ReadAsync(token).ConfigureAwait(false);
-                    var data = message.Data;
-                    if (!message.Binary || data is null || data.Length is < 1 or > 16385 ||
-                        ((data[0] & 0x7f) != (initial ? 2 : 0) && !(initial && data.Length == 1 && data[0] == 0x80))) throw new InvalidDataException("Invalid fetch body frame.");
-                    initial = false;
-                    await stream.FeedRequestAsync(data[1..], token).ConfigureAwait(false);
-                    if ((data[0] & 0x80) != 0) break;
-                }
-                stream.CompleteRequest();
+                var message = await _signals.ReadAsync(token).ConfigureAwait(false);
+                var data = message.Data;
+                if (!message.Binary || data is null || data.Length is < 1 or > 16385 ||
+                    ((data[0] & 0x7f) != (initial ? 2 : 0) && !(initial && data.Length == 1 && data[0] == 0x80))) throw new InvalidDataException("Invalid fetch body frame.");
+                initial = false;
+                if (body.Length + data.Length - 1 > FetchBodyLimit) throw new InvalidDataException("Fetch body too large.");
+                body.Write(data.AsSpan(1));
+                if ((data[0] & 0x80) != 0) return body.ToArray();
             }
-            catch (Exception error)
-            { stream.CompleteRequest(error); Abort(); throw; }
         }
 
         private async Task ServeAsync(LanRtcHttpStream stream, CancellationToken token, bool drainRequest)
@@ -227,7 +226,7 @@ internal sealed class LanRtcTunnel : IAsyncDisposable
             Exception? error = null;
             try { await _owner._serve(stream, _remote, token).ConfigureAwait(false); }
             catch (Exception exception) { error = exception; }
-            finally { stream.CompleteResponse(error); }
+            finally { stream.CompleteRequest(error); stream.CompleteResponse(error); }
             if (error is null && drainRequest) await stream.CopyToAsync(Stream.Null, token).ConfigureAwait(false);
         }
 
@@ -351,7 +350,7 @@ internal sealed class LanRtcTunnel : IAsyncDisposable
         }
     }
 
-    private static string BuildRequestHeader(JsonElement request, string method, string path, string host, WebSocketUpgrade? upgrade)
+    private static string BuildRequestHeader(JsonElement request, string method, string path, string host, WebSocketUpgrade? upgrade, int bodyLength)
     {
         var headers = new List<string[]>();
         foreach (var item in request.GetProperty("h").EnumerateArray())
@@ -373,7 +372,7 @@ internal sealed class LanRtcTunnel : IAsyncDisposable
             result.Append(h[0]).Append(": ").Append(h[1]).Append("\r\n");
         }
         result.Append($"Host: {host}\r\nOrigin: {CouchCoopWebOrigin.Resolve()}\r\n");
-        if (upgrade is null) result.Append("Connection: close\r\n");
+        if (upgrade is null) result.Append($"Content-Length: {bodyLength.ToString(CultureInfo.InvariantCulture)}\r\nConnection: close\r\n");
         else
         {
             result.Append($"Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {upgrade.Key}\r\n");

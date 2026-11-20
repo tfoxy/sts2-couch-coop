@@ -3,8 +3,8 @@ using System.Threading.Channels;
 namespace CouchCoop.Mod.Server.LanRtc;
 
 // Each direction has one chunk of credit, so either consumer can pause its producer.
-// The private request stream ends at the tunnel FIN rather than trusting a browser length.
-internal sealed class LanRtcHttpStream : Stream, ILanRtcRequestStream
+// HTTP framing ends each request body; read EOF means the connection has ended.
+internal sealed class LanRtcHttpStream : Stream
 {
     private readonly ResponseStream _request = new();
     private readonly ResponseStream _response = new();

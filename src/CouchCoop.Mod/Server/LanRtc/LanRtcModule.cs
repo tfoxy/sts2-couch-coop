@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.Mod.Session;
@@ -270,5 +271,29 @@ internal sealed unsafe class LanRtcModule : ILanRtcDatagramSink, ILanRtcTranspor
     { try { Owner(user).Post(new(LanRtcEventKind.Closed, peer, channel)); } catch (Exception e) { Report(user, e); } }
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
     private static void Log(nint user, int level, byte* data, nuint length)
-    { try { Owner(user)._log("LAN RTC: " + Encoding.UTF8.GetString(new ReadOnlySpan<byte>(data, checked((int)length)))); } catch (Exception e) { Report(user, e); } }
+    {
+        try
+        {
+            var bytes = new ReadOnlySpan<byte>(data, checked((int)length));
+            // Native info events include every message and send-credit notification. Keep lifecycle
+            // and error diagnostics without turning normal traffic into an unbounded log workload.
+            if (level >= 2)
+            {
+                try
+                {
+                    var reader = new Utf8JsonReader(bytes);
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType != JsonTokenType.PropertyName || reader.CurrentDepth != 1 || !reader.ValueTextEquals("event")) continue;
+                        if (reader.Read() && reader.TokenType == JsonTokenType.String &&
+                            (reader.ValueTextEquals("dc-message") || reader.ValueTextEquals("dc-low"))) return;
+                        break;
+                    }
+                }
+                catch (JsonException) { }
+            }
+            Owner(user)._log("LAN RTC: " + Encoding.UTF8.GetString(bytes));
+        }
+        catch (Exception e) { Report(user, e); }
+    }
 }

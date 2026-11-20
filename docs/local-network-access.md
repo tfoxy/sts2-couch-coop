@@ -1,9 +1,8 @@
 # Local Network Access and mixed content: what browsers allow
 
 The "Website" QR option serves a tiny bootstrap page from a public HTTPS origin (`sts2-couch.pages.dev`) and loads
-the rest of the client from the mod's plain-HTTP server on the host's LAN address. Whether that works is decided
-entirely by browser rules about an HTTPS page talking to `http://<private IP>:<port>`. This note records those rules
-as the client relies on them. Nothing here is game-internal; it is all browser behaviour.
+the rest of the client from the host over a WebRTC tunnel or direct HTTP. The direct path depends on browser
+rules about an HTTPS page talking to `http://<private IP>:<port>`. This note describes both paths.
 
 ## Why the mode exists
 
@@ -12,7 +11,26 @@ for a **private** address. Routers with DNS-rebinding protection, and some DNS s
 environment failure that makes the `.local` mDNS row unreliable. The Website mode takes DNS out of the path: a normal
 public origin with a normal certificate, and the host addressed by its literal IPv4 address.
 
+## WebRTC tunnel
+
+When the Website QR includes `f`, the browser can open an encrypted WebRTC data channel directly to the host's
+LAN port. The QR pins the host certificate's SHA-256 fingerprint: no certificate installation or trust setup is
+needed. The tunnel carries the client's HTTP requests and WebSockets, including render-stream resources, and
+works on iPhone and iPad without the direct path's mixed-content exemption.
+
+For each candidate host, boot tries the tunnel first when a fingerprint is available and the browser supports
+WebRTC and service workers. If it fails, boot tries direct HTTP before moving to the next host. Add `?tunnel=off`
+(or `&tunnel=off` to a URL that already has a query) to force the direct path for troubleshooting.
+
+The tunnel shares the discovery UDP socket: allow inbound **UDP on the same port number as the browser's TCP
+listener** (normally 13337; use the port shown by the host). A firewall rule allowing TCP alone does not allow
+this UDP traffic. The printed and copied Website URL omits `f` to keep it short; the QR image retains it. A typed
+or copied `?h=` URL therefore uses the direct path, so on iPhone and iPad scan the QR. A bare return visit to the
+Website origin (no `?h=`) can reuse a fingerprint the browser remembers from an earlier scan.
+
 ## The rules the client depends on
+
+These restrictions apply to direct HTTP and WebSocket traffic; tunnel traffic uses the data channel instead.
 
 **Chromium (Chrome, Edge, desktop and Android):**
 
@@ -49,11 +67,14 @@ public origin with a normal certificate, and the host addressed by its literal I
 **WebKit (Safari, every browser on iPhone and iPad):** WebKit has **no** private-IP mixed-content exemption. An HTTPS
 page's `fetch`, module script, image and `ws://` to `http://<private IP>` are all blocked outright ("This content was
 blocked and must be served over HTTPS"), and there is no Local Network Access permission to grant. The Website link
-therefore cannot reach a plain-HTTP LAN host from an iPhone or iPad on any network, and the bootstrap says so on iOS
-(`boot.unreachableIos`) instead of reporting a generic "the game didn't answer". iPhones and iPads use the plain LAN
-link, Direct address (HTTPS) or the secure origin.
+can reach the host from iPhone and iPad over the WebRTC tunnel when the host supplies `f` in its QR. Without a usable
+tunnel, WebKit still cannot use the plain-HTTP direct path; use the plain LAN link, Direct address (HTTPS) or the
+secure origin instead.
 
 ## How the Website mode is built on these rules
+
+The direct fallback loads the client as follows. With a tunnel, the bootstrap bridges these requests through a
+service worker and sends WebSocket traffic through the data channel.
 
 ```
   Cloudflare Pages  (public HTTPS, stable, deploy-once)
@@ -92,7 +113,7 @@ What it depends on:
 
 The QR carries the LAN address as `?h=<ip>:<port>` and `start_url` stays a bare `/`, which is what makes an installed
 icon survive a DHCP lease change: the address is data in `localStorage` (`@/join/hostStore`), not part of the app's
-identity. `OfflineQrCode` strips every query key except `h`.
+identity. `OfflineQrCode` retains `h` and the optional tunnel fingerprint `f` while stripping other query keys.
 
 The bootstrap document's `<body>` must stay layout-neutral: the app mounts into `#app` in the bootstrap's document and
 letterboxes a 1920x1080 stage against the viewport, so any layout on `<body>` (a centring flexbox, say) moves the
@@ -101,8 +122,12 @@ stage off screen and shows a black page with no error. All boot layout lives on 
 ## Rehearsing without deploying
 
 ```bash
-cd frontend && npm run build:pages && npm run preview:pages &   # the bootstrap on 127.0.0.1:4173
-cloudflared tunnel --url http://127.0.0.1:4173                  # -> https://<random>.trycloudflare.com
+cd frontend
+npm run build:pages
+cloudflared tunnel --url http://127.0.0.1:4173   # -> https://<random>.trycloudflare.com
+# In another terminal, from frontend/, allow that exact hostname in Vite's preview server:
+__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=<random>.trycloudflare.com npm run preview:pages
+# Launch the game separately:
 COUCHCOOP_WEB_ORIGIN=https://<random>.trycloudflare.com  <launch the game>
 ```
 
@@ -114,8 +139,9 @@ a plain-http stand-in host is enough. **The host side must not be `127.0.0.1`:**
 so a loopback subresource of an https page is never mixed content in any engine and every check passes for the wrong
 reason. `Content-Security-Policy: treat-as-public-address` on a document (or Chrome's
 `--ip-address-space-overrides=<ip>:0=public`) makes Chrome treat it as public, which exercises the permission half
-only. In automation, the CDP `Browser.grantPermissions` name is `localNetworkAccess`; setting the permission state
-alone changes `navigator.permissions.query` without unblocking any request.
+only. For Chrome 157 automation, call CDP `Browser.grantPermissions` for the public origin with all three names:
+`["localNetwork", "loopbackNetwork", "localNetworkAccess"]`. Granting only `localNetworkAccess` leaves fetches
+blocked; changing the reported `navigator.permissions.query` state alone does not unblock requests.
 
 ## Direct-IP HTTPS alternative
 
