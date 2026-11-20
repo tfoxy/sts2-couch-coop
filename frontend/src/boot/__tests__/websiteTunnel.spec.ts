@@ -80,7 +80,7 @@ describe("Website tunnel integration", () => {
     let base = "";
     try {
       const outcome = await bootWebsite(["http://192.168.1.5:13337"],
-        "https://pages.example/?h=192.168.1.5:13337&f=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", {
+        "https://pages.example/?h=192.168.1.5:13337&f=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&tunnel=first", {
           serviceWorker: sw, RTCPeerConnection: class {} as typeof RTCPeerConnection,
           openDirectPeer, fetch: directFetch, hardReload: false, storage: sessionStorage,
           startServiceWorkerBridge: fetch => (bridge = startServiceWorkerBridge(fetch)),

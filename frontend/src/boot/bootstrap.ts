@@ -206,6 +206,16 @@ export interface BootPlatform {
   maxTouchPoints?: number;
 }
 
+/** Shared WebKit detection for transport order and the iOS-only recovery message. */
+export function webKitPlatform(platform: Pick<BootPlatform, "userAgent" | "maxTouchPoints">): "ios" | "mac" | null {
+  const userAgent = platform.userAgent;
+  if (typeof userAgent !== "string") return null;
+  if (/iPad|iPhone|iPod/.test(userAgent)
+    || (userAgent.includes("Macintosh") && (platform.maxTouchPoints ?? 0) > 1)) return "ios";
+  return /Macintosh/.test(userAgent) && /AppleWebKit/.test(userAgent)
+    && /Version\//.test(userAgent) && /Safari\//.test(userAgent) ? "mac" : null;
+}
+
 /**
  * Whether this browser can NEVER reach the candidates below, however the network is configured.
  *
@@ -229,10 +239,7 @@ export function webLinkBlockedByBrowser(platform: BootPlatform, candidates: read
   if (platform.pageProtocol !== "https:") return false;
   if (candidates.length === 0) return false;
   if (!candidates.every((origin) => origin.startsWith("http://"))) return false;
-  const userAgent = platform.userAgent;
-  if (typeof userAgent !== "string") return false;
-  if (/iPad|iPhone|iPod/.test(userAgent)) return true;
-  return userAgent.includes("Macintosh") && (platform.maxTouchPoints ?? 0) > 1;
+  return webKitPlatform(platform) === "ios";
 }
 
 /**

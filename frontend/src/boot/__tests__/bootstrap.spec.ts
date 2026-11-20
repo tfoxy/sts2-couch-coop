@@ -10,9 +10,14 @@ import {
   rememberResolvedHost,
   stripHostParam,
   webLinkBlockedByBrowser,
+  webKitPlatform,
   type BootManifest
 } from "@/boot/bootstrap";
 import { HOST_STORE_KEY, readHosts, rememberHost } from "@/join/hostStore";
+
+const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
+const SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+const CHROMIUM = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36";
 
 const MANIFEST: BootManifest = {
   entry: "/app/index-abc123.js",
@@ -189,6 +194,22 @@ describe("candidatesForPage", () => {
   });
 });
 
+describe("webKitPlatform", () => {
+  it.each([
+    [IPHONE, 0, "ios"],
+    [IPHONE.replace("Version/26.0", "CriOS/147.0.0.0"), 0, "ios"],
+    [IPHONE.replace("Version/26.0", "FxiOS/147.0"), 0, "ios"],
+    [SAFARI, 5, "ios"],
+    [SAFARI, 0, "mac"],
+    [CHROMIUM, 0, null],
+    [SAFARI.replace("Version/26.0", "Chrome/147.0.0.0"), 0, null],
+    ["Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:147.0) Gecko/20100101 Firefox/147.0", 0, null],
+    [undefined, 0, null]
+  ])("classifies %s with %i touch points as %s", (userAgent, maxTouchPoints, expected) => {
+    expect(webKitPlatform({ userAgent, maxTouchPoints })).toBe(expected);
+  });
+});
+
 describe("webLinkBlockedByBrowser", () => {
   const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
   const IPAD = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
@@ -316,7 +337,7 @@ describe("Website tunnel boot", () => {
   const href = `https://pages.example/?h=192.168.1.5:13337&f=${fingerprint}`;
   const prefix = "/~h/abcdefghijklmnopqrstuv/";
 
-  function rig() {
+  function rig(userAgent = IPHONE) {
     const order: string[] = [];
     const sw = new EventTarget() as ServiceWorkerContainer;
     Object.assign(sw, { controller: {}, ready: Promise.resolve({ active: {} }),
@@ -324,6 +345,7 @@ describe("Website tunnel boot", () => {
     const peer = { openChannel: vi.fn(), close: vi.fn(), closed: new Promise<void>(() => {}) };
     const bridge = { prefix, tab: "abcdefghijklmnopqrstuv", ready: Promise.resolve(), stop: vi.fn() };
     const seams = {
+      platform: { userAgent, maxTouchPoints: 0 },
       serviceWorker: sw, RTCPeerConnection: class {} as typeof RTCPeerConnection,
       openDirectPeer: vi.fn(async () => { order.push("peer"); return peer; }) as unknown as ReturnType<typeof vi.fn<typeof import("@godot-scene-web/direct-peer").openDirectPeer>>,
       createTunnelFetch: vi.fn(() => vi.fn(async (request: Request) => {
@@ -331,7 +353,7 @@ describe("Website tunnel boot", () => {
         return jsonResponse({ ...MANIFEST, tunnel: "couch-tunnel/1" });
       })),
       startServiceWorkerBridge: vi.fn(() => { order.push("bridge"); return bridge; }),
-      fetch: vi.fn().mockResolvedValue(jsonResponse(MANIFEST)),
+      fetch: vi.fn<typeof fetch>(async () => { order.push("direct"); return jsonResponse(MANIFEST); }),
       injectApp: vi.fn(async (_base: string, _manifest: BootManifest) => { order.push("inject"); }),
       reload: vi.fn(), hardReload: false, storage: sessionStorage
     };
@@ -341,6 +363,90 @@ describe("Website tunnel boot", () => {
   afterEach(() => {
     delete globalThis.__couchCoopTunnel;
     sessionStorage.clear();
+  });
+
+  it("boots Chromium directly without worker control or a hard-reload retry", async () => {
+    const { seams, sw, order } = rig(CHROMIUM);
+    Object.assign(sw, { controller: null });
+    seams.hardReload = true;
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite([origin], href, seams)).toMatchObject({ ok: true, origin });
+    expect(order).toEqual(["direct", "inject"]);
+    expect(seams.injectApp).toHaveBeenCalledExactlyOnceWith(origin, MANIFEST);
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    expect(sw.register).not.toHaveBeenCalled();
+    expect(seams.reload).not.toHaveBeenCalled();
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it.each(["probe", "bundle"])("tries Chromium's tunnel after a direct %s failure", async failure => {
+    const { seams, order } = rig(CHROMIUM);
+    if (failure === "probe") seams.fetch.mockImplementationOnce(async () => {
+      order.push("direct"); throw new Error("unreachable");
+    });
+    if (failure === "bundle") seams.injectApp.mockImplementationOnce(async base => {
+      order.push("inject"); globalThis.__couchCoopHostBase = base; throw new Error("bundle");
+    });
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite([origin], href, seams)).toMatchObject({ ok: true, origin });
+    expect(order).toEqual(["direct", ...(failure === "bundle" ? ["inject"] : []),
+      "worker", "peer", "bridge", "/app-boot.json", "inject"]);
+    expect(seams.injectApp.mock.lastCall?.[0]).toBe(`https://pages.example${prefix.slice(0, -1)}`);
+  });
+
+  it.each([IPHONE, SAFARI])("prefers the tunnel on WebKit: %s", async userAgent => {
+    const { seams, order } = rig(userAgent);
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect((await bootWebsite([origin], href, seams))?.ok).toBe(true);
+    expect(order).toEqual(["worker", "peer", "bridge", "/app-boot.json", "inject"]);
+    expect(seams.fetch).not.toHaveBeenCalled();
+  });
+
+  it("reads the browser platform when no platform seam is supplied", async () => {
+    const { seams, order } = rig();
+    vi.spyOn(navigator, "userAgent", "get").mockReturnValue(CHROMIUM);
+    const { platform: _platform, ...browserSeams } = seams;
+    try {
+      const { bootWebsite } = await import("@/boot/websiteBoot");
+      expect((await bootWebsite([origin], href, browserSeams))?.ok).toBe(true);
+      expect(order).toEqual(["direct", "inject"]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("forces tunnel first on Chromium with tunnel=first", async () => {
+    const { seams, order } = rig(CHROMIUM);
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect((await bootWebsite([origin], href + "&tunnel=first", seams))?.ok).toBe(true);
+    expect(order).toEqual(["worker", "peer", "bridge", "/app-boot.json", "inject"]);
+    expect(seams.fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps the iOS unreachable explanation after tunnel and direct fail", async () => {
+    const { seams, order } = rig();
+    seams.openDirectPeer.mockRejectedValueOnce(new Error("timeout"));
+    seams.fetch.mockImplementationOnce(async () => { order.push("direct"); throw new Error("blocked"); });
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    const outcome = await bootWebsite([origin], href, seams);
+    expect(order).toEqual(["worker", "direct"]);
+    expect(outcome).toEqual({ ok: false, failure: { kind: "unreachable", tried: [origin] } });
+    if (outcome && !outcome.ok && outcome.failure.kind === "unreachable") {
+      expect(webLinkBlockedByBrowser({ pageProtocol: "https:", ...seams.platform }, outcome.failure.tried)).toBe(true);
+    }
+    expect(seams.injectApp).not.toHaveBeenCalled();
+  });
+
+  it.each([IPHONE, CHROMIUM])("never tunnels with tunnel=off after direct fails: %s", async userAgent => {
+    const { seams, sw } = rig(userAgent);
+    seams.fetch.mockRejectedValueOnce(new Error("unreachable"));
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite([origin], href + "&tunnel=off", seams)).toEqual({
+      ok: false, failure: { kind: "unreachable", tried: [origin] }
+    });
+    expect(seams.fetch).toHaveBeenCalledOnce();
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    expect(sw.register).not.toHaveBeenCalled();
   });
 
   it("connects before probing and injects from the SW virtual base", async () => {
@@ -386,10 +492,10 @@ describe("Website tunnel boot", () => {
     expect(bridge.stop).not.toHaveBeenCalled();
   });
 
-  it("keeps an unpinned scanned host ahead of a pinned remembered host", async () => {
+  it.each([IPHONE, CHROMIUM])("keeps an unpinned scanned host ahead of a pinned remembered host: %s", async userAgent => {
     const remembered = "http://192.168.1.20:13337";
     rememberHost(remembered, 1, undefined, fingerprint);
-    const { seams } = rig();
+    const { seams } = rig(userAgent);
     const beforeInject = vi.fn();
     const url = href.split("&f=")[0]!;
     const { bootWebsite } = await import("@/boot/websiteBoot");
@@ -416,6 +522,21 @@ describe("Website tunnel boot", () => {
     expect(seams.openDirectPeer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ host: "192.168.1.5" }));
   });
 
+  it("tries a pinned scanned host's tunnel before Chromium advances to a remembered host", async () => {
+    const remembered = "http://192.168.1.20:13337";
+    rememberHost(remembered, 1, undefined, fingerprint);
+    const { seams, order } = rig(CHROMIUM);
+    seams.fetch.mockImplementationOnce(async () => { order.push("direct"); throw new Error("unreachable"); });
+    seams.openDirectPeer.mockImplementationOnce(async () => { order.push("peer"); throw new Error("timeout"); });
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite(candidatesForPage(href), href, seams)).toMatchObject({ ok: true, origin: remembered });
+    expect(order).toEqual(["direct", "worker", "peer", "direct", "inject"]);
+    expect(seams.fetch.mock.calls.map(call => call[0])).toEqual([
+      `${origin}/app-boot.json`, `${remembered}/app-boot.json`
+    ]);
+    expect(seams.openDirectPeer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ host: "192.168.1.5" }));
+  });
+
   it("acquires worker control once when advancing to another candidate's tunnel", async () => {
     const remembered = "http://192.168.1.20:13337";
     rememberHost(remembered, 1, undefined, fingerprint);
@@ -433,25 +554,45 @@ describe("Website tunnel boot", () => {
     expect(beforeInject).toHaveBeenCalledExactlyOnceWith(outcome);
   });
 
-  it("stops at a candidate that refuses the page origin", async () => {
+  it.each([IPHONE, CHROMIUM])("stops at a candidate that refuses the page origin: %s", async userAgent => {
     rememberHost("http://192.168.1.20:13337", 1, undefined, fingerprint);
-    const { seams } = rig();
+    const { seams } = rig(userAgent);
     seams.fetch.mockResolvedValueOnce(jsonResponse({ ...MANIFEST, originAllowed: false }));
     const beforeInject = vi.fn();
-    const url = href.split("&f=")[0]!;
+    const url = href;
+    seams.openDirectPeer.mockRejectedValueOnce(new Error("timeout"));
     const { bootWebsite } = await import("@/boot/websiteBoot");
     expect(await bootWebsite(candidatesForPage(url), url, { ...seams, beforeInject })).toEqual({
       ok: false, failure: { kind: "origin-refused", origin, webOrigin: MANIFEST.webOrigin }
     });
     expect(seams.fetch).toHaveBeenCalledOnce();
-    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    expect(seams.openDirectPeer).toHaveBeenCalledTimes(userAgent === CHROMIUM ? 0 : 1);
     expect(seams.injectApp).not.toHaveBeenCalled();
     expect(beforeInject).not.toHaveBeenCalled();
   });
 
-  it("reports every unreachable candidate after their tunnel and direct attempts fail", async () => {
+  it.each([IPHONE, CHROMIUM])("stops and cleans up when the tunnel refuses the page origin: %s", async userAgent => {
     rememberHost("http://192.168.1.20:13337", 1, undefined, fingerprint);
-    const { seams, sw } = rig();
+    const { seams, peer, bridge } = rig(userAgent);
+    seams.fetch.mockRejectedValueOnce(new Error("unreachable"));
+    seams.createTunnelFetch.mockReturnValue(vi.fn(async () => jsonResponse({
+      ...MANIFEST, tunnel: "couch-tunnel/1", originAllowed: false
+    })));
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite(candidatesForPage(href), href, seams)).toEqual({
+      ok: false, failure: { kind: "origin-refused", origin, webOrigin: MANIFEST.webOrigin }
+    });
+    expect(seams.fetch).toHaveBeenCalledTimes(userAgent === CHROMIUM ? 1 : 0);
+    expect(seams.openDirectPeer).toHaveBeenCalledOnce();
+    expect(bridge.stop).toHaveBeenCalledOnce();
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(seams.injectApp).not.toHaveBeenCalled();
+    expect(globalThis.__couchCoopTunnel).toBeUndefined();
+  });
+
+  it.each([IPHONE, CHROMIUM])("reports every unreachable candidate after their tunnel and direct attempts fail: %s", async userAgent => {
+    rememberHost("http://192.168.1.20:13337", 1, undefined, fingerprint);
+    const { seams, sw } = rig(userAgent);
     seams.openDirectPeer.mockRejectedValue(new Error("timeout"));
     seams.fetch.mockRejectedValue(new Error("unreachable"));
     const candidates = candidatesForPage(href);
