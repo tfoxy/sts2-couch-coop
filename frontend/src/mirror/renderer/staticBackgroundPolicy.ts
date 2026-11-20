@@ -200,6 +200,12 @@ export function tryParseEventBackgroundSceneId(path: string | null | undefined):
   return match ? match[1] : null;
 }
 
+// Char-select stills are stream-only: old-renderer viewers keep their live background.
+const CHARACTER_SELECT_BG_SCENE_RE = /^res:\/\/scenes\/screens\/char_select\/char_select_bg_([a-z_]+)\.tscn$/;
+export function tryParseCharacterSelectBackgroundSceneId(path: string | null | undefined): string | null {
+  return path ? CHARACTER_SELECT_BG_SCENE_RE.exec(path)?.[1] ?? null : null;
+}
+
 // An event backdrop root the static-background setting may replace.
 export function isEventBackgroundSceneRoot(node: MirrorNode): boolean {
   return tryParseEventBackgroundSceneId(node.sceneFilePath) !== null;
@@ -269,13 +275,13 @@ export function staticBgCoversScenePath(path: string): boolean {
   return (
     isCombatBackgroundScenePath(path) ||
     tryParseEventBackgroundSceneId(path) !== null ||
-    tryParseRoomBackgroundSceneId(path) !== null
+    tryParseRoomBackgroundSceneId(path) !== null ||
+    tryParseCharacterSelectBackgroundSceneId(path) !== null
   );
 }
 
-// The whole family the "Static background" setting covers: the combat convention (parent-chain-scoped), the
-// strict event-backdrop convention, and the room-backdrop subtree table. This is THE predicate for every
-// static-bg gate on both render backends.
+// Old-renderer suppression covers combat, events and room subtrees. Char-select remains live here;
+// the stream-only replacement hides its mounted container on the seat instead.
 export function isStaticBackgroundSuppressibleRoot(
   node: MirrorNode,
   nodesById: ReadonlyMap<string, MirrorNode>

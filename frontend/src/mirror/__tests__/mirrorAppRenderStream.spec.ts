@@ -225,6 +225,41 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(host.ofType("settings")).toHaveLength(1);
   });
 
+  it("shows the seat's character-select pick independently of host updates", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    const character = (id: string) => ({
+      scenePath: `res://scenes/screens/char_select/char_select_bg_${id}.tscn`,
+      url: `/bg/char-select/${id}?v=1`, id: `seat:42:${id}`
+    });
+    const first = character("silent");
+    const seat = await joinSeat({ staticBackground: first });
+    const host = MockWebSocket.instances[0];
+    const image = () => app!.get('[data-testid="stream-static-bg-image"]');
+    expect(image().attributes("src")).toBe(first.url);
+    await image().trigger("load");
+    await settle();
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgReady: first.id });
+
+    host.emit(sessionMessage({ staticBackground: character("ironclad") }));
+    await settle();
+    expect(image().attributes("src")).toBe(first.url);
+    const pick = character("random_character");
+    seat.emit(sessionMessage({ staticBackground: pick }));
+    await settle();
+    expect(image().attributes("src")).toBe(pick.url);
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgReady: "" });
+    await image().trigger("error");
+    await settle();
+    expect((image().element.parentElement as HTMLElement).style.visibility).toBe("hidden");
+    expect(app!.get('[data-testid="render-stream-background-stage"]').attributes("style"))
+      .toContain("background-color: rgb(24, 24, 24)");
+
+    seat.emit(sessionMessage({ staticBackground: null }));
+    await settle();
+    expect(app!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+  });
+
   it("sends the seat descriptor vote only after its host still loads and retracts it on change/error/off", async () => {
     streamAvailable();
     Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });

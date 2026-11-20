@@ -42,10 +42,10 @@ public sealed record CouchCoopStaticBackgroundState(
 // `session` envelopes to EVERY connection — gated ones included — when the published value changes, so clients
 // learn the new URL.
 //
-// THE HOST'S PUBLISH IS THE SOURCE OF TRUTH for every viewer of the run, seat viewers included: a browser on a
-// headless seat shows the HOST's descriptor (received over its gated host socket), never one derived from the
-// seat's own tree. So the probe has to run whenever anybody is showing a still, not only while a host socket
-// streams. Three triggers schedule it, all folding into the one queued probe
+// Room stills use the host's publish, including on seats. Character-select stills use the seat's own pick.
+// The probe runs whenever anybody shows a still, including viewers whose host socket is gated. Screen and
+// demand triggers fold into the one queued probe; char-select also subscribes to its mounted root's child-entry/exit
+// and screen visibility signals while stream static-background demand lasts.
 // (CouchCoopStaticBackgroundProbeScheduler):
 //   1. OnSceneDelta — the mirror scene stream's SCREEN signature changed (the discriminator
 //      ResendSessionsIfSceneScreenChanged keys on), or a late event/room backdrop mounted. Runs only while a
@@ -120,6 +120,7 @@ public sealed class CouchCoopStaticBackgroundTracker
             ScheduleProbeOnMainThread,
             ArmFollowUpTimerOnMainThread,
             _log);
+        _characterSelectSubscription = new(() => _scheduler.TrySchedule("character-select scene"));
     }
 
     // The screen fingerprint last seen (scene-observer thread; cleared by ResetScreenBaseline when the observer
@@ -138,15 +139,33 @@ public sealed class CouchCoopStaticBackgroundTracker
     private ulong _stampedInstanceId;
     private readonly string _identityPrefix = Guid.NewGuid().ToString("N");
     private string? _desiredStreamHide;
-    private ulong _hiddenInstanceId;
-    private bool _savedVisible;
-    private Node.ProcessModeEnum _savedProcessMode;
+    private volatile bool _characterSelectProbeDesired;
+    private readonly CharacterSelectProbeSubscription _characterSelectSubscription;
+    private ulong _characterSelectScreenInstanceId;
+    private readonly StreamBackgroundHideSet _streamBackgroundHide = new();
 
     public void SetDesiredStreamHide(string? descriptorId)
     {
         if (string.Equals(Volatile.Read(ref _desiredStreamHide), descriptorId, StringComparison.Ordinal)) return;
         Volatile.Write(ref _desiredStreamHide, descriptorId);
         if (CouchCoopMod.EngineAvailable) _scheduler.TrySchedule("stream-background");
+    }
+
+    public void SetCharacterSelectProbeDesired(bool desired)
+    {
+        if (_characterSelectProbeDesired == desired) return;
+        _characterSelectProbeDesired = desired;
+        if (CouchCoopMod.EngineAvailable) _scheduler.TrySchedule("character-select demand");
+    }
+
+    // Picks change the image identity, but the mounted container must stay hidden throughout the swap.
+    internal static string? StreamHideIdentity(CouchCoopStaticBackgroundState? state)
+    {
+        if (state?.Id is not { } id) return null;
+        return BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(state.ScenePath) is not null
+            && id.EndsWith(":" + state.Url, StringComparison.Ordinal)
+                ? id[..^(state.Url.Length + 1)]
+                : id;
     }
 
     internal string? DesiredStreamHideForTest => Volatile.Read(ref _desiredStreamHide);
@@ -230,7 +249,7 @@ public sealed class CouchCoopStaticBackgroundTracker
     {
         var signature = delta.ScreenType + "|" + delta.ScreenInstanceId;
         if (string.Equals(signature, Volatile.Read(ref _lastScreenSignature), StringComparison.Ordinal)
-            && !CarriesUnpublishedEventBackdrop(delta))
+            && !CarriesUnpublishedEventBackdrop(delta, _characterSelectProbeDesired))
         {
             return;
         }
@@ -249,13 +268,14 @@ public sealed class CouchCoopStaticBackgroundTracker
     // True when this delta upserts an event-backdrop scene root the current publish does not already name —
     // the late-mount re-probe condition. Pure over the delta + the published volatile, so it is unit-testable
     // and costs one strict-parse per CHANGED node (the overwhelming majority have no SceneFilePath at all).
-    internal static bool CarriesUnpublishedEventBackdrop(RuntimeSceneDelta delta)
+    internal static bool CarriesUnpublishedEventBackdrop(RuntimeSceneDelta delta, bool includeCharacterSelect = false)
     {
         foreach (var upsert in delta.Upserts)
         {
             if (upsert.SceneFilePath is not { Length: > 0 } path
                 || (CouchCoopStaticBackgroundProvider.TryParseEventBackgroundId(path) is null
-                    && BackgroundSceneFamilies.TryParseRoomBackgroundId(path) is null))
+                    && BackgroundSceneFamilies.TryParseRoomBackgroundId(path) is null
+                    && (!includeCharacterSelect || BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(path) is null)))
             {
                 continue;
             }
@@ -301,7 +321,8 @@ public sealed class CouchCoopStaticBackgroundTracker
             // the combat one is what the viewer is looking at. Rooms (the shop) coexist with neither.
             next = LocateCombatBackground(root, out bgRoot)
                 ?? LocateEventBackground(root, out bgRoot)
-                ?? LocateRoomBackground(root, out bgRoot);
+                ?? LocateRoomBackground(root, out bgRoot)
+                ?? (_characterSelectProbeDesired ? LocateCharacterSelectBackground(root, out bgRoot) : null);
         }
 
         // Stage-B stamping half: apply the current desired-skip verdict to the LOCATED root (the node whose
@@ -311,32 +332,202 @@ public sealed class CouchCoopStaticBackgroundTracker
         {
             next = next with { Id = _identityPrefix + ":" + bgRoot.GetInstanceId() + ":" + next.Url };
         }
-        ApplyStreamSkip(bgRoot);
+        var characterSelect = BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(next?.ScenePath) is not null;
+        UpdateCharacterSelectSignalRoot(_characterSelectProbeDesired && (next is null || characterSelect),
+            characterSelect ? bgRoot : null);
+        ApplyStreamSkip(characterSelect ? null : bgRoot);
         PublishAndNotify(next);
-        ApplyStreamBackgroundHide(bgRoot, next?.Id);
+        ApplyStreamBackgroundHide(bgRoot, StreamHideIdentity(next), characterSelect);
+    }
+
+    private static CouchCoopStaticBackgroundState? LocateCharacterSelectBackground(Node root, out Node? bgRoot)
+    {
+        bgRoot = null;
+        var found = FindCharacterSelectBackgroundRoot<Node>(root,
+            node => [.. node.GetChildren()], node => node.SceneFilePath,
+            node => node.GetParent() is Control parent && parent.Name == "AnimatedBg" ? parent : null,
+            node => node.GetParent() is CanvasItem screen && screen.IsVisibleInTree());
+        if (found is null)
+        {
+            return null;
+        }
+
+        bgRoot = found.Value.Node;
+        return new CouchCoopStaticBackgroundState(found.Value.ScenePath, [], null,
+            CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.CharacterSelect, found.Value.Id, null));
+    }
+
+    internal static (string ScenePath, string Id, TNode Node)? FindCharacterSelectBackgroundRoot<TNode>(
+        TNode root, Func<TNode, IReadOnlyList<TNode>> children, Func<TNode, string?> scenePath,
+        Func<TNode, TNode?> animatedParent, Func<TNode, bool> screenVisible) where TNode : class
+    {
+        var found = FindBackgroundSceneRoot(root, children, scenePath,
+            BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId);
+        if (found is not { } background || animatedParent(background.Node) is not { } parent) return null;
+        // The hide root may carry our own hide; only its screen determines whether the still is current.
+        if (!screenVisible(parent)) return null;
+        var mounted = children(parent);
+        for (var i = mounted.Count - 1; i >= 0; i--)
+        {
+            if (scenePath(mounted[i]) is { } path
+                && BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(path) is { } id)
+            {
+                return (path, id, parent);
+            }
+        }
+        return null;
+    }
+
+    internal const string MainMenuScenePath = "res://scenes/screens/main_menu.tscn";
+
+    // Earlier sibling branches are occluded by the opaque still. Later siblings remain live above it.
+    internal static IReadOnlyList<TNode> FindOccludedPredecessors<TNode>(TNode root,
+        Func<TNode, TNode?> parent, Func<TNode, IReadOnlyList<TNode>> children,
+        Func<TNode, string?> scenePath, Func<TNode, bool> isControl, Func<TNode, bool> eligible)
+        where TNode : class
+    {
+        var result = new List<TNode>();
+        for (var branch = root; parent(branch) is { } ancestor && isControl(ancestor); branch = ancestor)
+        {
+            foreach (var sibling in children(ancestor))
+            {
+                if (ReferenceEquals(sibling, branch)) break;
+                if (eligible(sibling)) result.Add(sibling);
+            }
+            if (scenePath(ancestor) == MainMenuScenePath) break;
+        }
+        return result;
+    }
+
+    internal static bool IsOccludedPredecessor(int zIndex, bool zAsRelative, bool topLevel)
+        => zIndex == 0 && zAsRelative && !topLevel;
+
+    // Main thread only. Hold an instance id so freed screens do not leave a managed node reference behind.
+    private void UpdateCharacterSelectSignalRoot(bool desired, Node? root)
+    {
+        _characterSelectSubscription.Update(desired, root?.GetInstanceId() ?? 0,
+            id => GodotObject.InstanceFromId(id) is Node previous && previous.IsInsideTree(),
+            (id, subscribed) =>
+            {
+                if (subscribed)
+                {
+                    if (GodotObject.InstanceFromId(id) is not Node node) return;
+                    node.ChildEnteredTree += OnCharacterSelectChildChanged;
+                    node.ChildExitingTree += OnCharacterSelectChildChanged;
+                    if (node.GetParent() is CanvasItem screen)
+                    {
+                        _characterSelectScreenInstanceId = screen.GetInstanceId();
+                        screen.VisibilityChanged += OnCharacterSelectChanged;
+                    }
+                }
+                else
+                {
+                    if (GodotObject.InstanceFromId(id) is Node node)
+                    {
+                        node.ChildEnteredTree -= OnCharacterSelectChildChanged;
+                        node.ChildExitingTree -= OnCharacterSelectChildChanged;
+                    }
+                    if (_characterSelectScreenInstanceId != 0
+                        && GodotObject.InstanceFromId(_characterSelectScreenInstanceId) is CanvasItem screen)
+                        screen.VisibilityChanged -= OnCharacterSelectChanged;
+                    _characterSelectScreenInstanceId = 0;
+                }
+            });
+    }
+
+    private void OnCharacterSelectChildChanged(Node child) => OnCharacterSelectChanged();
+
+    private void OnCharacterSelectChanged()
+    {
+        // Signal callbacks only schedule; the folded probe reads the tree after the frame boundary.
+        _characterSelectSubscription.Changed(_characterSelectProbeDesired);
+    }
+
+    internal sealed class CharacterSelectProbeSubscription(Action scheduleProbe)
+    {
+        internal ulong RootId { get; private set; }
+
+        internal void Update(bool desired, ulong locatedRootId, Func<ulong, bool> isInsideTree,
+            Action<ulong, bool> setSubscribed)
+        {
+            // Empty or hidden containers still observe the next pick or reveal; detach or demand loss retires them.
+            var nextId = desired ? locatedRootId : 0;
+            if (desired && nextId == 0 && RootId != 0 && isInsideTree(RootId)) nextId = RootId;
+            if (RootId == nextId) return;
+            if (RootId != 0) setSubscribed(RootId, false);
+            RootId = nextId;
+            if (RootId != 0) setSubscribed(RootId, true);
+        }
+
+        internal void Changed(bool desired)
+        {
+            if (desired) scheduleProbe();
+        }
     }
 
     // Main thread only. Retire the previous root before considering a new room's descriptor.
-    private void ApplyStreamBackgroundHide(Node? bgRoot, string? descriptorId)
+    private void ApplyStreamBackgroundHide(Node? bgRoot, string? descriptorId, bool characterSelect)
     {
         var desired = MatchesStreamBackground(Volatile.Read(ref _desiredStreamHide), descriptorId);
-        if (_hiddenInstanceId != 0
-            && (!desired || bgRoot is null || bgRoot.GetInstanceId() != _hiddenInstanceId))
-        {
-            if (GodotObject.InstanceFromId(_hiddenInstanceId) is CanvasItem previous)
+        var predecessors = desired && characterSelect && bgRoot is not null
+            ? FindOccludedPredecessors<Node>(bgRoot, node => node.GetParent(),
+                node => [.. node.GetChildren()], node => node.SceneFilePath, node => node is Control,
+                node => node is CanvasItem item && IsOccludedPredecessor(item.ZIndex, item.ZAsRelative, item.TopLevel))
+                .Select(node => node.GetInstanceId()).ToArray()
+            : [];
+        _streamBackgroundHide.Apply(desired, bgRoot is CanvasItem ? bgRoot.GetInstanceId() : 0,
+            predecessors,
+            id => GodotObject.InstanceFromId(id) is CanvasItem item ? (item.Visible, item.ProcessMode) : null,
+            (id, visible, processMode) =>
             {
-                previous.Visible = _savedVisible;
-                previous.ProcessMode = _savedProcessMode;
-            }
-            _hiddenInstanceId = 0;
-        }
-        if (desired && _hiddenInstanceId == 0 && bgRoot is CanvasItem canvasItem)
+                if (GodotObject.InstanceFromId(id) is not CanvasItem item) return;
+                item.Visible = visible;
+                item.ProcessMode = processMode;
+            });
+    }
+
+    // Instance ids keep freed screens out of the saved state. All hides share the mounted root's lifetime.
+    internal sealed class StreamBackgroundHideSet
+    {
+        private ulong _rootId;
+        private readonly Dictionary<ulong, (bool Visible, Node.ProcessModeEnum ProcessMode)> _saved = [];
+
+        internal void Apply(bool desired, ulong rootId, IReadOnlyList<ulong> predecessors,
+            Func<ulong, (bool Visible, Node.ProcessModeEnum ProcessMode)?> read,
+            Action<ulong, bool, Node.ProcessModeEnum> write)
         {
-            _savedVisible = canvasItem.Visible;
-            _savedProcessMode = canvasItem.ProcessMode;
-            _hiddenInstanceId = canvasItem.GetInstanceId();
-            canvasItem.Visible = false;
-            canvasItem.ProcessMode = Node.ProcessModeEnum.Disabled;
+            var targets = desired && rootId != 0 ? predecessors.Append(rootId).ToHashSet() : [];
+            foreach (var id in _saved.Keys.ToArray())
+            {
+                if (rootId == _rootId && targets.Contains(id)) continue;
+                var saved = _saved[id];
+                if (read(id) is { } current)
+                {
+                    // Restore each property only while it still holds our value.
+                    var visible = current.Visible ? current.Visible : saved.Visible;
+                    var processMode = current.ProcessMode == Node.ProcessModeEnum.Disabled ? saved.ProcessMode : current.ProcessMode;
+                    if (visible != current.Visible || processMode != current.ProcessMode) write(id, visible, processMode);
+                }
+                _saved.Remove(id);
+            }
+            _rootId = desired ? rootId : 0;
+            foreach (var id in targets)
+            {
+                if (read(id) is not { } current) continue;
+                if (_saved.TryGetValue(id, out var saved))
+                {
+                    // A later probe can hide a newly shown predecessor without losing the game's newer state.
+                    _saved[id] = (current.Visible ? current.Visible : saved.Visible,
+                        current.ProcessMode == Node.ProcessModeEnum.Disabled ? saved.ProcessMode : current.ProcessMode);
+                }
+                else
+                {
+                    if (id != rootId && !current.Visible) continue;
+                    _saved.Add(id, current);
+                }
+                if (current.Visible || current.ProcessMode != Node.ProcessModeEnum.Disabled)
+                    write(id, false, Node.ProcessModeEnum.Disabled);
+            }
         }
     }
 
@@ -690,6 +881,11 @@ public sealed class CouchCoopStaticBackgroundTracker
         if (CouchCoopStaticBackgroundProvider.TryParseEventBackgroundId(state.ScenePath) is { } eventId)
         {
             return (StaticBackgroundFamily.Events, eventId);
+        }
+
+        if (BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(state.ScenePath) is { } characterId)
+        {
+            return (StaticBackgroundFamily.CharacterSelect, characterId);
         }
 
         if (BackgroundSceneFamilies.TryParseRoomBackgroundId(state.ScenePath) is { } roomId)

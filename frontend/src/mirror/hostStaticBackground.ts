@@ -1,23 +1,10 @@
-// WHICH STATIC BACKGROUND A SEAT VIEWER SHOWS — the host's, never the seat's own.
-//
-// Product rule: the background the host has is the background every seat has (combat, ancient events, shops).
-// A viewer redirected to a headless seat holds two sockets, and both deliver a `session` envelope with a
-// `staticBackground` descriptor. Only the HOST's URL is one the host's `/bg/` route will render: the seat's
-// carries the seat's own probed frame/digest, which the host refuses (a blank stage for events and shops).
-//
-// The two descriptors play different parts:
-//   * the SEAT's names WHICH scene this viewer's game has mounted (its scenePath). Its URL is never used.
-//   * the HOST's supplies the picture, admitted only while it names that same scene.
-//
-// Co-op players move between rooms together, but the two envelopes arrive on separate sockets from separate
-// processes, so either can be a room ahead for a moment:
-//   * HOST AHEAD — the host already describes the next room while the seat still shows this one. Keep the last
-//     host descriptor admitted for the seat's scene (the LATCH) until the seat itself moves on.
-//   * SEAT AHEAD — the seat has mounted a scene the host has not described yet. Show nothing until it does; a
-//     blank stage is correct, a picture the host did not publish is not.
+// Room stills use the host's descriptor, admitted against the seat's mounted scene. The last admitted
+// room still stays latched while the host moves ahead; a seat that moves first waits for the host.
+// Character-select stills use the seat's own pick: the host renders any valid character id on request.
 
 import type { BrowserStaticBackgroundDescriptor } from "@/protocol/browserEnvelope";
 import { hostBase } from "@/join/hostBase";
+import { tryParseCharacterSelectBackgroundSceneId } from "@/mirror/renderer/staticBackgroundPolicy";
 import { tunnelRequestUrl } from "@/tunnel/hostTunnel";
 
 /** Width of the host-rendered still in presentation design pixels. */
@@ -51,6 +38,10 @@ export function admitHostStaticBackground(
   if (scenePath === null) {
     // The seat has no covered scene mounted: nothing to show, and nothing left to latch for.
     return { descriptor: null, latch: null };
+  }
+  // The host renders any valid character id; no host publication or room latch is needed.
+  if (seat && tryParseCharacterSelectBackgroundSceneId(scenePath) !== null) {
+    return { descriptor: seat, latch: null };
   }
   if (host && host.scenePath === scenePath) {
     return { descriptor: host, latch: { scenePath, descriptor: host } };

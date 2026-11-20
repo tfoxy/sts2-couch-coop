@@ -25,7 +25,7 @@ public enum StaticBackgroundFamily
     // Inline room-backdrop subtrees (the merchant shop) — see BackgroundSceneFamilies.RoomBackgroundSubtrees.
     // Digest-less like events; frame-qualified like events; rendered via a scene-subtree:// key.
     Rooms,
-}
+    CharacterSelect,}
 
 // Produces the host-rendered STATIC background image for the `/bg/` route (the mirror's "Static background"
 // setting): one 2520x1080 render of the room's background — the combat background scene matching the layer
@@ -199,6 +199,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
     private static string FamilyPathPrefix(StaticBackgroundFamily family)
         => family switch
         {
+            StaticBackgroundFamily.CharacterSelect => "char-select/",
             StaticBackgroundFamily.Events => "events/",
             StaticBackgroundFamily.Rooms => "rooms/",
             _ => string.Empty,
@@ -294,7 +295,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             throw new ArgumentException("Event backgrounds are digest-less; layers are a combat-family concept.", nameof(layersDigest));
         }
 
-        if (family == StaticBackgroundFamily.Combat && eventFrame is not null)
+        if (family is StaticBackgroundFamily.Combat or StaticBackgroundFamily.CharacterSelect && eventFrame is not null)
         {
             throw new ArgumentException("Frame specs are an event-family concept.", nameof(eventFrame));
         }
@@ -379,6 +380,7 @@ public sealed class CouchCoopStaticBackgroundProvider(
             chain = await Task.Run(
                 () => family switch
                 {
+                    StaticBackgroundFamily.CharacterSelect => RenderCharacterSelectScene(id, RenderWidthPx, RenderHeightPx),
                     StaticBackgroundFamily.Events => RenderEventScene(id, eventFrame, RenderWidthPx, RenderHeightPx),
                     StaticBackgroundFamily.Rooms => RenderRoomSubtree(id, eventFrame, RenderWidthPx, RenderHeightPx),
                     _ => RenderWithFallback(id, layersDigest, layerScenePaths, RenderWidthPx, RenderHeightPx),
@@ -642,6 +644,24 @@ public sealed class CouchCoopStaticBackgroundProvider(
                 ImageQuality: encode.Quality,
                 ImageOpaque: encode.Opaque,
                 EventBackgroundFrame: eventFrame)));
+        return new RenderChainResult(result, samples);
+    }
+
+    // One fixed composition for every seat; no live probe frame enters the URL or cache key.
+    internal const string CharacterSelectFrame = "0.0,0.0,1.000";
+
+    private RenderChainResult RenderCharacterSelectScene(string id, int renderWidthPx, int renderHeightPx)
+    {
+        var encode = ShippedCodec;
+        var samples = new List<StaticBackgroundRenderMetrics.Sample>(1);
+        var result = TimeRender(
+            $"char-select/{id}", renderWidthPx, renderHeightPx, "literal", bench: false, encode, samples,
+            requestId => _assets.GetAsset(new EmbeddableAssetRequest(
+                BackgroundSceneFamilies.BuildCharacterSelectBackgroundScenePath(id),
+                encode.Codec, requestId,
+                RenderWidth: renderWidthPx, RenderHeight: renderHeightPx,
+                ImageQuality: encode.Quality, ImageOpaque: encode.Opaque,
+                EventBackgroundFrame: CharacterSelectFrame)));
         return new RenderChainResult(result, samples);
     }
 

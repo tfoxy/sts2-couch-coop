@@ -9,10 +9,33 @@ internal static class BackgroundSceneFamiliesTests
 {
     public static void Run()
     {
+        CharacterSelectIds();
         EventIdRoundTrips();
         RejectsForeignConventions();
         PatternMatcherKeepsSpreadBehavior();
         RoomTableRoundTrips();
+    }
+
+    private static void CharacterSelectIds()
+    {
+        foreach (var id in new[] { "ironclad", "silent", "fool", "random_character" })
+        {
+            var path = BackgroundSceneFamilies.BuildCharacterSelectBackgroundScenePath(id);
+            Check.Equal(path, $"res://scenes/screens/char_select/char_select_bg_{id}.tscn", "character scene path");
+            Check.Equal(BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(path), id, "character id round trip");
+        }
+        foreach (var path in new[] { null, "", "res://scenes/events/background_scenes/ironclad.tscn",
+            "res://scenes/screens/char_select/char_select_bg_.tscn",
+            "res://scenes/screens/char_select/char_select_bg_Ironclad.tscn",
+            "res://scenes/screens/char_select/char_select_bg_ironclad2.tscn",
+            "res://scenes/screens/char_select/char_select_bg_../ironclad.tscn",
+            "res://scenes/screens/char_select/char_select_bg_%2e%2e.tscn",
+            "res://scenes/screens/char_select/char_select_bg_ironclad.tscn::sub",
+            "res://scenes/screens/char_select/char_select_bg_ironclad.png" })
+        {
+            Check.That(BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(path) is null,
+                $"reject character path {path}");
+        }
     }
 
     private static void RoomTableRoundTrips()

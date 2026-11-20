@@ -33,6 +33,7 @@ import {
   isEventBackgroundSceneRoot,
   isRoomBackgroundSubtreeRoot,
   staticBgCoversScenePath,
+  tryParseCharacterSelectBackgroundSceneId,
   staticBgTargetPathOf,
   tryParseEventBackgroundSceneId,
   tryParseRoomBackgroundSceneId
@@ -60,10 +61,10 @@ const props = withDefaults(defineProps<{
   // The retained mirror state + its revision counter — only read for the descriptor-less FALLBACK scan.
   state?: MirrorState;
   revision?: number;
-  // A SEAT view: the descriptor is the host's and the only acceptable source (see the header contract).
+  // A seat's old-renderer view uses only the admitted host descriptor (see the header contract).
   // Omitted/false everywhere the serving socket is the host itself.
   hostAuthoritative?: boolean;
-  // Stream underlays use only the admitted host descriptor and actual image events. No mirror build hold,
+  // Stream underlays use the admitted descriptor and actual image events. No mirror build hold,
   // fallback URL or retry ladder: a failed still leaves the stream stage's dark underlay showing.
   stream?: boolean;
   // Stream-only placement of the seat's combat background in the centered 1920x1080 reference.
@@ -199,7 +200,8 @@ const target = computed<BrowserStaticBackgroundDescriptor | null>(() => {
   // Filter descriptors through the currently supported background families: under the Stage-B steady state the
   // wire carries no bg root to disagree with, so an unfiltered descriptor could otherwise revive an unsupported
   // family.
-  const d = props.descriptor && staticBgCoversScenePath(props.descriptor.scenePath) ? props.descriptor : null;
+  const d = props.descriptor && staticBgCoversScenePath(props.descriptor.scenePath)
+    && tryParseCharacterSelectBackgroundSceneId(props.descriptor.scenePath) === null ? props.descriptor : null;
   if (d && (wireScenePath.value === null || d.scenePath === wireScenePath.value)) {
     return d;
   }

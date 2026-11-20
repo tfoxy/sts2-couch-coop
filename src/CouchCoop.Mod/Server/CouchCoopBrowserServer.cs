@@ -533,6 +533,7 @@ public sealed partial class CouchCoopBrowserServer(
     private void RefreshBgSkipLocked()
     {
         var needed = 0;
+        var sceneViewers = 0;
         var gatedStaticBg = 0;
         var streamStaticBg = 0;
         var streamPages = new List<(bool WantsStaticBg, string? Ready)>();
@@ -541,6 +542,7 @@ public sealed partial class CouchCoopBrowserServer(
         {
             var wantsSceneStream = connection.WantsSceneStream;
             var wantsStaticBg = connection.WantsStaticBg;
+            if (wantsSceneStream) sceneViewers++;
             if (connection.WantsStreamStaticBg) streamStaticBg++;
             if (connection.IsRenderStreamPage)
             {
@@ -562,10 +564,15 @@ public sealed partial class CouchCoopBrowserServer(
         _gatedStaticBgViewerCount = gatedStaticBg;
         _streamStaticBgViewerCount = streamStaticBg;
         _streamStaticBgPageCount = streamPages.Count(page => page.WantsStaticBg);
+        StaticBgTracker.SetCharacterSelectProbeDesired(!_generationStopped && _streamStaticBgPageCount > 0);
         RefreshScreenProbeLocked();
 
-        var descriptorId = CouchCoopStaticBackgroundTracker.Published?.Id;
-        var streamHide = ComputeStreamBgHideDesired(!_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", descriptorId, needed, streamPages);
+        var published = CouchCoopStaticBackgroundTracker.Published;
+        var descriptorId = CouchCoopStaticBackgroundTracker.StreamHideIdentity(published);
+        // Old-renderer viewers have no character-select still, regardless of their static-background setting.
+        var streamHideNeeded = BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(published?.ScenePath) is not null
+            ? sceneViewers : needed;
+        var streamHide = ComputeStreamBgHideDesired(!_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", descriptorId, streamHideNeeded, streamPages);
         _staticBgTracker?.SetDesiredStreamHide(streamHide ? descriptorId : null);
         _streamParticleFreezeDesired = ComputeStreamParticleFreezeDesired(
             !_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", particlePages);
@@ -760,6 +767,7 @@ public sealed partial class CouchCoopBrowserServer(
         }
 
         _staticBgTracker?.CancelFollowUps();
+        _staticBgTracker?.SetCharacterSelectProbeDesired(false);
     }
 
     // The shipped subscription: the game's "the screen on top may have changed" event, through spirectl's total
@@ -3232,6 +3240,12 @@ public sealed partial class CouchCoopBrowserServer(
         }
 
         var route = TryParseStaticBackgroundRoute(request.RawPath);
+        if (route is null && Uri.UnescapeDataString(request.RawPath).StartsWith("/bg/char-select/", StringComparison.Ordinal))
+        {
+            await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound,
+                "unknown-background", "Character-select background was not found.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
         // `layers` must look like the digest BuildImageUrl minted (short lowercase hex); anything else is a
         // garbled URL, rejected before it can fragment the cache. `v` is accepted as an opaque cache-buster.
         // An EVENT URL carrying `layers=` is garbled too: event backdrops mount no layer variants, so no such
@@ -3256,7 +3270,7 @@ public sealed partial class CouchCoopBrowserServer(
             || !digestValid
             || !frameValid
             || (bg.Family != StaticBackgroundFamily.Combat && digest is not null)
-            || (bg.Family == StaticBackgroundFamily.Combat && frame is not null))
+            || (bg.Family is StaticBackgroundFamily.Combat or StaticBackgroundFamily.CharacterSelect && frame is not null))
         {
             await HttpResponseWriter.WriteJsonErrorAsync(
                 stream,
@@ -3379,8 +3393,16 @@ public sealed partial class CouchCoopBrowserServer(
             family = StaticBackgroundFamily.Rooms;
             id = id[roomsSegment.Length..];
         }
+        else if (id.StartsWith("char-select/", StringComparison.Ordinal))
+        {
+            family = StaticBackgroundFamily.CharacterSelect;
+            id = id["char-select/".Length..];
+        }
 
-        return CouchCoopStaticBackgroundProvider.IsValidBackgroundId(id) ? (family, id) : null;
+        var valid = family == StaticBackgroundFamily.CharacterSelect
+            ? CouchCoop.MirrorProtocol.SceneModel.BackgroundSceneFamilies.IsValidCharacterSelectBackgroundId(id)
+            : CouchCoopStaticBackgroundProvider.IsValidBackgroundId(id);
+        return valid ? (family, id) : null;
     }
 
     private void LogInternalServerError(CouchCoopHttpRequest? request, Exception exception)

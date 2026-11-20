@@ -199,9 +199,8 @@ public sealed class BrowserStateEnvelopeFactory(
             // Same source as the LAN-discovery reply (CouchCoopHostUiServices), so a discovered host
             // and a hand-typed one show the same label. Cheap (a cached OS string) — no need to hoist it.
             HostName: Environment.MachineName,
-            // Static background (Stage A): the tracker's published volatile — the current combat bg image the
-            // client's "Static background" setting displays. Null-omitted when unknown (the client fails open to
-            // the live subtree). A pure volatile read, no Godot call.
+            // This process's background descriptor, including its own character pick on a seat.
+            // Null-omitted when unknown; a pure volatile read with no Godot call.
             StaticBackground: CouchCoopStaticBackgroundTracker.Published is { } staticBg
                 ? new BrowserStaticBackgroundDto(staticBg.ScenePath, staticBg.Url, staticBg.Id, staticBg.CombatFrame)
                 : null,

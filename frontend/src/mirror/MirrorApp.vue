@@ -280,7 +280,7 @@ let audioVisibilityGeneration = 0;
 // passed to SettingsPanel for exactly that).
 const directView = ref(false);
 
-// THE STATIC BACKGROUND A SEAT VIEWER SHOWS is the HOST's descriptor, admitted against the scene the seat has
+// Room stills use the host descriptor; char-select uses the seat's pick. Admission follows the scene the seat has
 // mounted (see @/mirror/hostStaticBackground for the rule, the latch and the two ways the sockets can disagree).
 // Maintained by a SYNC watcher rather than a computed so the latch sees every host and seat envelope in order,
 // including those that land while nothing is reading the result (no scene on screen yet). Null while not joined:
@@ -300,7 +300,7 @@ watch(
   },
   { flush: "sync", immediate: true }
 );
-// What StaticBackground is given: the admitted host descriptor for a seat view, the serving session's own
+// What StaticBackground is given: the admitted descriptor for a seat view, the serving session's own
 // otherwise (the serving socket IS the host there).
 const stageBackground = computed<BrowserStaticBackgroundDescriptor | null>(() =>
   joined.value ? seatViewBackground.value : joinSession.value?.staticBackground ?? null

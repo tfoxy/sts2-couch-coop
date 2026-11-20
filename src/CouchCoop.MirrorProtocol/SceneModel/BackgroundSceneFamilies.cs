@@ -1,7 +1,7 @@
 namespace CouchCoop.MirrorProtocol.SceneModel;
 
 /// <summary>
-/// The TWO background scene-path conventions the mirror knows, in one place so the spread index, the static
+/// The background scene-path conventions the mirror knows, in one place so the spread index, the static
 /// background provider/tracker (Mod) and the frontend twins cannot drift apart:
 ///
 ///   - COMBAT:  <c>res://scenes/backgrounds/&lt;id&gt;/&lt;id&gt;_background.tscn</c> (directory name == file stem;
@@ -72,6 +72,27 @@ public static class BackgroundSceneFamilies
     /// <summary>The exact scene path <see cref="TryParseEventBackgroundId"/> parsed the id out of.</summary>
     public static string BuildEventBackgroundScenePath(string id)
         => EventBackgroundScenePrefix + id + SceneSuffix;
+
+    public const string CharacterSelectBackgroundScenePrefix = "res://scenes/screens/char_select/char_select_bg_";
+
+    public static bool IsValidCharacterSelectBackgroundId(string id)
+        => id.Length > 0 && id.All(ch => char.IsAsciiLetterLower(ch) || ch == '_');
+
+    public static string? TryParseCharacterSelectBackgroundId(string? scenePath)
+    {
+        if (scenePath is null
+            || !scenePath.StartsWith(CharacterSelectBackgroundScenePrefix, StringComparison.Ordinal)
+            || !scenePath.EndsWith(SceneSuffix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var id = scenePath[CharacterSelectBackgroundScenePrefix.Length..^SceneSuffix.Length];
+        return IsValidCharacterSelectBackgroundId(id) ? id : null;
+    }
+
+    public static string BuildCharacterSelectBackgroundScenePath(string id)
+        => CharacterSelectBackgroundScenePrefix + id + SceneSuffix;
 
     /// <summary>
     /// Whether <paramref name="id"/> is a plausible background id (lowercase snake_case / digits) — the shared

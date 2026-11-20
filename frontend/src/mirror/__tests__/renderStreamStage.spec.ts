@@ -129,6 +129,44 @@ describe("RenderStreamStage", () => {
       expect(underlay().style.visibility).toBe("");
     };
 
+    it("keeps char-select dark through a pick, stale load and failed replacement", async () => {
+      vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 1920, 1080));
+      mirrorSettings.streamStaticBg = true;
+      const character = (id: string) => ({
+        scenePath: `res://scenes/screens/char_select/char_select_bg_${id}.tscn`,
+        url: `/bg/char-select/${id}?v=1`, id: `seat:42:${id}`
+      });
+      const first = character("silent");
+      mountStage({ staticBackground: first, staticBackgroundId: first.id });
+      await nextTick();
+      expectDarkUnderlay();
+      expect((image().element.parentElement as HTMLElement).style.visibility).toBe("hidden");
+      await image().trigger("load");
+      expect((image().element.parentElement as HTMLElement).style.visibility).toBe("");
+      expect(votes().at(-1)).toEqual([first.id]);
+      const stale = image();
+      const pick = character("random_character");
+      await wrapper!.setProps({ staticBackground: pick, staticBackgroundId: pick.id });
+      expect(image().attributes("src")).toBe(pick.url);
+      expectDarkUnderlay();
+      expect((image().element.parentElement as HTMLElement).style.visibility).toBe("hidden");
+      await stale.trigger("load");
+      expect(votes().at(-1)).toEqual([""]);
+      await image().trigger("error");
+      expectDarkUnderlay();
+      expect((image().element.parentElement as HTMLElement).style.visibility).toBe("hidden");
+      expect(clients[0].options.transparentClear).toBe(true);
+      expect(clients).toHaveLength(1);
+    });
+
+    it("leaves char-select unchanged when the stream static-background option is off", () => {
+      mountStage({ staticBackground: { scenePath: "res://scenes/screens/char_select/char_select_bg_silent.tscn",
+        url: "/bg/char-select/silent?v=1" }, staticBackgroundId: "seat:42:silent" });
+      expect(wrapper!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+      expect(wrapper!.find('[data-testid="render-stream-background-stage"]').exists()).toBe(false);
+      expect(clients[0].options.transparentClear).toBeUndefined();
+    });
+
     it("keeps the default opaque canvas and mounts no underlay with both settings off", () => {
       mountStage(props);
       expect(clients[0].options.transparentClear).toBeUndefined();

@@ -1685,6 +1685,7 @@ internal sealed partial class BrowserServerRouteTests
         await AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(root.Path);
         await AssertStaticBackgroundEnvelopeAsync();
         AssertStreamBackgroundTruthTable();
+        AssertCharacterSelectBackgroundHide();
         await AssertStreamBackgroundDemandAsync(root.Path);
         await AssertStaticBackgroundEnvelopeAsync();
         // S9/S10 perf report routes (same reason for a dedicated server: both recorders are process-wide).
@@ -2509,8 +2510,39 @@ internal sealed partial class BrowserServerRouteTests
         await AssertStaticBackgroundRoutesAsync(root.Path);
         await AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(root.Path);
         AssertStreamBackgroundTruthTable();
+        AssertCharacterSelectBackgroundHide();
+        await AssertStaticBackgroundEnvelopeAsync();
         await AssertStreamBackgroundDemandAsync(root.Path);
         Console.WriteLine("static background routes: ok");
+    }
+
+    private static void AssertCharacterSelectBackgroundHide()
+    {
+        static CouchCoopStaticBackgroundState State(string id, string root = "42")
+        {
+            var url = CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.CharacterSelect, id, null);
+            return new(CouchCoop.MirrorProtocol.SceneModel.BackgroundSceneFamilies.BuildCharacterSelectBackgroundScenePath(id),
+                [], null, url, Id: "generation:" + root + ":" + url);
+        }
+        var first = State("ironclad");
+        var pick = State("silent");
+        var previous = CouchCoopStaticBackgroundTracker.StreamHideIdentity(first);
+        Expect(first.Id != pick.Id, "a character pick changes the descriptor identity");
+        Expect(CouchCoopStaticBackgroundTracker.MatchesStreamBackground(previous,
+            CouchCoopStaticBackgroundTracker.StreamHideIdentity(pick)), "a same-root pick stays hidden");
+        Expect(!CouchCoopStaticBackgroundTracker.MatchesStreamBackground(previous,
+            CouchCoopStaticBackgroundTracker.StreamHideIdentity(State("silent", "43"))), "a different root restores the old hide");
+        Expect(!CouchCoopStaticBackgroundTracker.MatchesStreamBackground(null,
+            CouchCoopStaticBackgroundTracker.StreamHideIdentity(pick)), "demand loss restores the root");
+        Expect(CouchCoopStaticBackgroundTracker.StreamHideIdentity(null) is null, "no descriptor keeps the live background");
+        (bool WantsStaticBg, string? Ready)[] pages = [(true, null)];
+        Expect(!CouchCoopBrowserServer.ComputeStreamBgHideDesired(true, previous, 1, pages), "a mirror viewer restores char-select");
+        Expect(!CouchCoopBrowserServer.ComputeStreamBgHideDesired(false, previous, 0, pages), "disarming restores char-select");
+        Expect(!CouchCoopBrowserServer.ComputeStreamBgHideDesired(true, previous, 0, []), "last stream page leaving restores char-select");
+        Expect(!CouchCoopBrowserServer.ComputeStreamBgHideDesired(true, previous, 0, [(false, null)]), "option off restores char-select");
+        Expect(CouchCoopStaticBackgroundTracker.StreamHideIdentity(first with
+            { ScenePath = "res://scenes/events/background_scenes/neow.tscn" }) == first.Id, "other families retain the full identity");
+        Console.WriteLine("character-select background hide: ok (10 checks)");
     }
 
     private static void AssertStreamBackgroundTruthTable()
@@ -2740,6 +2772,41 @@ internal sealed partial class BrowserServerRouteTests
                 await CloseWebSocketSilentlyAsync(liveMirror);
                 Expect(await WaitForAsync(() => Hidden("room-1")), "the live mirror viewer disconnecting permits hiding again");
             }
+            var characterUrl = CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.CharacterSelect, "silent", null);
+            var characterState = new CouchCoopStaticBackgroundState(
+                "res://scenes/screens/char_select/char_select_bg_silent.tscn", [], null, characterUrl,
+                Id: "character:42:" + characterUrl);
+            var characterIdentity = CouchCoopStaticBackgroundTracker.StreamHideIdentity(characterState);
+            foreach (var connectAfterHide in new[] { false, true })
+            {
+                if (connectAfterHide)
+                {
+                    tracker.PublishForTest(characterState);
+                    Expect(await WaitForAsync(() => Hidden(characterIdentity)), "char-select hides before a mirror viewer connects");
+                }
+                using var oldMirror = new ClientWebSocket();
+                await oldMirror.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws",
+                    Query = "watch=1&staticBg=1&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+                _ = await ReadWsMessageAsync(oldMirror);
+                await Send(oldMirror, new { type = "ping" });
+                _ = await ReadNextWsMessageOfTypeAsync(oldMirror, "pong");
+                if (!connectAfterHide)
+                {
+                    Expect(Hidden("room-1"), "a static mirror viewer still permits combat hiding");
+                    tracker.PublishForTest(characterState);
+                }
+                Expect(await WaitForAsync(() => Hidden(null)),
+                    "an old-renderer viewer needs live char-select scenery even with static backgrounds enabled");
+                await Send(oldMirror, new { type = "settings", staticBg = true });
+                await Send(oldMirror, new { type = "ping" });
+                _ = await ReadNextWsMessageOfTypeAsync(oldMirror, "pong");
+                Expect(Hidden(null), "reasserting old-renderer static backgrounds cannot hide char-select");
+                await CloseWebSocketSilentlyAsync(oldMirror);
+                Expect(await WaitForAsync(() => Hidden(characterIdentity)), "the last old-renderer viewer leaving permits char-select hiding");
+            }
+            tracker.PublishForTest(state);
+            Expect(await WaitForAsync(() => Hidden("room-1")), "combat hiding resumes after char-select");
+            Console.WriteLine("character-select mixed viewers: ok (9 checks)");
             using var second = new ClientWebSocket();
             await Connect(second);
             Expect(await WaitForAsync(() => Hidden(null)), "a newly connected non-demanding stream page restores");
@@ -3167,6 +3234,30 @@ internal sealed partial class BrowserServerRouteTests
                 "…at the fixed policy size");
             var roomDigest = await GetAsync(baseUri, "/bg/rooms/merchant_room?layers=abc&v=2");
             Expect(roomDigest.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "a room URL carrying layers= is malformed");
+            // The host may render a different seat's pick, independent of its current published room.
+            var character = await GetRawAsync(baseUri, "/bg/char-select/silent?v=1");
+            Expect(character.StatusLine.Contains("200 OK", StringComparison.Ordinal), "a non-published character renders");
+            Expect(runtime.LastAssetRequest is
+                { Key: "res://scenes/screens/char_select/char_select_bg_silent.tscn", RenderWidth: 2520, RenderHeight: 1080,
+                  EventBackgroundFrame: CouchCoopStaticBackgroundProvider.CharacterSelectFrame, CompositionSelector: null },
+                "character still uses the literal scene, fixed size and fixed frame");
+            var characterCalls = AssetCalls();
+            var cachedCharacter = await GetRawAsync(baseUri, "/bg/char-select/silent?v=1");
+            Expect(cachedCharacter.Body.SequenceEqual(character.Body) && AssetCalls() == characterCalls,
+                "the character still is cached independently of the published descriptor");
+            foreach (var invalid in new[] { "Silent", "silent2", "%2e%2e%2fsilent", "silent%2fextra", "silent.png" })
+            {
+                var junk = await GetAsync(baseUri, "/bg/char-select/" + invalid);
+                Expect(junk.StatusLine.Contains("404 NotFound", StringComparison.Ordinal), "junk character id gets 404: " + invalid);
+            }
+            Expect(AssetCalls() == characterCalls, "junk character ids never reach extraction");
+            var missingCharacter = await GetAsync(baseUri, "/bg/char-select/missing_character");
+            Expect(missingCharacter.StatusLine.Contains("404 NotFound", StringComparison.Ordinal), "a valid but absent character scene gets 404");
+            var framedCharacter = await GetAsync(baseUri, "/bg/char-select/silent?frame=1,2,1");
+            Expect(framedCharacter.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "character frame cannot be varied by the caller");
+            var layeredCharacter = await GetAsync(baseUri, "/bg/char-select/silent?layers=abcd");
+            Expect(layeredCharacter.StatusLine.Contains("400 BadRequest", StringComparison.Ordinal), "character URLs cannot carry layers");
+            Console.WriteLine("character-select background route: ok (12 checks)");
         }
         finally
         {
@@ -3214,6 +3305,14 @@ internal sealed partial class BrowserServerRouteTests
             var updated = await factory.CreateSessionEnvelope("Alice", "browser:req:bg-updated", session: null);
             Expect(updated.StaticBackground?.CombatFrame == "983,540,0.9", "the next session carries the changed frame");
             Expect(updated.StaticBackground?.Url == url, "live placement does not change the host image cache identity");
+            var characterUrl = CouchCoopStaticBackgroundProvider.BuildImageUrl(StaticBackgroundFamily.CharacterSelect, "silent", null);
+            tracker.PublishForTest(new("res://scenes/screens/char_select/char_select_bg_silent.tscn", [], null,
+                characterUrl, Id: "seat:42:" + characterUrl));
+            var characterEnvelope = await factory.CreateSessionEnvelope("Alice", "browser:req:character-bg", session: null);
+            Expect(characterEnvelope.StaticBackground is { ScenePath: "res://scenes/screens/char_select/char_select_bg_silent.tscn" }
+                && characterEnvelope.StaticBackground.Url == characterUrl
+                && characterEnvelope.StaticBackground.Id == "seat:42:" + characterUrl,
+                "the seat envelope carries its own character descriptor and mounted identity");
         }
         finally
         {
@@ -6401,6 +6500,7 @@ internal sealed partial class BrowserServerRouteTests
                 // "missing" fails structurally so the route's 404 is testable.
                 if (request.Key.StartsWith("composed://combat-background/", StringComparison.Ordinal)
                     || request.Key.EndsWith("_background.tscn", StringComparison.Ordinal)
+                    || request.Key.StartsWith("res://scenes/screens/char_select/char_select_bg_", StringComparison.Ordinal)
                     || request.Key.StartsWith("res://scenes/events/background_scenes/", StringComparison.Ordinal)
                     || request.Key.StartsWith("scene-subtree://", StringComparison.Ordinal))
                 {
