@@ -13,6 +13,7 @@ import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/stage/textMetho
 import {
   EFFECT_MODES,
   STREAM_PARTICLE_MODES,
+  STREAM_SHADER_MODES,
   TEXT_METHODS,
   effectivePanelSetting,
   mirrorSettings,
@@ -230,7 +231,16 @@ function qualityLabel(choice: QualityChoice): string {
 const renderBlocked = computed(() => canvasActive.value || streamActive.value);
 const shaderMode = computed<EffectMode>({
   get: () => effectivePanelSetting(settings, "shaderMode"),
-  set: (value) => { if (!renderBlocked.value) { settings.shaderMode = value; persistMirrorSetting("shaderMode", value); } }
+  set: (value) => {
+    if (streamActive.value) {
+      if (value !== "dynamic" && value !== "static") return;
+      settings.streamShaderMode = value;
+      persistMirrorSetting("streamShaderMode", value);
+    } else if (!canvasActive.value) {
+      settings.shaderMode = value;
+      persistMirrorSetting("shaderMode", value);
+    }
+  }
 });
 const particleMode = computed<EffectMode>({
   get: () => effectivePanelSetting(settings, "particleMode"),
@@ -534,11 +544,11 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.shaders') }}</span>
-            <select v-model="shaderMode" :disabled="renderBlocked" data-testid="mirror-shader-mode">
-              <option v-for="mode in EFFECT_MODES" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
+            <select v-model="shaderMode" :disabled="canvasActive && !streamActive" data-testid="mirror-shader-mode">
+              <option v-for="mode in (streamActive ? STREAM_SHADER_MODES : EFFECT_MODES)" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
             </select>
           </label>
-          <SettingsHelpTip v-bind="help('shaders', t('settings.shaders'))" />
+          <SettingsHelpTip v-bind="help('shaders', t('settings.shaders'), 'below', streamActive ? t('settings.help.streamShaders') : undefined)" />
         </div>
         <div class="settings-item">
           <label class="settings-row settings-row-select">

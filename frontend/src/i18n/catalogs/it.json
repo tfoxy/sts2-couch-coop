@@ -165,6 +165,7 @@
   "settings.help.shaders": "Effetti di bagliore, increspatura e dissolvenza in tempo reale, disegnati dalla GPU di questo dispositivo. Statico mostra ciascuno fermo su un fotogramma rappresentativo — l'aspetto resta corretto e non costa quasi nulla per fotogramma —, Dinamico li anima, e ½ / ¼ li animano a risoluzione più bassa (più sfocati, molto meno costosi). Disattivato torna alla grafica semplice.",
   "settings.help.particles": "Scintille, braci e pulviscolo fluttuante, simulati dalla GPU di questo dispositivo. Dinamico ¼ li simula a un quarto della risoluzione: è l'impostazione predefinita, perché le particelle a piena risoluzione sono la cosa più costosa che un telefono disegna qui. Statico mostra uno sbuffo fermo; Disattivato le nasconde del tutto.",
   "settings.help.streamFreezeSpines": "Mostra ogni animazione dei personaggi con una sola posa rappresentativa. Riduce il carico sia sull’host sia sul telefono.",
+  "settings.help.streamShaders": "Dinamico anima gli effetti degli shader normalmente. Statico li mantiene fermi per ridurre il carico su questo dispositivo.",
   "settings.help.streamParticles": "Dinamico anima le particelle normalmente. Statico mostra un singolo effetto congelato per ridurre il carico su questo dispositivo.",
   "settings.help.streamStaticBg": "Sostituisce lo sfondo animato della stanza con un’immagine fissa. Disattivato mantiene i movimenti ambientali.",
   "settings.hostStream": "Riduce l’uso della CPU dell’host. Le animazioni dei personaggi congelate appaiono come pose fisse anche su questo dispositivo.",

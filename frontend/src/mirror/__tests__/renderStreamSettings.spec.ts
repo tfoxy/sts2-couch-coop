@@ -147,30 +147,34 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("confirmTap"); // the confirm-tap module
     expect(Object.keys(STREAM_RENDER_OVERRIDES).sort()).toEqual([
       "backstopOcclusion", "freezeDecor", "freezeParticles", "quality",
-      "reproRecorder", "shaderMode", "tweenReplay"
+      "reproRecorder", "tweenReplay"
     ]);
   });
 
   it("sends stream opt-ins while keeping old-renderer settings unchanged", () => {
-    const storage = memoryStorage({ staticBgEnabled: true, particleMode: "static" });
+    const storage = memoryStorage({ staticBgEnabled: true, shaderMode: "off", particleMode: "static" });
     const settings = createMirrorSettings(undefined, "", { storage });
     const oldPayload = serverSettingsPayload(settings);
-    expect(settings).toMatchObject({ streamFreezeSpines: false, streamParticleMode: "dynamic", streamStaticBg: false });
+    expect(settings).toMatchObject({ streamFreezeSpines: false, streamShaderMode: "dynamic", streamParticleMode: "dynamic", streamStaticBg: false });
     settings.runtimeRenderer = "stream";
     expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(false);
+    expect(effectivePanelSetting(settings, "shaderMode")).toBe("dynamic");
     expect(effectivePanelSetting(settings, "particleMode")).toBe("dynamic");
     expect(effectivePanelSetting(settings, "freezeSpines")).toBe(false);
     const streamPayload = serverSettingsPayload(settings);
-    Object.assign(settings, { streamStaticBg: true, streamParticleMode: "static", streamFreezeSpines: true });
+    Object.assign(settings, { streamShaderMode: "static", streamStaticBg: true, streamParticleMode: "static", streamFreezeSpines: true });
     expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(true);
     expect(effectivePanelSetting(settings, "particleMode")).toBe("static");
     expect(effectivePanelSetting(settings, "freezeSpines")).toBe(true);
     expect(serverSettingsPayload(settings)).toEqual({ ...streamPayload, streamFreezeSpines: true, streamStaticBg: true });
     expect(streamPayload).toHaveProperty("streamFreezeSpines", false);
+    expect(streamPayload).not.toHaveProperty("streamShaderMode");
+    expect(effectivePanelSetting(settings, "shaderMode")).toBe("static");
     expect(streamPayload).not.toHaveProperty("streamParticleMode");
     expect(streamPayload).toHaveProperty("streamStaticBg", false);
     settings.runtimeRenderer = "mirror";
     expect(serverSettingsPayload(settings)).toEqual(oldPayload);
+    expect(effectivePanelSetting(settings, "shaderMode")).toBe(settings.shaderMode);
     expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(true);
     expect(effectivePanelSetting(settings, "particleMode")).toBe("static");
     expect(effectivePanelSetting(settings, "freezeSpines")).toBe(true);
@@ -203,7 +207,7 @@ describe("mirrorSettings — the renderer keys", () => {
     persistMirrorSetting("streamParticleMode", "dynamic", storage);
     expect(storage.raw()).toEqual({ streamParticleMode: "dynamic", streamStaticBg: false });
     expect(createMirrorSettings(undefined, "", { storage }))
-      .toMatchObject({ streamFreezeSpines: false, streamParticleMode: "dynamic", streamStaticBg: false });
+      .toMatchObject({ streamFreezeSpines: false, streamShaderMode: "dynamic", streamParticleMode: "dynamic", streamStaticBg: false });
   });
 
   it.each(["off", "dynamic-half", "dynamic-quarter", true, null])("rejects invalid saved stream particle mode %s", (mode) => {
@@ -275,7 +279,8 @@ describe("mirrorSettings — the renderer keys", () => {
     }
   });
 
-  it("leaves Particles selectable for the stream", () => {
+  it("leaves Shaders and Particles selectable for the stream", () => {
+    expect(STREAM_RENDER_OVERRIDES).not.toHaveProperty("shaderMode");
     expect(STREAM_RENDER_OVERRIDES).not.toHaveProperty("particleMode");
   });
 });

@@ -193,6 +193,9 @@ export type RenderStreamWireVersion = 16;
 export type RenderStreamCarrierChoice = "auto" | "websocket" | "webtransport";
 export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 16;
 
+export const STREAM_SHADER_MODES = ["dynamic", "static"] as const;
+export type StreamShaderMode = typeof STREAM_SHADER_MODES[number];
+
 export const STREAM_PARTICLE_MODES = ["dynamic", "static"] as const;
 export type StreamParticleMode = typeof STREAM_PARTICLE_MODES[number];
 
@@ -231,8 +234,9 @@ export interface MirrorSettings {
    */
   renderStreamCarrier: RenderStreamCarrierChoice;
   // Stream-only opt-ins; never inherit the old renderer's lite defaults.
-  // Spine freeze is seat truth (never persisted); particles and background are viewer preferences.
+  // Spine freeze is seat truth (never persisted); shaders, particles and background are viewer preferences.
   streamFreezeSpines: boolean;
+  streamShaderMode: StreamShaderMode;
   streamParticleMode: StreamParticleMode;
   streamStaticBg: boolean;
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
@@ -418,6 +422,7 @@ export type PersistedSettingKey =
   | "quality"
   | "shaderMode"
   | "particleMode"
+  | "streamShaderMode"
   | "streamParticleMode"
   | "streamStaticBg"
   | "safeAreaPaddingEnabled"
@@ -446,6 +451,7 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   "quality",
   "shaderMode",
   "particleMode",
+  "streamShaderMode",
   "streamParticleMode",
   "streamStaticBg",
   "safeAreaPaddingEnabled",
@@ -571,6 +577,7 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
+  streamShaderMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
   streamParticleMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
   streamStaticBg: boolValue,
   safeAreaPaddingEnabled: boolValue,
@@ -761,17 +768,15 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // value — see STREAM_DISABLED_ROWS. Since INP2, Tap to focus is the viewer's again: the input channel
 // (streamInput.ts) implements the touch two-step on the hit item's identity. Raise held card, Un-focus on release
 // and Confirm tap leave this table too: they run as the held-card and confirm-tap stream-ext modules plus the input
-// channel's peek / confirm gestures. Spine freeze, particles and static background use their own stream-scoped
+// channel's peek / confirm gestures. Spine freeze, shaders, particles and static background use their own stream-scoped
 // keys instead of the old renderer's defaults.
 export type StreamForcedKey =
-  | "quality" | "shaderMode"
+  | "quality"
   | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeDecor";
 
 export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protocol: RenderStreamWireVersion) => MirrorSettings[K] } = {
   // No client lever: the stream draws what the game draws.
   quality: () => "high",
-  // The game's own shaders run every frame.
-  shaderMode: () => "dynamic",
   // A DOM-mirror compositing optimization.
   backstopOcclusion: () => false,
   // Records the node-geometry wire and input, neither of which exists here.
@@ -804,8 +809,9 @@ export function streamForcedValue<K extends StreamForcedKey>(settings: MirrorSet
  * stream unmounts that renderer, and flipping its inputs on the way out would only make it rebuild effect
  * runtimes it is about to dispose.
  */
-export function effectivePanelSetting<K extends StreamForcedKey | "particleMode" | "staticBgEnabled" | "freezeSpines">(settings: MirrorSettings, key: K): MirrorSettings[K] {
+export function effectivePanelSetting<K extends StreamForcedKey | "shaderMode" | "particleMode" | "staticBgEnabled" | "freezeSpines">(settings: MirrorSettings, key: K): MirrorSettings[K] {
   if (streamRendererActive(settings)) {
+    if (key === "shaderMode") return settings.streamShaderMode as MirrorSettings[K];
     if (key === "particleMode") return settings.streamParticleMode as MirrorSettings[K];
     if (key === "staticBgEnabled") return settings.streamStaticBg as MirrorSettings[K];
     if (key === "freezeSpines") return settings.streamFreezeSpines as MirrorSettings[K];
@@ -947,6 +953,7 @@ export function createMirrorSettings(
       ? "off"
       : (effectModeOverride(search, "particles") ?? saved.particleMode ?? seededParticleMode(quality)),
     streamFreezeSpines: false,
+    streamShaderMode: saved.streamShaderMode ?? "dynamic",
     streamParticleMode: saved.streamParticleMode ?? "dynamic",
     streamStaticBg: saved.streamStaticBg ?? false,
     effectModePinned: false,

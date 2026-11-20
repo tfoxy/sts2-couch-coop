@@ -371,6 +371,7 @@ function mountClient(): void {
       endpoint: props.endpoint,
       extensions: built.extensions,
       creditWindow: 2,
+      staticShaders: mirrorSettings.streamShaderMode === "static",
       staticParticles: mirrorSettings.streamParticleMode === "static",
       ...(useStaticBackground.value ? { transparentClear: true } : {}),
       carrier: mirrorSettings.renderStreamCarrier,
@@ -515,6 +516,7 @@ function remountIfStale(): void {
 }
 
 watch(extensionsKey, remountIfStale);
+watch(() => mirrorSettings.streamShaderMode, (mode) => client?.setStaticShaders?.(mode === "static"));
 watch(() => mirrorSettings.streamParticleMode, (mode) => client?.setStaticParticles?.(mode === "static"));
 
 watch(() => props.inputEnabled, (enabled) => {

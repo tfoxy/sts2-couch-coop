@@ -165,6 +165,7 @@
   "settings.help.shaders": "Efectos de brillo, ondas y disolución en tiempo real, dibujados con la GPU de este dispositivo. Estático muestra cada uno congelado en un fotograma representativo (se sigue viendo bien y apenas cuesta nada por fotograma), mientras que Dinámico los anima, y ½ / ¼ los animan a menor resolución (más borrosos, mucho más baratos). Desactivado vuelve al arte sin efectos.",
   "settings.help.particles": "Chispas, brasas y motas que flotan, simuladas con la GPU de este dispositivo. Dinámico ¼ las simula a un cuarto de resolución, y es la opción predeterminada porque las partículas a resolución completa son lo más costoso que dibuja aquí un teléfono. Estático muestra una sola ráfaga congelada; Desactivado las oculta por completo.",
   "settings.help.streamFreezeSpines": "Muestra cada animación de personaje en una sola pose representativa. Reduce la carga del anfitrión y de tu móvil.",
+  "settings.help.streamShaders": "Dinámico anima los efectos de sombreado con normalidad. Estático los mantiene inmóviles para reducir la carga de este dispositivo.",
   "settings.help.streamParticles": "Dinámico anima las partículas con normalidad. Estático muestra una sola ráfaga congelada para reducir la carga de este dispositivo.",
   "settings.help.streamStaticBg": "Sustituye el fondo de la sala en vivo por una imagen fija. Desactivado mantiene el movimiento ambiental.",
   "settings.hostStream": "Reduce el uso de CPU del anfitrión. Las animaciones de personajes congeladas también se ven como poses fijas en este dispositivo.",

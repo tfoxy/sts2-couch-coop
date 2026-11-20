@@ -60,6 +60,7 @@ function createClient(options: RenderStreamClientOptions): RenderStreamClient {
     options, connects: 0, disposed: false, carrier: null,
     connect() { fake.connects += 1; },
     setEndpoint: vi.fn(),
+    setStaticShaders: vi.fn(),
     setStaticParticles: vi.fn(),
     hints: () => [],
     cssToPresentation: vi.fn(() => null),
@@ -93,6 +94,7 @@ beforeEach(() => {
   // The stage runs the extension modules on the viewer's saved choices; keep this suite's default mount a pure
   // client (every module off), so the "empty extension list" claim stays the baseline.
   mirrorSettings.streamStaticBg = false;
+  mirrorSettings.streamShaderMode = "dynamic";
   mirrorSettings.streamParticleMode = "dynamic";
   mirrorSettings.raiseHandCards = false;
   mirrorSettings.uiScaling = false;
@@ -130,6 +132,7 @@ describe("RenderStreamStage", () => {
     it("keeps the default opaque canvas and mounts no underlay with both settings off", () => {
       mountStage(props);
       expect(clients[0].options.transparentClear).toBeUndefined();
+      expect(clients[0].options.staticShaders).toBe(false);
       expect(clients[0].options.staticParticles).toBe(false);
       expect(wrapper!.find('[data-testid="render-stream-background-stage"]').exists()).toBe(false);
       expect(votes()).toEqual([]);
@@ -300,6 +303,23 @@ describe("RenderStreamStage", () => {
       expectDarkUnderlay();
       expect(votes().at(-1)).toEqual([""]);
       expect(wrapper!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+      expect(clients).toHaveLength(1);
+    });
+
+    it("creates with static shaders and toggles the live client without recreating it", async () => {
+      mirrorSettings.streamShaderMode = "static";
+      mountStage();
+      const client = clients[0];
+      expect(client.options.staticShaders).toBe(true);
+      mirrorSettings.streamShaderMode = "dynamic";
+      await nextTick();
+      expect(client.setStaticShaders).toHaveBeenLastCalledWith(false);
+      mirrorSettings.streamShaderMode = "static";
+      await nextTick();
+      expect(client.setStaticShaders).toHaveBeenLastCalledWith(true);
+      expect(client.setStaticShaders).toHaveBeenCalledTimes(2);
+      expect(client.disposed).toBe(false);
+      expect(client.connects).toBe(1);
       expect(clients).toHaveLength(1);
     });
 

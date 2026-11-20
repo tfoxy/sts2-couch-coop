@@ -23,6 +23,7 @@ import {
   REFRESH_RATE_MAX,
   REFRESH_RATE_MIN,
   SERVER_SETTING_KEYS,
+  STREAM_SHADER_MODES,
   serverSettingsPayload,
   staticBgWireValue,
   TEXT_METHODS,
@@ -575,6 +576,31 @@ describe("createMirrorSettings — the repro recorder (and the build that exclud
     expect(excluded("?repro=on", fakeStorage({ reproRecorder: false })).reproRecorder).toBe(true);
     expect(excluded("?repro=off", fakeStorage({ reproRecorder: true })).reproRecorder).toBe(false);
   });
+});
+
+describe("stream shader preference", () => {
+  it("defaults to dynamic independently of old shader settings and URL overrides", () => {
+    expect(STREAM_SHADER_MODES).toEqual(["dynamic", "static"]);
+    const settings = build(quality(), "?shaders=off", fakeStorage({ shaderMode: "static" }));
+    expect(settings.streamShaderMode).toBe("dynamic");
+    expect(settings.shaderMode).toBe("off");
+  });
+
+  it.each(STREAM_SHADER_MODES)("persists and reloads %s without changing the old shader preference", (mode) => {
+    const storage = fakeStorage({ shaderMode: "off" });
+    expect(PERSISTED_SETTING_KEYS).toContain("streamShaderMode");
+    persistMirrorSetting("streamShaderMode", mode, storage);
+    expect(readStoredMirrorSettings(storage)).toEqual({ shaderMode: "off", streamShaderMode: mode });
+    expect(build(quality(), "", storage)).toMatchObject({ shaderMode: "off", streamShaderMode: mode });
+  });
+
+  it.each(["off", "dynamic-half", "dynamic-quarter", "invalid", true, 1, null])(
+    "drops invalid stored stream shader mode %s", (streamShaderMode) => {
+      const storage = fakeStorage({ streamShaderMode });
+      expect(readStoredMirrorSettings(storage)).toEqual({});
+      expect(build(quality(), "", storage).streamShaderMode).toBe("dynamic");
+    }
+  );
 });
 
 describe("the persisted key set", () => {

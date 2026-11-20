@@ -165,6 +165,7 @@
   "settings.help.shaders": "Efekty blasku, falowania i rozpuszczania na żywo, rysowane przez GPU tego urządzenia. Statyczne pokazuje każdy z nich zamrożony w reprezentatywnej klatce — nadal wygląda dobrze i prawie nic nie kosztuje w każdej klatce — a Dynamiczne je animuje; ½ i ¼ animują w niższej rozdzielczości (bardziej rozmyte, znacznie tańsze). Wyłączone pokazuje zwykłą grafikę.",
   "settings.help.particles": "Iskry, żar i unoszące się drobinki, symulowane przez GPU tego urządzenia. Dynamiczne ¼ symuluje je w jednej czwartej rozdzielczości — to ustawienie domyślne, bo cząstki w pełnej rozdzielczości to najdroższa rzecz, jaką rysuje tu telefon. Statyczne pokazuje jeden zamrożony rozprysk; Wyłączone całkowicie je ukrywa.",
   "settings.help.streamFreezeSpines": "Pokazuje każdą animację postaci jako jedną reprezentatywną pozę. Odciąża zarówno hosta, jak i telefon.",
+  "settings.help.streamShaders": "Tryb dynamiczny animuje efekty shaderów normalnie. Tryb statyczny zatrzymuje je, aby odciążyć to urządzenie.",
   "settings.help.streamParticles": "Tryb dynamiczny animuje cząsteczki normalnie. Tryb statyczny pokazuje jeden zatrzymany efekt, aby odciążyć to urządzenie.",
   "settings.help.streamStaticBg": "Zastępuje animowane tło pomieszczenia nieruchomym obrazem. Wyłączenie zachowuje ruch otoczenia.",
   "settings.hostStream": "Zmniejsza obciążenie procesora hosta. Zatrzymane animacje postaci są też widoczne jako nieruchome pozy na tym urządzeniu.",

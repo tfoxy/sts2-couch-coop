@@ -34,14 +34,13 @@ const VIEWER: Partial<MirrorSettings> = {
   raiseHeldCard: true, unfocusOnRelease: true, tapToFocus: true, confirmTap: true, raiseHandCards: true,
   uiScaling: true, backstopOcclusion: true, reproRecorder: true, tweenReplay: true, freezeParticles: true,
   freezeSpines: true, freezeDecor: true, audio: true, safeAreaPaddingEnabled: true, refreshRate: 40,
-  streamFreezeSpines: false, streamParticleMode: "dynamic", streamStaticBg: false,
+  streamFreezeSpines: false, streamShaderMode: "dynamic", streamParticleMode: "dynamic", streamStaticBg: false,
   latencyOverlay: true
 };
 
 // testid → how the row shows its value, for every FORCED row in Q4.
 const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select" | "checkbox"]> = [
   ["mirror-quality", "quality", "select"],
-  ["mirror-shader-mode", "shaderMode", "select"],
   ["mirror-backstop-occlusion", "backstopOcclusion", "checkbox"],
   ["mirror-repro-recorder", "reproRecorder", "checkbox"],
   ["mirror-tween-replay", "tweenReplay", "checkbox"],
@@ -55,7 +54,7 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
 // peek and confirm gestures).
 const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-stretch", "mirror-refresh-rate",
   "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling", "mirror-tap-focus",
-  "mirror-raise-card", "mirror-unfocus", "mirror-confirm-tap", "mirror-particle-mode",
+  "mirror-raise-card", "mirror-unfocus", "mirror-confirm-tap", "mirror-shader-mode", "mirror-particle-mode",
   "mirror-static-bg", "mirror-freeze-spines"];
 
 function available(): void {
@@ -178,11 +177,14 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     expect(el("mirror-static-bg").checked).toBe(false);
     expect(el("mirror-freeze-spines").checked).toBe(false);
     expect(el<HTMLSelectElement>("mirror-particle-mode").value).toBe("dynamic");
-    for (const id of ["mirror-static-bg", "mirror-freeze-spines", "mirror-particle-mode"]) {
+    for (const id of ["mirror-static-bg", "mirror-freeze-spines", "mirror-shader-mode", "mirror-particle-mode"]) {
       expect(el(id).disabled).toBe(false);
     }
-    expect(wrapper!.get('[data-testid="mirror-particle-mode"]').findAll("option").map(o => o.attributes("value")))
-      .toEqual(["dynamic", "static"]);
+    for (const id of ["mirror-shader-mode", "mirror-particle-mode"]) {
+      expect(el<HTMLSelectElement>(id).value).toBe("dynamic");
+      expect(wrapper!.get(`[data-testid="${id}"]`).findAll("option").map(o => o.attributes("value")))
+        .toEqual(["dynamic", "static"]);
+    }
   });
 
   it("edits only stream keys, saves only page preferences and restores old rows on switch back", async () => {
@@ -216,12 +218,44 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
       streamFreezeSpines: true, streamParticleMode: "static", streamStaticBg: true });
   });
 
+  it("saves stream shaders independently, restores old shaders and keeps canvas shaders blocked", async () => {
+    available();
+    mirrorSettings.shaderMode = "off";
+    localStorage.setItem(MIRROR_SETTINGS_STORAGE_KEY, JSON.stringify({ shaderMode: "off" }));
+    mirrorSettings.runtimeStage = "canvas";
+    mountPanel();
+    expect(el<HTMLSelectElement>("mirror-shader-mode").disabled).toBe(true);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    const shaders = wrapper!.get('[data-testid="mirror-shader-mode"]');
+    expect(el<HTMLSelectElement>("mirror-shader-mode").disabled).toBe(false);
+    expect(el<HTMLSelectElement>("mirror-shader-mode").value).toBe("dynamic");
+    await shaders.setValue("static");
+    expect(mirrorSettings.streamShaderMode).toBe("static");
+    expect(mirrorSettings.shaderMode).toBe("off");
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}"))
+      .toEqual({ renderer: "stream", shaderMode: "off", streamShaderMode: "static" });
+    await shaders.setValue("dynamic");
+    expect(mirrorSettings.streamShaderMode).toBe("dynamic");
+    await shaders.setValue("static");
+
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(el<HTMLSelectElement>("mirror-shader-mode").disabled).toBe(true);
+    mirrorSettings.runtimeStage = "dom";
+    await nextTick();
+    expect(el<HTMLSelectElement>("mirror-shader-mode").value).toBe("off");
+    await shaders.setValue("dynamic-half");
+    expect(mirrorSettings.shaderMode).toBe("dynamic-half");
+    expect(mirrorSettings.streamShaderMode).toBe("static");
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(el<HTMLSelectElement>("mirror-shader-mode").value).toBe("static");
+  });
+
   it("uses stream-specific help and describes visible freezes", async () => {
     available();
     mountPanel();
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
     expect(wrapper!.get('[data-testid="mirror-host-perf-note"]').text()).toContain("still poses");
-    for (const [id, text] of [["freezeSpines", "representative pose"], ["particles", "Dynamic animates"],
+    for (const [id, text] of [["freezeSpines", "representative pose"], ["shaders", "Static holds them still"], ["particles", "Dynamic animates"],
       ["staticBg", "live room background"]]) {
       await wrapper!.get(`[data-testid="mirror-help-${id}"]`).trigger("click");
       expect(wrapper!.text()).toContain(text);

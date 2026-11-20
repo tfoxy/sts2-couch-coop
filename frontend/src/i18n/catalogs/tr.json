@@ -165,6 +165,7 @@
   "settings.help.shaders": "Bu cihazın GPU'sunda çizilen canlı parlama, dalgalanma ve çözülme efektleri. Statik her birini temsili bir karede dondurulmuş olarak çizer — yine doğru görünür ve kare başına neredeyse hiç maliyeti yoktur — Dinamik ise onları canlandırır; ½ / ¼ daha düşük çözünürlükte canlandırır (daha bulanık, çok daha ucuz). Kapalı, düz görsellere geri döner.",
   "settings.help.particles": "Bu cihazın GPU'sunda simüle edilen kıvılcımlar, korlar ve süzülen zerreler. Dinamik ¼ bunları çeyrek çözünürlükte simüle eder; varsayılan budur, çünkü tam çözünürlüklü parçacıklar bir telefonun burada çizdiği en pahalı şeydir. Statik tek bir donmuş püskürme gösterir; Kapalı onları tamamen gizler.",
   "settings.help.streamFreezeSpines": "Her karakter animasyonunu tek bir temsili poz olarak gösterir. Hem sunucunun hem de telefonunuzun yükünü azaltır.",
+  "settings.help.streamShaders": "Dinamik, gölgelendirici efektlerini normal şekilde oynatır. Statik, bu cihazın yükünü azaltmak için onları sabit tutar.",
   "settings.help.streamParticles": "Dinamik, parçacıkları normal şekilde oynatır. Statik, bu cihazın yükünü azaltmak için tek bir donmuş parçacık efekti gösterir.",
   "settings.help.streamStaticBg": "Odanın canlı arka planını sabit bir görüntüyle değiştirir. Kapalıyken ortam hareketleri korunur.",
   "settings.hostStream": "Sunucunun işlemci kullanımını azaltır. Dondurulan karakter animasyonları bu cihazda da sabit pozlar olarak görünür.",

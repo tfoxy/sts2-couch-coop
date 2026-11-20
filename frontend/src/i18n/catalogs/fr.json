@@ -165,6 +165,7 @@
   "settings.help.shaders": "Effets de lueur, d'ondulation et de dissolution en temps réel, dessinés par le GPU de cet appareil. Statique fige chacun d'eux sur une image représentative — le rendu reste correct et ne coûte presque rien par image —, Dynamique les anime, et ½ / ¼ les animent en résolution réduite (plus flou, bien moins coûteux). Désactivé revient à des images simples.",
   "settings.help.particles": "Étincelles, braises et poussières flottantes, simulées par le GPU de cet appareil. Dynamique ¼ les simule en quart de résolution ; c'est le réglage par défaut, car les particules en pleine résolution sont ce qu'un téléphone dessine de plus coûteux ici. Statique affiche une gerbe figée ; Désactivé les masque entièrement.",
   "settings.help.streamFreezeSpines": "Affiche chaque animation de personnage sous une seule pose représentative. Allège la charge de l’hôte et de votre téléphone.",
+  "settings.help.streamShaders": "Dynamique anime les effets de shader normalement. Statique les fige pour alléger la charge de cet appareil.",
   "settings.help.streamParticles": "Dynamique anime les particules normalement. Statique affiche une seule gerbe figée pour alléger la charge de cet appareil.",
   "settings.help.streamStaticBg": "Remplace le fond animé de la salle par une image fixe. Désactivé conserve les mouvements d’ambiance.",
   "settings.hostStream": "Réduit la charge CPU de l’hôte. Les animations de personnages figées apparaissent aussi sous forme de poses fixes sur cet appareil.",
