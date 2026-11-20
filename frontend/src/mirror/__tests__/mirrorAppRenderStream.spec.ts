@@ -1218,6 +1218,52 @@ describe("MirrorApp — the new-renderer checkbox after a re-join", () => {
     return host;
   }
 
+  it.each([
+    "res://scenes/screens/char_select/char_select_bg_ironclad.tscn",
+    "res://scenes/backgrounds/underdocks/underdocks_background.tscn"
+  ])("retracts mirror watch on a fresh seat after rejoining with static background: %s", async (scenePath) => {
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    const host = await pickAlice();
+    host.emit(sessionMessage({ headlessMirrorPort: 14000 }));
+    await settle();
+    const seat = latest();
+    seat.emit(seatSession({ renderStream: descriptor }));
+    await settle();
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }]);
+
+    seat.close();
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await settle();
+    const rejoined = latest();
+    rejoined.emit(sessionMessage());
+    await settle();
+    rejoined.emit(sessionMessage({ headlessMirrorPort: 14001 }));
+    await settle();
+    const replacement = latest();
+    expect(new URL(replacement.url).searchParams.get("watch")).toBe("1");
+    replacement.emit(seatSession());
+    await settle();
+    const staticBackground = { scenePath, id: "fresh-background", url: "/bg/fresh-background?v=1" };
+    replacement.emit(seatSession({ renderStream: descriptor, staticBackground }));
+    await settle();
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+
+    expect(replacement.ofType("settings")).toContainEqual(expect.objectContaining({ streamStaticBg: true }));
+    // A lingering mirror watch vetoes the shared capture's background hide, even on this same socket.
+    expect(replacement.ofType("watch")).toEqual([{ type: "watch", on: false }]);
+    mirrorSettings.streamStaticBg = false;
+    await settle();
+    mirrorSettings.streamStaticBg = true;
+    replacement.emit(seatSession({ renderStream: descriptor, staticBackground: { ...staticBackground, id: "next-pick" } }));
+    await settle();
+    expect(replacement.ofType("watch")).toEqual([{ type: "watch", on: false }]);
+    expect(replacement.ofType("settings").at(-1)).toMatchObject({ streamStaticBg: true });
+  });
+
   it.each(["mirror", "arming", "armed"])("applies the saved choice again after reconnecting to a reused %s seat", async (state) => {
     mirrorSettings.renderer = "stream";
     const host = await pickAlice();

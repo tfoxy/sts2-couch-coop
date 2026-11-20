@@ -1304,8 +1304,9 @@ function onRenderStreamFailed(reason: string, attempt = stageAttempt.value): voi
   requestSeatRenderer(activeClient, "mirror");
 }
 
-// Watch intent is independent of whether a compatible scene can be admitted yet.
-watch(wantsHostStream, (on) => activeClient.sendWatch(on), { immediate: true });
+// Watch intent is independent of whether a compatible scene can be admitted yet. Apply it to replacement
+// connections too: a fresh seat socket can start watching even when the previous socket's intent was false.
+watch([wantsHostStream, joinSession], ([on]) => activeClient.sendWatch(on), { immediate: true });
 // The pre-game LIFECYCLE state (rules + copy in @/mirror/loadingState): "Connecting…" / "Reconnecting…" /
 // "Joining…" / "Loading…", or null when the screen is steady. Non-null also means the picker shows a spinner,
 // lets the placeholder outrank a (by then stale) screen title, and hides the steady-state APK hint.
