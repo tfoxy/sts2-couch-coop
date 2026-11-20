@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   admitHostStaticBackground,
   sameStaticBackground,
+  staticBackgroundIdentity,
   type HostStaticBackgroundLatch
 } from "@/mirror/hostStaticBackground";
 
@@ -69,5 +70,28 @@ describe("sameStaticBackground", () => {
     expect(sameStaticBackground(host(NEOW, "a"), host(NEOW, "b"))).toBe(false);
     expect(sameStaticBackground(null, null)).toBe(true);
     expect(sameStaticBackground(host(NEOW), null)).toBe(false);
+  });
+});
+
+describe("staticBackgroundIdentity", () => {
+  it("removes the browser tunnel prefix so the vote names the seat's published route", () => {
+    globalThis.__couchCoopHostBase = "https://relay.example/~h/abcdefghijklmnopqrstuv";
+    try {
+      expect(staticBackgroundIdentity({ scenePath: SHOP,
+        url: "https://relay.example/~h/abcdefghijklmnopqrstuv/bg/rooms/merchant_room?frame=1,2,3&v=2" }))
+        .toBe("/bg/rooms/merchant_room?frame=1,2,3&v=2");
+    } finally {
+      delete globalThis.__couchCoopHostBase;
+    }
+  });
+
+  it("preserves the seat frame/digest while removing browser origin normalization", () => {
+    const relative = { scenePath: SHOP, url: "/bg/rooms/merchant_room?frame=1,2,3&v=2" };
+    expect(staticBackgroundIdentity(relative)).toBe(relative.url);
+    expect(staticBackgroundIdentity({ ...relative, id: "mounted-room" })).toBe("mounted-room");
+    expect(staticBackgroundIdentity({ ...relative, url: `https://host.example${relative.url}` })).toBe(relative.url);
+    expect(staticBackgroundIdentity(null)).toBe("");
+    expect(staticBackgroundIdentity({ ...relative, url: "/bg/rooms/merchant_room?frame=2,3,4&v=2" }))
+      .not.toBe(staticBackgroundIdentity(relative));
   });
 });

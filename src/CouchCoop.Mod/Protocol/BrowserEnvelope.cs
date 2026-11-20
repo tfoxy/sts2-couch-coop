@@ -49,6 +49,8 @@ public sealed record BrowserEnvelope(
     bool? FreezeParticles = null,
     bool? FreezeSpines = null,
     bool? FreezeDecor = null,
+    // Stream-specific seat preference; independent of the old-renderer freezes above.
+    bool? StreamFreezeSpines = null,
     // The game's own Settings -> Text Effects preference on THIS instance, so the mirror's animated rich text
     // (wavy / bouncing) obeys the same switch the player at the keyboard set. It cannot be inferred client-side:
     // the game leaves the effect markup in the label's string and skips the per-character transform instead, so a
@@ -103,7 +105,9 @@ public sealed record BrowserRenderStreamLanDto(bool WebTransport, bool Tls, bool
 // "url": "/bg/<id>?layers=<digest>&v=1" } (camelCased by BrowserJson).
 public sealed record BrowserStaticBackgroundDto(
     string ScenePath,
-    string Url);
+    string Url,
+    string? Id = null,
+    string? CombatFrame = null);
 
 // The `atlasManifest` wire shape: { "directory": "res://images/atlases/", "pages": ["res://images/atlases/
 // card_atlas_0.png", …] } (camelCased by BrowserJson).

@@ -28,6 +28,7 @@
 import { computed, inject, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 
 import {
+  isCombatBackgroundScenePath,
   isCombatBackgroundSceneRoot,
   isEventBackgroundSceneRoot,
   isRoomBackgroundSubtreeRoot,
@@ -49,19 +50,36 @@ import {
   noteStaticBgLatch
 } from "@/mirror/staticBgReport";
 import { hostUrl } from "@/join/hostBase";
-import type { MirrorState } from "@/mirror/sceneTree";
+import { STATIC_BACKGROUND_WIDTH } from "@/mirror/hostStaticBackground";
+import { createMirrorState, type MirrorState } from "@/mirror/sceneTree";
 import type { BrowserStaticBackgroundDescriptor } from "@/protocol/browserEnvelope";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   // The session envelope's descriptor (mirrorClient parses/normalizes it); null = unknown.
   descriptor: BrowserStaticBackgroundDescriptor | null;
   // The retained mirror state + its revision counter — only read for the descriptor-less FALLBACK scan.
-  state: MirrorState;
-  revision: number;
+  state?: MirrorState;
+  revision?: number;
   // A SEAT view: the descriptor is the host's and the only acceptable source (see the header contract).
   // Omitted/false everywhere the serving socket is the host itself.
   hostAuthoritative?: boolean;
-}>();
+  // Stream underlays use only the admitted host descriptor and actual image events. No mirror build hold,
+  // fallback URL or retry ladder: a failed still leaves the stream stage's dark underlay showing.
+  stream?: boolean;
+  // Stream-only placement of the seat's combat background in the centered 1920x1080 reference.
+  combatFrame?: string;
+}>(), { state: createMirrorState, revision: 0 });
+
+const emit = defineEmits<{ ready: [descriptor: BrowserStaticBackgroundDescriptor | null] }>();
+let disposed = false;
+const streamTarget = computed(() => props.stream && props.descriptor
+  && staticBgCoversScenePath(props.descriptor.scenePath) ? props.descriptor : null);
+function streamImageSettled(event: Event, loaded: boolean): void {
+  const target = streamTarget.value;
+  if (!disposed && target && (event.target as HTMLImageElement).getAttribute("src") === target.url) {
+    emit("ready", loaded ? target : null);
+  }
+}
 
 const renderer = inject(MIRROR_RENDERER_KEY, shallowRef(null));
 
@@ -69,7 +87,7 @@ const renderer = inject(MIRROR_RENDERER_KEY, shallowRef(null));
 // leaves this slot without a DOM image until the viewer retries or selects DOM.
 const usesStageTexture = computed(
   () =>
-    (requestedStageBackend() === "canvas" || requestedStageBackend() === "rust") &&
+    !props.stream && (requestedStageBackend() === "canvas" || requestedStageBackend() === "rust") &&
     (renderer.value === null || renderer.value?.setStaticBackgroundSource !== undefined)
 );
 
@@ -79,7 +97,7 @@ const usesStageTexture = computed(
 // design.w: on 16:9 the outer 300px per side sit outside that box and are clipped by its `overflow: hidden`
 // (`.mirror-stage`, or `.mirror-stage-underlay` on the canvas arm — the same design box, same clip), exactly like
 // the game's own viewport clips the live bg layers.
-const BG_WIDTH = 2520;
+const BG_WIDTH = STATIC_BACKGROUND_WIDTH;
 const BG_HEIGHT = 1080;
 
 // The wire-derived FALLBACK target (descriptor-less host): the combat bg root's sceneFilePath → the digest-less
@@ -101,6 +119,7 @@ let lastScanState: MirrorState | null = null;
 let lastScanEpoch = -1;
 let lastScanResult: BrowserStaticBackgroundDescriptor | null = null;
 const wireFallback = computed<BrowserStaticBackgroundDescriptor | null>(() => {
+  if (props.stream) return null;
   void props.revision; // reactivity anchor — the retained map mutates in place
   if (props.state === lastScanState && props.state.sceneRootEpoch === lastScanEpoch) {
     return lastScanResult;
@@ -173,6 +192,7 @@ const wireScenePath = computed<string | null>(() => wireFallback.value?.scenePat
 // render the deterministic-first-sorted layer variant rather than the mounted one — strictly better than showing
 // the previous room's artwork.
 const target = computed<BrowserStaticBackgroundDescriptor | null>(() => {
+  if (props.stream) return null;
   if (!staticBgWireValue(mirrorSettings)) {
     return null;
   }
@@ -383,6 +403,7 @@ watch(wireScenePath, (path) => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
   clearShown(); // also disarms the watchdog and orphans any late completion
 });
 
@@ -399,9 +420,36 @@ const imgStyle = computed(() => ({
   // deepest layer). Inline so the spec can pin it.
   zIndex: "-2147483648"
 }));
+
+// Combat captures include reference framing (scale 0.9 about the capture's center + 23px).
+// Map those pixels to the seat's probed frame before the outer layer scales to page pixels. Event/shop
+// captures already carry their probed framing, and the old renderer keeps its original placement.
+const streamImgStyle = computed(() => {
+  const frame = props.combatFrame?.split(",").map(Number);
+  if (!streamTarget.value || !isCombatBackgroundScenePath(streamTarget.value.scenePath)
+    || !frame || frame.length !== 3 || !frame.every(Number.isFinite) || frame[2] <= 0) return imgStyle.value;
+  return {
+    ...imgStyle.value,
+    transformOrigin: `${BG_WIDTH / 2 + 23}px ${BG_HEIGHT / 2}px`,
+    transform: `translate(${frame[0] - (1920 / 2 + 23)}px, ${frame[1] - BG_HEIGHT / 2}px) scale(${frame[2] / 0.9})`
+  };
+});
 </script>
 
 <template>
+  <img
+    v-if="streamTarget"
+    :key="streamTarget.url"
+    class="mirror-static-bg"
+    data-testid="stream-static-bg-image"
+    :src="streamTarget.url"
+    :style="streamImgStyle"
+    alt=""
+    decoding="sync"
+    draggable="false"
+    @load="streamImageSettled($event, true)"
+    @error="streamImageSettled($event, false)"
+  />
   <img
     v-if="shownUrl && !usesStageTexture"
     class="mirror-static-bg"

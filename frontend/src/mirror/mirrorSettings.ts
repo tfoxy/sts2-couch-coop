@@ -31,7 +31,7 @@
 //      forced value (STREAM_RENDER_OVERRIDES), again without writing a saved preference. It outranks layer 5:
 //      while the stream draws, neither DOM nor canvas stage is mounted.
 //
-// NEVER PERSISTED (see NEVER_PERSISTED_SETTING_KEYS): the three `freeze*` fields are HOST truth, re-seeded per
+// NEVER PERSISTED (see NEVER_PERSISTED_SETTING_KEYS): `freeze*` and `streamFreezeSpines` are HOST truth, re-seeded per
 // connection from the serving instance; `panelOpen`/`panelAnchorTop` are momentary UI; `effectModePinned` is a
 // per-session adaptive-controller flag; `spineMode` is a dev-only `?spineMode=` override with no panel control,
 // so it has nothing viewer-set to save.
@@ -193,6 +193,9 @@ export type RenderStreamWireVersion = 16;
 export type RenderStreamCarrierChoice = "auto" | "websocket" | "webtransport";
 export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 16;
 
+export const STREAM_PARTICLE_MODES = ["dynamic", "static"] as const;
+export type StreamParticleMode = typeof STREAM_PARTICLE_MODES[number];
+
 export interface MirrorSettings {
   /** Public stage choice; a fresh WebKit viewer starts on canvas, other viewers on DOM. */
   stage: "dom" | "canvas";
@@ -227,6 +230,11 @@ export interface MirrorSettings {
    * prove wss on a page that would otherwise choose WebTransport (CAR9).
    */
   renderStreamCarrier: RenderStreamCarrierChoice;
+  // Stream-only opt-ins; never inherit the old renderer's lite defaults.
+  // Spine freeze is seat truth (never persisted); particles and background are viewer preferences.
+  streamFreezeSpines: boolean;
+  streamParticleMode: StreamParticleMode;
+  streamStaticBg: boolean;
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
   // auto-detection and leaves every row below at its product default; a rung is this device's tier AND a preset
   // over the three rows it implies (shaders, particles, static background — qualityPreset.ts). The rows stay
@@ -385,6 +393,7 @@ export const SERVER_SETTING_KEYS = [
   "refreshRate",
   "freezeParticles",
   "freezeSpines",
+  "streamFreezeSpines",
   "freezeDecor",
   "tweenReplay",
   "staticBgEnabled",
@@ -409,6 +418,8 @@ export type PersistedSettingKey =
   | "quality"
   | "shaderMode"
   | "particleMode"
+  | "streamParticleMode"
+  | "streamStaticBg"
   | "safeAreaPaddingEnabled"
   | "stretchEnabled"
   | "raiseHeldCard"
@@ -435,6 +446,8 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   "quality",
   "shaderMode",
   "particleMode",
+  "streamParticleMode",
+  "streamStaticBg",
   "safeAreaPaddingEnabled",
   "stretchEnabled",
   "raiseHeldCard",
@@ -457,7 +470,7 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
 
 // The DENYLIST, stated as data so a new field can't quietly join the saved set by accident (a spec asserts the
 // two lists together cover every key of MirrorSettings):
-//   freeze*          — HOST truth. The serving instance reports what IT has frozen and the panel adopts that per
+//   freeze*/streamFreezeSpines — HOST truth. The serving instance reports what IT has frozen and the panel adopts that per
 //                      connection; a saved copy would push a stale answer onto a different game.
 //   panelOpen/Anchor — momentary UI (and the anchor is a measured pixel of a layout that no longer exists).
 //   effectModePinned — a per-session flag for the adaptive controller, not a preference.
@@ -482,6 +495,7 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
   "keyboard",
   "freezeParticles",
   "freezeSpines",
+  "streamFreezeSpines",
   "freezeDecor",
   // textEffects — the GAME's setting, not this viewer's. Same reasoning as the freezes: a saved copy would speak
   // for a preference that has since moved, and there is no panel control here to correct it with.
@@ -557,6 +571,8 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
+  streamParticleMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
+  streamStaticBg: boolValue,
   safeAreaPaddingEnabled: boolValue,
   stretchEnabled: boolValue,
   raiseHeldCard: boolValue,
@@ -649,6 +665,7 @@ export function clearStoredMirrorSettings(storage: MirrorSettingsStorage | null 
 export interface ReportedHostFreezes {
   freezeParticles?: boolean | null;
   freezeSpines?: boolean | null;
+  streamFreezeSpines?: boolean | null;
   freezeDecor?: boolean | null;
   // Not a freeze and not seeded with them — same envelope, same tri-state contract, different lifetime. See
   // `adoptGameTextEffects`.
@@ -683,6 +700,10 @@ export function seedServerSettingsFromSession(
   }
   if (typeof reported.freezeSpines === "boolean") {
     settings.freezeSpines = reported.freezeSpines;
+    seeded = true;
+  }
+  if (typeof reported.streamFreezeSpines === "boolean") {
+    settings.streamFreezeSpines = reported.streamFreezeSpines;
     seeded = true;
   }
   if (typeof reported.freezeDecor === "boolean") {
@@ -740,20 +761,17 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // value — see STREAM_DISABLED_ROWS. Since INP2, Tap to focus is the viewer's again: the input channel
 // (streamInput.ts) implements the touch two-step on the hit item's identity. Raise held card, Un-focus on release
 // and Confirm tap leave this table too: they run as the held-card and confirm-tap stream-ext modules plus the input
-// channel's peek / confirm gestures.
+// channel's peek / confirm gestures. Spine freeze, particles and static background use their own stream-scoped
+// keys instead of the old renderer's defaults.
 export type StreamForcedKey =
-  | "quality" | "shaderMode" | "particleMode" | "staticBgEnabled"
-  | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeSpines" | "freezeDecor";
+  | "quality" | "shaderMode"
+  | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeDecor";
 
 export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protocol: RenderStreamWireVersion) => MirrorSettings[K] } = {
   // No client lever: the stream draws what the game draws.
   quality: () => "high",
   // The game's own shaders run every frame.
   shaderMode: () => "dynamic",
-  // The client simulates the streamed emitters.
-  particleMode: () => "dynamic",
-  // The live background is in the stream.
-  staticBgEnabled: () => false,
   // A DOM-mirror compositing optimization.
   backstopOcclusion: () => false,
   // Records the node-geometry wire and input, neither of which exists here.
@@ -762,7 +780,6 @@ export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protoc
   tweenReplay: () => false,
   // A freeze on the streaming seat would freeze what is streamed.
   freezeParticles: () => false,
-  freezeSpines: () => false,
   freezeDecor: () => false
 };
 
@@ -780,16 +797,21 @@ export function streamForcedValue<K extends StreamForcedKey>(settings: MirrorSet
 }
 
 /**
- * What the settings panel SHOWS for a row: the new renderer's forced value, else the Rust canvas overlay (for
+ * What the settings panel SHOWS for a row: the stream-specific choice or forced value, else the Rust canvas overlay (for
  * the render rows it owns), else the store. A read-only overlay — never a write.
  *
  * Deliberately separate from `effectiveMirrorRenderSettings`, which is the DOM/canvas renderer's own input: the
  * stream unmounts that renderer, and flipping its inputs on the way out would only make it rebuild effect
  * runtimes it is about to dispose.
  */
-export function effectivePanelSetting<K extends StreamForcedKey>(settings: MirrorSettings, key: K): MirrorSettings[K] {
-  const forced = streamForcedValue(settings, key);
-  if (forced !== undefined) return forced;
+export function effectivePanelSetting<K extends StreamForcedKey | "particleMode" | "staticBgEnabled" | "freezeSpines">(settings: MirrorSettings, key: K): MirrorSettings[K] {
+  if (streamRendererActive(settings)) {
+    if (key === "particleMode") return settings.streamParticleMode as MirrorSettings[K];
+    if (key === "staticBgEnabled") return settings.streamStaticBg as MirrorSettings[K];
+    if (key === "freezeSpines") return settings.streamFreezeSpines as MirrorSettings[K];
+  }
+  const forced = key in STREAM_RENDER_OVERRIDES ? streamForcedValue(settings, key as StreamForcedKey) : undefined;
+  if (forced !== undefined) return forced as MirrorSettings[K];
   const canvasOverlay: Partial<MirrorSettings> = effectiveMirrorRenderSettings(settings);
   return key in RUST_RENDER_SETTINGS ? canvasOverlay[key] as MirrorSettings[K] : settings[key];
 }
@@ -824,12 +846,14 @@ export function effectiveMirrorQuality(settings: MirrorSettings = mirrorSettings
 // Two entries' payload keys differ from their store keys: `staticBgEnabled` is sent as `staticBg`, and
 // `trailDriveCapable` is sent as `trailDrive`.
 //
-// Freeze preferences are sent unchanged; the native capture override controls suspension. `staticBg`
+// Old-renderer freeze preferences are sent unchanged; stream spine stills use their own optional field.
+// Stream background readiness is transient page state, supplied only after the admitted host image loads.
+// The native capture override controls suspension. `staticBg`
 // off (see staticBgWireValue) and `tweenReplay` off (it only feeds the node-mirror wire, which nobody watches while
 // the stream draws); every other field is sent as saved — `refreshRate` is the one that matters, since the capture
 // publishes per host frame. The store is untouched, so the next push after the beta is switched off restores the
 // instance's freezes and its tween replay.
-export function serverSettingsPayload(settings: MirrorSettings): MirrorSettingsPayload {
+export function serverSettingsPayload(settings: MirrorSettings, streamStaticBgReady = ""): MirrorSettingsPayload {
   const stream = streamRendererActive(settings);
   return {
     refreshRate: settings.refreshRate,
@@ -838,7 +862,12 @@ export function serverSettingsPayload(settings: MirrorSettings): MirrorSettingsP
     freezeDecor: settings.freezeDecor,
     tweenReplay: stream ? STREAM_RENDER_OVERRIDES.tweenReplay(settings.renderStreamProtocol) : settings.tweenReplay,
     staticBg: staticBgWireValue(settings),
-    trailDrive: settings.trailDriveCapable
+    trailDrive: settings.trailDriveCapable,
+    ...(stream ? {
+      streamStaticBg: settings.streamStaticBg,
+      streamFreezeSpines: settings.streamFreezeSpines,
+      streamStaticBgReady: settings.streamStaticBg ? streamStaticBgReady : ""
+    } : {})
   };
 }
 
@@ -917,6 +946,9 @@ export function createMirrorSettings(
     particleMode: particlesHardOff(quality)
       ? "off"
       : (effectModeOverride(search, "particles") ?? saved.particleMode ?? seededParticleMode(quality)),
+    streamFreezeSpines: false,
+    streamParticleMode: saved.streamParticleMode ?? "dynamic",
+    streamStaticBg: saved.streamStaticBg ?? false,
     effectModePinned: false,
     safeAreaPaddingEnabled: saved.safeAreaPaddingEnabled ?? isIphonePlatform(userAgent),
     stretchEnabled: urlOffFlag(params, "stretch") ?? saved.stretchEnabled ?? true,

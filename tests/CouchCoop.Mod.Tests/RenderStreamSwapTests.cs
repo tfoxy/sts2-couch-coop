@@ -30,6 +30,8 @@ internal static class RenderStreamSwapTests
             RestoreCompletionFollowsDeferredRestoration,
             DisposedSwapIgnoresDeferredRestore,
             OnlyArmedPublishesTheSnapshot,
+            SpineFreezeFollowsArmedAndDisarm,
+            FailedArmNeverArmsSpineFreeze,
             RefusedArmRestoresTheSuspender,
             ArmFailureAllowsAnExplicitRetry,
             PagesShareOneArm,
@@ -62,6 +64,30 @@ internal static class RenderStreamSwapTests
         }
         if (failures.Count != 0) throw new AggregateException(failures);
         Console.WriteLine($"RenderStreamSwapTests: {tests.Length} passed.");
+    }
+
+    private static void SpineFreezeFollowsArmedAndDisarm()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("page", true);
+        Assert(!f.StreamSpinesArmed, "arming does not yet freeze spines");
+        f.Capture.EmitArmed(Snapshot("stills"));
+        Assert(f.StreamSpinesArmed && !f.SuspenderEnabled, "armed capture uses its own spine freeze");
+        f.Swap.Request("page", false);
+        Assert(!f.StreamSpinesArmed && !f.SuspenderEnabled, "disarm releases stream spines before restoring the mirror");
+        f.Capture.EmitDisarmed();
+        Assert(!f.StreamSpinesArmed && f.SuspenderEnabled, "mirror restoration leaves stream freeze off");
+        f.Arm();
+        f.Swap.Dispose();
+        Assert(!f.StreamSpinesArmed, "disposal releases the stream freeze");
+    }
+
+    private static void FailedArmNeverArmsSpineFreeze()
+    {
+        using var f = new Fixture();
+        f.Capture.ArmResult = 1;
+        f.Swap.Request("page", true);
+        Assert(!f.StreamSpinesArmed && f.SuspenderEnabled, "failed arm restores the old path without stream freeze");
     }
 
     private static void MixedRendererJoinOrders()
@@ -756,6 +782,7 @@ internal static class RenderStreamSwapTests
         internal readonly List<(bool Expand, int Width)> PresentationChanges = [];
         internal (bool Expand, int Width)? PresentationWhenResumed;
         internal bool SuspenderEnabled = true;
+        internal bool StreamSpinesArmed;
         internal int TrimCalls;
         private TimeSpan _now;
 
@@ -777,7 +804,8 @@ internal static class RenderStreamSwapTests
                 () => { TrimCalls++; Events.Add("trim"); },
                 () => { Events.Add($"changed:{Swap!.State}"); Changes.Add((Swap.State, Swap.Snapshot)); },
                 Presentation.SetStreamWidth, maxWidth, deferSignal, deferPresentation,
-                trySetPresentationWidth: Presentation.TrySetStreamWidth);
+                trySetPresentationWidth: Presentation.TrySetStreamWidth,
+                setStreamSpinesArmed: on => StreamSpinesArmed = on);
         }
 
         internal void Arm()

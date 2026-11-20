@@ -17,6 +17,7 @@ internal sealed class RenderStreamSwap : IDisposable
     private readonly IRenderStreamCapture _capture;
     private readonly Func<TimeSpan, Action, IDisposable> _schedule;
     private readonly Action<bool> _setSuspenderEnabled;
+    private readonly Action<bool> _setStreamSpinesArmed;
     private readonly Action _requestTrim;
     private readonly Action _onChanged;
     private readonly Action<int> _setPresentationWidth;
@@ -57,11 +58,13 @@ internal sealed class RenderStreamSwap : IDisposable
         Action onChanged,
         Action<int> setPresentationWidth,
         int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth,
-        Action<Action>? deferSignal = null, Action<Action>? deferPresentation = null, Func<int, bool>? trySetPresentationWidth = null)
+        Action<Action>? deferSignal = null, Action<Action>? deferPresentation = null, Func<int, bool>? trySetPresentationWidth = null,
+        Action<bool>? setStreamSpinesArmed = null)
     {
         _capture = capture;
         _schedule = schedule;
         _setSuspenderEnabled = setSuspenderEnabled;
+        _setStreamSpinesArmed = setStreamSpinesArmed ?? (_ => { });
         _requestTrim = requestTrim;
         _onChanged = onChanged;
         _setPresentationWidth = setPresentationWidth;
@@ -193,6 +196,7 @@ internal sealed class RenderStreamSwap : IDisposable
     {
         if (_disposed || _phase != Phase.Arming) return;
         _phase = Phase.Armed;
+        _setStreamSpinesArmed(true);
         Snapshot = snapshot;
         Change("armed");
         if (_capture.Clients == 0) StartGrace();
@@ -202,6 +206,7 @@ internal sealed class RenderStreamSwap : IDisposable
     {
         if (_disposed || _phase != Phase.Arming) return;
         BeginTransition();
+        _setStreamSpinesArmed(false);
         _phase = Phase.Mirror;
         Snapshot = null;
         var restored = ApplyPresentation(StreamingSeatLaunch.PresentationBaseWidth);
@@ -223,6 +228,7 @@ internal sealed class RenderStreamSwap : IDisposable
     {
         CancelGrace();
         BeginTransition();
+        _setStreamSpinesArmed(false);
         _phase = Phase.Disarming;
         Snapshot = null;
         Change(failure is null ? "disarming" : "failed", failure);
@@ -240,6 +246,7 @@ internal sealed class RenderStreamSwap : IDisposable
         if (_disposed || _phase == Phase.Mirror) return;
         var rearm = _phase == Phase.Disarming && HasStream && !_dormant;
         CancelGrace();
+        _setStreamSpinesArmed(false);
         _phase = Phase.Mirror;
         Snapshot = null;
         var restored = ApplyPresentation(StreamingSeatLaunch.PresentationBaseWidth);
@@ -295,6 +302,7 @@ internal sealed class RenderStreamSwap : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _setStreamSpinesArmed(false);
         CancelGrace();
         _signals?.Dispose();
         _unsubscribeViewport?.Invoke();
@@ -312,7 +320,8 @@ internal sealed class RenderStreamSwap : IDisposable
                 System.Environment.GetEnvironmentVariable(StreamingSeatLaunch.MaxPresentationWidthEnvironmentVariable), out _),
             // Restore outside the capture signal, before resuming the mirror's visual suspender.
             deferSignal: Defer, deferPresentation: Defer,
-            trySetPresentationWidth: HeadlessViewportConfigurator.TrySetStreamPresentationWidth);
+            trySetPresentationWidth: HeadlessViewportConfigurator.TrySetStreamPresentationWidth,
+            setStreamSpinesArmed: CouchCoopStreamSpineStills.SetArmed);
         HeadlessViewportConfigurator.PresentationInvalidated += swap.InvalidatePresentation;
         HeadlessViewportConfigurator.PresentationReasserted += swap.ReassertedPresentation;
         swap._unsubscribeViewport = () =>

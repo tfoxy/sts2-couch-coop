@@ -153,6 +153,11 @@ export interface MirrorSettingsPayload {
   refreshRate?: number;
   freezeParticles?: boolean;
   freezeSpines?: boolean;
+  streamFreezeSpines?: boolean;
+  // The seat's current static-background descriptor URL, only after the HOST still loads. Empty retracts it;
+  // absent leaves the connection's vote unchanged. Separate from the node mirror's staticBg walk-skip vote.
+  streamStaticBgReady?: string;
+  streamStaticBg?: boolean;
   freezeDecor?: boolean;
   tweenReplay?: boolean;
   // Stage-B walk skip: this viewer's "Static background" setting, independent of image readiness or failure.
@@ -811,7 +816,7 @@ export function connectMirrorClient(options: {
     // Connection capabilities remain available while the shared host is private.
     if (!client.hostAccess.allowed) {
       payload = Object.fromEntries(Object.entries(payload).filter(([key]) =>
-        key === "staticBg" || key === "trailDrive" || key === "tweenReplay"));
+        key === "staticBg" || key === "streamStaticBg" || key === "trailDrive" || key === "tweenReplay"));
       if (Object.keys(payload).length === 0) return;
     }
     settingsSequence += 1;

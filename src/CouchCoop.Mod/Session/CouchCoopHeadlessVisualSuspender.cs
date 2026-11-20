@@ -299,6 +299,16 @@ public static class CouchCoopHeadlessVisualSuspender
     // Mutable + volatile so the browser Settings panel can toggle it at runtime (SetFreezeSpines).
     private static volatile bool _freezeSpine = true;
 
+    // Stream-specific seat preference. Stored independently; the stream renderer owns applying it.
+    private static volatile bool _streamFreezeSpines;
+    public static bool StreamFreezeSpines => _streamFreezeSpines;
+    public static void SetStreamFreezeSpines(bool on)
+    {
+        if (_streamFreezeSpines == on) return;
+        _streamFreezeSpines = on;
+        CouchCoopStreamSpineStills.Reconcile();
+    }
+
     /// <summary>Idempotent.</summary>
     public static void Install() => Install(rescanOnly: false);
 
@@ -1007,7 +1017,10 @@ public static class CouchCoopHeadlessVisualSuspender
     // one creature's skeleton for the rest of the run while the log still counted it as held. Re-asserting is free
     // in the steady state: an already-Disabled node short-circuits on the ProcessMode read and never reaches either
     // the GetClass probe or the write.
-    private static int FreezeAllSpine(Node root)
+    private static int FreezeAllSpine(Node root) => FreezeAllSpine(root, _spineFrozenIds);
+
+    internal static int FreezeAllSpine(Node root, FrozenNodeStates<Node.ProcessModeEnum> frozenIds,
+        Action<Node>? onFrozen = null)
     {
         var froze = 0;
         var refroze = 0;
@@ -1038,7 +1051,7 @@ public static class CouchCoopHeadlessVisualSuspender
             var frozenAlready = node.ProcessMode == Node.ProcessModeEnum.Disabled;
             if (ShouldAssertSpineFreeze(frozenAlready, !frozenAlready && LooksLikeSpine(node)))
             {
-                var firstFreeze = _spineFrozenIds.Remember(node.GetInstanceId(), node.ProcessMode);
+                var firstFreeze = frozenIds.Remember(node.GetInstanceId(), node.ProcessMode);
                 node.ProcessMode = Node.ProcessModeEnum.Disabled;
                 if (firstFreeze)
                 {
@@ -1048,6 +1061,7 @@ public static class CouchCoopHeadlessVisualSuspender
                 {
                     refroze++; // already held, but something had put it back — the bug this branch shape fixes
                 }
+                onFrozen?.Invoke(node);
             }
 
             var childCount = node.GetChildCount();
@@ -1060,7 +1074,7 @@ public static class CouchCoopHeadlessVisualSuspender
         if (froze > 0 || refroze > 0)
         {
             CouchCoopLog.Info(
-                $"[suspend] froze {froze} spine node(s) (total held {_spineFrozenIds.Count}"
+                $"[suspend] froze {froze} spine node(s) (total held {frozenIds.Count}"
                 + (refroze > 0 ? $", re-froze {refroze} that had come back)" : ")"));
         }
 
@@ -1489,7 +1503,7 @@ public static class CouchCoopHeadlessVisualSuspender
     }
 
     // Restore exactly the state captured before the first freeze, then release the ids, including freed nodes.
-    private static void Unfreeze(FrozenNodeStates<Node.ProcessModeEnum> frozenIds)
+    internal static void Unfreeze(FrozenNodeStates<Node.ProcessModeEnum> frozenIds)
     {
         var resumed = 0;
         frozenIds.Restore((id, mode) =>
@@ -1526,6 +1540,9 @@ public static class CouchCoopHeadlessVisualSuspender
             CouchCoopLog.Info($"[suspend] runtime toggle — resumed _process on {resumed} decorative node(s)");
         }
     }
+
+    internal static bool IsSpineFreezeExempt(string scriptType, string nodeName)
+        => SpineFreezeExemptScriptTypes.Contains(scriptType) || IsOffscreenExtractionSubtreeRoot(nodeName);
 
     private static Node? RootOrNull()
         => Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root) ? root : null;

@@ -85,6 +85,7 @@ import { createMirrorImagePrefetchGate } from "@/mirror/imagePrefetch";
 import {
   admitHostStaticBackground,
   sameStaticBackground,
+  staticBackgroundIdentity,
   type HostStaticBackgroundLatch
 } from "@/mirror/hostStaticBackground";
 import { sceneAblation } from "@/mirror/sceneAblation";
@@ -536,6 +537,8 @@ const settingsPushed = new WeakSet<MirrorClient>();
 // `session`). Per CONNECTION, because the host socket and a redirected headless socket are different games with
 // different answers — see seedServerSettingsFromSession.
 const hostPerfSeeded = new WeakSet<MirrorClient>();
+// Stream spine stills are seat truth even while native capture overrides the old freezes.
+const streamSpinesSeeded = new WeakSet<MirrorClient>();
 
 // ORDER CONTRACT for the server-side settings, in one place because getting it wrong is invisible until a host
 // silently un-freezes:
@@ -560,13 +563,19 @@ function adoptTextEffects(c: MirrorClient): void {
 
 function seedHostPerf(c: MirrorClient): void {
   adoptTextEffects(c);
+  if (!streamSpinesSeeded.has(c) && typeof c.session?.streamFreezeSpines === "boolean") {
+    mirrorSettings.streamFreezeSpines = c.session.streamFreezeSpines;
+    streamSpinesSeeded.add(c);
+  }
   if (hostPerfSeeded.has(c)) return;
   // Capture reports effective suspension, not the viewer's preference.
   const renderer = c.session?.rendererState;
   if (renderer?.restoreComplete === false || ["arming", "disarming", "armed"].includes(renderer?.state ?? "")) return;
   // Only a reported state counts as seeded; an unavailable measurement leaves the local defaults in place and stays
   // eligible, so a later reported state still wins.
-  if (seedServerSettingsFromSession(mirrorSettings, c.session)) {
+  // The stream preference has its own once-per-connection seed above. A later capture restore must not
+  // replace a viewer edit with a stale echo when the old freezes become readable again.
+  if (seedServerSettingsFromSession(mirrorSettings, { ...c.session, streamFreezeSpines: undefined })) {
     hostPerfSeeded.add(c);
   }
 }
@@ -577,37 +586,43 @@ function seedHostPerf(c: MirrorClient): void {
 // any other repeat — the host applies each field verbatim, so a duplicate is only wire noise, but a duplicate
 // arriving while the game is mid-freeze-walk is noise worth not making.)
 const lastSettingsSent = new WeakMap<MirrorClient, string>();
+const streamStaticBgReady = ref("");
 function pushServerSettings(c: MirrorClient): boolean {
   // A direct-view grant requests watching before it authorizes host mutations. Do not consume the
   // initial push (or its deduplication entry) until the watch acknowledgement permits it.
   if (c === hostClient && (!c.watching || !c.hostAccess.allowed)) return false;
-  const payload = serverSettingsPayload(mirrorSettings);
+  const payload = serverSettingsPayload(mirrorSettings, streamStaticBgReady.value);
   const encoded = JSON.stringify(payload);
   if (lastSettingsSent.get(c) === encoded) return true;
   lastSettingsSent.set(c, encoded);
   staticBgDeclared.set(c, payload.staticBg ?? false);
+  streamStaticBgDeclared.set(c, payload.streamStaticBg ?? false);
   c.sendSettings(payload);
   return true;
 }
 
 // The `staticBg` value each connection was last told — its connect URL's, then any `settings` message since.
 const staticBgDeclared = new WeakMap<MirrorClient, boolean>();
+const streamStaticBgDeclared = new WeakMap<MirrorClient, boolean>();
 
 // KEEP THE HOST SOCKET'S `staticBg` CURRENT FOR A SEAT VIEWER. The gated host socket is what tells the host this
 // device shows the host's stills (it warms them on publish for such a viewer), and after a redirect the store
 // watch below only reaches the SEAT socket. So a flip — or one made on the picker before the redirect — is sent
-// to the host socket too, as a `staticBg`-ONLY message.
+// to the host socket too, as a background-preferences-only message.
 //
 // NEVER `pushServerSettings(hostClient)` here. The host's `settings` handler applies the refresh-rate and freeze
 // levers to the process that RECEIVES the message; for the host socket that is the host's own game, which a seat
-// viewer's panel must never throttle or freeze. Absent fields are no-ops there, so a lone `staticBg` touches only
-// this connection's own flag.
+// viewer's panel must never throttle or freeze. Absent fields are no-ops there, so these fields touch only
+// this connection's own background flags.
 function syncHostStaticBg(): void {
   if (!joined.value || hostClient === activeClient || hostClient.status !== "connected") return;
   const staticBg = staticBgWireValue(mirrorSettings);
-  if (staticBgDeclared.get(hostClient) === staticBg) return;
+  const streamStaticBg = mirrorSettings.runtimeRenderer === "stream" && mirrorSettings.streamStaticBg;
+  const previousStreamStaticBg = streamStaticBgDeclared.get(hostClient) ?? false;
+  if (staticBgDeclared.get(hostClient) === staticBg && previousStreamStaticBg === streamStaticBg) return;
   staticBgDeclared.set(hostClient, staticBg);
-  hostClient.sendSettings({ staticBg });
+  streamStaticBgDeclared.set(hostClient, streamStaticBg);
+  hostClient.sendSettings({ staticBg, ...(streamStaticBg || previousStreamStaticBg ? { streamStaticBg } : {}) });
 }
 
 function makeClient(url?: string, watchStream = false): MirrorClient {
@@ -1414,7 +1429,8 @@ watch(
 // Watching the value list fires exactly when one of the fields changes; the client no-ops if the socket isn't
 // open yet (values are held; the on-connect push in makeClient carries them once connected).
 watch(
-  () => [mirrorSettings.runtimeRenderer, ...SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
+  () => [mirrorSettings.runtimeRenderer, mirrorSettings.streamStaticBg, streamStaticBgReady.value,
+    ...SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
     ? staticBgWireValue(mirrorSettings) : mirrorSettings[key])],
   () => {
     if (joined.value || directView.value) {
@@ -1424,7 +1440,7 @@ watch(
 );
 // …and a seat viewer's `staticBg` flip reaches the gated HOST socket as well, alone (see syncHostStaticBg).
 watch(
-  () => staticBgWireValue(mirrorSettings),
+  () => [staticBgWireValue(mirrorSettings), mirrorSettings.runtimeRenderer, mirrorSettings.streamStaticBg],
   () => syncHostStaticBg()
 );
 
@@ -1950,6 +1966,9 @@ onBeforeUnmount(() => {
       <RenderStreamStage
         :endpoint="renderStreamEndpoint"
         :core="renderStreamCore"
+        :static-background="stageBackground"
+        :static-background-id="staticBackgroundIdentity(rendererSession?.staticBackground)"
+        :static-background-frame="rendererSession?.staticBackground?.combatFrame"
         :send-input="viewControls.sendInput"
         :input-enabled="renderStreamContext.firstFrame && !hostAccessBlocked && viewRendererState?.presentationReady !== false"
         :presentation-epoch="viewRendererState?.presentationEpoch"
@@ -1961,6 +1980,7 @@ onBeforeUnmount(() => {
         @first-frame="streamCallbacks.firstFrame"
         @refresh-endpoint="onRenderStreamRefresh"
         @open-ios-install="iosInstallOpenTick++"
+        @static-bg-ready="streamStaticBgReady = $event"
       />
     </div>
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP

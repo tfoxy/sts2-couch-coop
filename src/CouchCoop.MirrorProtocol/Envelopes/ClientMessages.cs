@@ -84,8 +84,8 @@ public sealed record PingMessage(double T0, bool? MainThread = null)
 }
 
 // `{type:"settings", requestId?, refreshRate?, freezeParticles?, freezeSpines?, freezeDecor?, tweenReplay?,
-// staticBg?, trailDrive?}` — a server-side settings change (the mirror Settings panel). Every field optional; the
-// host treats an absent field as unchanged. Mirrors MirrorSettingsPayload + the host's
+// staticBg?, trailDrive?, streamFreezeSpines?, streamStaticBgReady?}` — a server-side settings change.
+// Every field optional; the host treats an absent field as unchanged. Mirrors MirrorSettingsPayload + the host's
 // BrowserSettingsRequestEnvelope.
 public sealed record SettingsMessage(
     string? RequestId = null,
@@ -99,7 +99,14 @@ public sealed record SettingsMessage(
     bool? StaticBg = null,
     // Trail drive: this viewer's trail-root CAPABILITY (see BrowserSettingsRequestEnvelope.TrailDrive — the
     // other per-connection unanimity input). Omit-null keeps the pre-field wire identical, and reads as NOT capable.
-    bool? TrailDrive = null)
+    bool? TrailDrive = null,
+    // Stream spine stills are independent of the node-mirror spine freeze. Null leaves the seat unchanged.
+    bool? StreamFreezeSpines = null,
+    // The seat's published background URL (path + query), after its host-sourced still loads. Empty retracts;
+    // null leaves the connection unchanged. Independent of the node-mirror walk-skip vote.
+    string? StreamStaticBgReady = null,
+    // Demand for the host still, before the image has loaded. Independent of readiness and StaticBg.
+    bool? StreamStaticBg = null)
 {
     public string Type => "settings";
 }

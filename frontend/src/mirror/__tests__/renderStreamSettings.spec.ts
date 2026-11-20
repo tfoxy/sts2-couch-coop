@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createMirrorSettings,
+  effectivePanelSetting,
   mirrorSettings,
   NEVER_PERSISTED_SETTING_KEYS,
   persistMirrorSetting,
   PERSISTED_SETTING_KEYS,
   readStoredMirrorSettings,
   serverSettingsPayload,
+  seedServerSettingsFromSession,
   staticBgWireValue,
   STREAM_RENDER_OVERRIDES,
   type MirrorSettingsStorage
@@ -112,7 +114,7 @@ describe("mirrorSettings — the renderer keys", () => {
     settings.runtimeRenderer = "stream";
     expect(serverSettingsPayload(settings)).toEqual({
       refreshRate: 40, freezeParticles: true, freezeSpines: true, freezeDecor: true, tweenReplay: false,
-      staticBg: false, trailDrive: true
+      staticBg: false, trailDrive: true, streamFreezeSpines: false, streamStaticBgReady: "", streamStaticBg: false
     });
     expect(staticBgWireValue(settings)).toBe(false);
     // The store itself is untouched, so switching back sends the instance's own values again.
@@ -120,6 +122,19 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(settings.tweenReplay).toBe(true);
     settings.runtimeRenderer = "mirror";
     expect(serverSettingsPayload(settings)).toEqual(old);
+  });
+
+  it("sends loaded readiness only for the stream opt-in, independent of the old mirror vote", () => {
+    const settings = createMirrorSettings(undefined, "", { storage: null });
+    const id = "/bg/underdocks?layers=current&v=1";
+    expect(serverSettingsPayload(settings, id)).not.toHaveProperty("streamStaticBgReady");
+    settings.runtimeRenderer = "stream";
+    expect(serverSettingsPayload(settings, id).streamStaticBgReady).toBe("");
+    settings.streamStaticBg = true;
+    expect(serverSettingsPayload(settings).streamStaticBgReady).toBe("");
+    expect(serverSettingsPayload(settings, id)).toMatchObject({ streamStaticBgReady: id, staticBg: false });
+    settings.streamStaticBg = false;
+    expect(serverSettingsPayload(settings, id).streamStaticBgReady).toBe("");
   });
 
   it("leaves Widescreen stretch the viewer's: it sets the streaming seat's width (PRES-A)", () => {
@@ -131,9 +146,71 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("unfocusOnRelease"); // the peek-release pair
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("confirmTap"); // the confirm-tap module
     expect(Object.keys(STREAM_RENDER_OVERRIDES).sort()).toEqual([
-      "backstopOcclusion", "freezeDecor", "freezeParticles", "freezeSpines", "particleMode", "quality",
-      "reproRecorder", "shaderMode", "staticBgEnabled", "tweenReplay"
+      "backstopOcclusion", "freezeDecor", "freezeParticles", "quality",
+      "reproRecorder", "shaderMode", "tweenReplay"
     ]);
+  });
+
+  it("sends stream opt-ins while keeping old-renderer settings unchanged", () => {
+    const storage = memoryStorage({ staticBgEnabled: true, particleMode: "static" });
+    const settings = createMirrorSettings(undefined, "", { storage });
+    const oldPayload = serverSettingsPayload(settings);
+    expect(settings).toMatchObject({ streamFreezeSpines: false, streamParticleMode: "dynamic", streamStaticBg: false });
+    settings.runtimeRenderer = "stream";
+    expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(false);
+    expect(effectivePanelSetting(settings, "particleMode")).toBe("dynamic");
+    expect(effectivePanelSetting(settings, "freezeSpines")).toBe(false);
+    const streamPayload = serverSettingsPayload(settings);
+    Object.assign(settings, { streamStaticBg: true, streamParticleMode: "static", streamFreezeSpines: true });
+    expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(true);
+    expect(effectivePanelSetting(settings, "particleMode")).toBe("static");
+    expect(effectivePanelSetting(settings, "freezeSpines")).toBe(true);
+    expect(serverSettingsPayload(settings)).toEqual({ ...streamPayload, streamFreezeSpines: true, streamStaticBg: true });
+    expect(streamPayload).toHaveProperty("streamFreezeSpines", false);
+    expect(streamPayload).not.toHaveProperty("streamParticleMode");
+    expect(streamPayload).toHaveProperty("streamStaticBg", false);
+    settings.runtimeRenderer = "mirror";
+    expect(serverSettingsPayload(settings)).toEqual(oldPayload);
+    expect(effectivePanelSetting(settings, "staticBgEnabled")).toBe(true);
+    expect(effectivePanelSetting(settings, "particleMode")).toBe("static");
+    expect(effectivePanelSetting(settings, "freezeSpines")).toBe(true);
+  });
+
+  it("re-seeds stream spine truth independently on each connection and ignores unknown values", () => {
+    const settings = createMirrorSettings(undefined, "", { storage: null });
+    expect(seedServerSettingsFromSession(settings, { streamFreezeSpines: null })).toBe(false);
+    expect(settings.streamFreezeSpines).toBe(false);
+    expect(seedServerSettingsFromSession(settings, { streamFreezeSpines: true })).toBe(true);
+    expect(settings.streamFreezeSpines).toBe(true);
+    expect(settings.freezeSpines).toBe(true);
+    expect(seedServerSettingsFromSession(settings, {})).toBe(false);
+    expect(settings.streamFreezeSpines).toBe(true);
+    expect(seedServerSettingsFromSession(settings, { freezeSpines: false, streamFreezeSpines: false })).toBe(true);
+    expect(settings.streamFreezeSpines).toBe(false);
+    expect(settings.freezeSpines).toBe(false);
+    expect(serverSettingsPayload(settings)).not.toHaveProperty("streamFreezeSpines");
+  });
+
+  it("restores page opt-ins but never restores or persists stream spine freeze", () => {
+    const storage = memoryStorage({ streamFreezeSpines: true, streamParticleMode: "static", streamStaticBg: true });
+    expect(createMirrorSettings(undefined, "", { storage }))
+      .toMatchObject({ streamFreezeSpines: false, streamParticleMode: "static", streamStaticBg: true });
+    expect(readStoredMirrorSettings(storage)).toEqual({ streamParticleMode: "static", streamStaticBg: true });
+    expect(NEVER_PERSISTED_SETTING_KEYS).toContain("streamFreezeSpines");
+    expect(PERSISTED_SETTING_KEYS).not.toContain("streamFreezeSpines");
+    // A panel write also drops stale host-truth entries from the stored blob.
+    persistMirrorSetting("streamStaticBg", false, storage);
+    persistMirrorSetting("streamParticleMode", "dynamic", storage);
+    expect(storage.raw()).toEqual({ streamParticleMode: "dynamic", streamStaticBg: false });
+    expect(createMirrorSettings(undefined, "", { storage }))
+      .toMatchObject({ streamFreezeSpines: false, streamParticleMode: "dynamic", streamStaticBg: false });
+  });
+
+  it.each(["off", "dynamic-half", "dynamic-quarter", true, null])("rejects invalid saved stream particle mode %s", (mode) => {
+    const settings = createMirrorSettings(undefined, "", {
+      storage: memoryStorage({ streamParticleMode: mode, streamStaticBg: "true" })
+    });
+    expect(settings).toMatchObject({ streamParticleMode: "dynamic", streamStaticBg: false });
   });
 
   it("asks for the mirror design aspect only with Widescreen stretch on", () => {
@@ -198,8 +275,8 @@ describe("mirrorSettings — the renderer keys", () => {
     }
   });
 
-  it("forces dynamic Particles for the stream", () => {
-    expect(STREAM_RENDER_OVERRIDES.particleMode(16)).toBe("dynamic");
+  it("leaves Particles selectable for the stream", () => {
+    expect(STREAM_RENDER_OVERRIDES).not.toHaveProperty("particleMode");
   });
 });
 

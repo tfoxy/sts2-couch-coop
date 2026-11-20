@@ -179,6 +179,7 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   // its own defaults.
   freezeParticles?: boolean | null;
   freezeSpines?: boolean | null;
+  streamFreezeSpines?: boolean | null;
   freezeDecor?: boolean | null;
   // The GAME's own Settings → Text Effects preference on the instance serving this connection, so the mirror's
   // animated rich text (the wavy and bouncing tags) obeys the switch the player at the keyboard set. It has to be
@@ -227,6 +228,10 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
 export interface BrowserStaticBackgroundDescriptor {
   scenePath: string;
   url: string;
+  /** Mounted-background identity; image URLs can be reused across rooms. */
+  id?: string;
+  /** Live combat origin x,y and scale in the centered 1920x1080 reference. */
+  combatFrame?: string;
 }
 
 export interface BrowserRendererState {
@@ -526,14 +531,16 @@ function normalizeStaticBackground(raw: unknown): BrowserStaticBackgroundDescrip
   if (raw === null || typeof raw !== "object") {
     return null;
   }
-  const value = raw as { scenePath?: unknown; url?: unknown };
+  const value = raw as { scenePath?: unknown; url?: unknown; id?: unknown; combatFrame?: unknown };
   return typeof value.scenePath === "string" && value.scenePath.length > 0
     && typeof value.url === "string" && value.url.length > 0
     // The host describes the picture with a route it serves; `hostUrl` points that at the game machine
     // when the page came from the public origin, and is a no-op otherwise. Applied at the single point
     // the descriptor enters the app, so StaticBackground.vue's url equality never compares two spellings
     // of the same picture.
-    ? { scenePath: value.scenePath, url: hostUrl(value.url) }
+    ? { scenePath: value.scenePath, url: hostUrl(value.url),
+      ...(typeof value.id === "string" && value.id.length > 0 ? { id: value.id } : {}),
+      ...(typeof value.combatFrame === "string" ? { combatFrame: value.combatFrame } : {}) }
     : null;
 }
 
@@ -615,6 +622,7 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       // Only a real boolean may seed the panel — coercing an absent field to false would invent a windowed state.
       freezeParticles: typeof value.freezeParticles === "boolean" ? value.freezeParticles : null,
       freezeSpines: typeof value.freezeSpines === "boolean" ? value.freezeSpines : null,
+      streamFreezeSpines: typeof value.streamFreezeSpines === "boolean" ? value.streamFreezeSpines : null,
       freezeDecor: typeof value.freezeDecor === "boolean" ? value.freezeDecor : null,
       hostName: requiredString(value.hostName, "hostName"),
       assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,

@@ -225,7 +225,14 @@ public sealed record BrowserSettingsRequestEnvelope(
     // and a CAPABILITY rather than a preference: it feeds the server's unanimity aggregate, which turns the
     // producer lever on only while EVERY streaming mirror connection reports true. Null means this partial settings
     // update leaves the connection's current capability unchanged; `?trailDrive=0|1` seeds it at connect.
-    bool? TrailDrive = null);
+    bool? TrailDrive = null,
+    // Stream spine stills are independent of the node-mirror spine freeze. Null leaves the seat unchanged.
+    bool? StreamFreezeSpines = null,
+    // The seat's published background URL (path + query), after its host-sourced still loads. Empty retracts;
+    // null leaves the connection unchanged. Independent of the node-mirror walk-skip vote.
+    string? StreamStaticBgReady = null,
+    // Demand for the host still, before the image has loaded. Independent of readiness and StaticBg.
+    bool? StreamStaticBg = null);
 
 public sealed record BrowserServerReloadEnvelope(
     string Type,

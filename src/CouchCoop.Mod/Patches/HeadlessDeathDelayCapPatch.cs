@@ -146,8 +146,8 @@ internal static class HeadlessDeathDelayCapPatch
             modifiers: null);
     }
 
-    internal static bool ShouldCapDelayTask(bool enabled, Task? original)
-        => enabled && original is { IsCompleted: false };
+    internal static bool ShouldCapDelayTask(bool enabled, Task? original, bool streamSpinesFrozen = false)
+        => (enabled || streamSpinesFrozen) && original is { IsCompleted: false };
 
     // Harmony postfix. `__result` is the task the death sequence awaits; swap in a wrapper that also gives up
     // after the cap. Already-completed tasks are passed through untouched (no allocation on the common path).
@@ -156,7 +156,7 @@ internal static class HeadlessDeathDelayCapPatch
         try
         {
             var original = __result;
-            if (!ShouldCapDelayTask(CouchCoopHeadlessVisualSuspender.IsEnabled, original))
+            if (!ShouldCapDelayTask(CouchCoopHeadlessVisualSuspender.IsEnabled, original, CouchCoopStreamSpineStills.IsActive))
             {
                 return;
             }

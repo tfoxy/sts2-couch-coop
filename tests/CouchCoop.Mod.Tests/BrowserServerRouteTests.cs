@@ -46,6 +46,20 @@ if (args is ["player-names", ..])
     return;
 }
 
+if (args is ["host-performance", ..])
+{
+    HostPerformanceEnvelopeTests.Run();
+    Console.WriteLine("host performance: ok (8 cases)");
+    return;
+}
+
+if (args is ["stream-spine", ..])
+{
+    HeadlessSpineFreezeTests.Run();
+    StreamSpineStillsTests.Run();
+    return;
+}
+
 if (args is ["suspender-enable", ..])
 {
     HeadlessSuspenderEnableTests.Run();
@@ -1073,6 +1087,7 @@ HeadlessParticleFreezeExemptionTests.Run();
 // Idle wire: the spine freeze re-asserts on every scan — its dedup set is a reporting set, never the gate
 // (a node whose ProcessMode came back used to be skipped forever; see the file header).
 HeadlessSpineFreezeTests.Run();
+StreamSpineStillsTests.Run();
 await HeadlessAssetLoadingActivityTests.RunAsync();
 // Geoclip round: all three freeze walks skip an OFF-SCREEN EXTRACTION subtree (they DFS from SceneTree.Root, so
 // they otherwise freeze the detached rig a bake is posing and it returns one pose repeated) — and skip nothing
@@ -1658,6 +1673,9 @@ internal sealed partial class BrowserServerRouteTests
         await AssertStaticBackgroundRoutesAsync(root.Path);
         // …and the host-authority half: a gated seat viewer keeps the host's publish live and warm.
         await AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(root.Path);
+        await AssertStaticBackgroundEnvelopeAsync();
+        AssertStreamBackgroundTruthTable();
+        await AssertStreamBackgroundDemandAsync(root.Path);
         await AssertStaticBackgroundEnvelopeAsync();
         // S9/S10 perf report routes (same reason for a dedicated server: both recorders are process-wide).
         await AssertPerfReportRoutesAsync(root.Path);
@@ -2480,7 +2498,216 @@ internal sealed partial class BrowserServerRouteTests
         using var root = new TempStaticRoot();
         await AssertStaticBackgroundRoutesAsync(root.Path);
         await AssertGatedStaticBgViewerKeepsHostPublishLiveAsync(root.Path);
+        AssertStreamBackgroundTruthTable();
+        await AssertStreamBackgroundDemandAsync(root.Path);
         Console.WriteLine("static background routes: ok");
+    }
+
+    private static void AssertStreamBackgroundTruthTable()
+    {
+        (bool Armed, string? Current, (bool WantsStaticBg, string? Ready)[] Pages, bool Hide)[] cases =
+        [
+            (true, "room-1", [(true, "room-1"), (true, "room-1")], true),
+            (true, "room-1", [(true, "room-1"), (true, "")], true),
+            (true, "room-1", [(true, "room-1"), (false, "room-1")], false),
+            (true, "room-2", [(true, "room-1"), (true, "room-1")], true),
+            (true, "room-2", [(true, "room-2"), (true, "room-1")], true),
+            (true, "room-2", [(true, "room-2"), (true, "room-2")], true),
+            (true, "room-1", [], false),
+            (true, null, [(true, "room-1")], false),
+            (true, "", [(true, "")], false),
+            (true, "room-1", [(true, null)], true),
+            (false, "room-1", [(true, "room-1")], false),
+            (true, "room-1", [(true, "room-1")], true),
+        ];
+        foreach (var (armed, current, pages, hide) in cases)
+        {
+            Expect(CouchCoopBrowserServer.ComputeStreamBgHideDesired(armed, current, 0, pages) == hide,
+                $"stream background unanimity: armed={armed}, current={current}, pages={pages.Length}, hide={hide}");
+        }
+        (bool WantsStaticBg, string? Ready)[] demandingPages = [(true, null), (true, null)];
+        Expect(!CouchCoopBrowserServer.ComputeStreamBgHideDesired(true, "room-1", 1, demandingPages),
+            "unanimous stream demand cannot hide the background a live mirror viewer needs");
+        Expect(CouchCoopBrowserServer.ComputeStreamBgHideDesired(true, "room-1", 0, demandingPages),
+            "unanimous stream demand can hide when no mirror viewer needs the live background");
+        Expect(!CouchCoopStaticBackgroundTracker.MatchesStreamBackground("room-1", "room-2"),
+            "a queued hide for the previous mounted room cannot hide the new root");
+        Expect(CouchCoopStaticBackgroundTracker.MatchesStreamBackground("room-2", "room-2"),
+            "the probe admits only its current mounted descriptor");
+        var tracker = new CouchCoopStaticBackgroundTracker();
+        tracker.SetDesiredStreamHide("room-1");
+        Expect(tracker.DesiredStreamHideForTest == "room-1", "stream hide latches without engine calls");
+        tracker.SetDesiredStreamHide(null);
+        Expect(tracker.DesiredStreamHideForTest is null, "stream restore latches without engine calls");
+        Console.WriteLine("stream background truth table: ok (14 scenarios, 4 tracker checks)");
+    }
+
+    private sealed class StaticBackgroundRendererHost : IHotRendererSwapHost, IHotSelfRenderStreamHost
+    {
+        private readonly HashSet<string> _pages = [];
+        private event Action? Changed;
+        private string _state = "armed";
+        public bool SupportsSelfRenderStream => true;
+        public (string State, string? Reason, (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
+            => (_state, null, ("127.0.0.1:1", "test", "", "1920x1080", 16));
+        public bool WantsRenderStream(string pageId) { lock (_pages) return _pages.Contains(pageId); }
+        public void RequestRenderer(string pageId, bool wantsStream, double? aspect)
+        {
+            lock (_pages) { if (wantsStream) _pages.Add(pageId); else _pages.Remove(pageId); }
+            Changed?.Invoke();
+        }
+        public void ReleaseRenderer(string pageId) { lock (_pages) _pages.Remove(pageId); Changed?.Invoke(); }
+        public IDisposable SubscribeRendererChanged(Action handler)
+        {
+            Changed += handler;
+            return new CallbackDisposable(() => Changed -= handler);
+        }
+        public void SetArmed(bool armed) { _state = armed ? "armed" : "mirror"; Changed?.Invoke(); }
+    }
+
+    private static async Task AssertStreamBackgroundDemandAsync(string staticRoot)
+    {
+        CouchCoopStaticBackgroundTracker.ResetForTest();
+        try
+        {
+            var hostRuntime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+            await using (var host = new CouchCoopBrowserServer(new StaticSpaFileProvider(staticRoot),
+                new CapturingAssetAdapter(), hostRuntime.NewEnvelopeFactory(),
+                isHeadlessClient: false, rendererSwapHost: new StaticBackgroundRendererHost(),
+                hostBrowserAccess: new TestHostBrowserAccess(), subscribeScreenUpdated: _ => new CallbackDisposable(() => { }), log: _ => { }))
+            {
+                var hostUri = await host.StartAsync();
+                using var coordination = new ClientWebSocket();
+                await coordination.ConnectAsync(new UriBuilder(hostUri) { Scheme = "ws", Path = "/ws",
+                    Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+                _ = await ReadWsMessageAsync(coordination);
+                await coordination.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "settings", streamStaticBg = true }),
+                    WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                Expect(await WaitForAsync(() => host.StaticBgViewerStateForTest().ScreenProbeArmed),
+                    "gated stream preference starts the host probe before image readiness");
+                Expect(host.StaticBgViewerStateForTest() is { GatedStaticBgViewers: 0, HasStaticBgViewer: true },
+                    "stream demand opens the warm gate without entering the old static-bg population");
+                Expect(!host.BgSkipStateForTest().BgSkipDesired, "gated stream demand has no old walk vote");
+                await coordination.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "renderer", renderer = "mirror", rendererProtocol = 2 }),
+                    WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                await coordination.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "ping" }),
+                    WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                _ = await ReadNextWsMessageOfTypeAsync(coordination, "pong");
+                Expect(host.StaticBgViewerStateForTest().ScreenProbeArmed,
+                    "a gated coordination socket ignores renderer requests and keeps its stream demand");
+                await coordination.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "settings", streamStaticBg = false }),
+                    WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                Expect(await WaitForAsync(() => !host.StaticBgViewerStateForTest().ScreenProbeArmed),
+                    "the host releases its probe when stream demand turns off");
+                Expect(!host.StaticBgViewerStateForTest().HasStaticBgViewer, "turning off demand closes the warm gate");
+                await CloseWebSocketSilentlyAsync(coordination);
+                using var direct = new ClientWebSocket();
+                await direct.ConnectAsync(new UriBuilder(hostUri) { Scheme = "ws", Path = "/ws",
+                    Query = "watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+                _ = await ReadWsMessageAsync(direct);
+                foreach (var mode in new[] { "stream", "mirror", "stream" })
+                {
+                    if (mode == "stream")
+                        await direct.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "settings", streamStaticBg = true }),
+                            WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                    await direct.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "renderer", renderer = mode, rendererProtocol = 2 }),
+                        WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                    await direct.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "ping" }),
+                        WebSocketMessageType.Text, WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+                    _ = await ReadNextWsMessageOfTypeAsync(direct, "pong");
+                    var wantsStill = mode == "stream";
+                    Expect(host.StaticBgViewerStateForTest().HasStaticBgViewer == wantsStill,
+                        $"direct host page {mode} updates still demand without an old-renderer static background");
+                    Expect(host.StaticBgViewerStateForTest().ScreenProbeArmed == wantsStill,
+                        $"direct host page {mode} updates the screen probe subscription");
+                }
+                await CloseWebSocketSilentlyAsync(direct);
+            }
+            Console.WriteLine("stream background host demand: ok (12 checks)");
+            var renderer = new StaticBackgroundRendererHost();
+            var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+            await using var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(staticRoot),
+                new CapturingAssetAdapter(), runtime.NewEnvelopeFactory(), isHeadlessClient: true,
+                rendererSwapHost: renderer, subscribeScreenUpdated: _ => new CallbackDisposable(() => { }), log: _ => { });
+            var baseUri = await server.StartAsync();
+            async Task Send(ClientWebSocket socket, object message)
+                => await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(message), WebSocketMessageType.Text,
+                    WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            async Task Connect(ClientWebSocket socket)
+            {
+                await socket.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws",
+                    Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+                _ = await ReadWsMessageAsync(socket);
+                await Send(socket, new { type = "renderer", renderer = "stream", rendererProtocol = 2 });
+                await Send(socket, new { type = "ping" });
+                _ = await ReadNextWsMessageOfTypeAsync(socket, "pong");
+            }
+            bool Hidden(string? id) => server.StaticBgTrackerForTest?.DesiredStreamHideForTest == id;
+            using var first = new ClientWebSocket();
+            await Connect(first);
+            Expect(!server.StaticBgViewerStateForTest().ScreenProbeArmed,
+                "a stream page with the static background off leaves the seat probe dormant");
+            await Send(first, new { type = "settings", streamStaticBg = true });
+            Expect(await WaitForAsync(() => server.StaticBgViewerStateForTest().HasStaticBgViewer),
+                "stream preference starts host still demand before an image is ready");
+            Expect(server.StaticBgViewerStateForTest().ScreenProbeArmed,
+                "enabling the stream static background arms the seat probe");
+            var tracker = server.StaticBgTrackerForTest!;
+            Expect(Hidden(null), "stream demand keeps the live background when no root is known");
+            var state = new CouchCoopStaticBackgroundState("res://scenes/backgrounds/underdocks/underdocks_background.tscn",
+                [], null, "/bg/underdocks?v=1", Id: "room-1");
+            tracker.PublishForTest(state);
+            Expect(await WaitForAsync(() => Hidden("room-1")), "stream demand hides without any ready vote");
+            Expect(!server.BgSkipStateForTest().BgSkipDesired, "stream demand never engages the old walk skip");
+            using (var liveMirror = new ClientWebSocket())
+            {
+                await liveMirror.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws",
+                    Query = "watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+                _ = await ReadWsMessageAsync(liveMirror);
+                Expect(await WaitForAsync(() => Hidden(null)), "a live mirror viewer connecting restores the background");
+                await Send(liveMirror, new { type = "settings", staticBg = true });
+                Expect(await WaitForAsync(() => Hidden("room-1")), "the mirror viewer choosing its still permits hiding again");
+                await Send(liveMirror, new { type = "settings", staticBg = false });
+                Expect(await WaitForAsync(() => Hidden(null)), "the mirror viewer choosing live scenery restores again");
+                await CloseWebSocketSilentlyAsync(liveMirror);
+                Expect(await WaitForAsync(() => Hidden("room-1")), "the live mirror viewer disconnecting permits hiding again");
+            }
+            using var second = new ClientWebSocket();
+            await Connect(second);
+            Expect(await WaitForAsync(() => Hidden(null)), "a newly connected non-demanding stream page restores");
+            await Send(second, new { type = "settings", streamStaticBg = true });
+            Expect(await WaitForAsync(() => Hidden("room-1")), "both pages demanding hides without readiness");
+            tracker.PublishForTest(state with { Id = "room-2" });
+            Expect(await WaitForAsync(() => Hidden("room-2")), "a new mounted room hides on existing demand");
+            await Send(first, new { type = "settings", streamStaticBgReady = "room-1" });
+            await Send(second, new { type = "settings", streamStaticBgReady = "" });
+            await Send(second, new { type = "ping" });
+            _ = await ReadNextWsMessageOfTypeAsync(second, "pong");
+            Expect(Hidden("room-2"), "stale or failed image readiness cannot restore the live background");
+            tracker.PublishForTest(null);
+            Expect(await WaitForAsync(() => Hidden(null)), "a room without a still family keeps the live background");
+            tracker.PublishForTest(state with { Id = "room-2" });
+            Expect(await WaitForAsync(() => Hidden("room-2")), "a background root returning hides on demand");
+            await Send(second, new { type = "settings", streamStaticBg = false });
+            Expect(await WaitForAsync(() => Hidden(null)), "a page dropping demand restores");
+            await CloseWebSocketSilentlyAsync(second);
+            Expect(await WaitForAsync(() => Hidden("room-2")), "disconnect removes the non-demanding page");
+            renderer.SetArmed(false);
+            Expect(await WaitForAsync(() => Hidden(null)), "disarming restores while page demand remains");
+            renderer.SetArmed(true);
+            Expect(await WaitForAsync(() => Hidden("room-2")), "arming recomputes the live page demand");
+            await Send(first, new { type = "settings", streamStaticBg = false });
+            Expect(await WaitForAsync(() => Hidden(null)), "toggle-off restores");
+            Expect(!server.StaticBgViewerStateForTest().ScreenProbeArmed,
+                "disabling the last stream static background releases the seat probe");
+            await Send(first, new { type = "settings", streamStaticBg = true });
+            Expect(await WaitForAsync(() => server.StaticBgViewerStateForTest().HasStaticBgViewer), "demand returns");
+            Expect(await WaitForAsync(() => Hidden("room-2")), "toggling back on hides without a fresh ready vote");
+            await CloseWebSocketSilentlyAsync(first);
+            Expect(await WaitForAsync(() => Hidden(null)), "the last stream page disconnect restores");
+            Console.WriteLine("stream background socket lifecycle: ok (25 checks)");
+        }
+        finally { CouchCoopStaticBackgroundTracker.ResetForTest(); }
     }
 
     // HOST AUTHORITY over real sockets. A browser on a headless seat keeps its HOST socket open gated (`watch=0`)
@@ -2897,13 +3124,28 @@ internal sealed partial class BrowserServerRouteTests
             string[] layers = ["res://scenes/backgrounds/underdocks/layers/underdocks_bg_00_c.tscn"];
             var digest = CouchCoopStaticBackgroundProvider.ComputeLayersDigest(layers)!;
             var url = CouchCoopStaticBackgroundProvider.BuildImageUrl("underdocks", digest);
-            new CouchCoopStaticBackgroundTracker().PublishForTest(new CouchCoopStaticBackgroundState(scene, layers, digest, url));
+            var publishes = 0;
+            var tracker = new CouchCoopStaticBackgroundTracker(onPublishedChanged: () => publishes++);
+            var state = new CouchCoopStaticBackgroundState(scene, layers, digest, url, CombatFrame: "983,540,1");
+            tracker.PublishForTest(state);
 
             var present = await factory.CreateSessionEnvelope("Alice", "browser:req:bg-present", session: null);
             using var document = JsonDocument.Parse(BrowserJson.Serialize(present));
             var descriptor = document.RootElement.GetProperty("staticBackground");
             Expect(descriptor.GetProperty("scenePath").GetString() == scene, "the descriptor carries the live bg scene path");
             Expect(descriptor.GetProperty("url").GetString() == url, "the descriptor carries the ready-to-fetch digest-qualified /bg/ URL");
+            Expect(descriptor.GetProperty("combatFrame").GetString() == "983,540,1",
+                "the descriptor carries live placement independently of the capture URL");
+            var roundTrip = JsonSerializer.Deserialize<BrowserStaticBackgroundDto>(descriptor.GetRawText(),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            Expect(roundTrip?.CombatFrame == "983,540,1", "combat placement survives the descriptor wire round-trip");
+            tracker.PublishForTest(state);
+            Expect(publishes == 1, "an unchanged combat frame does not republish");
+            tracker.PublishForTest(state with { CombatFrame = "983,540,0.9" });
+            Expect(publishes == 2, "a changed live combat frame republishes even with the same image URL");
+            var updated = await factory.CreateSessionEnvelope("Alice", "browser:req:bg-updated", session: null);
+            Expect(updated.StaticBackground?.CombatFrame == "983,540,0.9", "the next session carries the changed frame");
+            Expect(updated.StaticBackground?.Url == url, "live placement does not change the host image cache identity");
         }
         finally
         {

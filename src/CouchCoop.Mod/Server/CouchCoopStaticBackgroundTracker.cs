@@ -23,7 +23,11 @@ public sealed record CouchCoopStaticBackgroundState(
     // reference — see CouchCoopStaticBackgroundTracker.NormalizeProbedFrameSpec). The route's stale-frame rule
     // compares against this, exactly the way the combat digest rule compares against Digest. Null for combat and
     // for a probe that could not read a transform (the Url is then the deterministic reference-lerp variant).
-    string? EventFrame = null);
+    string? EventFrame = null,
+    // Mounted-root identity, independent of the image cache URL.
+    string? Id = null,
+    // Live combat placement in the centered 1920x1080 reference, independent of the still's capture framing.
+    string? CombatFrame = null);
 
 // The static-background tracker, two halves sharing ONE deferred main-thread probe:
 //
@@ -132,6 +136,23 @@ public sealed class CouchCoopStaticBackgroundTracker
     // leave a dangling managed wrapper alive — InstanceFromId of a freed id is simply null (nothing to unstamp;
     // the node's removal already swept its subtree off the wire).
     private ulong _stampedInstanceId;
+    private readonly string _identityPrefix = Guid.NewGuid().ToString("N");
+    private string? _desiredStreamHide;
+    private ulong _hiddenInstanceId;
+    private bool _savedVisible;
+    private Node.ProcessModeEnum _savedProcessMode;
+
+    public void SetDesiredStreamHide(string? descriptorId)
+    {
+        if (string.Equals(Volatile.Read(ref _desiredStreamHide), descriptorId, StringComparison.Ordinal)) return;
+        Volatile.Write(ref _desiredStreamHide, descriptorId);
+        if (CouchCoopMod.EngineAvailable) _scheduler.TrySchedule("stream-background");
+    }
+
+    internal string? DesiredStreamHideForTest => Volatile.Read(ref _desiredStreamHide);
+
+    internal static bool MatchesStreamBackground(string? desiredId, string? currentId)
+        => !string.IsNullOrEmpty(desiredId) && string.Equals(desiredId, currentId, StringComparison.Ordinal);
 
     /// <summary>
     /// Stage-B walk skip: the server's unanimity aggregate changed. Stores the new verdict and schedules the
@@ -286,8 +307,37 @@ public sealed class CouchCoopStaticBackgroundTracker
         // Stage-B stamping half: apply the current desired-skip verdict to the LOCATED root (the node whose
         // SceneFilePath produced `next.ScenePath`). Runs before the publish so a screen-change probe stamps the
         // new room's root in the same main-thread hop that announces it.
+        if (next is not null && bgRoot is not null)
+        {
+            next = next with { Id = _identityPrefix + ":" + bgRoot.GetInstanceId() + ":" + next.Url };
+        }
         ApplyStreamSkip(bgRoot);
         PublishAndNotify(next);
+        ApplyStreamBackgroundHide(bgRoot, next?.Id);
+    }
+
+    // Main thread only. Retire the previous root before considering a new room's descriptor.
+    private void ApplyStreamBackgroundHide(Node? bgRoot, string? descriptorId)
+    {
+        var desired = MatchesStreamBackground(Volatile.Read(ref _desiredStreamHide), descriptorId);
+        if (_hiddenInstanceId != 0
+            && (!desired || bgRoot is null || bgRoot.GetInstanceId() != _hiddenInstanceId))
+        {
+            if (GodotObject.InstanceFromId(_hiddenInstanceId) is CanvasItem previous)
+            {
+                previous.Visible = _savedVisible;
+                previous.ProcessMode = _savedProcessMode;
+            }
+            _hiddenInstanceId = 0;
+        }
+        if (desired && _hiddenInstanceId == 0 && bgRoot is CanvasItem canvasItem)
+        {
+            _savedVisible = canvasItem.Visible;
+            _savedProcessMode = canvasItem.ProcessMode;
+            _hiddenInstanceId = canvasItem.GetInstanceId();
+            canvasItem.Visible = false;
+            canvasItem.ProcessMode = Node.ProcessModeEnum.Disabled;
+        }
     }
 
     // Main thread only (probe body). Reconciles OUR stamp with (a) the located combat bg root and (b) the
@@ -349,7 +399,8 @@ public sealed class CouchCoopStaticBackgroundTracker
                     scenePath,
                     layers,
                     digest,
-                    CouchCoopStaticBackgroundProvider.BuildImageUrl(id, digest));
+                    CouchCoopStaticBackgroundProvider.BuildImageUrl(id, digest),
+                    CombatFrame: ProbeFrameSpec(child));
             }
         }
 
@@ -669,7 +720,9 @@ public sealed class CouchCoopStaticBackgroundTracker
               && string.Equals(current.ScenePath, next.ScenePath, StringComparison.Ordinal)
               && string.Equals(current.Digest, next.Digest, StringComparison.Ordinal)
               && string.Equals(current.EventFrame, next.EventFrame, StringComparison.Ordinal)
-              && string.Equals(current.Url, next.Url, StringComparison.Ordinal);
+              && string.Equals(current.CombatFrame, next.CombatFrame, StringComparison.Ordinal)
+              && string.Equals(current.Url, next.Url, StringComparison.Ordinal)
+              && string.Equals(current.Id, next.Id, StringComparison.Ordinal);
         if (unchanged)
         {
             return;

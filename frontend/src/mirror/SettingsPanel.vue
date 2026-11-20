@@ -12,6 +12,7 @@ import { setComparisonStageBackend } from "@/mirror/rendererFactory";
 import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/stage/textMethods";
 import {
   EFFECT_MODES,
+  STREAM_PARTICLE_MODES,
   TEXT_METHODS,
   effectivePanelSetting,
   mirrorSettings,
@@ -233,11 +234,28 @@ const shaderMode = computed<EffectMode>({
 });
 const particleMode = computed<EffectMode>({
   get: () => effectivePanelSetting(settings, "particleMode"),
-  set: (value) => { if (!renderBlocked.value) { settings.particleMode = value; persistMirrorSetting("particleMode", value); } }
+  set: (value) => {
+    if (streamActive.value) {
+      if (value !== "dynamic" && value !== "static") return;
+      settings.streamParticleMode = value;
+      persistMirrorSetting("streamParticleMode", value);
+    } else if (!canvasActive.value) {
+      settings.particleMode = value;
+      persistMirrorSetting("particleMode", value);
+    }
+  }
 });
 const staticBgEnabled = computed<boolean>({
   get: () => effectivePanelSetting(settings, "staticBgEnabled"),
-  set: (value) => { if (!renderBlocked.value) { settings.staticBgEnabled = value; persistMirrorSetting("staticBgEnabled", value); } }
+  set: (value) => {
+    if (streamActive.value) {
+      settings.streamStaticBg = value;
+      persistMirrorSetting("streamStaticBg", value);
+    } else if (!canvasActive.value) {
+      settings.staticBgEnabled = value;
+      persistMirrorSetting("staticBgEnabled", value);
+    }
+  }
 });
 const textMethod = computed<TextMethod>({
   get: () => settings.textMethod,
@@ -287,7 +305,13 @@ const audio = bind("audio");
 const audioUnavailable = computed(() => props.audioUnavailable);
 const reproRecorder = forcedBind("reproRecorder");
 const freezeParticles = forcedBind("freezeParticles", false);
-const freezeSpines = forcedBind("freezeSpines", false);
+const freezeSpines = computed<boolean>({
+  get: () => effectivePanelSetting(settings, "freezeSpines"),
+  set: (value) => {
+    if (streamActive.value) settings.streamFreezeSpines = value;
+    else settings.freezeSpines = value;
+  }
+});
 const freezeDecor = forcedBind("freezeDecor", false);
 
 // Whether THIS BUILD ships the repro recorder's row at all (buildFlags). A published build sets
@@ -324,7 +348,7 @@ const hasGame = computed(() => props.latency.gameCount > 0 && !streamActive.valu
 // under direct view the frozen game is the one on the host's TV.
 const hostPerfNote = computed(() =>
   props.directView
-    ? t("settings.hostOwn") : t("settings.hostHeadless")
+    ? t("settings.hostOwn") : t(streamActive.value ? "settings.hostStream" : "settings.hostHeadless")
 );
 
 // ---------------------------------------------------------------------------------------------------------
@@ -519,11 +543,11 @@ onBeforeUnmount(() => setHelpListeners(false));
         <div class="settings-item">
           <label class="settings-row settings-row-select">
             <span>{{ t('settings.particles') }}</span>
-            <select v-model="particleMode" :disabled="renderBlocked" data-testid="mirror-particle-mode">
-              <option v-for="mode in EFFECT_MODES" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
+            <select v-model="particleMode" :disabled="canvasActive && !streamActive" data-testid="mirror-particle-mode">
+              <option v-for="mode in (streamActive ? STREAM_PARTICLE_MODES : EFFECT_MODES)" :key="mode" :value="mode">{{ t(EFFECT_MODE_LABELS[mode]) }}</option>
             </select>
           </label>
-          <SettingsHelpTip v-bind="help('particles', t('settings.particles'))" />
+          <SettingsHelpTip v-bind="help('particles', t('settings.particles'), 'below', streamActive ? t('settings.help.streamParticles') : undefined)" />
         </div>
         <div class="settings-item">
           <label class="settings-row">
@@ -537,10 +561,10 @@ onBeforeUnmount(() => setHelpListeners(false));
         <p v-if="audioUnavailable" role="status" data-testid="mirror-audio-unavailable">{{ t('settings.audioUnavailable') }}</p>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="staticBgEnabled" :disabled="renderBlocked" data-testid="mirror-static-bg" />
+            <input type="checkbox" v-model="staticBgEnabled" :disabled="canvasActive && !streamActive" data-testid="mirror-static-bg" />
             <span>{{ t('settings.staticBg') }}</span>
           </label>
-          <SettingsHelpTip v-bind="help('staticBg', t('settings.staticBg'))" />
+          <SettingsHelpTip v-bind="help('staticBg', t('settings.staticBg'), 'below', streamActive ? t('settings.help.streamStaticBg') : undefined)" />
         </div>
         <div v-if="hasSafeArea" class="settings-item">
           <label class="settings-row">
@@ -677,10 +701,10 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="freezeSpines" :disabled="streamActive" data-testid="mirror-freeze-spines" />
+            <input type="checkbox" v-model="freezeSpines" data-testid="mirror-freeze-spines" />
             <span>{{ t('settings.freezeSpines') }}</span>
           </label>
-          <SettingsHelpTip v-bind="help('freezeSpines', t('settings.freezeSpines'))" />
+          <SettingsHelpTip v-bind="help('freezeSpines', t('settings.freezeSpines'), 'below', streamActive ? t('settings.help.streamFreezeSpines') : undefined)" />
         </div>
         <div class="settings-item">
           <label class="settings-row settings-row-advanced">

@@ -1,5 +1,7 @@
 using System.Reflection;
 using System.Text.Json;
+using CouchCoop.Mod;
+using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
@@ -30,6 +32,8 @@ internal static class HostPerformanceEnvelopeTests
         SessionEnvelopeReportsAnInstalledInstancesFlags();
         RequiredNullableSessionFieldsSerializeAsNull();
         SettingsMessageCarriesTheThreeFreezes();
+        StreamFreezeSpinesDefaultsOff();
+        StreamFreezeSpinesSettingsAreStoredAndEchoedIndependently();
     }
 
     // THE user-visible bug, as a rule: a windowed host holds `_freeze* = true` (env defaults) and has no Timer, no
@@ -129,6 +133,56 @@ internal static class HostPerformanceEnvelopeTests
         Assert(parsed.FreezeSpines == true, "settings: freezeSpines true round-trips");
         Assert(parsed.FreezeDecor == false, "settings: freezeDecor false round-trips");
         Assert(parsed.RefreshRate is null && parsed.TweenReplay is null, "settings: absent fields stay null (unchanged)");
+    }
+
+    private static void StreamFreezeSpinesDefaultsOff()
+    {
+        Assert(!CouchCoopHeadlessVisualSuspender.StreamFreezeSpines, "stream spine stills default off");
+    }
+
+    private static void StreamFreezeSpinesSettingsAreStoredAndEchoedIndependently()
+    {
+        using var restore = SuspenderState.Push(installed: true, particles: true, spines: true, decor: true);
+        var previous = CouchCoopHeadlessVisualSuspender.StreamFreezeSpines;
+        var engineAvailable = CouchCoopMod.EngineAvailable;
+        var apply = typeof(CouchCoopWebSocketConnection).GetMethod("ApplyBrowserSettings",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        try
+        {
+            // These payloads only reach the store-only setter, never native Godot calls.
+            foreach (var value in new[] { true, false })
+            {
+                var parsed = BrowserJson.Deserialize<BrowserSettingsRequestEnvelope>(
+                    $$"""{"type":"settings","streamFreezeSpines":{{value.ToString().ToLowerInvariant()}}}""")!;
+                CouchCoopMod.EngineAvailable = true;
+                apply.Invoke(null, [parsed]);
+                CouchCoopMod.EngineAvailable = engineAvailable;
+                Assert(CouchCoopHeadlessVisualSuspender.StreamFreezeSpines == value,
+                    "settings applies the stream spine preference");
+                Assert(CouchCoopHeadlessVisualSuspender.EffectiveFreezes().Spines,
+                    "stream spine preference never changes the old spine freeze");
+
+                var envelope = CreateSessionEnvelope();
+                Assert(envelope.StreamFreezeSpines == value, "session echoes the stream spine preference");
+                var json = JsonSerializer.SerializeToElement(envelope, BrowserJson.Options);
+                Assert(json.GetProperty("streamFreezeSpines").GetBoolean() == value,
+                    "the wire echoes both true and false");
+
+                var absent = BrowserJson.Deserialize<BrowserSettingsRequestEnvelope>("""{"type":"settings"}""")!;
+                CouchCoopMod.EngineAvailable = true;
+                apply.Invoke(null, [absent]);
+                CouchCoopMod.EngineAvailable = engineAvailable;
+                Assert(CouchCoopHeadlessVisualSuspender.StreamFreezeSpines == value,
+                    "an absent stream field leaves its store unchanged");
+                Assert(CouchCoopHeadlessVisualSuspender.EffectiveFreezes().Spines,
+                    "an absent stream field leaves the old spine freeze unchanged");
+            }
+        }
+        finally
+        {
+            CouchCoopMod.EngineAvailable = engineAvailable;
+            CouchCoopHeadlessVisualSuspender.SetStreamFreezeSpines(previous);
+        }
     }
 
     private static BrowserEnvelope CreateSessionEnvelope()

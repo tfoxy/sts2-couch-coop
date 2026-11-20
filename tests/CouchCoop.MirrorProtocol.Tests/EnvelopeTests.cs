@@ -15,6 +15,8 @@ internal static class EnvelopeTests
         RejectsNonSessionType();
         SerializesClientMessagesCamelCaseOmitNull();
         PointerInstanceRoundTrips();
+        StreamFreezeSpinesRoundTrips();
+        StreamStaticBackgroundReadyRoundTrips();
     }
 
     private static void ParsesAFullSessionEnvelope()
@@ -309,6 +311,53 @@ internal static class EnvelopeTests
         }, "settings");
         AssertNoKey(settings, "freezeSpines", "settings omits null freezeSpines");
         AssertNoKey(settings, "tweenReplay", "settings omits null tweenReplay");
+    }
+
+    private static void StreamFreezeSpinesRoundTrips()
+    {
+        foreach (var value in new bool?[] { null, false, true })
+        {
+            var message = new SettingsMessage(FreezeSpines: true, StreamFreezeSpines: value);
+            var json = ProtocolJson.Serialize(message);
+            var restored = JsonSerializer.Deserialize<SettingsMessage>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Check.That(restored == message, "stream spine settings round-trip absent, false and true");
+            var request = JsonSerializer.Deserialize<BrowserSettingsRequestEnvelope>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            Check.Equal(request!.StreamFreezeSpines, value, "host settings read the optional stream freeze");
+            Check.Equal(request.FreezeSpines, true, "old spine freeze survives independently");
+            using var doc = JsonDocument.Parse(json);
+            Check.That(doc.RootElement.TryGetProperty("streamFreezeSpines", out _) == value.HasValue,
+                "stream spine field is omitted when absent");
+            if (value is null)
+                Check.Equal(json, """{"freezeSpines":true,"type":"settings"}""",
+                    "absent stream spine field keeps the old settings bytes");
+        }
+    }
+
+    private static void StreamStaticBackgroundReadyRoundTrips()
+    {
+        foreach (var value in new string?[] { null, "", "mounted-room-1" })
+        foreach (var demand in new bool?[] { null, false, true })
+        {
+            var message = new SettingsMessage(StaticBg: false, StreamStaticBgReady: value, StreamStaticBg: demand);
+            var json = ProtocolJson.Serialize(message);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            Check.That(JsonSerializer.Deserialize<SettingsMessage>(json, options) == message,
+                "stream background readiness round-trips absent, retracted and loaded");
+            var request = JsonSerializer.Deserialize<BrowserSettingsRequestEnvelope>(json, options)!;
+            Check.Equal(request.StreamStaticBg, message.StreamStaticBg, "stream demand precedes readiness independently");
+            Check.Equal(request.StreamStaticBgReady, value, "server reads descriptor-specific stream readiness");
+            Check.Equal(request.StaticBg, false, "node-mirror vote remains independent");
+            using var doc = JsonDocument.Parse(json);
+            Check.That(doc.RootElement.TryGetProperty("streamStaticBgReady", out _) == (value is not null),
+                "absent readiness is omitted but an empty retraction survives");
+            Check.That(doc.RootElement.TryGetProperty("streamStaticBg", out _) == demand.HasValue,
+                "absent demand is omitted but an explicit false survives");
+            if (value is null && demand is null)
+                Check.Equal(json, """{"staticBg":false,"type":"settings"}""",
+                    "absent stream background field keeps old settings bytes");
+        }
     }
 
     private static void PointerInstanceRoundTrips()

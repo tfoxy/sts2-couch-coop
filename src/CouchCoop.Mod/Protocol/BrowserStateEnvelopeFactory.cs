@@ -92,6 +92,7 @@ public sealed class BrowserStateEnvelopeFactory(
         bool? freezeParticles = null;
         bool? freezeSpines = null;
         bool? freezeDecor = null;
+        bool? streamFreezeSpines = null;
         try
         {
             maxFps = await CouchCoopHeadlessVisualSuspender.GetEffectiveBaselineMaxFpsAsync().ConfigureAwait(false);
@@ -104,6 +105,7 @@ public sealed class BrowserStateEnvelopeFactory(
             freezeParticles = freezes.Particles;
             freezeSpines = freezes.Spines;
             freezeDecor = freezes.Decor;
+            streamFreezeSpines = CouchCoopHeadlessVisualSuspender.StreamFreezeSpines;
         }
         catch (Exception exception) when (
             exception is FileNotFoundException or FileLoadException or TypeLoadException or BadImageFormatException
@@ -185,6 +187,7 @@ public sealed class BrowserStateEnvelopeFactory(
             FreezeParticles: freezeParticles,
             FreezeSpines: freezeSpines,
             FreezeDecor: freezeDecor,
+            StreamFreezeSpines: streamFreezeSpines,
             TextEffects: textEffects,
             // Browsers key their asset caches by this token — the `?b=` on every asset url they mint
             // (plus the service-worker /res/ store) — and it changes
@@ -200,7 +203,7 @@ public sealed class BrowserStateEnvelopeFactory(
             // client's "Static background" setting displays. Null-omitted when unknown (the client fails open to
             // the live subtree). A pure volatile read, no Godot call.
             StaticBackground: CouchCoopStaticBackgroundTracker.Published is { } staticBg
-                ? new BrowserStaticBackgroundDto(staticBg.ScenePath, staticBg.Url)
+                ? new BrowserStaticBackgroundDto(staticBg.ScenePath, staticBg.Url, staticBg.Id, staticBg.CombatFrame)
                 : null,
             // The atlas pages this game build actually ships, so the browser's idle prefetch asks only for pages
             // that exist. Enumerated ONCE at startup (CouchCoopAtlasManifest.Warm from CouchCoopMod.Init) and read

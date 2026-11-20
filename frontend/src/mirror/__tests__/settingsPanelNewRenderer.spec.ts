@@ -34,6 +34,7 @@ const VIEWER: Partial<MirrorSettings> = {
   raiseHeldCard: true, unfocusOnRelease: true, tapToFocus: true, confirmTap: true, raiseHandCards: true,
   uiScaling: true, backstopOcclusion: true, reproRecorder: true, tweenReplay: true, freezeParticles: true,
   freezeSpines: true, freezeDecor: true, audio: true, safeAreaPaddingEnabled: true, refreshRate: 40,
+  streamFreezeSpines: false, streamParticleMode: "dynamic", streamStaticBg: false,
   latencyOverlay: true
 };
 
@@ -41,13 +42,10 @@ const VIEWER: Partial<MirrorSettings> = {
 const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select" | "checkbox"]> = [
   ["mirror-quality", "quality", "select"],
   ["mirror-shader-mode", "shaderMode", "select"],
-  ["mirror-particle-mode", "particleMode", "select"],
-  ["mirror-static-bg", "staticBgEnabled", "checkbox"],
   ["mirror-backstop-occlusion", "backstopOcclusion", "checkbox"],
   ["mirror-repro-recorder", "reproRecorder", "checkbox"],
   ["mirror-tween-replay", "tweenReplay", "checkbox"],
   ["mirror-freeze-particles", "freezeParticles", "checkbox"],
-  ["mirror-freeze-spines", "freezeSpines", "checkbox"],
   ["mirror-freeze-decor", "freezeDecor", "checkbox"]
 ];
 // Widescreen stretch is supported since PRES-A: under the new renderer it sets the width the seat is launched at.
@@ -57,7 +55,8 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
 // peek and confirm gestures).
 const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-stretch", "mirror-refresh-rate",
   "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling", "mirror-tap-focus",
-  "mirror-raise-card", "mirror-unfocus", "mirror-confirm-tap"];
+  "mirror-raise-card", "mirror-unfocus", "mirror-confirm-tap", "mirror-particle-mode",
+  "mirror-static-bg", "mirror-freeze-spines"];
 
 function available(): void {
   renderStreamContext.coreProblem = null;
@@ -165,10 +164,68 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
     mountPanel();
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
     // A disabled control cannot be operated by a user; drive the binding the way a stray script would.
-    await wrapper!.get('[data-testid="mirror-static-bg"]').setValue(false);
     await wrapper!.get('[data-testid="mirror-quality"]').setValue("minimum");
     expect(mirrorSettings.staticBgEnabled).toBe(true);
     expect(mirrorSettings.quality).toBe("low");
+  });
+
+  it("defaults stream lite rows off/dynamic despite the old lite defaults", async () => {
+    available();
+    // The old canvas stage must not disable the stream's independent controls.
+    mirrorSettings.runtimeStage = "canvas";
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(el("mirror-static-bg").checked).toBe(false);
+    expect(el("mirror-freeze-spines").checked).toBe(false);
+    expect(el<HTMLSelectElement>("mirror-particle-mode").value).toBe("dynamic");
+    for (const id of ["mirror-static-bg", "mirror-freeze-spines", "mirror-particle-mode"]) {
+      expect(el(id).disabled).toBe(false);
+    }
+    expect(wrapper!.get('[data-testid="mirror-particle-mode"]').findAll("option").map(o => o.attributes("value")))
+      .toEqual(["dynamic", "static"]);
+  });
+
+  it("edits only stream keys, saves only page preferences and restores old rows on switch back", async () => {
+    available();
+    Object.assign(mirrorSettings, { freezeSpines: false, particleMode: "off", staticBgEnabled: false });
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    await wrapper!.get('[data-testid="mirror-freeze-spines"]').setValue(true);
+    expect(mirrorSettings).toMatchObject({ streamFreezeSpines: true, streamParticleMode: "dynamic", streamStaticBg: false,
+      freezeSpines: false, particleMode: "off", staticBgEnabled: false });
+    await wrapper!.get('[data-testid="mirror-particle-mode"]').setValue("static");
+    expect(mirrorSettings).toMatchObject({ streamFreezeSpines: true, streamParticleMode: "static", streamStaticBg: false,
+      freezeSpines: false, particleMode: "off", staticBgEnabled: false });
+    await wrapper!.get('[data-testid="mirror-static-bg"]').setValue(true);
+    expect(mirrorSettings).toMatchObject({ streamFreezeSpines: true, streamParticleMode: "static", streamStaticBg: true,
+      freezeSpines: false, particleMode: "off", staticBgEnabled: false });
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}"))
+      .toEqual({ renderer: "stream", streamParticleMode: "static", streamStaticBg: true });
+    for (const id of ["mirror-freeze-particles", "mirror-freeze-decor"]) expect(el(id).disabled).toBe(true);
+
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(el("mirror-freeze-spines").checked).toBe(false);
+    expect(el("mirror-static-bg").checked).toBe(false);
+    expect(el<HTMLSelectElement>("mirror-particle-mode").value).toBe("off");
+    expect(wrapper!.get('[data-testid="mirror-particle-mode"]').findAll("option").map(o => o.attributes("value")))
+      .toEqual(["dynamic", "dynamic-half", "dynamic-quarter", "static", "off"]);
+    await wrapper!.get('[data-testid="mirror-freeze-spines"]').setValue(true);
+    await wrapper!.get('[data-testid="mirror-particle-mode"]').setValue("dynamic-quarter");
+    await wrapper!.get('[data-testid="mirror-static-bg"]').setValue(true);
+    expect(mirrorSettings).toMatchObject({ freezeSpines: true, particleMode: "dynamic-quarter", staticBgEnabled: true,
+      streamFreezeSpines: true, streamParticleMode: "static", streamStaticBg: true });
+  });
+
+  it("uses stream-specific help and describes visible freezes", async () => {
+    available();
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    expect(wrapper!.get('[data-testid="mirror-host-perf-note"]').text()).toContain("still poses");
+    for (const [id, text] of [["freezeSpines", "representative pose"], ["particles", "Dynamic animates"],
+      ["staticBg", "live room background"]]) {
+      await wrapper!.get(`[data-testid="mirror-help-${id}"]`).trigger("click");
+      expect(wrapper!.text()).toContain(text);
+    }
   });
 
   // PRES-A: under the new renderer Widescreen stretch means "launch my seat at my aspect" (the request for a streaming

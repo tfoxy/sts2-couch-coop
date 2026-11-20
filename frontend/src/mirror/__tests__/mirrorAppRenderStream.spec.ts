@@ -31,6 +31,7 @@ vi.mock("@godot-scene-web/render-stream-client", async (importOriginal) => ({
     return {
       connect: () => { client.connects += 1; },
       setEndpoint: () => {},
+      setStaticParticles: () => {},
       stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0 }),
       dispose: () => { client.disposed = true; }
     };
@@ -128,14 +129,14 @@ function streamAvailable(): void {
 }
 
 /** Mount, pick Alice's seat, follow the redirect, and let the seat's own instance report. Returns the seat socket. */
-async function joinSeat(over: Record<string, unknown> = {}): Promise<MockWebSocket> {
+async function joinSeat(over: Record<string, unknown> = {}, redirect: Record<string, unknown> = {}): Promise<MockWebSocket> {
   app = mount(MirrorApp);
   await settle();
   latest().emit(sessionMessage());
   await settle();
   await app.findAll('[data-testid="player-picker"] button')[1].trigger("click");
   await settle();
-  latest().emit(sessionMessage({ headlessMirrorPort: 14000 }));
+  latest().emit(sessionMessage({ headlessMirrorPort: 14000, ...redirect }));
   await settle();
   const seat = latest();
   expect(seat.url).toContain("14000");
@@ -164,7 +165,7 @@ beforeEach(() => {
   // Widescreen stretch off unless a test turns it on: a streaming-seat request then carries no `aspect` (PRES-A).
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
     renderStreamProtocol: 16, refreshRate: DEFAULT_REFRESH_RATE, ...HEADLESS_FREEZES, staticBgEnabled: true,
-    stretchEnabled: false });
+    stretchEnabled: false, streamFreezeSpines: false, streamStaticBg: false, streamParticleMode: "dynamic" });
 });
 
 afterEach(() => {
@@ -172,7 +173,7 @@ afterEach(() => {
   app?.unmount();
   app = null;
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
-    stretchEnabled: true, panelOpen: false });
+    stretchEnabled: true, panelOpen: false, streamFreezeSpines: false, streamStaticBg: false, streamParticleMode: "dynamic" });
   Object.assign(renderStreamContext, { directView: false, hostSelfStream: false, sessionEndpoint: null, rendererState: null, firstFrame: false, returningToMirror: false, coreLoadFailed: false, stopped: null,
     coreProblem: undefined, webgl2: undefined, pageLoopback: undefined, seatJoined: false,
     lanOffer: null, hostUnavailableReason: null, page: undefined });
@@ -181,6 +182,130 @@ afterEach(() => {
 });
 
 describe("MirrorApp — the new renderer's stream branch", () => {
+  it("declares and retracts stream still demand through the gated host socket after a seat redirect", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    await joinSeat({}, { hostAccess: { allowed: false, reason: "host-view-disabled", generation: 1 } });
+    const host = MockWebSocket.instances[0];
+    const settings = () => host.ofType("settings").map(({ type, requestId, ...payload }) => payload);
+    expect(settings()).toEqual([{ staticBg: false, streamStaticBg: true }]);
+    host.sent.length = 0;
+
+    mirrorSettings.streamStaticBg = false;
+    await settle();
+    expect(settings()).toEqual([{ staticBg: false, streamStaticBg: false }]);
+    host.sent.length = 0;
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    expect(settings()).toEqual([{ staticBg: true }]);
+  });
+
+  it.each([true, false])("declares and retracts host stream background demand once with host access %s", async (allowed) => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: false });
+    await joinSeat({}, { hostAccess: { allowed, reason: allowed ? "allowed" : "host-view-disabled", generation: 1 } });
+    const host = MockWebSocket.instances[0];
+    expect(host.ofType("settings")).toEqual([expect.objectContaining({ staticBg: false })]);
+    expect(host.ofType("settings")[0]).not.toHaveProperty("streamStaticBg");
+    host.sent.length = 0;
+    mirrorSettings.streamStaticBg = true;
+    await settle();
+    expect(host.ofType("settings")).toEqual([
+      expect.objectContaining({ staticBg: false, streamStaticBg: true })
+    ]);
+    host.sent.length = 0;
+
+    mirrorSettings.streamStaticBg = false;
+    await settle();
+    expect(host.ofType("settings")).toEqual([
+      expect.objectContaining({ staticBg: false, streamStaticBg: false })
+    ]);
+    host.emit(sessionMessage());
+    await settle();
+    expect(host.ofType("settings")).toHaveLength(1);
+  });
+
+  it("sends the seat descriptor vote only after its host still loads and retracts it on change/error/off", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    const scenePath = "res://scenes/backgrounds/underdocks/underdocks_background.tscn";
+    const hostBackground = { scenePath, url: "/bg/underdocks?layers=host&v=1" };
+    const seatBackground = { scenePath, url: "/bg/underdocks?layers=seat&v=1", id: "room-1", combatFrame: "983,540,1" };
+    const seat = await joinSeat({ staticBackground: seatBackground });
+    const host = MockWebSocket.instances[0];
+    host.emit(sessionMessage({ staticBackground: hostBackground }));
+    await settle();
+    const image = () => app!.get('[data-testid="stream-static-bg-image"]');
+    const votes = () => seat.ofType("settings").map((s) => s.streamStaticBgReady);
+    expect(image().attributes("src")).toBe(hostBackground.url);
+    expect((image().element as HTMLImageElement).style.transform).toBe("translate(0px, 0px) scale(1.1111111111111112)");
+    expect(votes().every((v) => v === "")).toBe(true);
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBg: true });
+    expect(host.ofType("settings").at(-1)).toMatchObject({ type: "settings", staticBg: false, streamStaticBg: true });
+    host.sent.length = 0;
+    seat.sent.length = 0;
+    await image().trigger("load");
+    await settle();
+    expect(votes()).toEqual([seatBackground.id]);
+    expect(host.ofType("settings")).toEqual([]);
+
+    // A repeat session is not a new descriptor and must not retract a loaded vote.
+    seat.emit(sessionMessage({ staticBackground: { ...seatBackground } }));
+    await settle();
+    expect(votes()).toEqual([seatBackground.id]);
+
+    host.emit(sessionMessage({ staticBackground: { ...hostBackground, url: "/bg/underdocks?layers=host-next&v=1" } }));
+    await settle();
+    expect(votes().at(-1)).toBe("");
+    await image().trigger("load");
+    await settle();
+    expect(votes().at(-1)).toBe(seatBackground.id);
+    await image().trigger("error");
+    await settle();
+    expect(votes().at(-1)).toBe("");
+    await image().trigger("load");
+    await settle();
+    // Re-entering the same backdrop uses the same cached picture, but needs a fresh mounted-room vote.
+    seat.emit(sessionMessage({ staticBackground: { ...seatBackground, id: "room-2" } }));
+    await settle();
+    expect(votes().at(-1)).toBe("");
+    await image().trigger("load");
+    await settle();
+    expect(votes().at(-1)).toBe("room-2");
+    mirrorSettings.streamStaticBg = false;
+    await settle();
+    expect(votes().at(-1)).toBe("");
+    expect(host.ofType("settings").at(-1)).toMatchObject({ type: "settings", staticBg: false, streamStaticBg: false });
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBg: false });
+    expect(app!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+  });
+
+  it.each(["mirror", "arming", "armed", "disarming"])("seeds stream spine truth while %s and forwards later viewer changes", async (state) => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    const seat = await joinSeat({ streamFreezeSpines: true, rendererState: { state } });
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(mirrorSettings.streamFreezeSpines).toBe(true);
+    expect(seat.ofType("settings")[0]).toMatchObject({ streamFreezeSpines: true, freezeSpines: true });
+
+    seat.sent.length = 0;
+    mirrorSettings.streamFreezeSpines = false;
+    await settle();
+    expect(seat.ofType("settings")).toHaveLength(1);
+    expect(seat.ofType("settings")[0]).toMatchObject({ streamFreezeSpines: false, freezeSpines: true });
+
+    seat.emit(sessionMessage({
+      session: { joined: true, name: "Alice", status: "assigned", playerId: "p:1003", connectionCount: 1 },
+      rendererState: { state: "mirror" }, streamFreezeSpines: true, ...HEADLESS_FREEZES
+    }));
+    await settle();
+    expect(mirrorSettings.streamFreezeSpines).toBe(false);
+
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    expect(seat.ofType("settings").at(-1)).not.toHaveProperty("streamFreezeSpines");
+  });
+
   it("switching on pushes the server overlay, then watch:false, then mounts the stage instead of MirrorView", async () => {
     const seat = await joinSeat();
     seat.sent.length = 0;

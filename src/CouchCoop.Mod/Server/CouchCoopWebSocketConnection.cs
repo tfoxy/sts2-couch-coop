@@ -45,6 +45,8 @@ public sealed class CouchCoopWebSocketConnection
     // the receive loop, read by
     // the server's aggregate recompute under its own gate.
     private volatile bool _wantsStaticBg;
+    private volatile bool _wantsStreamStaticBg;
+    private string? _streamStaticBgReady;
     // A socket cannot be written concurrently; this gate serializes the scene fan-out (background thread)
     // against the connection's own replies (session / action-result).
     private readonly SemaphoreSlim _sendGate = new(1, 1);
@@ -271,6 +273,12 @@ public sealed class CouchCoopWebSocketConnection
     /// the subtree flowing for everyone.
     /// </summary>
     public bool WantsStaticBg => _wantsStaticBg;
+
+    public bool WantsStreamStaticBg => !_closing && _wantsStreamStaticBg;
+    public string? StreamStaticBgReady => Volatile.Read(ref _streamStaticBgReady);
+    public bool IsRenderStreamPage => !_closing && IsSelfRenderStreamPage
+        && _rendererSwapHost?.WantsRenderStream(RendererPageId) == true
+        && (PresentationHost is not { } host || host.IsPresentationPageOwner(RendererPageId, _id.ToString("N")));
 
     private static bool ParseRequiredBoolean(string? raw, string name) => raw switch
     {
@@ -1186,6 +1194,20 @@ public sealed class CouchCoopWebSocketConnection
                             _onStaticBgChanged?.Invoke(staticBg);
                         }
 
+                        var streamChanged = false;
+                        if (settings.StreamStaticBg is bool streamStaticBg && streamStaticBg != _wantsStreamStaticBg)
+                        {
+                            _wantsStreamStaticBg = streamStaticBg;
+                            streamChanged = true;
+                        }
+                        if (settings.StreamStaticBgReady is { } ready && ready != StreamStaticBgReady)
+                        {
+                            Volatile.Write(ref _streamStaticBgReady, ready);
+                            streamChanged = true;
+                        }
+                        if (!_wantsStreamStaticBg) Volatile.Write(ref _streamStaticBgReady, null);
+                        if (streamChanged) _onStaticBgChanged?.Invoke(_wantsStaticBg);
+
                         var generation = AccessState.Generation;
                         ExecuteWithAccess(generation, Interlocked.Read(ref _watchEpoch), () => { ApplyBrowserSettings(settings); return true; }, false);
                     }
@@ -1352,9 +1374,15 @@ public sealed class CouchCoopWebSocketConnection
 
     private void RequestPageRenderer(bool stream, double? aspect)
     {
+        if (!stream)
+        {
+            _wantsStreamStaticBg = false;
+            Volatile.Write(ref _streamStaticBgReady, null);
+        }
         if (PresentationHost is { } presentation)
             presentation.UpdatePresentationPage(RendererPageId, _id.ToString("N"), _watchRequested, stream, aspect);
         else _rendererSwapHost?.RequestRenderer(RendererPageId, stream, aspect);
+        _onStaticBgChanged?.Invoke(_wantsStaticBg);
     }
 
     private void SyncPresentationPage()
@@ -1504,6 +1532,11 @@ public sealed class CouchCoopWebSocketConnection
         if (settings.FreezeSpines is bool freezeSpines)
         {
             CouchCoopHeadlessVisualSuspender.SetFreezeSpines(freezeSpines);
+        }
+
+        if (settings.StreamFreezeSpines is bool streamFreezeSpines)
+        {
+            CouchCoopHeadlessVisualSuspender.SetStreamFreezeSpines(streamFreezeSpines);
         }
 
         if (settings.FreezeDecor is bool freezeDecor)

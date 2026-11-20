@@ -159,7 +159,13 @@ internal static class HeadlessExtractionExemptionTests
 
         foreach (var walk in new[] { "FreezeAllSpine", "FreezeAllParticles", "FreezeDecorativeAnimators" })
         {
-            var method = suspender.GetMethod(walk, BindingFlags.NonPublic | BindingFlags.Static);
+            // A walk may have a thin delegating overload (FreezeAllSpine(Node) forwards to the stream stills'
+            // overload with its own frozen-id set); the overload with the most parameters is the one holding the DFS.
+            var method = suspender
+                .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .Where(m => m.Name == walk)
+                .OrderByDescending(m => m.GetParameters().Length)
+                .FirstOrDefault();
             Assert(method is not null, $"{walk} is one of the three tree walks");
             Assert(
                 CallsMethod(method!, exemption!),

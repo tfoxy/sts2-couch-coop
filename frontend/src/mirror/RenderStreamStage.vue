@@ -49,6 +49,9 @@ import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import { confirmButtonReady, primeConfirmSprites } from "@/mirror/confirmTap";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
+import StaticBackground from "@/mirror/StaticBackground.vue";
+import { sameStaticBackground } from "@/mirror/hostStaticBackground";
+import type { BrowserStaticBackgroundDescriptor } from "@/protocol/browserEnvelope";
 import { streamChromeGeometry } from "@/mirror/streamChrome";
 import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
 import { createKeyPadInput, type KeyPadInput } from "@/mirror/keyPadInput";
@@ -61,6 +64,12 @@ import type { PointerTargetModule } from "@/stream-ext/pointerTargets";
 const props = withDefaults(defineProps<{
   endpoint: RenderStreamEndpoint;
   core: RenderStreamCore;
+  /** The host still admitted for the seat's current scene. */
+  staticBackground?: BrowserStaticBackgroundDescriptor | null;
+  /** The seat's mounted descriptor identity, independent of the host still's framing. */
+  staticBackgroundId?: string;
+  /** The seat's live combat placement; the host descriptor supplies only the image. */
+  staticBackgroundFrame?: string;
   /** Injectable for specs; the package's factory otherwise. */
   createClient?: (options: RenderStreamClientOptions) => RenderStreamClient;
   /** The upstream input sender (the seat socket's `input` message); absent ⇒ the stage stays view-only. */
@@ -103,6 +112,7 @@ const emit = defineEmits<{
   /** The hub refused our token: send the seat's current descriptor (a new `endpoint` prop), once. */
   "refresh-endpoint": [];
   "open-ios-install": [];
+  "static-bg-ready": [descriptorId: string];
 }>();
 
 type Phase = "connecting" | "loading" | "streaming" | "reconnecting" | "suspended" | "failed";
@@ -160,6 +170,21 @@ const UNAUTHORIZED = "live-connect-failed: unauthorized";
 // client sizes it from the same value, and the aspect the canvas is letterboxed at.
 const presentation = computed<[number, number]>(() => props.endpoint.presentation ?? [1920, 1080]);
 const boxStyle = computed(() => ({ "--render-stream-aspect": String(presentation.value[0] / presentation.value[1]) }));
+// Keep the underlay's alpha context through room transitions. Demand hides the seat's background even while
+// the still is pending or failed; the underlay fills any uncovered pixels with dark gray.
+const useStaticBackground = computed(() => mirrorSettings.streamStaticBg);
+const loadedBackground = shallowRef<BrowserStaticBackgroundDescriptor | null>(null);
+watch([useStaticBackground, () => props.staticBackground?.url,
+  () => props.staticBackground?.scenePath, () => props.staticBackgroundId], () => {
+  loadedBackground.value = null;
+  emit("static-bg-ready", "");
+}, { flush: "sync" });
+function onStaticBackgroundReady(descriptor: BrowserStaticBackgroundDescriptor | null): void {
+  loadedBackground.value = descriptor;
+  // Readiness is diagnostic only; the seat hides on demand, independently of image loading or coverage.
+  emit("static-bg-ready", useStaticBackground.value && descriptor
+    && sameStaticBackground(descriptor, props.staticBackground ?? null) ? props.staticBackgroundId ?? "" : "");
+}
 
 const chromeGeometry = computed(() => {
   void layoutTick.value;
@@ -313,9 +338,10 @@ function stop(reason: string): void {
   }
 }
 
-// A changed presentation or input capability needs fresh extensions and captures.
+// Presentation/input changes refresh extensions; the underlay toggle changes the create-time clear.
 function extensionsKey(): string {
-  return [presentation.value.join("x"), props.presentationEpoch, props.sendInput !== undefined].join("|");
+  return [presentation.value.join("x"), props.presentationEpoch, props.sendInput !== undefined,
+    useStaticBackground.value].join("|");
 }
 
 function mountClient(): void {
@@ -345,6 +371,8 @@ function mountClient(): void {
       endpoint: props.endpoint,
       extensions: built.extensions,
       creditWindow: 2,
+      staticParticles: mirrorSettings.streamParticleMode === "static",
+      ...(useStaticBackground.value ? { transparentClear: true } : {}),
       carrier: mirrorSettings.renderStreamCarrier,
       transport: globalThis.__couchCoopTunnel
         ? createTunnelRenderStreamTransport(globalThis.__couchCoopTunnel) : undefined,
@@ -487,6 +515,7 @@ function remountIfStale(): void {
 }
 
 watch(extensionsKey, remountIfStale);
+watch(() => mirrorSettings.streamParticleMode, (mode) => client?.setStaticParticles?.(mode === "static"));
 
 watch(() => props.inputEnabled, (enabled) => {
   if (!enabled) {
@@ -573,6 +602,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  emit("static-bg-ready", "");
   if (typeof window !== "undefined" && (window as unknown as StatsSeam).__renderStreamStats === statsSeam) {
     delete (window as unknown as StatsSeam).__renderStreamStats;
   }
@@ -607,6 +637,23 @@ defineExpose({
     :data-stream-phase="phase"
     :data-stream-carrier="carrier ?? undefined"
   >
+    <div
+      v-if="useStaticBackground"
+      class="render-stream-background-stage"
+      data-testid="render-stream-background-stage"
+      :style="{ ...pictureStageStyle, backgroundColor: '#181818', visibility: pictureStageStyle ? undefined : 'hidden' }"
+    >
+      <div :style="{ visibility: loadedBackground ? undefined : 'hidden' }">
+        <StaticBackground
+          v-if="staticBackground && staticBackgroundId"
+          :key="staticBackgroundId"
+          stream
+          :descriptor="staticBackground ?? null"
+          :combat-frame="staticBackgroundFrame"
+          @ready="onStaticBackgroundReady"
+        />
+      </div>
+    </div>
     <div class="render-stream-box" :style="boxStyle">
       <canvas
         :key="canvasGeneration"
@@ -721,9 +768,10 @@ defineExpose({
   transform-origin: top left;
 }
 
-/* Couch's own design-space chrome, clipped and scaled to the stream picture. Its children opt into input. */
+/* Couch's own design-space layers, clipped and scaled to the stream picture. Controls opt into input. */
 .render-stream-confirm-stage,
-.render-stream-hand-raise-stage {
+.render-stream-hand-raise-stage,
+.render-stream-background-stage {
   position: fixed;
   transform-origin: top left;
   overflow: hidden;

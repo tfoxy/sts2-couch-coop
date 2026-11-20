@@ -7,8 +7,8 @@ namespace CouchCoop.Mod.Session;
 /// </summary>
 /// <remarks>
 /// Capture seats keep the visual suspender while using the mirror; arming disables it until capture teardown
-/// finishes. They never install the texture evictor: the capture releases compressed texture pixels itself and
-/// reloads them for each arm. A flagged seat must load its capture before joining or refuse to start.
+/// finishes. While armed, the separate opt-in spine stills freeze remains available. They never install the
+/// texture evictor: the capture releases compressed texture pixels itself and reloads them for each arm. A flagged seat must load its capture before joining or refuse to start.
 /// The host clears inherited capture settings and applies this role to each configured seat launch.
 /// </remarks>
 internal static class StreamingSeatRole

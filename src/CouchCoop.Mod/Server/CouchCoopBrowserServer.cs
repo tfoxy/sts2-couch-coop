@@ -146,6 +146,9 @@ public sealed partial class CouchCoopBrowserServer(
     // skip unanimity (a gated viewer receives no scene bytes, so it has no vote on what the walk streams).
     // Guarded by _observerGate.
     private int _gatedStaticBgViewerCount;
+    // Stream demand includes the gated host coordination socket; only actual stream pages vote to hide.
+    private int _streamStaticBgViewerCount;
+    private int _streamStaticBgPageCount;
     // The HOST's subscription to the game's "the screen on top may have changed" event, held while anybody shows a
     // still (RefreshScreenProbeLocked). Its handler only asks the tracker for a probe, which is what keeps the
     // host's publish — the one every seat viewer displays — live while no host socket streams. `_screenProbeArmed`
@@ -231,7 +234,11 @@ public sealed partial class CouchCoopBrowserServer(
             }
 
             var created = new CouchCoopStaticBackgroundTracker(
-                onPublishedChanged: ResendSessions,
+                onPublishedChanged: () => _ = Task.Run(() =>
+                {
+                    lock (_observerGate) RefreshBgSkipLocked();
+                    ResendSessions();
+                }),
                 log: _log,
                 warmVariant: WarmPublishedStaticBackground);
             return Interlocked.CompareExchange(ref _staticBgTracker, created, null) ?? created;
@@ -363,6 +370,8 @@ public sealed partial class CouchCoopBrowserServer(
 
     private void OnRendererChanged()
     {
+        // Capture callbacks must not wait on server observer work.
+        _ = Task.Run(() => { lock (_observerGate) RefreshBgSkipLocked(); });
         foreach (var connection in _connections.Values) connection.OnRendererChanged();
     }
 
@@ -525,10 +534,14 @@ public sealed partial class CouchCoopBrowserServer(
     {
         var needed = 0;
         var gatedStaticBg = 0;
+        var streamStaticBg = 0;
+        var streamPages = new List<(bool WantsStaticBg, string? Ready)>();
         foreach (var connection in _connections.Values)
         {
             var wantsSceneStream = connection.WantsSceneStream;
             var wantsStaticBg = connection.WantsStaticBg;
+            if (connection.WantsStreamStaticBg) streamStaticBg++;
+            if (connection.IsRenderStreamPage) streamPages.Add((connection.WantsStreamStaticBg, connection.StreamStaticBgReady));
             if (NeedsBgStream(wantsSceneStream, wantsStaticBg))
             {
                 needed++;
@@ -542,7 +555,13 @@ public sealed partial class CouchCoopBrowserServer(
 
         _bgStreamNeededCount = needed;
         _gatedStaticBgViewerCount = gatedStaticBg;
+        _streamStaticBgViewerCount = streamStaticBg;
+        _streamStaticBgPageCount = streamPages.Count(page => page.WantsStaticBg);
         RefreshScreenProbeLocked();
+
+        var descriptorId = CouchCoopStaticBackgroundTracker.Published?.Id;
+        var streamHide = ComputeStreamBgHideDesired(!_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", descriptorId, needed, streamPages);
+        _staticBgTracker?.SetDesiredStreamHide(streamHide ? descriptorId : null);
 
         var desired = ComputeBgSkipDesired(_streamingMirrorConnectionCount, needed);
         if (desired == _bgSkipDesired)
@@ -553,6 +572,17 @@ public sealed partial class CouchCoopBrowserServer(
         _bgSkipDesired = desired;
         StaticBgTracker.SetDesiredSkip(desired);
     }
+
+    // Render-stream pages share one capture with live mirror viewers. Hide on unanimous stream demand while
+    // a background root is mounted; image readiness is diagnostic only. Live mirror demand always restores it.
+    internal static bool ComputeStreamBgHideDesired(
+        bool armed, string? descriptorId, int liveBgNeeded, IReadOnlyList<(bool WantsStaticBg, string? Ready)> pages)
+        => armed && !string.IsNullOrEmpty(descriptorId) && liveBgNeeded == 0 && pages.Count > 0
+            && pages.All(page => page.WantsStaticBg);
+
+    private bool HasAnyStaticBgViewer
+        => _streamStaticBgViewerCount > 0
+            || HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount);
 
     // Stage-B walk skip, the per-connection classification: a connection needs the live combat background subtree
     // only while it is streaming and has not declared static-background rendering. Pure so the unanimity rule is
@@ -647,16 +677,15 @@ public sealed partial class CouchCoopBrowserServer(
     // viewer displays — would freeze at whatever it was when the last host stream stopped, and the /bg/ route
     // (which renders only the CURRENT publish) would refuse the stale URL.
     //
-    // COST: host-only and viewer-gated, so a host with no browser — or none on a still — subscribes nothing (the
-    // idle-host rule). With one, the game raises the event a handful of times a minute and never at idle; each
-    // raise costs one folded probe plus one bounded follow-up.
+    // Hosts probe while any browser wants a still. Stream seats with still demand also publish their mounted descriptor
+    // identity while their mirror producer is off; their images still come only from the host. The existing
+    // event scheduler folds each signal and its bounded follow-up.
     //
     // Arming also requests one probe immediately: the publish may be stale from before anybody was watching.
     private void RefreshScreenProbeLocked()
     {
-        var wanted = !_isHeadlessClient
-            && envelopeFactory is not null
-            && HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount);
+        var wanted = !_generationStopped && envelopeFactory is not null
+            && ((!_isHeadlessClient && HasAnyStaticBgViewer) || _streamStaticBgPageCount > 0);
         if (wanted == _screenProbeArmed)
         {
             return;
@@ -763,7 +792,7 @@ public sealed partial class CouchCoopBrowserServer(
             return; // a seat process cannot render; asset HTTP goes to the host origin anyway
         }
 
-        if (!HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount))
+        if (!HasAnyStaticBgViewer)
         {
             return;
         }
@@ -853,7 +882,7 @@ public sealed partial class CouchCoopBrowserServer(
         {
             return (
                 _gatedStaticBgViewerCount,
-                HasStaticBgViewer(_streamingMirrorConnectionCount, _bgStreamNeededCount, _gatedStaticBgViewerCount),
+                HasAnyStaticBgViewer,
                 _screenProbeArmed);
         }
     }
@@ -1474,6 +1503,9 @@ public sealed partial class CouchCoopBrowserServer(
         lock (_observerGate)
         {
             _gatedStaticBgViewerCount = 0;
+            _streamStaticBgViewerCount = 0;
+            _streamStaticBgPageCount = 0;
+            _staticBgTracker?.SetDesiredStreamHide(null);
             StopScreenProbeLocked();
         }
     }

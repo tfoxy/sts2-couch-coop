@@ -17,6 +17,19 @@
 //     blank stage is correct, a picture the host did not publish is not.
 
 import type { BrowserStaticBackgroundDescriptor } from "@/protocol/browserEnvelope";
+import { hostBase } from "@/join/hostBase";
+import { tunnelRequestUrl } from "@/tunnel/hostTunnel";
+
+/** Width of the host-rendered still in presentation design pixels. */
+export const STATIC_BACKGROUND_WIDTH = 2520;
+
+/** The mounted seat background, falling back to the route for older hosts. Empty means no vote. */
+export function staticBackgroundIdentity(descriptor: BrowserStaticBackgroundDescriptor | null | undefined): string {
+  if (!descriptor) return "";
+  if (descriptor.id) return descriptor.id;
+  const url = tunnelRequestUrl(descriptor.url, hostBase() || "http://background.invalid");
+  return url.pathname + url.search;
+}
 
 // The last host descriptor admitted, and the seat scene it was admitted for.
 export interface HostStaticBackgroundLatch {
@@ -52,5 +65,5 @@ export function sameStaticBackground(
   a: BrowserStaticBackgroundDescriptor | null,
   b: BrowserStaticBackgroundDescriptor | null
 ): boolean {
-  return a === b || (a !== null && b !== null && a.scenePath === b.scenePath && a.url === b.url);
+  return a === b || (a !== null && b !== null && a.scenePath === b.scenePath && a.url === b.url && a.id === b.id);
 }

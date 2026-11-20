@@ -54,6 +54,16 @@ describe("browser locale negotiation", () => {
 });
 
 describe("catalogue integrity", () => {
+  it("translates stream settings help in every locale", () => {
+    for (const [locale, catalog] of Object.entries(messages)) {
+      for (const key of ["settings.help.streamFreezeSpines", "settings.help.streamParticles",
+        "settings.help.streamStaticBg", "settings.hostStream"] as const) {
+        expect(catalog[key].trim(), `${locale}: ${key}`).not.toBe("");
+        if (locale !== "en") expect(catalog[key], `${locale}: ${key}`).not.toBe(en[key]);
+      }
+    }
+  });
+
   it("has exact nonblank key and placeholder parity", () => {
     expect(Object.keys(messages)).toHaveLength(14);
     for (const catalog of Object.values(messages)) {
