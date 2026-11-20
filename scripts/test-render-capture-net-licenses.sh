@@ -13,11 +13,12 @@ from pathlib import Path
 work = Path(os.environ['LICENSE_TEST_WORK'])
 args = sys.argv[1:]
 target = args[args.index('--filter-platform') + 1]
+features = ['--features', 'rtc'] if '--features' in args else []
 assert args == ['metadata', '--format-version', '1', '--locked', '--offline', '--filter-platform', target,
-                '--manifest-path', str(work / 'gsw/experiments/render-stream/rs-net/Cargo.toml')]
+                *features, '--manifest-path', str(work / 'gsw/experiments/render-stream/rs-net/Cargo.toml')]
 with (work / 'calls').open('a') as calls:
-    calls.write(target + '\n')
-print((work / (target + '.json')).read_text())
+    calls.write(target + (' rtc' if features else '') + '\n')
+print((work / (target + ('-rtc' if features else '') + '.json')).read_text())
 PY
 chmod +x "$work/bin/cargo"
 python3 -I - "$work" <<'PY'
@@ -60,6 +61,13 @@ for target in ('x86_64-unknown-linux-gnu', 'x86_64-pc-windows-gnullvm',
         deps += [(apple, [None]), (package(target + '-only'), [None])]
     root = package('render-stream-net', deps=deps)
     (work / (target + '.json')).write_text(json.dumps(dict(packages=packages, resolve=dict(root=root, nodes=nodes))))
+    # The same graph with the optional WebRTC feature on: one more normal dependency of the root.
+    rtc_packages, rtc_nodes = list(packages), [n for n in nodes if n['id'] != root]
+    packages, nodes = rtc_packages, rtc_nodes
+    rtc_root = package('render-stream-net', deps=deps + [(package('rtc-only'), [None])])
+    (work / (target + '-rtc.json')).write_text(json.dumps(
+        dict(packages=[p for p in packages if p['id'] != root or p is packages[-1]],
+             resolve=dict(root=rtc_root, nodes=nodes))))
 PY
 LICENSE_TEST_WORK="$work" PATH="$work/bin:$PATH" \
   python3 -I "$here/render-capture-net-licenses.py" "$work/gsw" "$work/out"
@@ -120,4 +128,19 @@ notice = (out / 'THIRD_PARTY_NOTICES.md').read_text()
 assert all(t in notice for t in ('aarch64-apple-darwin', 'x86_64-apple-darwin',
                                 'render-capture/macos/librender_stream_net.dylib'))
 print('render capture macOS net licences: 23 checks passed')
+PY
+printf '[features]\nrtc = ["dep:rtc-only"]\n' > "$work/gsw/experiments/render-stream/rs-net/Cargo.toml"
+LICENSE_TEST_WORK="$work" PATH="$work/bin:$PATH" \
+  python3 -I "$here/render-capture-net-licenses.py" "$work/gsw" "$work/out-rtc"
+python3 -I - "$work" <<'PY'
+import csv, sys
+from pathlib import Path
+work = Path(sys.argv[1])
+with (work / 'out-rtc' / 'manifest.tsv').open() as manifest:
+    rows = {r['crate'] for r in csv.DictReader(manifest, delimiter='\t')}
+assert 'rtc-only' in rows, 'rtc feature dependency missing when rs-net declares the feature'
+assert 'rtc-only' not in (work / 'out/manifest.tsv').read_text(), 'rtc dependency added without the feature'
+assert (work / 'calls').read_text().splitlines()[6:] == [
+    'x86_64-unknown-linux-gnu rtc', 'x86_64-pc-windows-gnullvm rtc'], 'rtc feature not requested'
+print('render capture rtc net licences: 3 checks passed')
 PY

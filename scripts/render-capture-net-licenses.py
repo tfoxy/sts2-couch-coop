@@ -11,8 +11,9 @@ format so scripts/verify-release-archive.sh checks both the same way:
   THIRD_PARTY_NOTICES.md what this is and how it was made
 
 The crate set is the union of the normal (non-dev, non-build) dependency graphs of `render-stream-net` for
-x86_64-unknown-linux-gnu and x86_64-pc-windows-gnullvm (plus both Apple targets with --macos),
-read offline with `cargo metadata --locked` and deduplicated
+x86_64-unknown-linux-gnu and x86_64-pc-windows-gnullvm (plus both Apple targets with --macos), with the `rtc`
+feature enabled when the crate declares it (the shipped module is built with it), read offline with
+`cargo metadata --locked` and deduplicated
 by name and version; procedural macros are included conservatively. A crate whose package ships no licence file
 gets its declared licence's standard text (MIT where the expression offers it), with the authors Cargo.toml names
 as the copyright holders, and the notice lists it.
@@ -26,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 TARGETS = ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnullvm")
@@ -61,11 +63,15 @@ def main() -> int:
     out = args.out
     targets = TARGETS + MACOS_TARGETS if args.macos else TARGETS
     manifest_path = gsw / "experiments/render-stream/rs-net/Cargo.toml"
+    # The shipped module is built with the WebRTC feature whenever rs-net declares it, so that feature's
+    # optional dependencies are linked into what ships and need their licences too.
+    declared = tomllib.loads(manifest_path.read_text()).get("features", {})
+    features = ["--features", "rtc"] if "rtc" in declared else []
     bundled = {}
     for target in targets:
         metadata = json.loads(subprocess.run(
             ["cargo", "metadata", "--format-version", "1", "--locked", "--offline", "--filter-platform", target,
-             "--manifest-path", str(manifest_path)],
+             *features, "--manifest-path", str(manifest_path)],
             check=True, capture_output=True, text=True).stdout)
         packages = {p["id"]: p for p in metadata["packages"]}
         nodes = {n["id"]: n for n in metadata["resolve"]["nodes"]}
