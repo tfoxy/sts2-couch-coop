@@ -1149,3 +1149,58 @@ describe("presentation replacement", () => {
     expect(wrapper!.emitted("failed")).toBeUndefined();
   });
 });
+
+describe("tunnel render-stream transport", () => {
+  it("passes a transport for stream control, binary records and SW-prefixed resource reads", async () => {
+    const base = `${location.origin}/~h/abcdefghijklmnopqrstuv`;
+    let socket!: WebSocket;
+    const sent: string[] = [];
+    const close = vi.fn();
+    const Socket = class {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "blob";
+      onopen: WebSocket["onopen"] = null;
+      onmessage: WebSocket["onmessage"] = null;
+      onclose: WebSocket["onclose"] = null;
+      onerror: WebSocket["onerror"] = null;
+      constructor(readonly url: string, readonly protocols: string[]) { socket = this as unknown as WebSocket; }
+      send(text: string) { sent.push(text); }
+      close = close;
+    } as unknown as typeof WebSocket;
+    const fetcher = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "content-length": "3" } }));
+    globalThis.__couchCoopTunnel = { WebSocket: Socket, fetch: fetcher, closed: new Promise(() => {}) };
+    try {
+      mountStage();
+      await nextTick();
+      const factory = clients[0]!.options.transport;
+      expect(factory).toBeTypeOf("function");
+      const on = { open: vi.fn(), message: vi.fn(), close: vi.fn() };
+      const transport = factory!({ ...endpoint, url: `${base.replace(/^http/, "ws")}/render-stream/seat`, resourceBase: base }, "grc/16", on);
+      expect(socket.url).toBe(`${base.replace(/^http/, "ws")}/render-stream/seat`);
+      socket.onopen?.call(socket, new Event("open"));
+      expect(on.open).toHaveBeenCalledOnce();
+      const binary = new Uint8Array([7]).buffer;
+      socket.onmessage?.call(socket, new MessageEvent("message", { data: binary }));
+      expect(on.message).toHaveBeenCalledWith(binary);
+      transport.send("hello");
+      expect(sent).toEqual(["hello"]);
+      const signal = new AbortController().signal;
+      const response = await transport.fetchResource("/res/card", { token: "pin", signal, stream: true });
+      expect(fetcher).toHaveBeenCalledWith(`${base}/res/card`, { headers: { Authorization: "Bearer pin" }, signal, cache: "default", credentials: "omit" });
+      expect(response.status).toBe(200);
+      expect(response.stream).toBeInstanceOf(ReadableStream);
+      expect(response.sizeHint).toBe(3);
+      transport.close(1000, "done");
+      expect(close).toHaveBeenCalledWith(1000, "done");
+      socket.onclose?.call(socket, new CloseEvent("close", { code: 1006 }));
+      expect(on.close).toHaveBeenCalledWith(1006, "");
+    } finally { delete globalThis.__couchCoopTunnel; }
+  });
+
+  it("leaves direct transport selection unchanged without a tunnel", async () => {
+    mountStage();
+    await nextTick();
+    expect(clients[0]!.options.transport).toBeUndefined();
+  });
+});

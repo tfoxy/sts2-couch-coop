@@ -309,3 +309,207 @@ describe("injectApp", () => {
     await expect(promise).rejects.toThrow(/failed to load/);
   });
 });
+
+describe("Website tunnel boot", () => {
+  const origin = "http://192.168.1.5:13337";
+  const fingerprint = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
+  const href = `https://pages.example/?h=192.168.1.5:13337&f=${fingerprint}`;
+  const prefix = "/~h/abcdefghijklmnopqrstuv/";
+
+  function rig() {
+    const order: string[] = [];
+    const sw = new EventTarget() as ServiceWorkerContainer;
+    Object.assign(sw, { controller: {}, ready: Promise.resolve({ active: {} }),
+      register: vi.fn(async () => { order.push("worker"); return {}; }) });
+    const peer = { openChannel: vi.fn(), close: vi.fn(), closed: new Promise<void>(() => {}) };
+    const bridge = { prefix, tab: "abcdefghijklmnopqrstuv", ready: Promise.resolve(), stop: vi.fn() };
+    const seams = {
+      serviceWorker: sw, RTCPeerConnection: class {} as typeof RTCPeerConnection,
+      openDirectPeer: vi.fn(async () => { order.push("peer"); return peer; }) as unknown as ReturnType<typeof vi.fn<typeof import("@godot-scene-web/direct-peer").openDirectPeer>>,
+      createTunnelFetch: vi.fn(() => vi.fn(async (request: Request) => {
+        order.push(new URL(request.url).pathname);
+        return jsonResponse({ ...MANIFEST, tunnel: "couch-tunnel/1" });
+      })),
+      startServiceWorkerBridge: vi.fn(() => { order.push("bridge"); return bridge; }),
+      fetch: vi.fn().mockResolvedValue(jsonResponse(MANIFEST)),
+      injectApp: vi.fn(async (_base: string, _manifest: BootManifest) => { order.push("inject"); }),
+      reload: vi.fn(), hardReload: false, storage: sessionStorage
+    };
+    return { seams, peer, bridge, order, sw };
+  }
+
+  afterEach(() => {
+    delete globalThis.__couchCoopTunnel;
+    sessionStorage.clear();
+  });
+
+  it("connects before probing and injects from the SW virtual base", async () => {
+    const { seams, order } = rig();
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect((await bootWebsite([origin], href, seams))?.ok).toBe(true);
+    expect(order).toEqual(["worker", "peer", "bridge", "/app-boot.json", "inject"]);
+    expect(seams.fetch).not.toHaveBeenCalled();
+    expect(seams.openDirectPeer).toHaveBeenCalledWith({ host: "192.168.1.5", port: 13337,
+      fingerprint, RTCPeerConnection: seams.RTCPeerConnection });
+    expect(seams.injectApp.mock.calls[0]?.[0]).toBe(`https://pages.example${prefix.slice(0, -1)}`);
+    expect(globalThis.__couchCoopTunnel?.closed).toBeDefined();
+  });
+
+  it.each(["off", "no-pin", "no-rtc", "no-worker"])("uses direct HTTP for %s", async reason => {
+    const { seams } = rig();
+    if (reason === "no-rtc") seams.RTCPeerConnection = null as unknown as typeof RTCPeerConnection;
+    if (reason === "no-worker") seams.serviceWorker = null as unknown as ServiceWorkerContainer;
+    const url = reason === "off" ? href + "&tunnel=off" : reason === "no-pin" ? href.split("&f=")[0]! : href;
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    await bootWebsite([origin], url, seams);
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    expect(seams.fetch).toHaveBeenCalledOnce();
+    expect(seams.injectApp.mock.calls[0]?.[0]).toBe(origin);
+  });
+
+  it("uses a remembered fingerprint on a return visit", async () => {
+    rememberHost(origin, 1, undefined, fingerprint);
+    const { seams } = rig();
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    await bootWebsite([origin], "https://pages.example/", seams);
+    expect(seams.openDirectPeer).toHaveBeenCalledOnce();
+    expect(seams.fetch).not.toHaveBeenCalled();
+  });
+
+  it("falls back when the peer times out", async () => {
+    const { seams, bridge } = rig();
+    seams.openDirectPeer.mockRejectedValue(new Error("timeout"));
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    await bootWebsite([origin], href, seams);
+    expect(seams.fetch).toHaveBeenCalledOnce();
+    expect(seams.injectApp.mock.calls[0]?.[0]).toBe(origin);
+    expect(bridge.stop).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unpinned scanned host ahead of a pinned remembered host", async () => {
+    const remembered = "http://192.168.1.20:13337";
+    rememberHost(remembered, 1, undefined, fingerprint);
+    const { seams } = rig();
+    const beforeInject = vi.fn();
+    const url = href.split("&f=")[0]!;
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    const outcome = await bootWebsite(candidatesForPage(url), url, { ...seams, beforeInject });
+    expect(outcome).toMatchObject({ ok: true, origin });
+    expect(seams.fetch).toHaveBeenCalledExactlyOnceWith(`${origin}/app-boot.json`, expect.anything());
+    expect(seams.injectApp).toHaveBeenCalledExactlyOnceWith(origin, MANIFEST);
+    expect(beforeInject).toHaveBeenCalledExactlyOnceWith(outcome);
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+  });
+
+  it("tries a scanned host's direct fallback before a remembered host's tunnel", async () => {
+    const remembered = "http://192.168.1.20:13337";
+    rememberHost(remembered, 1, undefined, fingerprint);
+    const { seams } = rig();
+    seams.openDirectPeer.mockRejectedValueOnce(new Error("timeout"));
+    const beforeInject = vi.fn();
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    const outcome = await bootWebsite(candidatesForPage(href), href, { ...seams, beforeInject });
+    expect(outcome).toMatchObject({ ok: true, origin });
+    expect(seams.fetch).toHaveBeenCalledExactlyOnceWith(`${origin}/app-boot.json`, expect.anything());
+    expect(seams.injectApp).toHaveBeenCalledExactlyOnceWith(origin, MANIFEST);
+    expect(beforeInject).toHaveBeenCalledExactlyOnceWith(outcome);
+    expect(seams.openDirectPeer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ host: "192.168.1.5" }));
+  });
+
+  it("acquires worker control once when advancing to another candidate's tunnel", async () => {
+    const remembered = "http://192.168.1.20:13337";
+    rememberHost(remembered, 1, undefined, fingerprint);
+    const { seams, sw, order } = rig();
+    seams.openDirectPeer.mockRejectedValueOnce(new Error("timeout"));
+    seams.fetch.mockRejectedValueOnce(new Error("unreachable"));
+    const beforeInject = vi.fn();
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    const outcome = await bootWebsite(candidatesForPage(href), href, { ...seams, beforeInject });
+    expect(outcome).toMatchObject({ ok: true, origin: remembered });
+    expect(seams.fetch).toHaveBeenCalledExactlyOnceWith(`${origin}/app-boot.json`, expect.anything());
+    expect(seams.openDirectPeer).toHaveBeenCalledTimes(2);
+    expect(sw.register).toHaveBeenCalledOnce();
+    expect(order.filter(event => event === "worker")).toHaveLength(1);
+    expect(beforeInject).toHaveBeenCalledExactlyOnceWith(outcome);
+  });
+
+  it("stops at a candidate that refuses the page origin", async () => {
+    rememberHost("http://192.168.1.20:13337", 1, undefined, fingerprint);
+    const { seams } = rig();
+    seams.fetch.mockResolvedValueOnce(jsonResponse({ ...MANIFEST, originAllowed: false }));
+    const beforeInject = vi.fn();
+    const url = href.split("&f=")[0]!;
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite(candidatesForPage(url), url, { ...seams, beforeInject })).toEqual({
+      ok: false, failure: { kind: "origin-refused", origin, webOrigin: MANIFEST.webOrigin }
+    });
+    expect(seams.fetch).toHaveBeenCalledOnce();
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    expect(seams.injectApp).not.toHaveBeenCalled();
+    expect(beforeInject).not.toHaveBeenCalled();
+  });
+
+  it("reports every unreachable candidate after their tunnel and direct attempts fail", async () => {
+    rememberHost("http://192.168.1.20:13337", 1, undefined, fingerprint);
+    const { seams, sw } = rig();
+    seams.openDirectPeer.mockRejectedValue(new Error("timeout"));
+    seams.fetch.mockRejectedValue(new Error("unreachable"));
+    const candidates = candidatesForPage(href);
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite(candidates, href, seams)).toEqual({
+      ok: false, failure: { kind: "unreachable", tried: candidates }
+    });
+    expect(seams.fetch.mock.calls.map(call => call[0])).toEqual(candidates.map(host => `${host}/app-boot.json`));
+    expect(seams.openDirectPeer).toHaveBeenCalledTimes(2);
+    expect(sw.register).toHaveBeenCalledOnce();
+    expect(seams.injectApp).not.toHaveBeenCalled();
+  });
+
+  it("reports no candidates without probing or injecting", async () => {
+    const { seams } = rig();
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite([], href, seams)).toEqual({ ok: false, failure: { kind: "no-candidates" } });
+    expect(seams.fetch).not.toHaveBeenCalled();
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    expect(seams.injectApp).not.toHaveBeenCalled();
+  });
+
+  it.each(["manifest", "bridge", "bundle"])("cleans up and falls back after a %s failure", async failure => {
+    const { seams, peer, bridge } = rig();
+    if (failure === "manifest") seams.createTunnelFetch.mockReturnValue(vi.fn(async () => jsonResponse(MANIFEST)));
+    if (failure === "bridge") bridge.ready = Promise.reject(new Error("bridge"));
+    if (failure === "bundle") seams.injectApp.mockRejectedValueOnce(new Error("bundle"));
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    await bootWebsite([origin], href, seams);
+    expect(peer.close).toHaveBeenCalledOnce();
+    expect(bridge.stop).toHaveBeenCalledOnce();
+    expect(seams.fetch).toHaveBeenCalledOnce();
+    expect(globalThis.__couchCoopTunnel).toBeUndefined();
+  });
+
+  it("waits for clients.claim via controllerchange before opening the peer", async () => {
+    const { seams, sw, order } = rig();
+    Object.assign(sw, { controller: null });
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    const boot = bootWebsite([origin], href, seams);
+    await Promise.resolve(); await Promise.resolve();
+    expect(order).toEqual(["worker"]);
+    Object.assign(sw, { controller: {} });
+    sw.dispatchEvent(new Event("controllerchange"));
+    await boot;
+    expect(seams.openDirectPeer).toHaveBeenCalledOnce();
+  });
+
+  it("reloads an uncontrolled hard reload once, then falls back if still uncontrolled", async () => {
+    const { seams, sw } = rig();
+    Object.assign(sw, { controller: null });
+    seams.hardReload = true;
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite([origin], href, seams)).toBeNull();
+    expect(seams.reload).toHaveBeenCalledOnce();
+    expect(seams.openDirectPeer).not.toHaveBeenCalled();
+    await bootWebsite([origin], href, seams);
+    expect(seams.reload).toHaveBeenCalledOnce();
+    expect(seams.fetch).toHaveBeenCalledOnce();
+  });
+});

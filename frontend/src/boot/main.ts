@@ -5,14 +5,13 @@
 
 import {
   candidatesForPage,
-  injectApp,
   isPermissionGranted,
   rememberResolvedHost,
-  resolveHost,
   stripHostParam,
   webLinkBlockedByBrowser,
   type BootFailure
 } from "@/boot/bootstrap";
+import { bootWebsite, canTunnel } from "@/boot/websiteBoot";
 import { bootLocale, bootText } from "@/boot/localize";
 
 const locale = bootLocale();
@@ -78,30 +77,24 @@ async function boot(explicitHost?: string): Promise<void> {
   show(t("boot.looking"));
 
   const candidates = explicitHost ? [explicitHost] : candidatesForPage(location.href);
-  const outcome = await resolveHost(candidates);
-
-  if (!outcome.ok) {
-    showConnectButton(t("boot.tryAgain"), explain(outcome.failure));
-    manual.hidden = false;
-    return;
-  }
-
-  rememberResolvedHost(outcome.origin, Date.now(), explicitHost ? null : location.href);
-  // Only once the host has ANSWERED: an address that never worked is not worth pinning into the URL, and
-  // dropping it early would lose the one clue a retry has.
-  const stripped = stripHostParam(location.href);
-  if (stripped) history.replaceState(null, "", stripped);
-
-  show(t("boot.loading"));
   try {
-    await injectApp(outcome.origin, outcome.manifest);
-    // The app is mounted; get out of its way. Removed rather than hidden so nothing of ours can ever
-    // intercept a tap meant for the game.
+    const outcome = await bootWebsite(candidates, location.href, {
+      beforeInject(resolved) {
+        rememberResolvedHost(resolved.origin, Date.now(), explicitHost ? null : location.href);
+        const stripped = stripHostParam(location.href);
+        if (stripped) history.replaceState(null, "", stripped);
+        show(t("boot.loading"));
+      }
+    });
+    if (!outcome) return; // The worker will control the replacement document.
+    if (!outcome.ok) {
+      showConnectButton(t("boot.tryAgain"), explain(outcome.failure));
+      manual.hidden = false;
+      return;
+    }
     boot_.remove();
   } catch {
-    showConnectButton(
-      t("boot.tryAgain"), t("boot.loadFailed")
-    );
+    showConnectButton(t("boot.tryAgain"), t("boot.loadFailed"));
   }
 }
 
@@ -119,7 +112,12 @@ void (async () => {
   // Said BEFORE the attempt on a browser that cannot make it, rather than after a probe that was never
   // going to leave the device. The button stays — a UA sniff can misfire, and the cost of being wrong must
   // be one line of text, never a screen that refuses to try.
-  if (webLinkBlockedByBrowser(platform(), candidatesForPage(location.href))) {
+  const candidates = candidatesForPage(location.href);
+  if (canTunnel(candidates, location.href)) {
+    void boot();
+    return;
+  }
+  if (webLinkBlockedByBrowser(platform(), candidates)) {
     showConnectButton(t("boot.connect"), t("boot.unreachableIos"));
     return;
   }

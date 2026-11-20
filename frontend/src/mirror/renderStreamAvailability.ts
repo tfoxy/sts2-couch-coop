@@ -30,7 +30,7 @@ import { computed, reactive } from "vue";
 
 import { validateEndpoint, type RenderStreamEndpoint } from "@godot-scene-web/render-stream-client";
 
-import { hostBase } from "@/join/hostBase";
+import { hostBase, hostRouteUrl } from "@/join/hostBase";
 
 import type { BrowserRendererState } from "@/protocol/browserEnvelope";
 
@@ -178,11 +178,11 @@ export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): Re
     const value = raw as Record<string, unknown>;
     if (value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL
       || typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
-    const url = new URL(value.url, `${base}/`);
+    const url = hostRouteUrl(value.url, base);
     if (url.protocol === "http:") url.protocol = "ws:";
     if (url.protocol === "https:") url.protocol = "wss:";
     return validateEndpoint({ ...value, url: url.href,
-      resourceBase: value.resourceBase === "" ? new URL(base).origin : new URL(value.resourceBase, `${base}/`).href.replace(/\/$/, "") });
+      resourceBase: value.resourceBase === "" ? base : hostRouteUrl(value.resourceBase, base).href.replace(/\/$/, "") });
   } catch {
     return null;
   }

@@ -26,6 +26,7 @@ import { installAudioDiagnostics, outputLeadMs } from "./fastTrackProbe";
 import { MainSink } from "./mainSink";
 import { createWorkletSink, type WorkletSinkHandle } from "./workletSink";
 import { AudioDiagRing } from "./audioDiagRing";
+import { serveWorkerSockets } from "@/tunnel/workerSockets";
 import { hostBase, isRemoteHosted } from "@/join/hostBase";
 import { assetVersion, whenAssetVersion } from "@/join/assetVersion";
 
@@ -69,6 +70,7 @@ function createOffThreadAudioEngine(options: AudioEngineFacadeOptions, resolved:
   let path: Exclude<AudioPath, "main"> = resolved.path === "worklet" ? "worklet" : "worker";
   let delegate: AudioEngineHandle | null = null;
   let worker: AudioWorkerLike | null = null;
+  let stopTunnelSockets: (() => void) | undefined;
   let initSent = false;
   let sinkMode: AudioSinkMode | null = null;
   let context: AudioContextLike | null = null;
@@ -122,6 +124,7 @@ function createOffThreadAudioEngine(options: AudioEngineFacadeOptions, resolved:
 
   const teardownOffThread = (): void => {
     if (worker) { post({ kind: "dispose" }); worker.terminate(); worker = null; }
+    stopTunnelSockets?.(); stopTunnelSockets = undefined;
     mainSink?.dispose(); mainSink = null;
     worklet?.dispose(); worklet = null;
   };
@@ -198,6 +201,11 @@ function createOffThreadAudioEngine(options: AudioEngineFacadeOptions, resolved:
   const spawnWorker = (): boolean => {
     try { worker = (options.createWorker ?? defaultWorkerFactory)(); }
     catch (error) { record("worker-spawn-failed", { error: error instanceof Error ? error.message : String(error) }); return false; }
+    if (globalThis.__couchCoopTunnel) {
+      const { port1, port2 } = new MessageChannel();
+      stopTunnelSockets = serveWorkerSockets(port1, globalThis.__couchCoopTunnel.WebSocket);
+      post({ kind: "tunnel-port", port: port2 }, [port2]);
+    }
     worker.addEventListener("message", onWorkerMessage);
     worker.addEventListener("error", () => { if (!disposed) switchToMain("worker-error"); });
     return true;

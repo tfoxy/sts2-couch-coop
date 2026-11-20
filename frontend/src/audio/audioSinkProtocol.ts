@@ -94,6 +94,7 @@ export interface AudioDiagPayload {
 
 /** Main -> Worker. */
 export type MainToWorker =
+  | { kind: "tunnel-port"; port: MessagePort }
   | {
       kind: "init"; mainTimeOrigin: number; diag: boolean; hostBase: string; assetToken: string;
       indexUrl: string; renderUrl: string; sinkMode: AudioSinkMode; pcm: AudioSinkPcmFormat; coalesce: number;

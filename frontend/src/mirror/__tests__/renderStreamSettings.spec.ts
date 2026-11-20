@@ -536,3 +536,13 @@ describe("relay protocol2", () => {
     expect(parseLanOffer({ relay: true, webTransport: false, tls: false, ws: true })?.relay).toBe(true);
   });
 });
+
+it("keeps tunnel prefixes on host-relative stream descriptors and resources", () => {
+  const base = "https://pages.example/~h/abcdefghijklmnopqrstuv";
+  const endpoint = sessionRenderStreamEndpoint({ url: "/render-stream/host/ws", resourceBase: "/render-stream/host",
+    token: null, protocol: 16 }, base);
+  expect(endpoint?.url).toBe("wss://pages.example/~h/abcdefghijklmnopqrstuv/render-stream/host/ws");
+  expect(endpoint?.resourceBase).toBe(`${base}/render-stream/host`);
+  expect(sessionRenderStreamEndpoint({ url: "/render-stream/host/ws", resourceBase: "", token: null, protocol: 16 }, base)?.resourceBase)
+    .toBe(base);
+});

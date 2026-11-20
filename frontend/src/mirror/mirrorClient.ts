@@ -27,6 +27,7 @@ import { sceneAblation } from "@/mirror/sceneAblation";
 import { emitWarmAckTrace, warmAckTraceEnabled } from "@/mirror/warmAckTrace";
 import { wirePhase, wirePhaseFlushTail } from "@/mirror/wirePhaseTrace";
 import { publishAssetVersion } from "@/join/assetVersion";
+import { hostWebSocketCtor } from "@/tunnel/hostTunnel";
 import { hostWsUrl } from "@/join/hostBase";
 import { hostUrl } from "@/join/hostBase";
 import { readVisitId } from "@/join/visitId";
@@ -346,7 +347,7 @@ export function connectMirrorClient(options: {
 } = {}): MirrorClient {
   const sourceLocation = options.location ?? window.location;
   const vitalsSources = options.vitalsSources ?? defaultClientVitalsSources();
-  const WebSocketCtor = options.WebSocketCtor ?? WebSocket;
+  const WebSocketCtor = options.WebSocketCtor ?? hostWebSocketCtor();
   const sceneAblationRuntime = options.sceneAblationRuntime ?? sceneAblation;
   const diagnosticSocketRole = lifecycleSocketRole(options.url !== undefined);
   const state = createMirrorState();
@@ -1033,7 +1034,11 @@ export function connectMirrorClient(options: {
         }
       } else if (typeof parsed?.headlessMirrorPort === "number") {
         cancelPendingJoin();
-        options.onHeadlessRedirect?.(parsed.headlessMirrorPort);
+        // A tunnel can address host routes only; a port carries no shared-seat capability.
+        if (globalThis.__couchCoopTunnel) {
+          console.warn("[couch-coop] Tunnel seat redirect requires headlessMirrorPath; the host supplied only a port.");
+          options.onJoinRejected?.("join-failed");
+        } else options.onHeadlessRedirect?.(parsed.headlessMirrorPort);
       } else if (typeof parsed?.joinRejection === "string") {
         cancelPendingJoin();
         // A rejection is TERMINAL on its own — it is not cross-checked against `session.joined`. It used to be,
@@ -1224,7 +1229,10 @@ export function buildSeatMirrorWebSocketUrl(
     throw new Error("Invalid shared seat route.");
   }
   const wsUrl = new URL(hostWsUrl(typeof target === "string" ? target : "/ws", sourceLocation.href));
-  if (typeof target === "number") wsUrl.port = String(target);
+  if (typeof target === "number") {
+    if (globalThis.__couchCoopTunnel) throw new Error("Tunnel seats require a shared route.");
+    wsUrl.port = String(target);
+  }
   wsUrl.searchParams.set("watch", "1");
   wsUrl.searchParams.set("staticBg", staticBg ? "1" : "0");
   wsUrl.searchParams.set("cardFlight", "1");

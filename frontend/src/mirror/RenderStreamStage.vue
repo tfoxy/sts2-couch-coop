@@ -26,6 +26,7 @@
 // the input channel: pointer events over the canvas → the pointer mapping → the seat socket's `input` message
 // (streamInput.ts: godot-scene-web's pointer capture behind couch's adapter); and the keyboard and gamepad
 // (keyPadInput.ts: the same package's captures behind couch's adapter), on the same socket.
+import { createTunnelRenderStreamTransport } from "@/tunnel/renderStreamTransport";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 
 import {
@@ -345,6 +346,8 @@ function mountClient(): void {
       extensions: built.extensions,
       creditWindow: 2,
       carrier: mirrorSettings.renderStreamCarrier,
+      transport: globalThis.__couchCoopTunnel
+        ? createTunnelRenderStreamTransport(globalThis.__couchCoopTunnel) : undefined,
       onStatus: (status) => { if (epoch === clientEpoch && !stopped) onStatus(status); }
     });
   } catch (error) {

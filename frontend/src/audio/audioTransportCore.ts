@@ -40,6 +40,8 @@ export const LANE_COALESCE_DEADLINE_MS = 12;
 /** The exported installer's name, kept as a runtime string so the emitted worker chunk can be checked for it. */
 export const AUDIO_TRANSPORT_WORKER_ENTRY = "installAudioTransportWorker";
 
+import { createWorkerSocketCtor } from "@/tunnel/workerSockets";
+
 export interface AudioTransportDeps {
   WebSocketCtor: typeof WebSocket;
   fetcher: typeof fetch;
@@ -446,13 +448,22 @@ export interface AudioTransportWorkerScope {
 export function installAudioTransportWorker(scope: AudioTransportWorkerScope,
   overrides: Partial<AudioTransportDeps> = {}): AudioTransportCore {
   const postMain = overrides.postMain ?? ((msg: WorkerToMain, transfer: Transferable[] = []) => scope.postMessage(msg, transfer));
-  const core = new AudioTransportCore({
+  let tunnelSockets: ReturnType<typeof createWorkerSocketCtor> | undefined;
+  const deps: AudioTransportDeps = {
     WebSocketCtor: overrides.WebSocketCtor ?? scope.WebSocket ?? WebSocket,
     fetcher: overrides.fetcher ?? scope.fetch ?? fetch,
     postMain, postSink: overrides.postSink, now: overrides.now
-  }, () => scope.close?.());
+  };
+  const core = new AudioTransportCore(deps, () => { tunnelSockets?.dispose(); scope.close?.(); });
   scope.addEventListener("message", event => {
-    try { core.handle(event.data as MainToWorker); }
+    try {
+      const msg = event.data as MainToWorker;
+      if (msg.kind === "tunnel-port") {
+        tunnelSockets?.dispose();
+        tunnelSockets = createWorkerSocketCtor(msg.port);
+        deps.WebSocketCtor = tunnelSockets.WebSocket;
+      } else core.handle(msg);
+    }
     catch (error) {
       postMain({ kind: "fallback", reason: `${AUDIO_TRANSPORT_WORKER_ENTRY}: ${error instanceof Error ? error.message : String(error)}` });
     }

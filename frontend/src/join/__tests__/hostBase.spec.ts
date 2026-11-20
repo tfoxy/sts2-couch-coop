@@ -215,3 +215,22 @@ describe("hostStore", () => {
     ]);
   });
 });
+
+describe("tunnel virtual host base", () => {
+  const base = `${location.origin}/~h/abcdefghijklmnopqrstuv`;
+  it("preserves the virtual path for every host URL", () => {
+    setHostBase(base);
+    expect(hostBase()).toBe(base);
+    expect(isRemoteHosted()).toBe(true);
+    expect(hostUrl("/res/card.png")).toBe(`${base}/res/card.png`);
+    expect(hostWsUrl("/ws?watch=1")).toBe(`${base.replace(/^http/, "ws")}/ws?watch=1`);
+  });
+  it("does not preserve unrelated injected paths", () => {
+    setHostBase(`${location.origin}/other/path`);
+    expect(hostBase()).toBe(location.origin);
+  });
+  it("continues accepting whitespace around an injected authority", () => {
+    setHostBase("  192.168.1.5:13337  ");
+    expect(hostBase()).toBe("http://192.168.1.5:13337");
+  });
+});

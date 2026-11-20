@@ -17,6 +17,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
+      "@godot-scene-web/direct-peer": ["../../godot-scene-web/packages/direct-peer/src/index.ts"],
       "@godot-scene-web/core": ["../../godot-scene-web/packages/core/src/index.ts"],
       "@godot-scene-web/tscn-parser": ["../../godot-scene-web/packages/tscn-parser/src/index.ts"],
       "@godot-scene-web/layout": ["../../godot-scene-web/packages/layout/src/index.ts"],

@@ -1,3 +1,4 @@
+import { hostWebSocketCtor } from "@/tunnel/hostTunnel";
 import { decodeAudioFrame, type AudioFrame, type RenderInbound, type RenderOutbound } from "./audioWire";
 import type { AudioLaneMark } from "./seatAudioLane";
 
@@ -13,7 +14,7 @@ export interface RenderLaneOptions<F extends AudioFrame> {
   now?: () => number;
 }
 export function openRenderLane<F extends AudioFrame = AudioFrame>(url: string, onFrame: (frame: F, callbackOrder?: number) => void,
-  onMessage: (message: RenderOutbound, callbackOrder?: number) => void, WebSocketCtor: typeof WebSocket = WebSocket,
+  onMessage: (message: RenderOutbound, callbackOrder?: number) => void, WebSocketCtor: typeof WebSocket = hostWebSocketCtor(),
   onUnavailable?: () => void, mark?: AudioLaneMark, connectionId?: number, laneOptions: RenderLaneOptions<F> = {}): RenderLaneHandle {
   const decode = laneOptions.decode ?? (decodeAudioFrame as unknown as (data: ArrayBuffer) => F);
   const now = laneOptions.now ?? (() => performance.now());

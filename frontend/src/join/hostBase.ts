@@ -73,7 +73,11 @@ let memoValid = false;
 export function hostBase(): string {
   const raw = globalThis.__couchCoopHostBase;
   if (memoValid && raw === memoRaw) return memoBase;
-  const injected = normalizeHostBase(raw);
+  const normalized = normalizeHostBase(raw);
+  const trimmed = raw?.trim();
+  const parsed = normalized && trimmed ? new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`) : null;
+  const injected = parsed && /^\/~h\/[A-Za-z0-9_-]{22}\/?$/.test(parsed.pathname)
+    ? parsed.origin + parsed.pathname.replace(/\/$/, "") : normalized;
   memoRaw = raw;
   memoValid = true;
   memoBase = injected ?? (typeof location === "undefined" ? "" : location.origin);
@@ -117,7 +121,16 @@ export function hostUrl(route: string): string {
  */
 export function hostWsUrl(route: string, pageHref?: string): string {
   const base = isRemoteHosted() ? hostBase() : (pageHref ?? hostBase());
-  const url = new URL(route, base);
+  const url = hostRouteUrl(route, base);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
+}
+
+/** Resolve host-root paths beneath a virtual tunnel base, including renderer descriptors. */
+export function hostRouteUrl(route: string, base = hostBase()): URL {
+  const prefix = new URL(base).pathname.replace(/\/$/, "");
+  if (/^\/~h\/[A-Za-z0-9_-]{22}$/.test(prefix) && route.startsWith("/") && !route.startsWith("//")) {
+    return new URL(base.replace(/\/$/, "") + route);
+  }
+  return new URL(route, `${base.replace(/\/$/, "")}/`);
 }

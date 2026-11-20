@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { regionBackgroundStyle, richTextLayeredHtml } from "@godot-scene-web/html";
 import { DEFAULT_BBCODE_TAGS } from "@spirectl/presentation/render";
@@ -535,6 +535,37 @@ describe("connectMirrorClient", () => {
     expect(redirectPort).toBe(13357);
 
     client.close();
+  });
+
+  it("rejects a port-only tunnel redirect and accepts the host's supplied path", async () => {
+    MockWebSocket.instances = [];
+    const diagnostic = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const redirects: Array<string | number> = [];
+    const rejections: string[] = [];
+    globalThis.__couchCoopTunnel = { WebSocket: MockWebSocket as unknown as typeof WebSocket,
+      fetch, closed: new Promise(() => {}) };
+    const client = connectMirrorClient({
+      location: { href: "http://localhost/", protocol: "http:" },
+      onHeadlessRedirect: target => redirects.push(target),
+      onJoinRejected: reason => rejections.push(reason)
+    });
+    try {
+      await Promise.resolve();
+      const socket = MockWebSocket.instances[0]!;
+      socket.emit(currentSession({ headlessMirrorPort: 13357, session: { joined: true } }));
+      expect(redirects).toEqual([]);
+      expect(rejections).toEqual(["join-failed"]);
+      expect(diagnostic).toHaveBeenCalledExactlyOnceWith(
+        "[couch-coop] Tunnel seat redirect requires headlessMirrorPath; the host supplied only a port.");
+      socket.emit(currentSession({ headlessMirrorPath: "/ws?seat=opaque-route", headlessMirrorPort: 13357,
+        session: { joined: true } }));
+      expect(redirects).toEqual(["/ws?seat=opaque-route"]);
+      expect(diagnostic).toHaveBeenCalledTimes(1);
+    } finally {
+      client.close();
+      delete globalThis.__couchCoopTunnel;
+      diagnostic.mockRestore();
+    }
   });
 
   it("prefers the shared seat path when a join reply also carries a direct port", async () => {

@@ -1,10 +1,11 @@
+import { hostWebSocketCtor } from "@/tunnel/hostTunnel";
 import type { SeatAudioEvent } from "./audioWire";
 
 export type AudioLaneMark = (type: string, fields: Record<string, unknown>) => void;
 
 export interface SeatLaneHandle { close(): void; }
 export function openSeatAudioLane(url: string, onEvent: (event: SeatAudioEvent, callbackOrder?: number) => void,
-  WebSocketCtor: typeof WebSocket = WebSocket, mark?: AudioLaneMark, connectionId?: number): SeatLaneHandle {
+  WebSocketCtor: typeof WebSocket = hostWebSocketCtor(), mark?: AudioLaneMark, connectionId?: number): SeatLaneHandle {
   const socket = new WebSocketCtor(url);
   let callbackOrder = 0;
   socket.addEventListener("message", event => {

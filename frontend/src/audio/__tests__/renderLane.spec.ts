@@ -41,3 +41,20 @@ describe("render audio lane admission", () => {
     handle.close();
   });
 });
+
+describe("tunnel audio lanes", () => {
+  it("defaults both lane sockets to the window tunnel constructor", async () => {
+    const { openSeatAudioLane } = await import("../seatAudioLane");
+    const urls: string[] = [];
+    const Socket = class extends FakeSocket {
+      constructor(url: string) { super(url); urls.push(url); }
+    } as unknown as typeof WebSocket;
+    globalThis.__couchCoopTunnel = { WebSocket: Socket, fetch, closed: new Promise(() => {}) };
+    try {
+      const seat = openSeatAudioLane("wss://pages/~h/tab/ws?seat=route&lane=audio", () => {});
+      const render = openRenderLane("wss://pages/~h/tab/audio", () => {}, () => {});
+      expect(urls).toEqual(["wss://pages/~h/tab/ws?seat=route&lane=audio", "wss://pages/~h/tab/audio"]);
+      seat.close(); render.close();
+    } finally { delete globalThis.__couchCoopTunnel; }
+  });
+});

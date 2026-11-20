@@ -309,3 +309,38 @@ describe("audio path parity", () => {
     expect(offLanes.map(s => s.start)[0]).toBeCloseTo(mainLanes[0].start, 9);
   });
 });
+
+describe("audio worker tunnel wiring", () => {
+  it("transfers a socket port and opens both audio lanes through the window tunnel", async () => {
+    const r = rig();
+    const tunnelSockets: FakeSocket[] = [];
+    const Socket = class extends FakeSocket {
+      constructor(url: string) { super(url); tunnelSockets.push(this); }
+    } as unknown as typeof WebSocket;
+    const channel = class {
+      port1: MessagePort; port2: MessagePort;
+      constructor() {
+        const ends = createFakeWorkerChannelPair().map(end => Object.assign(end, { start() {}, close() {} }));
+        [this.port1, this.port2] = ends as unknown as [MessagePort, MessagePort];
+      }
+    };
+    vi.stubGlobal("MessageChannel", channel);
+    globalThis.__couchCoopTunnel = { WebSocket: Socket, fetch: r.fetcher, closed: new Promise(() => {}) };
+    const worker = inProcessWorker(r.Ctor, r.fetcher);
+    const engine = createAudioEngine({ ...r.base, pathEnv: env("?audioPath=worker"), createWorker: worker.factory });
+    try {
+      expect(await engine.unlock()).toBe(true);
+      engine.start();
+      await settle();
+      expect(worker.state.toWorker[0]?.kind).toBe("tunnel-port");
+      expect(tunnelSockets.map(s => s.url)).toEqual([r.base.seatUrl, r.base.renderUrl]);
+      expect(r.sockets).toHaveLength(0);
+      engine.dispose();
+      expect(tunnelSockets.every(s => s.readyState === 3)).toBe(true);
+    } finally {
+      engine.dispose();
+      delete globalThis.__couchCoopTunnel;
+      vi.unstubAllGlobals();
+    }
+  });
+});

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildSeatMirrorWebSocketUrl,
+  buildAudioSeatWebSocketUrl,
+  buildAudioRenderWebSocketUrl,
   buildHeadlessMirrorWebSocketUrl,
   buildMirrorWebSocketUrl,
   connectMirrorClient
@@ -575,5 +578,32 @@ describe("presentation admission", () => {
     client.sendInput({ ...key, presentationEpoch: 8 });
     expect(socket.sentOfType("input").map(m => m.presentationEpoch)).toEqual([7, 8]);
     client.close();
+  });
+});
+
+describe("tunnel host sockets", () => {
+  it("uses the tunnel constructor for host and routed seat sockets", () => {
+    const base = `${location.origin}/~h/abcdefghijklmnopqrstuv`;
+    const urls: string[] = [];
+    const Socket = class extends MockWebSocket {
+      constructor(url: string) { super(url); urls.push(url); }
+    } as unknown as typeof WebSocket;
+    globalThis.__couchCoopHostBase = base;
+    globalThis.__couchCoopTunnel = { WebSocket: Socket, fetch, closed: new Promise(() => {}) };
+    try {
+      const host = connectMirrorClient({ url: buildMirrorWebSocketUrl(), watch: false });
+      const seat = connectMirrorClient({ url: buildSeatMirrorWebSocketUrl("/ws?seat=opaque-route"), watch: false });
+      expect(new URL(urls[0]!).pathname).toBe("/~h/abcdefghijklmnopqrstuv/ws");
+      expect(new URL(urls[1]!).pathname).toBe("/~h/abcdefghijklmnopqrstuv/ws");
+      expect(new URL(urls[1]!).searchParams.get("seat")).toBe("opaque-route");
+      const audio = new URL(buildAudioSeatWebSocketUrl("/ws?seat=opaque-route"));
+      expect(audio.pathname).toBe("/~h/abcdefghijklmnopqrstuv/ws");
+      expect(audio.searchParams.get("lane")).toBe("audio");
+      expect(buildAudioRenderWebSocketUrl()).toBe(`${base.replace(/^http/, "ws")}/audio`);
+      host.close(); seat.close();
+    } finally {
+      delete globalThis.__couchCoopHostBase;
+      delete globalThis.__couchCoopTunnel;
+    }
   });
 });

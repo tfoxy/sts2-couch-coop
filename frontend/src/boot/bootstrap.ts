@@ -28,6 +28,7 @@ export interface BootManifest {
   originAllowed: boolean;
   /** The origin the host expects the client to be served from, so a refusal can name where to go. */
   webOrigin: string | null;
+  tunnel?: string;
 }
 
 /** The newest boot protocol this bootstrap understands. */
@@ -62,7 +63,8 @@ export function parseBootManifest(raw: unknown): BootManifest | null {
     buildId,
     bootProtocol: protocol,
     originAllowed: value.originAllowed,
-    webOrigin: typeof value.webOrigin === "string" ? value.webOrigin : null
+    webOrigin: typeof value.webOrigin === "string" ? value.webOrigin : null,
+    ...(typeof value.tunnel === "string" ? { tunnel: value.tunnel } : {})
   };
 }
 
@@ -169,11 +171,13 @@ export function injectApp(
   // Set BEFORE the entry executes: the app reads it at module scope (see @/join/hostBase).
   (globalThis as { __couchCoopHostBase?: string }).__couchCoopHostBase = origin;
 
+  const styles: HTMLLinkElement[] = [];
   for (const href of manifest.css) {
     const link = doc.createElement("link");
     link.rel = "stylesheet";
     link.href = origin + href;
     doc.head.appendChild(link);
+    styles.push(link);
   }
 
   return new Promise<void>((resolve, reject) => {
@@ -184,7 +188,11 @@ export function injectApp(
     // right moment to take the boot chrome away — earlier would flash an empty page, later would leave
     // the spinner over a running game. `error` keeps the chrome up, which is the whole point of waiting.
     script.addEventListener("load", () => resolve());
-    script.addEventListener("error", () => reject(new Error("the game's app bundle failed to load")));
+    script.addEventListener("error", () => {
+      script.remove();
+      for (const style of styles) style.remove();
+      reject(new Error("the game's app bundle failed to load"));
+    });
     doc.head.appendChild(script);
   });
 }

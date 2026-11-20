@@ -8,10 +8,15 @@
 // static file, so it type-checks, unit-tests, and reuses the very same host-parsing rules the app itself
 // uses (`@/join/hostStore`) instead of a second copy that can drift.
 
+import { resolve } from "node:path";
 import { cp, readdir } from "node:fs/promises";
 import { fileURLToPath, URL } from "node:url";
 
 import { defineConfig } from "vite";
+
+const godotSceneWebRoot = process.env.COUCHCOOP_GSW_ROOT
+  ?? fileURLToPath(new URL("../../godot-scene-web", import.meta.url));
+const gsw = (p: string) => resolve(godotSceneWebRoot, `packages/${p}`);
 
 const fromHere = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
@@ -57,7 +62,8 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": fromHere("./src")
+      "@": fromHere("./src"),
+      "@godot-scene-web/direct-peer": gsw("direct-peer/src/index.ts")
     }
   },
   plugins: [sharedPwaAssets]
