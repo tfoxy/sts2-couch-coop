@@ -61,6 +61,7 @@ function createClient(options: RenderStreamClientOptions): RenderStreamClient {
     connect() { fake.connects += 1; },
     setEndpoint: vi.fn(),
     setStaticShaders: vi.fn(),
+    setDamageRedraw: vi.fn(),
     setStaticParticles: vi.fn(),
     hints: () => [],
     cssToPresentation: vi.fn(() => null),
@@ -171,6 +172,7 @@ describe("RenderStreamStage", () => {
       mountStage(props);
       expect(clients[0].options.transparentClear).toBeUndefined();
       expect(clients[0].options.staticShaders).toBe(false);
+      expect(clients[0].options.damageRedraw).toBe(false);
       expect(clients[0].options.staticParticles).toBe(false);
       expect(wrapper!.find('[data-testid="render-stream-background-stage"]').exists()).toBe(false);
       expect(votes()).toEqual([]);
@@ -349,13 +351,17 @@ describe("RenderStreamStage", () => {
       mountStage();
       const client = clients[0];
       expect(client.options.staticShaders).toBe(true);
+      expect(client.options.damageRedraw).toBe(true);
       mirrorSettings.streamShaderMode = "dynamic";
       await nextTick();
       expect(client.setStaticShaders).toHaveBeenLastCalledWith(false);
+      expect(client.setDamageRedraw).toHaveBeenLastCalledWith(false);
       mirrorSettings.streamShaderMode = "static";
       await nextTick();
       expect(client.setStaticShaders).toHaveBeenLastCalledWith(true);
+      expect(client.setDamageRedraw).toHaveBeenLastCalledWith(true);
       expect(client.setStaticShaders).toHaveBeenCalledTimes(2);
+      expect(client.setDamageRedraw).toHaveBeenCalledTimes(2);
       expect(client.disposed).toBe(false);
       expect(client.connects).toBe(1);
       expect(clients).toHaveLength(1);

@@ -372,6 +372,9 @@ function mountClient(): void {
       extensions: built.extensions,
       creditWindow: 2,
       staticShaders: mirrorSettings.streamShaderMode === "static",
+      // Damage-limited redraw is exact; it pays on a weak GPU once shader time is pinned, so it follows
+      // the static-shaders setting.
+      damageRedraw: mirrorSettings.streamShaderMode === "static",
       staticParticles: mirrorSettings.streamParticleMode === "static",
       ...(useStaticBackground.value ? { transparentClear: true } : {}),
       carrier: mirrorSettings.renderStreamCarrier,
@@ -516,7 +519,10 @@ function remountIfStale(): void {
 }
 
 watch(extensionsKey, remountIfStale);
-watch(() => mirrorSettings.streamShaderMode, (mode) => client?.setStaticShaders?.(mode === "static"));
+watch(() => mirrorSettings.streamShaderMode, (mode) => {
+  client?.setStaticShaders?.(mode === "static");
+  client?.setDamageRedraw?.(mode === "static");
+});
 watch(() => mirrorSettings.streamParticleMode, (mode) => client?.setStaticParticles?.(mode === "static"));
 
 watch(() => props.inputEnabled, (enabled) => {
