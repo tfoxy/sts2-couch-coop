@@ -134,6 +134,7 @@ function fakeQuery(overrides: Record<number, { parent?: number | null; x?: numbe
       return [1, 0, 0, 1, o.x ?? 0, o.y];
     },
     rect,
+    controlRect: () => null,
     subtreeRect,
     visible: (id) => overrides[id]?.visible ?? true,
     meta: (id) => {

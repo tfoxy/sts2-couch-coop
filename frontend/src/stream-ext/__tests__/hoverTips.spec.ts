@@ -77,6 +77,7 @@ function layout(boxes: Rect[], owner: Rect | null = null, script = "NHandCardHol
     children: vi.fn((id) => Uint32Array.from(children.get(id) ?? [])),
     transform: vi.fn(() => [1, 0, 0, 1, 0, 0] as Affine2D),
     rect: vi.fn((id) => rects.get(id) ?? null),
+    controlRect: vi.fn(() => null),
     subtreeRect: vi.fn((id) => rects.get(id) ?? null),
     visible: vi.fn((id) => !hidden.has(id)),
     meta: vi.fn((id) => rows.find((row) => row.id === id) ?? null),

@@ -26,6 +26,7 @@ function fixture() {
     children: vi.fn((id) => Uint32Array.from(rows.filter((row) => parent(row.id) === id).map((row) => row.id))),
     transform: vi.fn((id) => [1, 0, 0, 1, 0, id === 3 ? 941 : 1000] as Affine2D),
     rect: vi.fn(() => ({ x: 80, y: 900, w: 80, h: 80 })),
+    controlRect: vi.fn(() => null),
     subtreeRect: vi.fn(() => ({ x: 80, y: 900, w: 80, h: 80 })),
     visible: vi.fn(() => true),
     meta: vi.fn((id) => rows.find((row) => row.id === id) ?? null),
@@ -61,7 +62,7 @@ describe("stream extension live settings", () => {
     const f = fixture();
     try {
       expect(f.built.extensions.map((extension) => extension.id)).toEqual([
-        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.hoverTips",
+        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.heldCard", "couchcoop.hoverTips",
         "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets"
       ]);
     } finally {

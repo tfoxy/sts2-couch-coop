@@ -493,7 +493,7 @@ describe("createStreamInput — reward-list auto-focus", () => {
       meta: (id) => items.find((item) => item.id === id) ?? null,
       parent: (id) => id === 10 ? null : id % 10 === 0 ? 10 : id - 1,
       children: (id) => Uint32Array.from(id === 10 ? rows : rows.includes(id) ? [id + 1] : []),
-      rect, subtreeRect: () => null, visible: () => visible,
+      rect, controlRect: () => null, subtreeRect: () => null, visible: () => visible,
       transform: () => [1, 0, 0, 1, 0, 0], hitTest
     };
     policy.extension.onItemMeta!({ form: "full", items });

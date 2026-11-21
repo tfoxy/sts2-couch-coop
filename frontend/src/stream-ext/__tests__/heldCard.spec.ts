@@ -44,6 +44,7 @@ function fakeQuery(parents: Record<number, number | null>, visible: Record<numbe
     children: () => new Uint32Array(0),
     transform: () => [1, 0, 0, 1, 0, 0],
     rect: () => null,
+    controlRect: () => null,
     subtreeRect: () => null,
     visible: (id) => visible[id] ?? true,
     meta: () => null,

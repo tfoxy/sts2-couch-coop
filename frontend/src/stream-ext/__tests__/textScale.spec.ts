@@ -93,7 +93,7 @@ function composedOverrides() {
   host.bind({
     queryItem: (id) => id === 1 ? [2] : id === 2 ? [3] : [-1],
     itemMetaJson: () => "", setLogRemoved: vi.fn(), takeRemoved: () => new Uint32Array(),
-    setOverrides: vi.fn(), refreshOverrides: () => 0, querySubtreeRect: () => [],
+    setOverrides: vi.fn(), refreshOverrides: () => 0, querySubtreeRect: () => [], queryControlRect: () => [],
     queryChildren: () => new Uint32Array(), hitTest: () => null,
     setHitFilters: vi.fn(), setPickOrder: vi.fn(),
     itemVisible: () => false, queryItems: vi.fn(), itemsVisible: vi.fn(), queryEpoch: () => 0
@@ -107,7 +107,7 @@ function fixture() {
   const overrides: OverrideTable = {
     set: vi.fn(), translate: vi.fn(), setGlobal: vi.fn(), freeze: vi.fn(), clearAll: vi.fn(),
     scaleAbout: vi.fn((id, sx, sy, x, y) => {
-      values.set(id, { transform: [sx, 0, 0, sy, x - sx * x, y - sy * y], modulate: [1, 1, 1, 1], visible: true, frozen: false });
+      values.set(id, { transform: [sx, 0, 0, sy, x - sx * x, y - sy * y], modulate: [1, 1, 1, 1], visible: true, frozen: false, clipOutset: [0, 0, 0, 0] });
     }),
     clear: vi.fn((id) => { values.delete(id); }),
     get: vi.fn((id) => values.get(id) ?? null),
@@ -117,6 +117,7 @@ function fixture() {
   const query: ItemQuery = {
     parent: vi.fn(() => null), children: vi.fn(() => new Uint32Array()),
     rect: vi.fn(() => ({ x: 100, y: 200, w: 80, h: 20 })),
+    controlRect: vi.fn(() => null),
     subtreeRect: vi.fn(() => null), transform: vi.fn((): Affine2D => [1, 0, 0, 1, 0, 0]),
     visible: vi.fn(() => true), meta: vi.fn(() => null), hitTest: vi.fn(() => null)
   };
@@ -233,12 +234,45 @@ describe("stream text scale — pivots and lifecycle", () => {
     }
   });
 
-  it("uses the container origin and row bounds when the reward container draws nothing", () => {
+  it.each(["rewards-screen-label", "reward-button-label"])("centres %s inside its Control box despite overhanging row art", (key) => {
+    for (const inkWidth of [100, 270]) {
+      const f = fixture();
+      const overrides = composedOverrides();
+      const box = { x: 200, y: 220, w: inkWidth, h: 20 };
+      const control = { x: 182, y: 210, w: 316, h: 50 };
+      vi.mocked(f.query.parent).mockImplementation((id) => id === 1 ? 2 : id === 2 ? 3 : null);
+      vi.mocked(f.query.transform).mockImplementation((id) => [1, 0, 0, 1, id === 2 ? 178 : 0, 0]);
+      vi.mocked(f.query.rect).mockImplementation((id) => id === 1 ? box : null);
+      vi.mocked(f.query.controlRect).mockImplementation((id) => id === 1 ? control : null);
+      // Reticle corners extend past both ends of the row's 402px Control box.
+      vi.mocked(f.query.subtreeRect).mockImplementation((id) => id === 3 ? { x: 70, y: 200, w: 462, h: 100 } : null);
+      f.extension.onItemMeta!({ form: "full", items: [meta(key)] });
+      overrides.set(3, { transform: [1.2, 0, 0, 1.2, 30, -50] });
+      overrides.translate(2, 10, 2);
+      f.extension.beforeDraw!({ ...f.frame, overrides });
+      const drawn = overrides.effective(1);
+      const parent = overrides.effective(2);
+      const label = overrides.get(1)!.transform;
+      const areaWidth = 0.9 * control.w;
+      expect(label[0]).toBeCloseTo(Math.min(1.32 / 1.08, areaWidth / inkWidth));
+      expect(label[3]).toBe(label[0]);
+      expect(drawn[0] * (box.x + inkWidth / 2) + drawn[4]).toBeCloseTo(
+        parent[0] * (control.x + areaWidth / 2) + parent[4], 6);
+      expect(f.query.controlRect).toHaveBeenCalledWith(1);
+      expect(f.query.subtreeRect).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each([
+    ["no", null],
+    ["a zero-sized", { x: 150, y: 230, w: 0, h: 0 }]
+  ])("falls back to the container origin and row bounds when the label has %s Control box", (_, control) => {
     const f = fixture();
     const overrides = composedOverrides();
     vi.mocked(f.query.parent).mockImplementation((id) => id === 1 ? 2 : id === 2 ? 3 : null);
     vi.mocked(f.query.transform).mockImplementation((id) => [1, 0, 0, 1, id === 2 ? 120 : 0, 0]);
     vi.mocked(f.query.rect).mockImplementation((id) => id === 1 ? { x: 120, y: 220, w: 100, h: 20 } : null);
+    vi.mocked(f.query.controlRect).mockImplementation((id) => id === 1 ? control : null);
     vi.mocked(f.query.subtreeRect).mockImplementation((id) => id === 3 ? { x: 40, y: 210, w: 480, h: 50 } : null);
     f.extension.onItemMeta!({ form: "full", items: [meta("reward-button-label")] });
     f.extension.beforeDraw!({ ...f.frame, overrides });
@@ -380,7 +414,7 @@ describe("stream text scale — pivots and lifecycle", () => {
     settings.uiScaling = true;
     extension.beforeDraw!(f.frame);
     expect(f.values.has(1)).toBe(true);
-    f.values.set(999, { transform: [1, 0, 0, 1, 0, 0], visible: false, modulate: [1, 1, 1, 1], frozen: false });
+    f.values.set(999, { transform: [1, 0, 0, 1, 0, 0], visible: false, modulate: [1, 1, 1, 1], frozen: false, clipOutset: [0, 0, 0, 0] });
     settings.uiScaling = false;
     Object.values(f.query).forEach((fn) => vi.mocked(fn).mockClear());
     extension.beforeDraw!(f.frame);

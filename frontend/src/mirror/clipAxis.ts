@@ -29,8 +29,9 @@
 // `computeSceneInfo` resolves and stamps as data-scene-file / data-scene-node-path — the same tuple viewScale.ts's
 // ENTRIES and mirrorRenderer's isDrawingTools / isMenuReticle matchers key on.
 //
-// This module is PURE (no DOM, no query reads), like viewScale.ts. The consumer applies its result only while
-// readability scaling is enabled; see nodeStyles.ts, which owns the `clip_contents` branch this feeds.
+// This module is PURE (no DOM, no query reads), like viewScale.ts. Both consumers apply its result only while
+// readability scaling is enabled: the old mirror's nodeStyles.ts / canvas/buildDrawList.ts and the render-stream
+// client's stream-ext/clipAxis.ts module.
 
 export interface ClipAxisEntry {
   /** Owning instanced scene, matched EXACTLY against `computeSceneInfo().file`. */

@@ -5,7 +5,8 @@ import type { ExtensionFrame, ItemMeta, ItemMetaBatch, ItemQuery, OverrideTable,
 import { buildStreamExtensions } from "@/stream-ext/extensions";
 import { RS_GROUP_CARD_REWARD_CARD, RS_GROUP_CARD_REWARD_ROOT, RS_GROUP_TREASURE_RELIC } from "@/stream-ext/groups";
 import { createViewScaleExtension, resolveStreamViewScale, scaleStampAffine } from "@/stream-ext/viewScale";
-import { VIEW_SCALE_PILE } from "@/mirror/viewScale";
+import { resolveViewScale, VIEW_SCALE_PILE } from "@/mirror/viewScale";
+import { computeViewScaleStamp, viewScaleStampMatrix } from "@/mirror/viewScaleLayout";
 import { createMirrorSettings } from "@/mirror/mirrorSettings";
 
 function meta(id: number, groups: string[], scene: string | null = null, path: string | null = null): ItemMeta {
@@ -69,6 +70,7 @@ function fakeQuery(rects: Record<number, Rect | null>): ItemQuery {
     children: () => new Uint32Array(0),
     transform: () => [1, 0, 0, 1, 0, 0],
     rect: (id) => rects[id] ?? null,
+    controlRect: () => null,
     subtreeRect: (id) => rects[id] ?? null,
     visible: () => true,
     meta: () => null,
@@ -96,6 +98,22 @@ describe("viewScale — extension glue", () => {
     ext.onItemMeta!({ form: "delta", items: [meta(1, [RS_GROUP_CARD_REWARD_CARD])] });
     ext.beforeDraw!(frame);
     expect(overrides.written.get(1)![0]).toBe(1.15);
+    ext.dispose!();
+  });
+
+  it.each([[0, 0], [0, 338], [240, 0]])("keeps reward-card scaling with a %sx%s Control box", (w, h) => {
+    const overrides = new FakeOverrides();
+    const query = fakeQuery({ 1: { x: 580, y: 281, w: 240, h: 338 } });
+    const ext = createViewScaleExtension({ designWidth: 1920 });
+    const frame: ExtensionFrame = { seq: 1, now: 0, overrides, query, requestRedraw: () => {} };
+    ext.onItemMeta!(batch([meta(1, [RS_GROUP_CARD_REWARD_CARD])]));
+    ext.beforeDraw!(frame);
+    const expected = [1.15, 0, 0, 1.15, 700 * (1 - 1.15), 450 * (1 - 1.15)];
+    expect(overrides.written.get(1)).toEqual(expected);
+
+    query.controlRect = () => ({ x: 700, y: 450, w, h });
+    ext.beforeDraw!({ ...frame, seq: 2 });
+    expect(overrides.written.get(1)).toEqual(expected);
     ext.dispose!();
   });
 
@@ -128,16 +146,37 @@ describe("viewScale — extension glue", () => {
     ext.dispose!();
   });
 
-  it("measures a widget whose sprite is drawn in a child (own rect null, subtree rect set)", () => {
+  it.each([1920, 2227])("uses the Control box for event-option pivots at width %s", (designWidth) => {
+    for (const [scene, path, y] of [
+      ["res://scenes/events/ancient_event_layout.tscn", "ContentContainer/Content/OptionsContainer", 700],
+      ["res://scenes/events/default_event_layout.tscn", "VBoxContainer/OptionsContainer", 500]
+    ] as const) {
+      const control = { x: 460 + (designWidth - 1920) / 2, y, w: 1000, h: 250 };
+      const subtree = { x: control.x - 90, y: y - 35, w: 1210, h: 330 };
+      const query = { ...fakeQuery({ 1: subtree }), controlRect: () => control };
+      const overrides = new FakeOverrides();
+      const ext = createViewScaleExtension({ designWidth });
+      ext.onItemMeta!(batch([meta(1, [], scene, path)]));
+      ext.beforeDraw!({ seq: 1, now: 0, overrides, query, requestRedraw: () => {} });
+      const entry = resolveViewScale(scene, path);
+      const expected = computeViewScaleStamp(control, entry, designWidth)!;
+      expect(overrides.written.get(1)).toEqual(viewScaleStampMatrix(entry.scale, expected));
+      expect(overrides.written.get(1)).not.toEqual(
+        viewScaleStampMatrix(entry.scale, computeViewScaleStamp(subtree, entry, designWidth)!));
+      ext.dispose!();
+    }
+  });
+
+  it.each([true, false])("scales a pile with no own draw commands (Control box present: %s)", (hasControl) => {
     const overrides = new FakeOverrides();
     // A combat pile button: its own commands are empty (the sprite is a child), so `rect` is null;
-    // the subtree rect is the button's 80x80 visual. The stream must still scale it (the old
-    // mirror's DOM element bounding box included that child).
+    // the Control box is preferred, with the subtree paint bounds as a non-Control fallback.
     const query: ItemQuery = {
       parent: () => null,
       children: () => new Uint32Array(0),
       transform: () => [1, 0, 0, 1, 15, 985],
       rect: () => null,
+      controlRect: () => hasControl ? { x: 15, y: 985, w: 96, h: 83 } : null,
       subtreeRect: (id) => (id === 1 ? { x: 17, y: 985, w: 94, h: 83 } : null),
       visible: () => true,
       meta: () => null,

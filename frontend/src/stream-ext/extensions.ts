@@ -11,6 +11,7 @@ import { createHeldCardExtension, type HeldCardController } from "@/stream-ext/h
 import { createPointerTargetModule, type PointerTargetModule } from "@/stream-ext/pointerTargets";
 import { createHandPresenceExtension, createRaisedHandExtension } from "@/stream-ext/raisedHand";
 import { createHoverTipsModule } from "@/stream-ext/hoverTips";
+import { createClipAxisExtension } from "@/stream-ext/clipAxis";
 import { createViewScaleExtension } from "@/stream-ext/viewScale";
 import { createTextScaleExtension } from "@/stream-ext/textScale";
 
@@ -46,6 +47,7 @@ export function buildStreamExtensions(options: StreamExtensionsOptions): StreamE
   if (install("raiseHandCards")) extensions.push(settingGated(createRaisedHandExtension(), enabled("raiseHandCards")));
   if (install("uiScaling")) {
     extensions.push(settingGated(createViewScaleExtension({ designWidth: options.presentationWidth }), enabled("uiScaling")));
+    extensions.push(settingGated(createClipAxisExtension(), enabled("uiScaling")));
   }
   if (install("raiseHeldCard")) {
     const held = createHeldCardExtension();

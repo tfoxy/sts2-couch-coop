@@ -113,13 +113,14 @@ export function createViewScaleExtension(options: ViewScaleOptions): RenderStrea
       }
 
       for (const [id, d] of desired) {
-        // Measure the widget's whole visual bounds, not just its own draw commands: a combat pile
-        // button draws its sprite in a child (the root has no own commands), and the old mirror's
-        // node rect was the DOM element's bounding box, which includes descendants. The subtree rect
-        // is the own-command rect's superset, so this reads the pile / map point / deck-view widgets
-        // the same way the mirror did. `isGroup` only differs in the mirror's DOM block scaling,
-        // which has no stream twin: every override here is one rigid subtree transform.
-        const box = f.query.subtreeRect(id) ?? f.query.rect(id);
+        // Match the old mirror's Control box (designAabbOf(global, localRect)), not the
+        // subtree's overhanging art or highlights. Undrawn Control roots such as piles still
+        // have this box; non-Control items and zero-sized Controls use their painted bounds.
+        // Only the mirror's DOM block scaling distinguishes `isGroup`; each stream override
+        // is one rigid subtree.
+        const control = f.query.controlRect(id);
+        const box = control && control.w > 0 && control.h > 0
+          ? control : (f.query.subtreeRect(id) ?? f.query.rect(id));
         if (box === null || boxFullyOutsideDesign(box, options.designWidth, DESIGN_HEIGHT)) {
           f.overrides.clear(id);
           continue;

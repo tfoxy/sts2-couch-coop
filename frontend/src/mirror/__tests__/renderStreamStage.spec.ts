@@ -530,7 +530,7 @@ describe("RenderStreamStage", () => {
     mirrorSettings.uiScaling = true;
     mountStage();
     expect((clients[0].options.extensions ?? []).map((e) => e.id))
-      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.hoverTips", "couchcoop.textScale"]);
+      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.hoverTips", "couchcoop.textScale"]);
   });
 
   it("attaches the held-card and confirm-tap modules on the viewer's saved choices", () => {
@@ -748,7 +748,7 @@ describe("RenderStreamStage", () => {
       const original = clients[0];
       const canvas = original.options.canvas;
       expect(ids(original)).toEqual([
-        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
+        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
       ]);
       for (const key of ["raiseHandCards", "uiScaling", "raiseHeldCard", "confirmTap"] as const) {
         for (const enabled of [true, false, true]) {
@@ -784,7 +784,7 @@ describe("RenderStreamStage", () => {
       expect(clients).toHaveLength(2);
       expect(clients[1].options.endpoint).toEqual(wide);
       expect(clients[1].options.canvas.width).toBe(2340);
-      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.hoverTips", "couchcoop.textScale"]);
+      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.hoverTips", "couchcoop.textScale"]);
     });
 
     it("a suspended stage remounts nothing, and builds from the current settings when it wakes", async () => {
@@ -818,7 +818,7 @@ describe("RenderStreamStage", () => {
       seq: 1, now: 0, overrides: null as never, requestRedraw: () => {},
       query: {
         parent: (id) => (id === 20 ? 10 : null), children: () => new Uint32Array(0), transform: () => null,
-        rect: (id) => (id === 10 ? rect : null), subtreeRect: () => null, visible: () => true, meta: () => null,
+        rect: (id) => (id === 10 ? rect : null), controlRect: () => null, subtreeRect: () => null, visible: () => true, meta: () => null,
         hitTest: () => null
       }
     });
@@ -1175,7 +1175,7 @@ describe("stream hand-raise button", () => {
       children: () => new Uint32Array(),
       transform: (id) => [1, 0, 0, 1, 0, id === 3 ? 941 : 1000],
       rect: (id) => id === 90 ? { x: 0, y: 0, w: 300, h: 200 } : { x: 400, y: 900, w: 100, h: 120 },
-      subtreeRect: () => null, visible: (id) => id === 90 ? overlayVisible : visible,
+      controlRect: () => null, subtreeRect: () => null, visible: (id) => id === 90 ? overlayVisible : visible,
       meta: (id) => rows.find((row) => row.id === id) ?? null, hitTest: () => covered ? 99 : 3
     };
     const offsets = new Map<number, number>();

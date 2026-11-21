@@ -31,6 +31,7 @@ function query(parents: Record<number, number | null>, metas: Record<number, Ite
     children: () => new Uint32Array(0),
     transform: () => [1, 0, 0, 1, 0, 0],
     rect: () => null,
+    controlRect: () => null,
     subtreeRect: () => null,
     visible: () => true,
     meta: (id) => metas[id] ?? null,

@@ -69,11 +69,14 @@ export function streamTextPivot(box: Rect, pivot: TextPivot, transform: Affine2D
   return { x, y: box.y + box.h / 2 };
 }
 
-function rewardTextArea(key: string, parent: number | null, query: ItemQuery): Rect | null {
+function rewardTextArea(key: string, labelId: number, parent: number | null, query: ItemQuery): Rect | null {
   if (parent === null || (key !== "rewards-screen-label" && key !== "reward-button-label")) return null;
   const xf = query.transform(parent);
   if (!xf || xf[0] <= 0 || xf[3] <= 0 || Math.abs(xf[1]) > 1e-6 || Math.abs(xf[2]) > 1e-6) return null;
-  let area = query.rect(parent);
+  // Centre inside the Label's laid-out box, independent of ink width and overhanging row art.
+  // A zero-sized box measures nothing, so it takes the painted-bounds fallback below.
+  const control = query.controlRect(labelId);
+  let area = control && control.w > 0 && control.h > 0 ? control : query.rect(parent);
   if (!area) {
     // An undrawn container has no command rect. Its origin and the row's painted bounds
     // still delimit the space to the right of the icon, without using a measured ink width.
@@ -133,7 +136,7 @@ export function createTextScaleExtension(): RenderStreamExtension {
         // Ancestor overrides act first, including input-driven movement on redraws without
         // a transaction. Keep the anchor fixed where those overrides now display it.
         const parent = frame.query.parent(id);
-        const area = rewardTextArea(scale.key, parent, frame.query);
+        const area = rewardTextArea(scale.key, id, parent, frame.query);
         // Cap reward enlargement uniformly; labels wider than the area at game size
         // overflow to the right so their left edge stays clear of the icon.
         const s = area ? Math.min(scale.factor, Math.max(1, area.w / box.w)) : scale.factor;
