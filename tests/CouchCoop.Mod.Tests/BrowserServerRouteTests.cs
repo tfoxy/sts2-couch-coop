@@ -864,6 +864,8 @@ if (args is ["seat-timeout", ..])
 // is what makes a static-background change cheap to verify on its own.
 if (args is ["static-bg", ..])
 {
+    SeatStillSourceTests.Run();
+    SeatStillNodeTests.Run();
     await StaticBackgroundProviderTests.RunAsync();
     await StaticBackgroundEventsTests.RunAsync();
     StaticBackgroundLayerProbeTests.Run();
@@ -1316,6 +1318,8 @@ QrRasterTests.Run();
 HostTransportAlertTests.Run();
 // Stage-A static background: the /bg/ image producer (grammar, single-flight, fallback chain, headless guard)
 // and the tracker's publish/change contract. The route + envelope halves ride BrowserServerRouteTests below.
+SeatStillSourceTests.Run();
+SeatStillNodeTests.Run();
 await StaticBackgroundProviderTests.RunAsync();
 // …and the EVENT family (/bg/events/<id>): grammar, the single literal-scene rung on the shared belt, the
 // digest-less contract, and the tracker's event-backdrop BFS locate.
@@ -2759,6 +2763,52 @@ internal sealed partial class BrowserServerRouteTests
             tracker.PublishForTest(state);
             Expect(await WaitForAsync(() => Hidden("room-1")), "stream demand hides without any ready vote");
             Expect(!server.BgSkipStateForTest().BgSkipDesired, "stream demand never engages the old walk skip");
+            var sourceChecks = 0;
+            async Task Source(object message, string? expected, string reason, string? expectedFor = "room-1")
+            {
+                await Send(first, message);
+                await Send(first, new { type = "ping" });
+                _ = await ReadNextWsMessageOfTypeAsync(first, "pong");
+                Expect(tracker.StreamStillSourceForTest == expected, reason);
+                Expect(tracker.StreamStillSourceIdentityForTest == (expected is null ? null : expectedFor),
+                    reason + " (descriptor identity)");
+                sourceChecks += 2;
+            }
+            await Source(new { type = "settings", streamStaticBgSource = "/bg/host?frame=host&v=1", streamStaticBgSourceFor = "room-1" },
+                "/bg/host?frame=host&v=1", "the admitted host source reaches the tracker without a ready field");
+            await Source(new { type = "settings", streamStaticBgSource = "/bg/host?frame=new&v=2" },
+                "/bg/host?frame=new&v=2", "source changes recompute even while demand stays on");
+            await Source(new { type = "settings", tweenReplay = false },
+                "/bg/host?frame=new&v=2", "absent source preserves the connection value");
+            foreach (var invalid in new[] { "https://other/bg/a", "/other/a", "/bg/a\\b", "/bg/a#fragment", "/bg/" + new string('x', 1021) })
+            {
+                await Source(new { type = "settings", streamStaticBgSource = invalid }, null, "invalid sources fail closed");
+                await Source(new { type = "settings", streamStaticBgSource = "/bg/valid" }, "/bg/valid", "a new source replaces an invalid one");
+            }
+            await Source(new { type = "settings", streamStaticBgSource = "" }, null, "empty retracts the source");
+            await Source(new { type = "settings", streamStaticBgSource = "/bg/valid" }, "/bg/valid", "the source returns");
+            await Source(new { type = "settings", streamStaticBg = false }, null, "turning demand off clears the source");
+            await Source(new { type = "settings", streamStaticBg = true }, null, "turning demand back on cannot reuse a cleared source");
+            await Source(new { type = "settings", streamStaticBgSource = "/bg/host?frame=host&v=1", streamStaticBgSourceFor = "room-1" },
+                "/bg/host?frame=host&v=1", "an admitted source returns on existing demand");
+            await Source(new { type = "settings", streamStaticBgSourceFor = "room-2" },
+                "/bg/host?frame=host&v=1", "identity-only changes propagate atomically with the stored source", "room-2");
+            await Source(new { type = "settings", tweenReplay = false },
+                "/bg/host?frame=host&v=1", "absent identity preserves the pair", "room-2");
+            foreach (var invalid in new[] { "", new string('x', 1025) })
+            {
+                await Source(new { type = "settings", streamStaticBgSourceFor = invalid },
+                    "/bg/host?frame=host&v=1", "invalid identity fails closed", null);
+            }
+            await Source(new { type = "settings", streamStaticBgSourceFor = "room-1" },
+                "/bg/host?frame=host&v=1", "matching identity returns without changing demand");
+            await Source(new { type = "settings", streamStaticBg = false }, null,
+                "demand loss forgets both fields");
+            await Source(new { type = "settings", streamStaticBg = true, streamStaticBgSource = "/bg/host" },
+                "/bg/host", "fresh demand cannot reuse an old descriptor identity", null);
+            Expect(Hidden("room-1"), "source changes keep the same hide identity");
+            sourceChecks++;
+            Console.WriteLine($"stream still source socket updates: ok ({sourceChecks} checks)");
             using (var liveMirror = new ClientWebSocket())
             {
                 await liveMirror.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws",
@@ -2840,7 +2890,8 @@ internal sealed partial class BrowserServerRouteTests
             Expect(await WaitForAsync(() => Hidden("room-2")), "toggling back on hides without a fresh ready vote");
             await CloseWebSocketSilentlyAsync(first);
             Expect(await WaitForAsync(() => Hidden(null)), "the last stream page disconnect restores");
-            Console.WriteLine("stream background socket lifecycle: ok (25 checks)");
+            Expect(tracker.StreamStillSourceForTest is null, "disconnect removes the last admitted source");
+            Console.WriteLine("stream background socket lifecycle: ok (26 checks)");
         }
         finally { CouchCoopStaticBackgroundTracker.ResetForTest(); }
     }

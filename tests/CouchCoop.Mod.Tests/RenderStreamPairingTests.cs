@@ -159,6 +159,7 @@ internal static class RenderStreamPairingTests
         var expected = new Dictionary<string, string>
         {
             ["COUCHCOOP_STREAMING_SEAT"] = "1",
+            ["COUCHCOOP_HOST_BROWSER_ORIGIN"] = "",
             ["COUCHCOOP_RENDER_CAPTURE_EXTENSION"] = Extension,
             ["GRC_MODE"] = "standby",
             ["GRC_HEADLESS_TEXTURE_RELEASE"] = "always",

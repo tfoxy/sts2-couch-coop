@@ -587,12 +587,12 @@ function seedHostPerf(c: MirrorClient): void {
 // any other repeat — the host applies each field verbatim, so a duplicate is only wire noise, but a duplicate
 // arriving while the game is mid-freeze-walk is noise worth not making.)
 const lastSettingsSent = new WeakMap<MirrorClient, string>();
-const streamStaticBgReady = ref("");
 function pushServerSettings(c: MirrorClient): boolean {
   // A direct-view grant requests watching before it authorizes host mutations. Do not consume the
   // initial push (or its deduplication entry) until the watch acknowledgement permits it.
   if (c === hostClient && (!c.watching || !c.hostAccess.allowed)) return false;
-  const payload = serverSettingsPayload(mirrorSettings, streamStaticBgReady.value);
+  const payload = serverSettingsPayload(mirrorSettings, stageBackground.value?.url,
+    streamStaticBgSourceFor.value);
   // Omit the new vote on the faithful path; retract it explicitly after this socket opted in.
   if (!payload.streamStaticParticles && streamStaticParticlesDeclared.has(c)) payload.streamStaticParticles = false;
   const encoded = JSON.stringify(payload);
@@ -1095,6 +1095,7 @@ const mirrorSurface = shallowRef<HTMLElement | null>(null);
 const hostSelfStream = computed(() => hostSession.value?.rendererState !== undefined);
 const selfStreamingView = computed(() => directView.value && hostSelfStream.value);
 const rendererSession = computed(() => selfStreamingView.value ? hostSession.value : joined.value ? joinSession.value : null);
+const streamStaticBgSourceFor = computed(() => staticBackgroundIdentity(rendererSession.value?.staticBackground));
 const viewRendererState = computed(() => (selfStreamingView.value ? hostSession.value : joinSession.value)?.rendererState);
 watch([directView, hostSelfStream], ([direct, selfStream]) => {
   renderStreamContext.directView = direct;
@@ -1452,7 +1453,8 @@ watch(
 // Watching the value list fires exactly when one of the fields changes; the client no-ops if the socket isn't
 // open yet (values are held; the on-connect push in makeClient carries them once connected).
 watch(
-  () => [mirrorSettings.runtimeRenderer, mirrorSettings.streamStaticBg, mirrorSettings.streamParticleMode, streamStaticBgReady.value,
+  () => [mirrorSettings.runtimeRenderer, mirrorSettings.streamStaticBg, mirrorSettings.streamParticleMode, stageBackground.value?.url,
+    streamStaticBgSourceFor.value,
     ...SERVER_SETTING_KEYS.map((key) => key === "staticBgEnabled"
     ? staticBgWireValue(mirrorSettings) : mirrorSettings[key])],
   () => {
@@ -1991,9 +1993,6 @@ onBeforeUnmount(() => {
       <RenderStreamStage
         :endpoint="renderStreamEndpoint"
         :core="renderStreamCore"
-        :static-background="stageBackground"
-        :static-background-id="staticBackgroundIdentity(rendererSession?.staticBackground)"
-        :static-background-frame="rendererSession?.staticBackground?.combatFrame"
         :send-input="viewControls.sendInput"
         :input-enabled="renderStreamContext.firstFrame && !hostAccessBlocked && viewRendererState?.presentationReady !== false"
         :presentation-epoch="viewRendererState?.presentationEpoch"
@@ -2005,7 +2004,6 @@ onBeforeUnmount(() => {
         @first-frame="streamCallbacks.firstFrame"
         @refresh-endpoint="onRenderStreamRefresh"
         @open-ios-install="iosInstallOpenTick++"
-        @static-bg-ready="streamStaticBgReady = $event"
       />
     </div>
     <!-- Pre-join screen: mirror player picker (host badged [Host]) + a name field only in MP

@@ -111,11 +111,14 @@ public sealed class CouchCoopStaticBackgroundTracker
     public CouchCoopStaticBackgroundTracker(
         Action? onPublishedChanged = null,
         Action<string>? log = null,
-        Action<CouchCoopStaticBackgroundState>? warmVariant = null)
+        Action<CouchCoopStaticBackgroundState>? warmVariant = null,
+        Func<CouchCoopStaticBackgroundState, Task<CouchCoopStaticBackgroundResult>>? renderStill = null)
     {
         _onPublishedChanged = onPublishedChanged;
         _log = log ?? CouchCoopLog.Stderr;
         _warmVariant = warmVariant;
+        _stillSource = new CouchCoopSeatStillSource(renderStill ?? (_ => Task.FromResult(
+            CouchCoopStaticBackgroundResult.Failure(new CouchCoopAssetHttpError("unavailable", "No still provider.")))));
         _scheduler = new CouchCoopStaticBackgroundProbeScheduler(
             ScheduleProbeOnMainThread,
             ArmFollowUpTimerOnMainThread,
@@ -143,12 +146,28 @@ public sealed class CouchCoopStaticBackgroundTracker
     private readonly CharacterSelectProbeSubscription _characterSelectSubscription;
     private ulong _characterSelectScreenInstanceId;
     private readonly StreamBackgroundHideSet _streamBackgroundHide = new();
+    private readonly CouchCoopSeatStillSource _stillSource;
+    private readonly StreamStillLifetime _stillLifetime = new();
+    private ulong _stillNodeId;
+    private ulong _stillViewportId;
+    private SeatStillAdmission? _streamStillSource;
+    private readonly SeatStillSelection _stillSelection = new();
+    private CouchCoopStaticBackgroundState? _stillState;
+
 
     public void SetDesiredStreamHide(string? descriptorId)
     {
         if (string.Equals(Volatile.Read(ref _desiredStreamHide), descriptorId, StringComparison.Ordinal)) return;
         Volatile.Write(ref _desiredStreamHide, descriptorId);
         if (CouchCoopMod.EngineAvailable) _scheduler.TrySchedule("stream-background");
+    }
+
+    public void SetStreamStillSource(string? source, string? sourceFor)
+    {
+        var admission = source is null && sourceFor is null ? null : new SeatStillAdmission(source, sourceFor);
+        if (Volatile.Read(ref _streamStillSource) == admission) return;
+        Volatile.Write(ref _streamStillSource, admission);
+        if (CouchCoopMod.EngineAvailable) _scheduler.TrySchedule("stream still source");
     }
 
     public void SetCharacterSelectProbeDesired(bool desired)
@@ -169,6 +188,8 @@ public sealed class CouchCoopStaticBackgroundTracker
     }
 
     internal string? DesiredStreamHideForTest => Volatile.Read(ref _desiredStreamHide);
+    internal string? StreamStillSourceForTest => Volatile.Read(ref _streamStillSource)?.Path;
+    internal string? StreamStillSourceIdentityForTest => Volatile.Read(ref _streamStillSource)?.SourceFor;
 
     internal static bool MatchesStreamBackground(string? desiredId, string? currentId)
         => !string.IsNullOrEmpty(desiredId) && string.Equals(desiredId, currentId, StringComparison.Ordinal);
@@ -337,7 +358,7 @@ public sealed class CouchCoopStaticBackgroundTracker
             characterSelect ? bgRoot : null);
         ApplyStreamSkip(characterSelect ? null : bgRoot);
         PublishAndNotify(next);
-        ApplyStreamBackgroundHide(bgRoot, StreamHideIdentity(next), characterSelect);
+        ApplyStreamBackgroundHide(bgRoot, next, characterSelect);
     }
 
     private static CouchCoopStaticBackgroundState? LocateCharacterSelectBackground(Node root, out Node? bgRoot)
@@ -466,13 +487,31 @@ public sealed class CouchCoopStaticBackgroundTracker
     }
 
     // Main thread only. Retire the previous root before considering a new room's descriptor.
-    private void ApplyStreamBackgroundHide(Node? bgRoot, string? descriptorId, bool characterSelect)
+    private void ApplyStreamBackgroundHide(Node? bgRoot, CouchCoopStaticBackgroundState? state, bool characterSelect)
     {
+        var descriptorId = StreamHideIdentity(state);
         var desired = MatchesStreamBackground(Volatile.Read(ref _desiredStreamHide), descriptorId);
+        // The still is best effort; the hide below is not. A failure here must never leave the live root showing.
+        try
+        {
+            _stillLifetime.Update(desired, bgRoot is CanvasItem ? bgRoot.GetInstanceId() : 0, state,
+                id => GodotObject.InstanceFromId(id) is CanvasItem item && item.IsInsideTree(),
+                () => InsertStreamStill((CanvasItem)bgRoot!, state!), RetireStreamStill);
+            if (_stillLifetime.RootId != 0)
+            {
+                RefreshStreamStill(state!);
+                UpdateStreamStillPlacement(state!);
+            }
+        }
+        catch (Exception exception)
+        {
+            _log($"stream-bg still update failed: {exception.GetType().Name}: {exception.Message}");
+        }
         var predecessors = desired && characterSelect && bgRoot is not null
             ? FindOccludedPredecessors<Node>(bgRoot, node => node.GetParent(),
                 node => [.. node.GetChildren()], node => node.SceneFilePath, node => node is Control,
-                node => node is CanvasItem item && IsOccludedPredecessor(item.ZIndex, item.ZAsRelative, item.TopLevel))
+                node => node.GetInstanceId() != _stillNodeId && node is CanvasItem item
+                    && IsOccludedPredecessor(item.ZIndex, item.ZAsRelative, item.TopLevel))
                 .Select(node => node.GetInstanceId()).ToArray()
             : [];
         _streamBackgroundHide.Apply(desired, bgRoot is CanvasItem ? bgRoot.GetInstanceId() : 0,
@@ -484,6 +523,97 @@ public sealed class CouchCoopStaticBackgroundTracker
                 item.Visible = visible;
                 item.ProcessMode = processMode;
             });
+    }
+
+    private void OnStreamBackgroundChanged() => _scheduler.TrySchedule("stream background visibility");
+
+    private void InsertStreamStill(CanvasItem root, CouchCoopStaticBackgroundState state)
+    {
+        var parent = root.GetParent();
+        var node = new Node2D { Name = "CouchCoopSeatStill", ZIndex = root.ZIndex, ZAsRelative = root.ZAsRelative };
+        CouchCoopStreamSkip.Stamp(node);
+        var placeholder = new ColorRect
+        {
+            Name = "Placeholder", Color = new Color("#181818"), MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        CouchCoopStreamSkip.Stamp(placeholder);
+        node.AddChild(placeholder);
+        var sprite = new Sprite2D { Name = "Still", Centered = false };
+        CouchCoopStreamSkip.Stamp(sprite);
+        node.AddChild(sprite);
+        parent.AddChild(node);
+        parent.MoveChild(node, root.GetIndex());
+        _stillNodeId = node.GetInstanceId();
+        root.VisibilityChanged += OnStreamBackgroundChanged;
+        root.TreeExiting += OnStreamBackgroundChanged;
+        var viewport = root.GetViewport();
+        _stillViewportId = viewport.GetInstanceId();
+        viewport.SizeChanged += OnStreamBackgroundChanged;
+        _log($"stream-bg engaged id={state.Id} reason=static demand");
+    }
+
+    private void RefreshStreamStill(CouchCoopStaticBackgroundState state)
+    {
+        _stillState = state;
+        var source = Volatile.Read(ref _streamStillSource);
+        if (!_stillSelection.Update(state.Id, source)) return;
+        // Detach the old texture before the source retires it. Loading and failure keep the same dark node.
+        if (GodotObject.InstanceFromId(_stillNodeId) is Node2D node)
+            node.GetNode<Sprite2D>("Still").Texture = null;
+        _stillSource.Retire();
+        if (_stillSelection.Source is not { } path) return;
+        var generation = _stillLifetime.Generation;
+        var requestGeneration = _stillSelection.Generation;
+        _stillSource.Request(state, path, texture =>
+        {
+            if (!_stillLifetime.IsCurrent(generation)
+                || !_stillSelection.IsCurrent(requestGeneration, Published?.Id, Volatile.Read(ref _streamStillSource))
+                || !MatchesStreamBackground(Volatile.Read(ref _desiredStreamHide), StreamHideIdentity(state))
+                || GodotObject.InstanceFromId(_stillLifetime.RootId) is not CanvasItem live || !live.IsInsideTree()
+                || GodotObject.InstanceFromId(_stillNodeId) is not Node2D still) return;
+            if (texture is not null) still.GetNode<Sprite2D>("Still").Texture = texture;
+            UpdateStreamStillPlacement(_stillState!);
+        });
+    }
+
+    private void UpdateStreamStillPlacement(CouchCoopStaticBackgroundState state)
+    {
+        if (GodotObject.InstanceFromId(_stillNodeId) is not Node2D node) return;
+        // Cancel the sibling parent's transform without TopLevel, preserving the background's draw order.
+        node.Transform = Transform2D.Identity;
+        node.Transform = node.GetGlobalTransform().AffineInverse();
+        var viewport = node.GetViewportRect().Size;
+        node.GetNode<ColorRect>("Placeholder").Size = viewport;
+        var family = TryResolveVariantTarget(state)?.Family ?? StaticBackgroundFamily.Events;
+        var parentGlobal = node.GetGlobalTransform();
+        var transform = CouchCoopSeatStillPlacement.LocalTransform(family, state.CombatFrame, viewport.X,
+            new System.Numerics.Matrix3x2(parentGlobal.X.X, parentGlobal.X.Y, parentGlobal.Y.X, parentGlobal.Y.Y,
+                parentGlobal.Origin.X, parentGlobal.Origin.Y));
+        node.GetNode<Sprite2D>("Still").Transform = new Transform2D(
+            new Vector2(transform.M11, transform.M12), new Vector2(transform.M21, transform.M22),
+            new Vector2(transform.M31, transform.M32));
+    }
+
+    private void RetireStreamStill(string reason)
+    {
+        if (GodotObject.InstanceFromId(_stillLifetime.RootId) is CanvasItem root)
+        {
+            root.VisibilityChanged -= OnStreamBackgroundChanged;
+            root.TreeExiting -= OnStreamBackgroundChanged;
+        }
+        if (GodotObject.InstanceFromId(_stillViewportId) is Viewport viewport)
+            viewport.SizeChanged -= OnStreamBackgroundChanged;
+        if (GodotObject.InstanceFromId(_stillNodeId) is Node2D node)
+        {
+            node.GetNode<Sprite2D>("Still").Texture = null;
+            node.Visible = false;
+            node.QueueFree();
+        }
+        _stillNodeId = _stillViewportId = 0;
+        _stillSelection.Retire();
+        _stillState = null;
+        _stillSource.Retire();
+        _log($"stream-bg retired id={_stillLifetime.Descriptor} reason={reason}");
     }
 
     // Instance ids keep freed screens out of the saved state. All hides share the mounted root's lifetime.

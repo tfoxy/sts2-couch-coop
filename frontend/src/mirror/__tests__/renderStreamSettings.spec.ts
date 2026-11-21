@@ -114,7 +114,7 @@ describe("mirrorSettings — the renderer keys", () => {
     settings.runtimeRenderer = "stream";
     expect(serverSettingsPayload(settings)).toEqual({
       refreshRate: 40, freezeParticles: true, freezeSpines: true, freezeDecor: true, tweenReplay: false,
-      staticBg: false, trailDrive: true, streamFreezeSpines: false, streamStaticBgReady: "", streamStaticBg: false
+      staticBg: false, trailDrive: true, streamFreezeSpines: false, streamStaticBg: false, streamStaticBgSource: "", streamStaticBgSourceFor: ""
     });
     expect(staticBgWireValue(settings)).toBe(false);
     // The store itself is untouched, so switching back sends the instance's own values again.
@@ -124,17 +124,34 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(serverSettingsPayload(settings)).toEqual(old);
   });
 
-  it("sends loaded readiness only for the stream opt-in, independent of the old mirror vote", () => {
+  it("sends stream background demand without page readiness", () => {
     const settings = createMirrorSettings(undefined, "", { storage: null });
-    const id = "/bg/underdocks?layers=current&v=1";
-    expect(serverSettingsPayload(settings, id)).not.toHaveProperty("streamStaticBgReady");
     settings.runtimeRenderer = "stream";
-    expect(serverSettingsPayload(settings, id).streamStaticBgReady).toBe("");
+    for (const enabled of [true, false]) {
+      settings.streamStaticBg = enabled;
+      expect(serverSettingsPayload(settings)).toMatchObject({ streamStaticBg: enabled, staticBg: false });
+      expect(serverSettingsPayload(settings)).not.toHaveProperty("streamStaticBgReady");
+    }
+  });
+
+  it("sends only the admitted source path and query while stream stills are enabled", () => {
+    const settings = createMirrorSettings(undefined, "", { storage: memoryStorage({}) });
+    settings.runtimeRenderer = "stream";
     settings.streamStaticBg = true;
-    expect(serverSettingsPayload(settings).streamStaticBgReady).toBe("");
-    expect(serverSettingsPayload(settings, id)).toMatchObject({ streamStaticBgReady: id, staticBg: false });
+    const source = "https://host.example/bg/host?frame=1,2,3&v=2#ignored";
+    expect(serverSettingsPayload(settings, source, "seat:id")).toMatchObject({ streamStaticBgSource: "/bg/host?frame=1,2,3&v=2", streamStaticBgSourceFor: "seat:id" });
+    expect(serverSettingsPayload(settings, null)).toMatchObject({ streamStaticBgSource: "", streamStaticBgSourceFor: "" });
+    globalThis.__couchCoopHostBase = "https://relay.example/~h/abcdefghijklmnopqrstuv";
+    try {
+      expect(serverSettingsPayload(settings, "https://relay.example/~h/abcdefghijklmnopqrstuv/bg/host?v=1"))
+        .toMatchObject({ streamStaticBgSource: "/bg/host?v=1" });
+    } finally {
+      delete globalThis.__couchCoopHostBase;
+    }
     settings.streamStaticBg = false;
-    expect(serverSettingsPayload(settings, id).streamStaticBgReady).toBe("");
+    expect(serverSettingsPayload(settings, source, "seat:id")).toMatchObject({ streamStaticBgSource: "", streamStaticBgSourceFor: "" });
+    settings.runtimeRenderer = "mirror";
+    expect(serverSettingsPayload(settings, source, "seat:id")).not.toHaveProperty("streamStaticBgSource");
   });
 
   it("leaves Widescreen stretch the viewer's: it sets the streaming seat's width (PRES-A)", () => {

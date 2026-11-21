@@ -48,6 +48,7 @@ public sealed class CouchCoopWebSocketConnection
     private volatile bool _wantsStreamStaticBg;
     private volatile bool _wantsStreamStaticParticles;
     private string? _streamStaticBgReady;
+    private SeatStillAdmission? _streamStaticBgSource;
     // A socket cannot be written concurrently; this gate serializes the scene fan-out (background thread)
     // against the connection's own replies (session / action-result).
     private readonly SemaphoreSlim _sendGate = new(1, 1);
@@ -278,6 +279,7 @@ public sealed class CouchCoopWebSocketConnection
     public bool WantsStreamStaticBg => !_closing && _wantsStreamStaticBg;
     public bool WantsStreamStaticParticles => !_closing && _wantsStreamStaticParticles;
     public string? StreamStaticBgReady => Volatile.Read(ref _streamStaticBgReady);
+    internal SeatStillAdmission? StreamStaticBgAdmission => Volatile.Read(ref _streamStaticBgSource);
     public bool IsRenderStreamPage => !_closing && IsSelfRenderStreamPage
         && _rendererSwapHost?.WantsRenderStream(RendererPageId) == true
         && (PresentationHost is not { } host || host.IsPresentationPageOwner(RendererPageId, _id.ToString("N")));
@@ -445,6 +447,7 @@ public sealed class CouchCoopWebSocketConnection
         finally
         {
             _closing = true;
+            Volatile.Write(ref _streamStaticBgSource, null);
             if (_presentationClaimed)
             {
                 _presentationClaimed = false;
@@ -1212,6 +1215,20 @@ public sealed class CouchCoopWebSocketConnection
                             Volatile.Write(ref _streamStaticBgReady, ready);
                             streamChanged = true;
                         }
+                        if (settings.StreamStaticBgSource is not null || settings.StreamStaticBgSourceFor is not null || !_wantsStreamStaticBg)
+                        {
+                            var previous = StreamStaticBgAdmission;
+                            var admission = _wantsStreamStaticBg ? new SeatStillAdmission(
+                                settings.StreamStaticBgSource is null ? previous?.Path
+                                    : CouchCoopSeatStillSource.ValidSourcePath(settings.StreamStaticBgSource),
+                                settings.StreamStaticBgSourceFor is null ? previous?.SourceFor
+                                    : CouchCoopSeatStillSource.ValidSourceFor(settings.StreamStaticBgSourceFor)) : null;
+                            if (admission != previous)
+                            {
+                                Volatile.Write(ref _streamStaticBgSource, admission);
+                                streamChanged = true;
+                            }
+                        }
                         if (!_wantsStreamStaticBg) Volatile.Write(ref _streamStaticBgReady, null);
                         if (streamChanged) _onStaticBgChanged?.Invoke(_wantsStaticBg);
 
@@ -1386,6 +1403,7 @@ public sealed class CouchCoopWebSocketConnection
             _wantsStreamStaticParticles = false;
             _wantsStreamStaticBg = false;
             Volatile.Write(ref _streamStaticBgReady, null);
+            Volatile.Write(ref _streamStaticBgSource, null);
         }
         if (PresentationHost is { } presentation)
             presentation.UpdatePresentationPage(RendererPageId, _id.ToString("N"), _watchRequested, stream, aspect);

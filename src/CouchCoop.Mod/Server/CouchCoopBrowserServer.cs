@@ -240,7 +240,8 @@ public sealed partial class CouchCoopBrowserServer(
                     ResendSessions();
                 }),
                 log: _log,
-                warmVariant: WarmPublishedStaticBackground);
+                warmVariant: WarmPublishedStaticBackground,
+                renderStill: RenderSeatStillAsync);
             return Interlocked.CompareExchange(ref _staticBgTracker, created, null) ?? created;
         }
     }
@@ -573,6 +574,12 @@ public sealed partial class CouchCoopBrowserServer(
         var streamHideNeeded = BackgroundSceneFamilies.TryParseCharacterSelectBackgroundId(published?.ScenePath) is not null
             ? sceneViewers : needed;
         var streamHide = ComputeStreamBgHideDesired(!_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", descriptorId, streamHideNeeded, streamPages);
+        // Several pages can share a seat: the first source admitted for the published descriptor wins, in
+        // connection-id order.
+        var stillSource = SeatStillAdmission.Select(_connections.OrderBy(pair => pair.Key).Select(pair => pair.Value)
+            .Where(connection => connection.IsRenderStreamPage && connection.WantsStreamStaticBg)
+            .Select(connection => connection.StreamStaticBgAdmission), published?.Id);
+        _staticBgTracker?.SetStreamStillSource(stillSource?.Path, stillSource?.SourceFor);
         _staticBgTracker?.SetDesiredStreamHide(streamHide ? descriptorId : null);
         _streamParticleFreezeDesired = ComputeStreamParticleFreezeDesired(
             !_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", particlePages);
@@ -775,6 +782,16 @@ public sealed partial class CouchCoopBrowserServer(
     // resolves a game type by reflection, which a test host must never reach.
     private static IDisposable? SubscribeGameScreenUpdated(Action handler)
         => GameScreenContext.SubscribeUpdated(handler);
+
+    // Self-streaming hosts render through the same provider as the background route.
+    private Task<CouchCoopStaticBackgroundResult> RenderSeatStillAsync(CouchCoopStaticBackgroundState state)
+    {
+        if (envelopeFactory is null || CouchCoopStaticBackgroundTracker.TryResolveVariantTarget(state) is not { } target)
+            return Task.FromResult(CouchCoopStaticBackgroundResult.Failure(
+                new CouchCoopAssetHttpError("unavailable", "No still provider.")));
+        return StaticBackgroundProvider(envelopeFactory).GetImageAsync(target.Family, target.Id,
+            state.Digest, state.Digest is null ? null : state.LayerPaths, eventFrame: state.EventFrame);
+    }
 
     /// <summary>
     /// WARM-AT-PUBLISH (the tracker's <c>warmVariant</c> callback): render the just-published QUALIFIED variant

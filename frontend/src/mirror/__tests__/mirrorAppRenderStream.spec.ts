@@ -225,94 +225,104 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(host.ofType("settings")).toHaveLength(1);
   });
 
-  it("shows the seat's character-select pick independently of host updates", async () => {
+  it("sends one settings message per static-background toggle without rebuilding the client", async () => {
     streamAvailable();
-    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
-    const character = (id: string) => ({
-      scenePath: `res://scenes/screens/char_select/char_select_bg_${id}.tscn`,
-      url: `/bg/char-select/${id}?v=1`, id: `seat:42:${id}`
-    });
-    const first = character("silent");
-    const seat = await joinSeat({ staticBackground: first });
-    const host = MockWebSocket.instances[0];
-    const image = () => app!.get('[data-testid="stream-static-bg-image"]');
-    expect(image().attributes("src")).toBe(first.url);
-    await image().trigger("load");
-    await settle();
-    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgReady: first.id });
-
-    host.emit(sessionMessage({ staticBackground: character("ironclad") }));
-    await settle();
-    expect(image().attributes("src")).toBe(first.url);
-    const pick = character("random_character");
-    seat.emit(sessionMessage({ staticBackground: pick }));
-    await settle();
-    expect(image().attributes("src")).toBe(pick.url);
-    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgReady: "" });
-    await image().trigger("error");
-    await settle();
-    expect((image().element.parentElement as HTMLElement).style.visibility).toBe("hidden");
-    expect(app!.get('[data-testid="render-stream-background-stage"]').attributes("style"))
-      .toContain("background-color: rgb(24, 24, 24)");
-
-    seat.emit(sessionMessage({ staticBackground: null }));
-    await settle();
-    expect(app!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: false });
+    const seat = await joinSeat();
+    const created = fake.clients.length;
+    expect(created).toBe(1);
+    for (const enabled of [true, false]) {
+      seat.sent.length = 0;
+      mirrorSettings.streamStaticBg = enabled;
+      await settle();
+      expect(seat.ofType("settings")).toEqual([
+        expect.objectContaining({ streamStaticBg: enabled })
+      ]);
+      expect(seat.ofType("settings")[0]).not.toHaveProperty("streamStaticBgReady");
+      expect(fake.clients).toHaveLength(created);
+      expect(app!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+    }
   });
 
-  it("sends the seat descriptor vote only after its host still loads and retracts it on change/error/off", async () => {
+  it("sends the admitted host source and keeps it latched while the host moves ahead", async () => {
     streamAvailable();
     Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
     const scenePath = "res://scenes/backgrounds/underdocks/underdocks_background.tscn";
-    const hostBackground = { scenePath, url: "/bg/underdocks?layers=host&v=1" };
-    const seatBackground = { scenePath, url: "/bg/underdocks?layers=seat&v=1", id: "room-1", combatFrame: "983,540,1" };
-    const seat = await joinSeat({ staticBackground: seatBackground });
+    const hostBackground = { scenePath, id: "host", url: "/bg/host?frame=host&v=1" };
+    const seatBackground = { scenePath, id: "seat", url: "/bg/seat?frame=seat&v=2", combatFrame: "1007,523,0.72" };
+    const seat = await joinSeat({ staticBackground: seatBackground }, { staticBackground: hostBackground });
     const host = MockWebSocket.instances[0];
-    host.emit(sessionMessage({ staticBackground: hostBackground }));
-    await settle();
-    const image = () => app!.get('[data-testid="stream-static-bg-image"]');
-    const votes = () => seat.ofType("settings").map((s) => s.streamStaticBgReady);
-    expect(image().attributes("src")).toBe(hostBackground.url);
-    expect((image().element as HTMLImageElement).style.transform).toBe("translate(0px, 0px) scale(1.1111111111111112)");
-    expect(votes().every((v) => v === "")).toBe(true);
-    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBg: true });
-    expect(host.ofType("settings").at(-1)).toMatchObject({ type: "settings", staticBg: false, streamStaticBg: true });
-    host.sent.length = 0;
+    const created = fake.clients.length;
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgSource: hostBackground.url, streamStaticBgSourceFor: seatBackground.id });
     seat.sent.length = 0;
-    await image().trigger("load");
-    await settle();
-    expect(votes()).toEqual([seatBackground.id]);
-    expect(host.ofType("settings")).toEqual([]);
 
-    // A repeat session is not a new descriptor and must not retract a loaded vote.
-    seat.emit(sessionMessage({ staticBackground: { ...seatBackground } }));
+    host.emit(sessionMessage({ staticBackground: { ...hostBackground, scenePath: "next-room", url: "/bg/next" } }));
     await settle();
-    expect(votes()).toEqual([seatBackground.id]);
+    expect(seat.ofType("settings")).toEqual([]);
+    // An unrelated settings push still carries the latched host frame, never the seat's frame.
+    mirrorSettings.refreshRate += 1;
+    await settle();
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgSource: hostBackground.url, streamStaticBgSourceFor: seatBackground.id });
+    seat.sent.length = 0;
 
-    host.emit(sessionMessage({ staticBackground: { ...hostBackground, url: "/bg/underdocks?layers=host-next&v=1" } }));
+    host.emit(sessionMessage({ staticBackground: { ...hostBackground, url: "/bg/host?frame=new&v=3" } }));
     await settle();
-    expect(votes().at(-1)).toBe("");
-    await image().trigger("load");
-    await settle();
-    expect(votes().at(-1)).toBe(seatBackground.id);
-    await image().trigger("error");
-    await settle();
-    expect(votes().at(-1)).toBe("");
-    await image().trigger("load");
-    await settle();
-    // Re-entering the same backdrop uses the same cached picture, but needs a fresh mounted-room vote.
-    seat.emit(sessionMessage({ staticBackground: { ...seatBackground, id: "room-2" } }));
-    await settle();
-    expect(votes().at(-1)).toBe("");
-    await image().trigger("load");
-    await settle();
-    expect(votes().at(-1)).toBe("room-2");
+    expect(seat.ofType("settings")).toEqual([
+      expect.objectContaining({ streamStaticBgSource: "/bg/host?frame=new&v=3", streamStaticBgSourceFor: seatBackground.id })
+    ]);
+    seat.sent.length = 0;
     mirrorSettings.streamStaticBg = false;
     await settle();
-    expect(votes().at(-1)).toBe("");
-    expect(host.ofType("settings").at(-1)).toMatchObject({ type: "settings", staticBg: false, streamStaticBg: false });
-    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBg: false });
-    expect(app!.find('[data-testid="stream-static-bg-image"]').exists()).toBe(false);
+    expect(seat.ofType("settings")).toEqual([
+      expect.objectContaining({ streamStaticBg: false, streamStaticBgSource: "", streamStaticBgSourceFor: "" })
+    ]);
+    expect(fake.clients).toHaveLength(created);
+  });
+
+  it("resends admission when only the seat descriptor identity changes", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    const scenePath = "res://scenes/backgrounds/underdocks/underdocks_background.tscn";
+    const hostBackground = { scenePath, id: "host", url: "/bg/host?v=1" };
+    const seatBackground = { scenePath, id: "seat:first", url: "/bg/seat?v=2" };
+    const seat = await joinSeat({ staticBackground: seatBackground }, { staticBackground: hostBackground });
+    seat.sent.length = 0;
+    seat.emit(sessionMessage({ staticBackground: { ...seatBackground, id: "seat:next" } }));
+    await settle();
+    expect(seat.ofType("settings")).toEqual([
+      expect.objectContaining({ streamStaticBgSource: hostBackground.url, streamStaticBgSourceFor: "seat:next" })
+    ]);
+    seat.emit(sessionMessage({ staticBackground: { ...seatBackground, id: "seat:next" } }));
+    await settle();
+    expect(seat.ofType("settings")).toHaveLength(1);
+  });
+
+  it("sends no source while the seat waits for host admission", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    const seat = await joinSeat({ staticBackground: {
+      scenePath: "res://scenes/events/background_scenes/neow.tscn", url: "/bg/seat?frame=seat"
+    } });
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBg: true, streamStaticBgSource: "", streamStaticBgSourceFor: "" });
+  });
+
+  it("sends the seat's character pick source and updates it without rebuilding the stream", async () => {
+    streamAvailable();
+    Object.assign(mirrorSettings, { renderer: "stream", streamStaticBg: true });
+    const background = (character: string) => ({
+      scenePath: `res://scenes/screens/char_select/char_select_bg_${character}.tscn`,
+      url: `/bg/char-select/${character}?v=1`, id: `seat:${character}`
+    });
+    const seat = await joinSeat({ staticBackground: background("ironclad") }, { staticBackground: background("silent") });
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticBgSource: background("ironclad").url, streamStaticBgSourceFor: background("ironclad").id });
+    const created = fake.clients.length;
+    seat.sent.length = 0;
+    seat.emit(sessionMessage({ staticBackground: background("regent") }));
+    await settle();
+    expect(seat.ofType("settings")).toEqual([
+      expect.objectContaining({ streamStaticBgSource: background("regent").url, streamStaticBgSourceFor: background("regent").id })
+    ]);
+    expect(fake.clients).toHaveLength(created);
   });
 
   it("sends particle demand to the seat and retracts it on toggle or renderer change", async () => {
@@ -871,7 +881,8 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     const presentation = (epoch: number, state = "armed") => ({ state, presentationEpoch: epoch,
       presentationReady: true, presentationWidth: 1920, presentationHeight: 1080, restoreComplete: true });
     const hostView = (over: Record<string, unknown> = {}) => sessionMessage({ requestId: "session",
-      renderStreamLan: undefined, renderStreamUnavailableReason: "no-capture", ...over });
+      renderStreamLan: undefined, renderStreamUnavailableReason: "no-capture",
+      staticBackground: { scenePath: "res://scenes/events/background_scenes/neow.tscn", url: "/bg/self?frame=host&v=1" }, ...over });
     host.emit(hostView({ directView: true, requestId: host.ofType("join").at(-1)!.requestId,
       rendererState: presentation(7, "mirror") }));
     await settle();
@@ -896,6 +907,13 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     fail({ kind: "streaming", firstFrame: true });
     await settle();
+    host.sent.length = 0;
+    mirrorSettings.streamStaticBg = true;
+    await settle();
+    expect(host.ofType("settings")).toEqual([
+      expect.objectContaining({ streamStaticBg: true, streamStaticBgSource: "/bg/self?frame=host&v=1" })
+    ]);
+    expect(fake.clients).toHaveLength(1);
     const stage = app.getComponent((await realStageImport()).default);
     expect(stage.props()).toMatchObject({ presentationEpoch: 7, inputEnabled: true });
     const oldSend = stage.props("sendInput")!;

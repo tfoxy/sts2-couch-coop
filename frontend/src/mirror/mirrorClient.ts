@@ -158,6 +158,10 @@ export interface MirrorSettingsPayload {
   // absent leaves the connection's vote unchanged. Separate from the node mirror's staticBg walk-skip vote.
   streamStaticBgReady?: string;
   streamStaticBg?: boolean;
+  // Admitted host still path + query; empty keeps the seat's placeholder until a source is admitted.
+  streamStaticBgSource?: string;
+  // Full seat descriptor identity for which that source was admitted. Empty retracts it.
+  streamStaticBgSourceFor?: string;
   streamStaticParticles?: boolean;
   freezeDecor?: boolean;
   tweenReplay?: boolean;
@@ -817,7 +821,7 @@ export function connectMirrorClient(options: {
     // Connection capabilities remain available while the shared host is private.
     if (!client.hostAccess.allowed) {
       payload = Object.fromEntries(Object.entries(payload).filter(([key]) =>
-        key === "staticBg" || key === "streamStaticBg" || key === "trailDrive" || key === "tweenReplay"));
+        key === "staticBg" || key === "streamStaticBg" || key === "streamStaticBgSource" || key === "streamStaticBgSourceFor" || key === "trailDrive" || key === "tweenReplay"));
       if (Object.keys(payload).length === 0) return;
     }
     settingsSequence += 1;

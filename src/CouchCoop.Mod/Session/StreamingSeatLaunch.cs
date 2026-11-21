@@ -316,7 +316,7 @@ internal static class StreamingSeatLaunch
     /// </param>
     internal static IReadOnlyDictionary<string, string> Environment(
         Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins,
-        LanLaunch? lan = null)
+        LanLaunch? lan = null, int hostBrowserPort = 0)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(allowedOrigins);
@@ -338,6 +338,8 @@ internal static class StreamingSeatLaunch
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = evidenceDirectory,
             ["GRC_LIVE_ALLOWED_ORIGINS"] = string.Join(',', allowedOrigins),
+            [Server.CouchCoopSeatStillSource.HostOriginEnvironmentVariable] = hostBrowserPort > 0
+                ? $"http://127.0.0.1:{hostBrowserPort.ToString(CultureInfo.InvariantCulture)}" : "",
             // One viewer, plus a second tab of the same viewer.
             ["GRC_LIVE_MAX_CONNECTIONS"] = "2",
             ["GRC_LIVE_CODING"] = "zstd-base",
@@ -425,7 +427,8 @@ internal static class StreamingSeatLaunch
         {
             if (key.StartsWith("GRC_", StringComparison.Ordinal)
                 || key is RenderCaptureExtensionLoader.EnvironmentVariable or CalibrationEnvironmentVariable
-                    or ExtraOriginsEnvironmentVariable or MaxPresentationWidthEnvironmentVariable)
+                    or ExtraOriginsEnvironmentVariable or MaxPresentationWidthEnvironmentVariable
+                    or Server.CouchCoopSeatStillSource.HostOriginEnvironmentVariable)
             {
                 psi.Environment.Remove(key);
             }

@@ -65,6 +65,16 @@ describe("sendSettings", () => {
     ]);
   });
 
+  it("forwards the stream source capability while host access is private", async () => {
+    const { client, socket } = connect();
+    await Promise.resolve();
+    socket.emit({ type: "host-access", hostAccess: { allowed: false, reason: "host-view-disabled", generation: 1 } });
+    client.sendSettings({ streamStaticBg: true, streamStaticBgSource: "/bg/host?v=1", streamStaticBgSourceFor: "seat:id", refreshRate: 12 });
+    expect(socket.sentOfType("settings")).toEqual([
+      { type: "settings", requestId: "settings:1", streamStaticBg: true, streamStaticBgSource: "/bg/host?v=1", streamStaticBgSourceFor: "seat:id" }
+    ]);
+  });
+
   it("no-ops when the socket is not open", async () => {
     const { client, socket } = connect();
     await Promise.resolve();

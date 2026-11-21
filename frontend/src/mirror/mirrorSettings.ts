@@ -60,6 +60,8 @@ import {
   type RenderQualityTier
 } from "@/render/quality";
 import type { MirrorSettingsPayload } from "@/mirror/mirrorClient";
+import { hostBase } from "@/join/hostBase";
+import { tunnelRequestUrl } from "@/tunnel/hostTunnel";
 
 // The game's headless defaults. The panel starts here and only diverges
 // once the viewer flips something.
@@ -853,14 +855,18 @@ export function effectiveMirrorQuality(settings: MirrorSettings = mirrorSettings
 // `trailDriveCapable` is sent as `trailDrive`.
 //
 // Old-renderer freeze preferences are sent unchanged; stream spine stills use their own optional field.
-// Stream background readiness is transient page state, supplied only after the admitted host image loads.
 // The native capture override controls suspension. `staticBg`
 // off (see staticBgWireValue) and `tweenReplay` off (it only feeds the node-mirror wire, which nobody watches while
 // the stream draws); every other field is sent as saved — `refreshRate` is the one that matters, since the capture
 // publishes per host frame. The store is untouched, so the next push after the beta is switched off restores the
 // instance's freezes and its tween replay.
-export function serverSettingsPayload(settings: MirrorSettings, streamStaticBgReady = ""): MirrorSettingsPayload {
+export function serverSettingsPayload(settings: MirrorSettings, staticBackgroundUrl?: string | null, seatStaticBackgroundId = ""): MirrorSettingsPayload {
   const stream = streamRendererActive(settings);
+  let source = "";
+  if (stream && settings.streamStaticBg && staticBackgroundUrl) {
+    const url = tunnelRequestUrl(staticBackgroundUrl, hostBase() || "http://background.invalid");
+    source = url.pathname + url.search;
+  }
   return {
     refreshRate: settings.refreshRate,
     freezeParticles: settings.freezeParticles,
@@ -871,8 +877,9 @@ export function serverSettingsPayload(settings: MirrorSettings, streamStaticBgRe
     trailDrive: settings.trailDriveCapable,
     ...(stream ? {
       streamStaticBg: settings.streamStaticBg,
-      streamFreezeSpines: settings.streamFreezeSpines,
-      streamStaticBgReady: settings.streamStaticBg ? streamStaticBgReady : ""
+      streamStaticBgSource: source,
+      streamStaticBgSourceFor: source ? seatStaticBackgroundId : "",
+      streamFreezeSpines: settings.streamFreezeSpines
     } : {}),
     ...(stream && settings.streamParticleMode === "static" ? { streamStaticParticles: true } : {})
   };

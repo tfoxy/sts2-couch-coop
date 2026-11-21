@@ -234,7 +234,11 @@ public sealed record BrowserSettingsRequestEnvelope(
     // Demand for the host still, before the image has loaded. Independent of readiness and StaticBg.
     bool? StreamStaticBg = null,
     // Per-page CPU particle freeze vote; null leaves this connection unchanged.
-    bool? StreamStaticParticles = null);
+    bool? StreamStaticParticles = null,
+    // Admitted host-relative still image path. Empty retracts; null leaves this connection unchanged.
+    string? StreamStaticBgSource = null,
+    // Full seat descriptor identity that admitted the source. Empty retracts; null leaves it unchanged.
+    string? StreamStaticBgSourceFor = null);
 
 public sealed record BrowserServerReloadEnvelope(
     string Type,
