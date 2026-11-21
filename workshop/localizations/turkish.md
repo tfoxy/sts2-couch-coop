@@ -1,13 +1,11 @@
-Yerel ağındaki telefonları, tabletleri ve dizüstü bilgisayarları çok oyunculu oyun için tarayıcı tabanlı istemcilere dönüştür.
-
-Oyunu barındıran kişi (host) CouchCoop'u kurar. Diğer oyuncular QR kodunu tarayarak veya ekranda gösterilen URL'yi girerek katılır. Kendi cihazlarında Slay the Spire 2 veya CouchCoop'un kurulu olması gerekmez.
+Slay the Spire 2'yi tek bir bilgisayarda çok oyunculu oyna; diğer herkes aynı ağdaki telefon, tablet veya dizüstü bilgisayarının tarayıcısından katılsın. Oyun ve CouchCoop yalnızca host bilgisayarda gereklidir.
 
 [h2]Hızlı başlangıç[/h2]
 [olist]
 [*]CouchCoop'u host bilgisayara kur.
 [*]Çok oyunculu bir koşu başlat veya yükle.
-[*]Host lobisinde [b]Couch Co-Op QR Kodu[/b] seçeneğini seç.
-[*]Her ek cihazda QR kodunu tara veya gösterilen URL'yi gir.
+[*]Çok oyunculu lobisinde [b]Couch Co-Op QR Kodu[/b] seçeneğini seç.
+[*]Her telefonda veya tablette QR kodunu tara ya da o ekranda gösterilen adresi aç.
 [/olist]
 
 Telefon veya tablet bağlanamıyor mu? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/turkish/phone-connection-troubleshooting.md]Telefon veya tabletten bağlanamıyor musun?[/url] sayfasına bak.
@@ -15,19 +13,17 @@ Telefon veya tablet bağlanamıyor mu? [url=https://github.com/tfoxy/sts2-couch-
 [h2]İlk kez mod mu kullanıyorsun?[/h2]
 [list]
 [*][b]Couch Co-Op QR Kodu düğmesi görünmüyor mu?[/b] Modların [b]Ayarlar -> Genel -> Mod Ayarları[/b] bölümünde açık olduğundan emin ol ve oyunu yeniden başlat.
-[*][b]İlerlemen sıfırlanmış gibi mi görünüyor?[/b] Kayıtların kaybolmadı. Oyun, modlu ve modsuz ilerlemeyi ayrı tutar. Oyunun kararlı dalında mevcut ilerlemeni modlu profile kopyalamak için [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3747503308]Import Vanilla Saves[/url] kullanabilirsin; herkese açık beta dalında oyun bunu modlarla ilk açılışında kendisi yapar.
+[*][b]İlerlemen sıfırlanmış gibi mi görünüyor?[/b] Kayıtların kaybolmadı. Oyun, modlu ve modsuz ilerlemeyi ayrı tutar. Kararlı dalda [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3747503308]Import Vanilla Saves[/url] ilerlemeni modlu profile kopyalar. Herkese açık beta dalında oyun, modlarla ilk açılışında bunu senin için yapar.
 [/list]
 
-[h2]Bu mod beta aşamasında[/h2]
-[i]Beta olan mod, oyun değil - CouchCoop hem oyunun kararlı dalında hem de herkese açık beta dalında çalışır.[/i]
+[h2]Bu mod deneysel[/h2]
+Bir koşu oynayabilirsin, ancak bazı ekranlarda ve eylemlerde hâlâ hatalar var, bazıları oyundakinden farklı görünüyor veya yavaş çalışıyor.
 
-Temel oyun döngüsü oynanabilir durumda, ancak bazı ekranlarda ve eylemlerde hâlâ hatalar, görsel farklılıklar, tam olarak düzeltilmemiş noktalar veya performans sorunları bulunuyor.
-
-Bir hata mı buldun ya da bir şey çalışmıyor mu? [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/turkish/reporting-a-problem.md]Bir sorun mu yaşıyorsun? Steam tartışmasına yaz[/url] sayfasına bak.
+Bir şey bozulursa şuraya yaz: [url=https://github.com/tfoxy/sts2-couch-coop/blob/main/workshop/discussions/turkish/reporting-a-problem.md]Bir sorun mu yaşıyorsun? Steam tartışmasına yaz[/url].
 
 [h2]Oynamadan önce[/h2]
-Tüm tarayıcı istemcileri aynı yerel ağ üzerinden, genellikle aynı Wi-Fi üzerinden, host bilgisayara ulaşabilmelidir. CouchCoop'u yalnızca güvendiğin kişilerle paylaştığın bir yerel ağda kullan.
+Her telefon veya tarayıcı host ile aynı yerel ağda, genellikle aynı Wi-Fi ağında olmalı. Bu ağda adresi bilen herkes oyununa katılabilir, bu yüzden CouchCoop'u yalnızca güvendiğin kişilerle paylaştığın bir ağda kullan.
 
-CouchCoop, uzaktan veya internet üzerinden oynama senaryolarını desteklemez.
+İnternet üzerinden oynama desteklenmiyor.
 
 Kaynak kodu ve destek: https://github.com/tfoxy/sts2-couch-coop

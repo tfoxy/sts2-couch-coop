@@ -8,12 +8,12 @@ Telefonun veya tabletin bağlanamıyorsa bu adımları dene. Çökmeler veya oyu
 
 Oyunun çalıştığı bilgisayarda **Couch Co-Op QR Kodu** ekranını aç.
 
-- **Ağ arayüzü** (solda): bilgisayar yönlendiriciye kabloyla bağlıysa **Kablolu (Ethernet)**, kablosuz bağlıysa **Wi-Fi** seç. Telefonunun kullandığı yönlendiriciye olan bağlantıyı seç. **PC adı (.local)** seçeneğini atla.
+- **Ağ arayüzü** (solda): bilgisayar yönlendiriciye kabloyla bağlıysa **Kablolu (Ethernet)**, kablosuz bağlıysa **Wi-Fi** seç. Bilgisayarda her iki bağlantı da varsa telefonunla aynı yönlendiriciye bağlı olanı seç. **PC adı (.local)** seçeneğini atla.
 - **Bağlantı yöntemi** (sağda): “(HTTPS)” yazmayan **Doğrudan adres** seçeneğini seç. Adres `http://` ile başlamalı; örneğin `http://192.168.1.5:13337`.
 
 Bu ayarları değiştirdikten sonra QR kodunu yeniden tara.
 
-Sorunu araştırırken **Doğrudan adres** kullan. HTTPS yöntemleri performans ve güvenlik için sunulan isteğe bağlı seçeneklerdir; ek kurulum veya bağlantı koşulları gerektirirler.
+Sorunu araştırırken **Doğrudan adres** kullan. HTTPS yöntemleri daha hızlı ve daha güvenli olabilir, ancak ek kurulum gerektirir. Önce normal adresin çalışmasını sağla.
 
 ### 2. Telefonun ağını kontrol et
 
@@ -25,8 +25,6 @@ Sorunu araştırırken **Doğrudan adres** kullan. HTTPS yöntemleri performans 
 
 ### 3. Windows: oyunun güvenlik duvarından geçmesine izin ver
 
-Ev ağında:
-
 1. **Ayarlar > Ağ ve İnternet > Wi-Fi** (veya Ethernet) > ağına tıkla > **Ağ profili türü** ayarını **Özel ağ** yap.
 2. **Ayarlar > Gizlilik ve güvenlik > Windows Güvenliği > Güvenlik duvarı ve ağ koruması > Bir uygulamaya güvenlik duvarı üzerinden izin ver**
 3. Listede **Slay the Spire 2** oyununu bul ve **Özel** kutusunun işaretli olduğundan emin ol. Listede yoksa **Başka bir uygulamaya izin ver...** seçeneğini kullan ve oyunun `.exe` dosyasını seç.
@@ -35,7 +33,7 @@ Daha önce oyunun güvenlik duvarı istemini iptal ettiysen engellenen kaydını
 
 Antivirüsünün kendi güvenlik duvarı varsa oyuna orada da izin ver.
 
-Adresi oyunun çalıştığı bilgisayarda açmak, güvenlik duvarının telefonun bağlanmasına izin verip vermediğini test etmez.
+Sayfanın bilgisayarda açılması, güvenlik duvarının telefonuna izin verdiği anlamına gelmez.
 
 ### 4. Tarayıcının HTTPS’yi zorlayıp zorlamadığını kontrol et
 
@@ -48,9 +46,7 @@ HTTP adresine izin ver, ardından QR kodunu yeniden tara. Bilgisayarda **Doğrud
 
 ### 5. Yönlendiriciyi kontrol et
 
-Misafir Wi-Fi ağı çoğu zaman cihazların birbiriyle iletişim kurmasını engeller. Evin ana ağını kullan.
-
-İki cihaz da zaten o ağdaysa yönlendiricide **AP isolation**, **Client isolation** veya **Wireless isolation** ayarının açık olup olmadığını kontrol et. Bu ayarlar cihazların birbirine ulaşmasını engeller.
+İki cihaz da evinin ana ağında olmasına rağmen hâlâ birbirine ulaşamıyorsa yönlendiricide **AP isolation**, **Client isolation** veya **Wireless isolation** ayarının açık olup olmadığını kontrol et. Bu ayarlar cihazların birbirine ulaşmasını engeller.
 
 Wi-Fi menzil genişletici kullanıyorsan ayrı bir ağ oluşturmak yerine **erişim noktası** (access point) veya **köprü** (bridge) modunda olduğundan emin ol.
 
@@ -72,7 +68,7 @@ Eski bir yer imi veya ana ekran kısayolu artık çalışmıyorsa yeni taradığ
 
 ## Hâlâ bağlanamıyor musun? Steam tartışmasına yaz
 
-[Steam tartışmasında](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) şunlarla başla:
+[Steam tartışmasında](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) şu bilgileri ekle:
 
 - Nereye kadar ilerlediği: sayfa açılmıyor, oyuncu listesi yok, katılma/yükleme takılıyor veya oyun sırasında bağlantı kopuyor.
 - Ekran görüntüsü veya hata mesajının tam metni.
@@ -87,4 +83,4 @@ Orada hiçbir bağlantı görünmüyorsa bunu söyle ve yukarıdaki bilgileri pa
 
 Rapor ilgili günlük dosyalarının yollarını içerir. Günlükler gerekirse [Bir sorun mu var? Steam tartışmasına yaz](reporting-a-problem.md) yazısı onları nasıl bulacağını açıklar. Günlükleri herkese açık paylaşmadan önce Steam hesap kimliğini ve bilgisayar kullanıcı adını gizli tutmak istiyorsan bunları kaldır.
 
-Modu güvendiğin bir ağda kullan: katılma adresine ulaşabilen herkes istemciyi açıp oynayabilir.
+Modu güvendiğin bir ağda kullan: katılma adresine ulaşabilen herkes oyununa katılabilir.

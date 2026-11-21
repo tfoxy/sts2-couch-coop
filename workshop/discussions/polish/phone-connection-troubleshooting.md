@@ -8,12 +8,12 @@ Wypróbuj te kroki, jeśli telefon lub tablet nie może się połączyć. W przy
 
 Na komputerze, na którym działa gra, otwórz **Kod QR Couch Co-Op**.
 
-- **Interfejs sieciowy** (po lewej): wybierz **Przewodowy (Ethernet)**, jeśli komputer łączy się z routerem kablem, lub **Wi-Fi**, jeśli łączy się bezprzewodowo. Wybierz połączenie z routerem, z którego korzysta telefon. Pomiń **Nazwa komputera (.local)**.
+- **Interfejs sieciowy** (po lewej): wybierz **Przewodowy (Ethernet)**, jeśli komputer łączy się z routerem kablem, lub **Wi-Fi**, jeśli łączy się bezprzewodowo. Jeśli komputer ma oba połączenia, wybierz to, które łączy go z tym samym routerem co telefon. Pomiń **Nazwa komputera (.local)**.
 - **Metoda połączenia** (po prawej): wybierz **Adres bezpośredni**, bez „(HTTPS)”. Adres powinien zaczynać się od `http://`, na przykład `http://192.168.1.5:13337`.
 
 Po zmianie tych ustawień zeskanuj kod QR ponownie.
 
-Podczas rozwiązywania problemu używaj opcji **Adres bezpośredni**. Metody HTTPS to dodatkowe opcje poprawiające wydajność i bezpieczeństwo, wymagające dodatkowej konfiguracji lub spełnienia warunków połączenia.
+Podczas rozwiązywania problemu używaj opcji **Adres bezpośredni**. Metody HTTPS mogą być szybsze i bezpieczniejsze, ale wymagają dodatkowej konfiguracji. Zajmij się nimi dopiero wtedy, gdy zwykły adres zadziała.
 
 ### 2. Sprawdź sieć telefonu
 
@@ -25,8 +25,6 @@ Podczas rozwiązywania problemu używaj opcji **Adres bezpośredni**. Metody HTT
 
 ### 3. Windows: zezwól grze na dostęp przez zaporę
 
-W swojej sieci domowej:
-
 1. **Ustawienia > Sieć i Internet > Wi-Fi** (lub Ethernet) > kliknij swoją sieć > ustaw **Typ profilu sieci** na **Sieć prywatna**.
 2. **Ustawienia > Prywatność i zabezpieczenia > Zabezpieczenia Windows > Zapora i ochrona sieci > Zezwalaj aplikacji na dostęp przez zaporę**
 3. Znajdź na liście **Slay the Spire 2** i upewnij się, że pole **Prywatna** jest zaznaczone. Jeśli gry nie ma na liście, użyj opcji **Zezwalaj innej aplikacji...** i wskaż plik `.exe` gry.
@@ -35,7 +33,7 @@ Jeśli wcześniej anulowano monit zapory dotyczący gry, usuń jej zablokowany w
 
 Jeśli antywirus ma własną zaporę, zezwól na grę również w niej.
 
-Otwarcie adresu na komputerze, na którym działa gra, nie sprawdza, czy zapora pozwala telefonowi się połączyć.
+Jeśli strona otwiera się na samym komputerze, nie znaczy to, że zapora pozwala telefonowi się połączyć.
 
 ### 4. Sprawdź, czy przeglądarka wymusza HTTPS
 
@@ -48,9 +46,7 @@ Zezwól na adres HTTP, a następnie ponownie zeskanuj kod QR. Na komputerze pozo
 
 ### 5. Sprawdź router
 
-Gościnne Wi-Fi często uniemożliwia urządzeniom komunikację ze sobą. Użyj głównej sieci domowej.
-
-Jeśli oba urządzenia są już w tej sieci, sprawdź, czy router ma włączone **AP isolation**, **Client isolation** lub **Wireless isolation**. Te ustawienia blokują komunikację między urządzeniami.
+Jeśli oba urządzenia są w głównej sieci domowej i nadal nie mogą się ze sobą połączyć, sprawdź, czy router ma włączone **AP isolation**, **Client isolation** lub **Wireless isolation**. Te ustawienia blokują komunikację między urządzeniami.
 
 Jeśli używasz wzmacniacza Wi-Fi, sprawdź, czy działa w trybie **punktu dostępu** (access point) lub **mostu** (bridge), zamiast tworzyć osobną sieć.
 
@@ -72,7 +68,7 @@ Jeśli stara zakładka lub skrót na ekranie głównym już nie działa, zastąp
 
 ## Nadal nie działa? Napisz w dyskusji na Steam
 
-W [dyskusji na Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) zacznij od tych informacji:
+W [dyskusji na Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) podaj:
 
 - Jak daleko dochodzi: brak strony, brak listy graczy, zatrzymane dołączanie/wczytywanie lub rozłączenie podczas gry.
 - Zrzut ekranu lub dokładny komunikat błędu.
@@ -87,4 +83,4 @@ Jeśli nie ma tam żadnego połączenia, napisz o tym i podaj informacje wymieni
 
 Raport zawiera ścieżki do odpowiednich plików dziennika. Jeśli dzienniki będą potrzebne, [Masz problem? Opisz go w dyskusji na Steam](reporting-a-problem.md) wyjaśnia, jak je znaleźć. Przed publicznym zamieszczeniem dzienników usuń identyfikator swojego konta Steam i nazwę użytkownika komputera, jeśli chcesz zachować je dla siebie.
 
-Używaj moda w zaufanej sieci: każdy, kto może otworzyć adres dołączania, może uruchomić klienta i grać.
+Używaj moda w zaufanej sieci: każdy, kto może otworzyć adres dołączania, może dołączyć do twojej gry.

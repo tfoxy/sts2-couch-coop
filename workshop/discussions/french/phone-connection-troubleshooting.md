@@ -8,12 +8,12 @@ Essayez ces étapes si votre téléphone ou votre tablette ne se connecte pas. P
 
 Sur l’ordinateur qui fait tourner le jeu, ouvrez **Code QR de Couch Co-Op**.
 
-- **Interface réseau** (à gauche) : choisissez **Filaire (Ethernet)** si l’ordinateur est relié au routeur par câble, ou **Wi-Fi** s’il est connecté sans fil. Choisissez la connexion au routeur qu’utilise votre téléphone. Ignorez **Nom du PC (.local)**.
+- **Interface réseau** (à gauche) : choisissez **Filaire (Ethernet)** si l’ordinateur est relié au routeur par câble, ou **Wi-Fi** s’il est connecté sans fil. Si l’ordinateur a les deux connexions, choisissez celle qui est reliée au même routeur que votre téléphone. Ignorez **Nom du PC (.local)**.
 - **Méthode de connexion** (à droite) : choisissez **Adresse directe**, sans « (HTTPS) ». L’adresse doit commencer par `http://`, par exemple `http://192.168.1.5:13337`.
 
 Scannez de nouveau le code QR après avoir modifié ces paramètres.
 
-Utilisez **Adresse directe** pendant le dépannage. Les méthodes HTTPS sont des options pour les performances et la sécurité, avec une configuration ou des conditions de connexion supplémentaires.
+Utilisez **Adresse directe** pendant le dépannage. Les méthodes HTTPS peuvent être plus rapides et plus sûres, mais elles demandent une configuration supplémentaire. Attendez que l’adresse simple fonctionne avant de les utiliser.
 
 ### 2. Vérifiez le réseau du téléphone
 
@@ -25,8 +25,6 @@ Utilisez **Adresse directe** pendant le dépannage. Les méthodes HTTPS sont des
 
 ### 3. Windows : autorisez le jeu à travers le pare-feu
 
-Sur votre réseau domestique :
-
 1. **Paramètres > Réseau et Internet > Wi-Fi** (ou Ethernet) > cliquez sur votre réseau > réglez **Type de profil réseau** sur **Réseau privé**.
 2. **Paramètres > Confidentialité et sécurité > Sécurité Windows > Pare-feu et protection réseau > Autoriser une application via le pare-feu**
 3. Trouvez **Slay the Spire 2** dans la liste et vérifiez que **Privé** est coché. S'il n'est pas dans la liste, utilisez **Autoriser une autre application...** et parcourez jusqu'au fichier `.exe` du jeu.
@@ -35,7 +33,7 @@ Si vous avez précédemment annulé la demande du pare-feu pour le jeu, supprime
 
 Si votre antivirus possède son propre pare-feu, autorisez le jeu dans celui-ci aussi.
 
-Ouvrir l’adresse sur l’ordinateur qui fait tourner le jeu ne permet pas de vérifier si le pare-feu autorise votre téléphone à se connecter.
+Si la page s’ouvre sur l’ordinateur lui-même, cela ne veut pas dire que le pare-feu laisse votre téléphone se connecter.
 
 ### 4. Vérifiez si le navigateur impose HTTPS
 
@@ -48,9 +46,7 @@ Autorisez l’adresse HTTP, puis scannez de nouveau le code QR. Gardez **Adresse
 
 ### 5. Vérifiez le routeur
 
-Le Wi-Fi invité empêche souvent les appareils de communiquer entre eux. Utilisez le réseau principal de la maison.
-
-Si les deux appareils sont déjà sur ce réseau, vérifiez si **AP isolation**, **Client isolation** ou **Wireless isolation** est activé sur le routeur. Ces réglages empêchent les appareils de communiquer entre eux.
+Si les deux appareils sont sur le réseau principal de la maison et n’arrivent toujours pas à communiquer, vérifiez si **AP isolation**, **Client isolation** ou **Wireless isolation** est activé sur le routeur. Ces réglages empêchent les appareils de communiquer entre eux.
 
 Si vous utilisez un répéteur Wi-Fi, vérifiez qu’il est en mode **point d’accès** (access point) ou **pont** (bridge), plutôt que de créer un réseau séparé.
 
@@ -72,7 +68,7 @@ Si un ancien favori ou raccourci sur l’écran d’accueil ne fonctionne plus, 
 
 ## Toujours bloqué ? Commentez dans la discussion Steam
 
-Dans [la discussion Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/), commencez par indiquer :
+Dans [la discussion Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/), indiquez :
 
 - Jusqu’où cela va : aucune page, aucune liste de joueurs, connexion ou chargement bloqué, ou déconnexion pendant la partie.
 - Une capture d’écran ou le message d’erreur exact.
@@ -87,4 +83,4 @@ Si aucune connexion n’y apparaît, dites-le et donnez les informations ci-dess
 
 Le rapport contient les chemins des fichiers journaux utiles. Si des journaux sont nécessaires, [Un problème ? Signalez-le dans la discussion Steam](reporting-a-problem.md) explique comment les trouver. Avant de publier des journaux, retirez votre identifiant de compte Steam et votre nom d’utilisateur sur l’ordinateur si vous préférez les garder privés.
 
-Utilisez le mod sur un réseau de confiance : toute personne pouvant accéder à l’adresse de connexion peut ouvrir le client et jouer.
+Utilisez le mod sur un réseau de confiance : toute personne pouvant accéder à l’adresse de connexion peut rejoindre votre partie.

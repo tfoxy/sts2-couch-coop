@@ -19,8 +19,10 @@ cannot reach the join page", already long, and ordered by *connection* causes. T
 ## Why it is shaped this way
 
 - **The first two items are ranked, the rest are optional.** What happened, and the copyable report,
-  are worth more than everything below them, so the post says so rather than presenting a flat form
-  nobody finishes.
+  help more than everything below them, so the post says so rather than presenting a flat form nobody
+  finishes.
+- **The stuck-join note comes before the form.** A join that is still counting up is not a fault, and
+  that is something to check before posting, not after filling everything in.
 - **The connection report is conditional.** The `Connections` panel is reached from the lobby's
   **Couch Co-Op QR Code** screen, so a player whose problem happens mid-run may not be able to open it
   at all. Asking everyone for it produces confused reports from the people it does not apply to, so the
@@ -48,18 +50,17 @@ cited for it.
 | the button is **Copy report** | `couchcoop_connection_copy_report` = "Copy report" — *not* "Copy" |
 | the report **names both log paths** | `CaptureConnectionLogsLocked(slot, hostLog, seatLogPath)` attaches the host log and the seat log to the connection record the report is built from |
 | players are numbered **from 2** | `HeadlessClientManager.MinSlot` is 2, so the first joiner is slot 2 |
-| per-player log at `couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` | `HeadlessUserDirSeeder.SlotBase` is `<userDir>/couch-coop/headless-slots/slot-N`; `SlotUserDir` appends `SlayTheSpire2` again (`Library/Application Support/SlayTheSpire2` on macOS); the seat is launched with `<SlotUserDir>/logs/godot.log`. **Confirmed on this Linux install**, doubled directory name included |
+| per-player log at `<userDir>/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log` on Windows and Linux, and `.../slot-2/Library/Application Support/SlayTheSpire2/logs/godot.log` on macOS | `HeadlessUserDirSeeder.SlotBase` is `<userDir>/couch-coop/headless-slots/slot-N`; `SlotUserDir` appends `SlayTheSpire2` again (`Library/Application Support/SlayTheSpire2` on macOS, where the seat's `HOME` is the slot base); the seat is launched with `<SlotUserDir>/logs/godot.log`. **Seen on a real Linux install and on the macOS VM rig** |
 | the `couch-coop/seat-logs/slot-N.log` fallback | `HeadlessClientManager.SeatLogPath`, used when per-slot isolation could not be prepared |
 | log lines look like `[INFO] [couchcoop] …` | `CouchCoopLogLine.Format` prepends `[couchcoop]` to the *message*; Godot's logger prepends the severity, so `[couchcoop]` is never first on the line |
 | a log carries a **SteamID64 and the OS user name**, no passwords, no other player's account | Swept the host log and all seven per-slot seat logs on this machine: one unique SteamID64 (the host's own, up to 144 occurrences, in `user://steam/<id>/…`), OS user name in file paths, LAN/VPN-range IPs only. The single `token` match is `PublicKeyToken=null`, a .NET artifact; the heartbeat's per-attempt token is never logged |
 | starting a player's game **can take up to a minute** | `DefaultSeatReadyTimeoutSeconds` = 75.0, and a seat's first contact was measured at 4.1 s idle / 9.9 s with every core busy |
 | each seat loads the **same mods as the host** | `SeatCloudSaveIsolationPatch` records that Workshop mod discovery sits behind Steam initialization, so a seat cannot be launched Steam-less without loading a different mod set — which is why seats inherit the host's mods |
 
-**Unconfirmed on real hardware:** the **Windows and macOS** per-player log paths. Both are the same code
-path resolved through `APPDATA` and `$HOME/Library/Application Support`, and only the Linux one has been
-seen on a real install. The post gives the Linux path in full, describes the other two as the same shape
-under their platform's folder, and leads with *the report names the exact path* — which is true
-everywhere and is what makes an unconfirmed path survivable.
+**Unconfirmed on real hardware:** the **Windows** per-player log path. It is the same code path resolved
+through `APPDATA`; only the Linux and macOS ones have been seen. The post gives all three in full and opens
+the log section with *the report lists the exact paths*, which is true everywhere and is what makes an
+unseen path survivable.
 
 ## The post
 

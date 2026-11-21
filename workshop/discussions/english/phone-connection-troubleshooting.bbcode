@@ -9,13 +9,13 @@ Try these steps if your phone or tablet cannot connect. For crashes or problems 
 On the computer running the game, open [b]Couch Co-Op QR Code[/b].
 
 [list]
-[*][b]Network interface[/b] (left): choose [b]Wired (Ethernet)[/b] if the computer connects to your router by cable, or [b]Wi-Fi[/b] if it connects wirelessly. Choose the connection to the router your phone uses. Skip [b]PC name (.local)[/b].
+[*][b]Network interface[/b] (left): choose [b]Wired (Ethernet)[/b] if the computer connects to your router by cable, or [b]Wi-Fi[/b] if it connects wirelessly. If the computer has both, pick the one connected to the same router as your phone. Skip [b]PC name (.local)[/b].
 [*][b]Connection method[/b] (right): choose [b]Direct address[/b], without “(HTTPS)”. The address should start with [i]http://[/i], for example [i]http://192.168.1.5:13337[/i].
 [/list]
 
 Scan the QR code again after changing these settings.
 
-Use [b]Direct address[/b] while troubleshooting. The HTTPS methods are optional choices for performance and security, with extra setup or connection requirements.
+Use [b]Direct address[/b] while troubleshooting. The HTTPS methods can be faster and more secure, but they need extra setup. Leave them until the plain address works.
 
 [h3]2. Check the phone’s network[/h3]
 
@@ -29,8 +29,6 @@ Use [b]Direct address[/b] while troubleshooting. The HTTPS methods are optional 
 
 [h3]3. Windows: allow the game through the firewall[/h3]
 
-On your home network:
-
 [olist]
 [*]Open [b]Settings > Network & Internet > Wi-Fi[/b] (or [b]Ethernet[/b]), select your network, and set [b]Network profile type[/b] to [b]Private[/b].
 [*]Open [b]Windows Security > Firewall & network protection > Allow an app through firewall[/b].
@@ -41,7 +39,7 @@ If you previously cancelled the game’s firewall prompt, remove its blocked ent
 
 If your antivirus has its own firewall, allow the game there too.
 
-Opening the address on the computer running the game does not test whether the firewall allows your phone to connect.
+If the page opens on the computer itself, that doesn’t mean the firewall lets your phone in.
 
 [h3]4. Check whether the browser is forcing HTTPS[/h3]
 
@@ -56,9 +54,7 @@ Allow the HTTP address, then scan the QR code again. Keep [b]Direct address[/b] 
 
 [h3]5. Check the router[/h3]
 
-Guest Wi-Fi often prevents devices from connecting to each other. Use the main home network.
-
-If both devices are already on that network, check whether your router has [b]AP isolation[/b], [b]Client isolation[/b], or [b]Wireless isolation[/b] enabled. These settings block devices from reaching each other.
+If both devices are on your main home network and still can’t reach each other, check whether your router has [b]AP isolation[/b], [b]Client isolation[/b], or [b]Wireless isolation[/b] enabled. These settings block devices from reaching each other.
 
 If you use a Wi-Fi extender, check that it is in [b]access point[/b] or [b]bridge[/b] mode rather than creating a separate network.
 
@@ -80,7 +76,7 @@ If an old bookmark or home-screen shortcut no longer works, replace it using the
 
 [h1]Still stuck? Post here[/h1]
 
-Start with:
+Include:
 
 [list]
 [*]How far it gets: no page, no player list, stuck joining/loading, or disconnected during play.
@@ -97,4 +93,4 @@ If no connection appears there, say so and post the details above.
 
 The report includes the paths to the relevant log files. If logs are needed, [url=https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/]Having a problem? Post it here[/url] explains how to find them. Before posting logs publicly, remove your Steam account ID and computer user name if you prefer to keep them private.
 
-Use the mod on a network you trust: anyone who can reach the join address can open the client and play.
+Use the mod on a network you trust: anyone who can reach the join address can join your game.

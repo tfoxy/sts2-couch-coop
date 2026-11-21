@@ -8,12 +8,12 @@ Probiere diese Schritte, wenn sich dein Handy oder Tablet nicht verbinden kann. 
 
 Öffne auf dem Computer, auf dem das Spiel läuft, **Couch Co-Op-QR-Code**.
 
-- **Netzwerkschnittstelle** (links): Wähle **Kabelgebunden (Ethernet)**, wenn der Computer per Kabel am Router hängt, oder **WLAN**, wenn er drahtlos verbunden ist. Wähle die Verbindung zu dem Router, den dein Handy nutzt. Überspringe **PC-Name (.local)**.
+- **Netzwerkschnittstelle** (links): Wähle **Kabelgebunden (Ethernet)**, wenn der Computer per Kabel am Router hängt, oder **WLAN**, wenn er drahtlos verbunden ist. Wenn der Computer beide Verbindungen hat, wähle die, die mit demselben Router wie dein Handy verbunden ist. Überspringe **PC-Name (.local)**.
 - **Verbindungsmethode** (rechts): Wähle **Direkte Adresse**, ohne „(HTTPS)“. Die Adresse sollte mit `http://` beginnen, zum Beispiel `http://192.168.1.5:13337`.
 
 Scanne den QR-Code nach dem Ändern dieser Einstellungen erneut.
 
-Verwende bei der Fehlersuche **Direkte Adresse**. Die HTTPS-Methoden sind zusätzliche Optionen für Leistung und Sicherheit und erfordern weitere Einrichtung oder Verbindungsvoraussetzungen.
+Verwende bei der Fehlersuche **Direkte Adresse**. Die HTTPS-Methoden können schneller und sicherer sein, erfordern aber zusätzliche Einrichtung. Warte damit, bis die einfache Adresse funktioniert.
 
 ### 2. Prüfe das Netzwerk des Handys
 
@@ -25,8 +25,6 @@ Verwende bei der Fehlersuche **Direkte Adresse**. Die HTTPS-Methoden sind zusät
 
 ### 3. Windows: Lass das Spiel durch die Firewall
 
-In deinem Heimnetzwerk:
-
 1. **Einstellungen > Netzwerk und Internet > WLAN** (oder Ethernet) > klicke auf dein Netzwerk > setze **Netzwerkprofiltyp** auf **Privates Netzwerk**.
 2. **Einstellungen > Datenschutz und Sicherheit > Windows-Sicherheit > Firewall & Netzwerkschutz > Zugriff von App durch Firewall zulassen**
 3. Suche **Slay the Spire 2** in der Liste und stelle sicher, dass **Privat** angehakt ist. Wenn es nicht in der Liste steht, verwende **Andere App zulassen...** und wähle die `.exe`-Datei des Spiels aus.
@@ -35,7 +33,7 @@ Wenn du die Firewall-Abfrage für das Spiel früher abgebrochen hast, entferne d
 
 Falls dein Antivirenprogramm eine eigene Firewall hat, erlaube das Spiel auch dort.
 
-Die Adresse auf dem Computer zu öffnen, auf dem das Spiel läuft, prüft nicht, ob die Firewall die Verbindung deines Handys zulässt.
+Wenn sich die Seite auf dem Computer selbst öffnet, heißt das nicht, dass die Firewall dein Handy durchlässt.
 
 ### 4. Prüfe, ob der Browser HTTPS erzwingt
 
@@ -48,9 +46,7 @@ Erlaube die HTTP-Adresse und scanne den QR-Code erneut. Lass auf dem Computer **
 
 ### 5. Prüfe den Router
 
-Gast-WLAN verhindert häufig, dass Geräte miteinander kommunizieren. Verwende das normale Heimnetzwerk.
-
-Wenn beide Geräte bereits in diesem Netzwerk sind, prüfe, ob am Router **AP isolation**, **Client isolation** oder **Wireless isolation** aktiviert ist. Diese Einstellungen verhindern, dass Geräte einander erreichen.
+Wenn beide Geräte im normalen Heimnetzwerk sind und einander trotzdem nicht erreichen können, prüfe, ob am Router **AP isolation**, **Client isolation** oder **Wireless isolation** aktiviert ist. Diese Einstellungen verhindern, dass Geräte einander erreichen.
 
 Wenn du einen WLAN-Repeater verwendest, prüfe, ob er im **Access-Point-** oder **Bridge-Modus** arbeitet, statt ein eigenes Netzwerk anzulegen.
 
@@ -72,7 +68,7 @@ Wenn ein altes Lesezeichen oder eine Verknüpfung auf dem Startbildschirm nicht 
 
 ## Noch immer Probleme? Schreibe in die Steam-Diskussion
 
-Beginne in der [Steam-Diskussion](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) mit diesen Angaben:
+Gib in der [Steam-Diskussion](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/) Folgendes an:
 
 - Wie weit es kommt: keine Seite, keine Spielerliste, Beitritt/Laden hängt oder Verbindung während des Spiels getrennt.
 - Ein Screenshot oder die genaue Fehlermeldung.
@@ -87,4 +83,4 @@ Wenn dort keine Verbindung erscheint, erwähne das und gib die Informationen von
 
 Der Bericht enthält die Pfade zu den passenden Logdateien. Falls Logs benötigt werden, erklärt [Du hast ein Problem? Melde es in der Steam-Diskussion](reporting-a-problem.md), wie du sie findest. Entferne vor dem öffentlichen Posten deine Steam-Konto-ID und den Benutzernamen deines Computers, wenn du sie privat halten möchtest.
 
-Verwende die Mod in einem vertrauenswürdigen Netzwerk: Jeder, der die Beitrittsadresse erreichen kann, kann den Client öffnen und mitspielen.
+Verwende die Mod in einem vertrauenswürdigen Netzwerk: Jeder, der die Beitrittsadresse erreichen kann, kann deinem Spiel beitreten.

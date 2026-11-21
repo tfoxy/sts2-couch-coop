@@ -2,65 +2,65 @@
 
 > To jest tłumaczenie dyskusji w Warsztacie Steam [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Aby zadać pytanie lub zgłosić problem, zostaw komentarz w tamtej dyskusji — nie musisz pisać po angielsku, możesz pisać po polsku.
 
-[Dyskusja na Steamie](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) to miejsce na wszystko, co idzie nie tak - awarie, gracz, który nigdy nie kończy dołączania, coś, co wyświetla się nieprawidłowo, rozgrywka, która się psuje.
+Napisz w [dyskusji na Steamie](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/), jeśli coś pójdzie nie tak: gra się zamknie, gracz nie może dokończyć dołączania, coś źle się wyświetla lub rozgrywka przestaje działać.
 
-**Jeśli twój telefon lub tablet w ogóle nie może otworzyć strony dołączania**, najpierw przeczytaj [Nie możesz połączyć się z telefonu lub tabletu?](phone-connection-troubleshooting.md) - omawia szczegółowo Wi-Fi, zapory i routery, a większość problemów z połączeniem da się tam rozwiązać.
+**Jeśli twój telefon lub tablet w ogóle nie może otworzyć strony dołączania**, najpierw przeczytaj [Nie możesz połączyć się z telefonu lub tabletu?](phone-connection-troubleshooting.md). Większość problemów z połączeniem wynika z ustawień Wi-Fi, zapory lub routera opisanych w tym poradniku.
+
+### Zanim zgłosisz zablokowane dołączanie
+
+Uruchomienie gry gracza może potrwać nawet minutę, zwłaszcza na wolniejszym komputerze. Dopóki wiersz pod napisem **Dołączanie…** na stronie dołączania nadal nalicza czas i się zmienia, uruchamianie trwa, więc nie zamykaj strony.
 
 ---
 
 ## Co warto podać
 
-Nie musisz odpowiadać na wszystko - dwa pierwsze punkty są warte więcej niż cała reszta razem wzięta.
+Nie musisz odpowiadać na wszystko. Dwa pierwsze punkty pomagają najbardziej.
 
-### 1. Co się stało i co powinno było się stać zamiast tego
+### 1. Co się stało i jaki był oczekiwany efekt
 
-Wystarczą jedno lub dwa zdania. Jeśli na ekranie pojawił się komunikat o błędzie, przytocz go dokładnie, razem z mniejszym szarym wierszem pod nim, jeśli taki jest. Zdjęcie lub zrzut ekranu będą idealne.
+Wystarczą jedno lub dwa zdania. Jeśli pojawił się błąd, skopiuj go dokładnie, razem z mniejszym szarym wierszem pod nim, albo opublikuj zrzut lub zdjęcie ekranu.
 
-### 2. Jeśli problem dotyczy dołączania lub lobby: raport połączenia
+### 2. Raport połączenia (problemy z dołączaniem lub w lobby)
 
-*Jeśli problem występuje później - w trakcie rozgrywki albo w samej grze - przejdź od razu do kroku 3.*
+*Pomiń ten punkt, jeśli problem wystąpił w trakcie rozgrywki.*
 
-W lobby otwórz ekran **Kod QR Couch Co-Op**. Pod kodem znajduje się panel **Połączenia**. Wszystko, co poszło nie tak, trafia pod **Problemy z połączeniem** (z liczbą obok).
+Na komputerze otwórz **Kod QR Couch Co-Op**, a potem odszukaj sekcję **Połączenia**. W sekcji **Problemy z połączeniem** wybierz nieudane połączenie, wybierz **Skopiuj raport** i wklej go do swojego komentarza.
 
-Zaznacz wiersz, który się nie powiódł, i naciśnij **Skopiuj raport**, a potem wklej raport do swojego komentarza. Przy problemie z dołączaniem to najbardziej przydatna rzecz, jaką możesz załączyć: zawiera już krok, na którym wystąpił błąd, czasy, diagnozę samego hosta i ścieżki do opisanych niżej plików logów.
+Raport podaje, który krok się nie powiódł i ile czasu zajął każdy krok, zawiera ocenę hosta dotyczącą przyczyny problemu oraz ścieżki do opisanych poniżej plików logów.
 
 ### 3. Pliki logów
 
-Są dwa rodzaje, a to, który jest ważny, zależy od problemu.
+Skopiowany raport połączenia zawiera już dokładne ścieżki.
 
-**Główny log gry** na komputerze hosta:
+**Log gry** na komputerze hosta:
 
 - Windows: `%APPDATA%\SlayTheSpire2\logs\godot.log`
 - Linux: `~/.local/share/SlayTheSpire2/logs/godot.log`
 - macOS: `~/Library/Application Support/SlayTheSpire2/logs/godot.log`
 
-**Log każdego gracza.** Każdy dołączający gracz dostaje własną kopię gry działającą w tle na komputerze hosta i każda z nich prowadzi własny log. **Jeśli gracz utknął przy dołączaniu, to właśnie ten plik wyjaśnia dlaczego** - powyższy główny log zwykle tego nie robi.
+**Logi graczy.** Każdy dołączający gracz uruchamia własną ukrytą kopię gry na komputerze hosta, z własnym logiem. Jeśli gracz utknął przy dołączaniu, jego log zwykle wyjaśnia dlaczego; log gry zwykle tego nie robi.
 
-Gracze są numerowani od 2, więc pierwsza osoba, która do ciebie dołącza, to `slot-2`. W Linuksie log tego gracza znajduje się tutaj:
+Pierwszy dołączający gracz to `slot-2`, następny to `slot-3` i tak dalej. Dla `slot-2`:
 
-`~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`
+- Windows: `%APPDATA%\SlayTheSpire2\couch-coop\headless-slots\slot-2\SlayTheSpire2\logs\godot.log`
+- Linux: `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`
+- macOS: `~/Library/Application Support/SlayTheSpire2/couch-coop/headless-slots/slot-2/Library/Application Support/SlayTheSpire2/logs/godot.log`
 
-(Tak, `SlayTheSpire2` naprawdę występuje dwa razy - to nie literówka.) W Windows i macOS układ jest taki sam, w folderze z listy powyżej. W niektórych konfiguracjach jest to zamiast tego pojedynczy plik `couch-coop/seat-logs/slot-2.log`. Tak czy inaczej, **raport z kroku 2 podaje dokładną ścieżkę**, więc skopiowanie go najpierw oszczędza szukania.
+Jeśli nie ma folderu `headless-slots`, log znajduje się w `couch-coop/seat-logs/slot-2.log`, w tym samym folderze `SlayTheSpire2` co log gry.
 
-**Które wiersze są ważne.** W obu plikach przydatne są te, które zawierają `[couchcoop]` - wyglądają jak `[INFO] [couchcoop] ...` - oraz wszystkie wiersze `[ERROR]`, nawet te, które nie wspominają o couchcoop. Zwykle te wiersze same w sobie wystarczą.
+**Które wiersze są ważne.** W obu logach najbardziej potrzebuję wierszy zawierających `[couchcoop]` (na przykład `[INFO] [couchcoop] ...`) oraz wszystkich wierszy `[ERROR]`, nawet tych, które nie wspominają o couchcoop. Zwykle to wystarczy.
 
-**Zanim wkleisz cały log:** dyskusja na Steamie jest publiczna, a log zawiera twój własny **SteamID64** (długą liczbę zaczynającą się od 7656, która wskazuje na twój profil Steam) i **nazwę użytkownika** twojego komputera w ścieżkach plików. *Nie* zawiera haseł ani kont innych graczy - tylko twoje. Jeśli wolisz tego nie publikować, wystarczy przed wklejeniem użyć funkcji „znajdź i zamień” na tych dwóch rzeczach albo po prostu wkleić tylko wiersze `[couchcoop]` i `[ERROR]` - jeśli będę potrzebować więcej, zapytam.
+**Zanim wkleisz cały log:** ta dyskusja jest publiczna. Log zawiera twój SteamID64 (długą liczbę zaczynającą się od 7656, która prowadzi do twojego profilu Steam) i nazwę użytkownika twojego komputera w ścieżkach plików. Nie zawiera haseł ani kont innych graczy. Jeśli wolisz nie udostępniać tych dwóch danych, zamień je przed wklejeniem albo opublikuj tylko wiersze `[couchcoop]` i `[ERROR]`, a jeśli będę potrzebować więcej, zapytam.
 
 ### 4. Wersje i modyfikacje
 
 - Czy grasz na gałęzi **stabilnej**, czy na gałęzi **otwartej bety** gry.
-- **Jakie inne modyfikacje są zainstalowane.** Każda kopia gracza działająca w tle wczytuje te same modyfikacje co host, więc inna modyfikacja może uniemożliwić graczowi dokończenie dołączania, nawet gdy gra na hoście wygląda na całkowicie sprawną.
+- **Jakie inne modyfikacje masz zainstalowane.** Kopia gry każdego gracza wczytuje te same modyfikacje co host, więc inna modyfikacja może uniemożliwić graczowi dołączenie, nawet gdy gra hosta działa prawidłowo.
 - System operacyjny hosta.
-- Wersja CouchCoop, jeśli ją znasz - w przeciwnym razie założę, że to najnowsza.
+- Twoja wersja CouchCoop, jeśli ją znasz. W przeciwnym razie założę, że to najnowsza.
 
 ### 5. Wszystko, co pomaga zawęzić problem
 
 - Czy dzieje się to za każdym razem, czy tylko czasami?
 - Czy dotyczy każdego gracza, czy tylko jednego?
-- Czy kiedykolwiek wcześniej działało i czy od tego czasu coś się zmieniło - aktualizacja gry, nowa modyfikacja?
-
----
-
-## Jedna rzecz, o której warto wiedzieć przed zgłoszeniem
-
-Uruchomienie gry gracza może potrwać nawet minutę, a na wolniejszym komputerze zajmie większość tego czasu. To normalne, a nie usterka. W tym czasie strona dołączania nalicza sekundy i zmienia etapy pod napisem *Dołączanie…* - jeśli ten wiersz wciąż się zmienia, nic jeszcze nie poszło źle, więc nie zamykaj strony.
+- Czy wcześniej działało i czy od tego czasu coś się zmieniło, na przykład aktualizacja gry lub nowa modyfikacja?

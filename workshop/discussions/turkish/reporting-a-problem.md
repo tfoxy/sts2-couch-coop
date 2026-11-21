@@ -2,65 +2,65 @@
 
 > Bu metin, Steam Atölyesi'ndeki [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) tartışmasının çevirisidir. Soru sormak veya bir sorun bildirmek için o tartışmaya yorum bırak — İngilizce yazman gerekmez, Türkçe yazabilirsin.
 
-Ters giden her şeyin yeri [Steam tartışması](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/): çökmeler, katılmayı bir türlü tamamlayamayan bir oyuncu, yanlış görüntülenen bir şey, bozulan bir koşu.
+Bir şey ters giderse [Steam tartışmasına](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) yaz: oyun çökerse, bir oyuncu katılmayı tamamlayamazsa, bir şey yanlış görüntülenirse veya koşu bozulursa.
 
-**Telefonun veya tabletin katılma sayfasına hiç ulaşamıyorsa**, önce [Telefon veya tabletten bağlanamıyor musun?](phone-connection-troubleshooting.md) sayfasını oku — Wi-Fi, güvenlik duvarları ve yönlendiriciler orada ayrıntılı olarak ele alınıyor ve çoğu bağlantı sorunu orada çözülüyor.
+**Telefonun veya tabletin katılma sayfasını hiç açamıyorsa**, önce [Telefon veya tabletten bağlanamıyor musun?](phone-connection-troubleshooting.md) sayfasını oku. Çoğu bağlantı sorunu, orada anlatılan bir Wi-Fi, güvenlik duvarı veya yönlendirici ayarından kaynaklanır.
+
+### Katılma sırasında takılmayı bildirmeden önce
+
+Bir oyuncunun oyununu başlatmak, özellikle yavaş bir bilgisayarda, bir dakikayı bulabilir. Katılma sayfasında **Katılıyor…** yazısının altındaki satırda süre artmaya ve satır değişmeye devam ediyorsa işlem hâlâ sürüyordur; sayfayı açık tut.
 
 ---
 
 ## Rapora neler eklenmeli
 
-Her şeyi yanıtlaman gerekmez — ilk ikisi, geri kalanların toplamından daha değerlidir.
+Her şeyi yanıtlaman gerekmez. En çok ilk iki madde yardımcı olur.
 
-### 1. Ne oldu ve bunun yerine ne bekliyordun
+### 1. Ne oldu ve ne bekliyordun
 
-Bir iki cümle yeterli. Ekranda bir hata mesajı varsa, altındaki daha küçük gri satır dahil olmak üzere mesajı aynen aktar. Bir fotoğraf veya ekran görüntüsü mükemmel olur.
+Bir iki cümle yeterli. Bir hata çıktıysa altındaki küçük gri satır da dahil mesajı aynen kopyala ya da ekran görüntüsü veya ekranın fotoğrafını paylaş.
 
-### 2. Sorun katılmayla veya lobiyle ilgiliyse: bağlantı raporu
+### 2. Bağlantı raporu (katılma veya lobi sorunları)
 
-*Sorunun daha sonra — bir koşu sırasında veya oyunun kendisinde — ortaya çıkıyorsa doğrudan 3. adıma geç.*
+*Sorun koşu sırasında olduysa bu adımı atla.*
 
-Lobiden **Couch Co-Op QR Kodu** ekranını aç. **Bağlantılar** paneli bu ekranda, kodun altındadır. Ters giden her şey **Bağlantı sorunları** altında tutulur (yanında bir sayıyla).
+Bilgisayarda **Couch Co-Op QR Kodu** ekranını aç, ardından **Bağlantılar** bölümüne bak. **Bağlantı sorunları** altındaki başarısız bağlantıyı seç, **Raporu kopyala** seçeneğini seç ve raporu yorumuna yapıştır.
 
-Başarısız olan satırı seç ve **Raporu kopyala** düğmesine bas, ardından raporu yorumuna yapıştır. Katılma sorunlarında ekleyebileceğin en faydalı şey budur: başarısız olan adımı, süreleri, host bilgisayarın kendi teşhisini ve aşağıda anlatılan log dosyalarının yollarını zaten içerir.
+Rapor, hangi adımın başarısız olduğunu, her adımın ne kadar sürdüğünü ve host bilgisayarın sorunun nedenine dair teşhisini içerir. Aşağıdaki log dosyalarının yollarını da listeler.
 
 ### 3. Log dosyaları
 
-İki türü vardır ve hangisinin önemli olduğu soruna bağlıdır.
+Bağlantı raporunu kopyaladıysan tam yollar zaten orada listelenir.
 
-**Ana oyun logu**, host bilgisayarda:
+**Oyun logu**, host bilgisayarda:
 
 - Windows: `%APPDATA%\SlayTheSpire2\logs\godot.log`
 - Linux: `~/.local/share/SlayTheSpire2/logs/godot.log`
 - macOS: `~/Library/Application Support/SlayTheSpire2/logs/godot.log`
 
-**Oyuncu başına log.** Katılan her oyuncu için host bilgisayarda arka planda oyunun ayrı bir kopyası çalışır ve her kopya kendi log dosyasını tutar. **Bir oyuncu katılırken takılıp kaldıysa, nedenini açıklayan dosya budur** — yukarıdaki ana log genellikle bunu açıklamaz.
+**Oyuncu logları.** Katılan her oyuncu için host bilgisayarda oyunun ayrı, gizli bir kopyası çalışır ve kendi logunu tutar. Bir oyuncu katılırken takılıp kaldıysa oyuncunun logu genellikle nedenini açıklar; oyun logu genellikle açıklamaz.
 
-Oyuncular 2'den başlayarak numaralandırılır, bu yüzden sana ilk katılan kişi `slot-2` olur. Linux'ta bu oyuncunun log dosyası şuradadır:
+İlk katılan oyuncu slot-2, sonraki slot-3 olur ve böyle devam eder. slot-2 için:
 
-`~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`
+- Windows: `%APPDATA%\SlayTheSpire2\couch-coop\headless-slots\slot-2\SlayTheSpire2\logs\godot.log`
+- Linux: `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`
+- macOS: `~/Library/Application Support/SlayTheSpire2/couch-coop/headless-slots/slot-2/Library/Application Support/SlayTheSpire2/logs/godot.log`
 
-(Evet, `SlayTheSpire2` gerçekten iki kez geçiyor — bu bir yazım hatası değil.) Windows ve macOS'ta da yapı aynıdır, yukarıdaki listede yer alan klasörün altında. Bazı kurulumlarda bunun yerine `couch-coop/seat-logs/slot-2.log` konumunda tek bir dosyadır. Her iki durumda da **2. adımdaki rapor tam yolu belirtir**, bu yüzden önce onu kopyalarsan aramakla uğraşmazsın.
+`headless-slots` klasörü yoksa log dosyası, oyun logunun bulunduğu `SlayTheSpire2` klasörünün içinde `couch-coop/seat-logs/slot-2.log` konumundadır.
 
-**Hangi satırlar önemli.** Her iki dosyada da işe yarayanlar `[couchcoop]` içeren satırlardır — `[INFO] [couchcoop] ...` gibi görünürler — ve bunlara ek olarak, couchcoop'tan hiç bahsetmeyenler dahil tüm `[ERROR]` satırları. Genellikle tek başlarına bu satırlar yeterlidir.
+**Hangi satırlar önemli.** Her iki logda da en çok ihtiyacım olan satırlar, `[couchcoop]` içerenlerdir (örneğin `[INFO] [couchcoop] ...`). Ayrıca couchcoop'tan bahsetmeyenler dahil tüm `[ERROR]` satırları da önemlidir. Genellikle bunlar yeterlidir.
 
-**Bir log dosyasının tamamını yapıştırmadan önce:** Steam tartışması herkese açıktır ve bir log dosyası, dosya yollarında kendi **SteamID64** numaranı (7656 ile başlayan ve Steam profiline işaret eden uzun bir sayı) ve bilgisayarının **kullanıcı adını** içerir. Parola *içermez*, diğer oyuncuların hesaplarını da içermez — yalnızca seninkini. Bunları paylaşmak istemiyorsan yapıştırmadan önce bu ikisini bul-değiştir ile değiştirmen yeterlidir; ya da sadece `[couchcoop]` ve `[ERROR]` satırlarını paylaş, daha fazlasına ihtiyacım olursa sorarım.
+**Bir log dosyasının tamamını yapıştırmadan önce:** Bu tartışma herkese açıktır. Log, SteamID64 numaranı (7656 ile başlayan ve Steam profiline bağlanan uzun bir sayı) ve dosya yollarında bilgisayarının kullanıcı adını içerir. Parolaları veya diğer oyuncuların hesaplarını içermez. Bu iki bilgiyi paylaşmak istemiyorsan yapıştırmadan önce değiştir ya da yalnızca `[couchcoop]` ve `[ERROR]` satırlarını paylaş; daha fazlasına ihtiyacım olursa sorarım.
 
 ### 4. Sürümler ve modlar
 
 - Oyunun **kararlı** dalında mı yoksa **herkese açık beta** dalında mı olduğun.
-- **Başka hangi modların kurulu olduğu.** Arka plandaki her oyuncu kopyası host ile aynı modları yükler; bu yüzden host bilgisayardaki oyun kusursuz görünse bile başka bir mod, bir oyuncunun katılmayı tamamlamasını engelleyebilir.
+- **Kurduğun diğer modlar.** Her oyuncunun oyun kopyası host ile aynı modları yükler. Bu yüzden host bilgisayardaki oyun düzgün çalışsa bile başka bir mod oyuncunun katılmasını engelleyebilir.
 - Host bilgisayarın işletim sistemi.
-- Biliyorsan CouchCoop sürümü — bilmiyorsan en yenisi olduğunu varsayarım.
+- Biliyorsan CouchCoop sürümün. Bilmiyorsan en yenisi olduğunu varsayarım.
 
-### 5. Sorunu daraltan her şey
+### 5. Sorunu daraltmaya yardımcı olan bilgiler
 
 - Her seferinde mi oluyor, yoksa sadece bazen mi?
 - Her oyuncuda mı oluyor, yoksa sadece birinde mi?
-- Daha önce hiç çalıştı mı ve o zamandan beri bir şey değişti mi — bir oyun güncellemesi, yeni bir mod?
-
----
-
-## Bildirmeden önce bilmeye değer bir şey
-
-Bir oyuncunun oyununu başlatmak bir dakikayı bulabilir ve daha yavaş bir bilgisayarda bu sürenin çoğu kullanılır. Bu normaldir, bir arıza değildir. Bu sırada katılma sayfası *Katılıyor…* yazısının altında süreyi sayar ve aşama değiştirir — o satır hâlâ ilerliyorsa henüz hiçbir şey ters gitmemiştir, bu yüzden sayfayı açık tut.
+- Daha önce çalışıyor muydu? O zamandan beri oyun güncellemesi veya yeni bir mod gibi bir şey değişti mi?

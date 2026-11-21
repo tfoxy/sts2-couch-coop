@@ -8,12 +8,12 @@ Prova questi passaggi se il telefono o il tablet non riesce a connettersi. Per a
 
 Sul computer che esegue il gioco, apri **Codice QR di Couch Co-Op**.
 
-- **Interfaccia di rete** (a sinistra): scegli **Cablato (Ethernet)** se il computer è collegato al router con un cavo, oppure **Wi-Fi** se è collegato senza fili. Scegli la connessione al router usato dal telefono. Salta **Nome del PC (.local)**.
+- **Interfaccia di rete** (a sinistra): scegli **Cablato (Ethernet)** se il computer è collegato al router con un cavo, oppure **Wi-Fi** se è collegato senza fili. Se il computer ha entrambe le connessioni, scegli quella collegata allo stesso router del telefono. Salta **Nome del PC (.local)**.
 - **Metodo di connessione** (a destra): scegli **Indirizzo diretto**, senza “(HTTPS)”. L’indirizzo deve iniziare con `http://`, per esempio `http://192.168.1.5:13337`.
 
 Scansiona di nuovo il codice QR dopo aver modificato queste impostazioni.
 
-Usa **Indirizzo diretto** durante la risoluzione del problema. I metodi HTTPS sono opzioni per prestazioni e sicurezza, con configurazioni o requisiti di connessione aggiuntivi.
+Usa **Indirizzo diretto** durante la risoluzione del problema. I metodi HTTPS possono essere più veloci e più sicuri, ma richiedono una configurazione aggiuntiva. Aspetta che l’indirizzo semplice funzioni prima di usarli.
 
 ### 2. Controlla la rete del telefono
 
@@ -25,8 +25,6 @@ Usa **Indirizzo diretto** durante la risoluzione del problema. I metodi HTTPS so
 
 ### 3. Windows: consenti il gioco attraverso il firewall
 
-Sulla tua rete domestica:
-
 1. **Impostazioni > Rete e Internet > Wi-Fi** (o Ethernet) > fai clic sulla tua rete > imposta **Tipo di profilo di rete** su **Rete privata**.
 2. **Impostazioni > Privacy e sicurezza > Sicurezza di Windows > Firewall e protezione rete > Consenti app tramite firewall**
 3. Trova **Slay the Spire 2** nell'elenco e assicurati che **Privato** sia selezionato. Se non è nell'elenco, usa **Consenti un'altra app...** e cerca il file `.exe` del gioco.
@@ -35,7 +33,7 @@ Se in precedenza hai annullato la richiesta del firewall per il gioco, rimuovi l
 
 Se l’antivirus ha un proprio firewall, consenti il gioco anche lì.
 
-Aprire l’indirizzo sul computer che esegue il gioco non verifica se il firewall permette al telefono di connettersi.
+Se la pagina si apre sul computer stesso, non significa che il firewall lasci connettere il telefono.
 
 ### 4. Controlla se il browser forza HTTPS
 
@@ -48,9 +46,7 @@ Consenti l’indirizzo HTTP, poi scansiona di nuovo il codice QR. Mantieni **Ind
 
 ### 5. Controlla il router
 
-Il Wi-Fi per ospiti spesso impedisce ai dispositivi di comunicare tra loro. Usa la rete principale di casa.
-
-Se entrambi i dispositivi sono già su quella rete, controlla se sul router è attivo **AP isolation**, **Client isolation** o **Wireless isolation**. Queste impostazioni impediscono ai dispositivi di comunicare tra loro.
+Se entrambi i dispositivi sono sulla rete principale di casa e continuano a non comunicare tra loro, controlla se sul router è attivo **AP isolation**, **Client isolation** o **Wireless isolation**. Queste impostazioni impediscono ai dispositivi di comunicare tra loro.
 
 Se usi un ripetitore Wi-Fi, verifica che sia in modalità **access point** o **bridge**, anziché creare una rete separata.
 
@@ -72,7 +68,7 @@ Se un vecchio segnalibro o collegamento nella schermata iniziale non funziona pi
 
 ## Ancora bloccato? Commenta nella discussione Steam
 
-Nella [discussione Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/), inizia con:
+Nella [discussione Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243032720/), includi:
 
 - Fin dove arriva: nessuna pagina, nessun elenco dei giocatori, ingresso o caricamento bloccato, oppure disconnessione durante la partita.
 - Uno screenshot o il messaggio di errore esatto.
@@ -87,4 +83,4 @@ Se non compare alcuna connessione, dillo e pubblica le informazioni elencate sop
 
 Il rapporto include i percorsi dei file di log pertinenti. Se servono i log, [Hai un problema? Segnalalo nella discussione Steam](reporting-a-problem.md) spiega come trovarli. Prima di pubblicare i log, rimuovi l’ID del tuo account Steam e il nome utente del computer se preferisci mantenerli privati.
 
-Usa il mod su una rete fidata: chiunque possa raggiungere l’indirizzo di accesso può aprire il client e giocare.
+Usa il mod su una rete fidata: chiunque possa raggiungere l’indirizzo di accesso può unirsi alla tua partita.

@@ -18,7 +18,7 @@ every link against it.
 
 The two cross-link each other: the phone post sends non-connection problems to the reporting post, and
 the reporting post sends "my phone can't reach the page at all" the other way. The store description links
-both: the phone post at the end of Quick Start, the reporting post at the end of "This mod is in beta".
+both: the phone post at the end of Quick Start, the reporting post at the end of "This mod is experimental".
 
 ## Translations
 

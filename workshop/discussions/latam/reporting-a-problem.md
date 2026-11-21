@@ -2,65 +2,65 @@
 
 > Esta es una traducción de la discusión del Workshop de Steam [Having a problem? Post it here](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/). Para hacer una pregunta o reportar un problema, deja un comentario en esa discusión. No necesitas escribir en inglés: puedes hacerlo en español.
 
-[La discusión de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) es el lugar para cualquier cosa que salga mal: cierres inesperados, un jugador que nunca termina de unirse, algo que se ve mal en pantalla, una partida que se rompe.
+Publica en [la discusión de Steam](https://steamcommunity.com/workshop/filedetails/discussion/3799476240/563668239243120957/) si algo falla: un cierre inesperado, un jugador que no termina de unirse, algo que se ve mal en pantalla o una partida que deja de funcionar.
 
-**Si tu teléfono o tablet ni siquiera llega a la página para unirse**, lee primero [¿No puedes conectarte desde un teléfono o una tablet?](phone-connection-troubleshooting.md): ahí se explican en detalle la red Wi-Fi, los firewalls y los routers, y la mayoría de los problemas de conexión se resuelven ahí.
+**Si tu teléfono o tablet ni siquiera puede abrir la página para unirse**, lee primero [¿No puedes conectarte desde un teléfono o una tablet?](phone-connection-troubleshooting.md). La mayoría de los problemas de conexión se deben a un ajuste de la red Wi-Fi, el firewall o el router que se explica en esa guía.
+
+### Antes de reportar un bloqueo al unirse
+
+Iniciar el juego de un jugador puede tardar hasta un minuto, sobre todo en una computadora más lenta. Mientras la línea debajo de **Uniéndote…** en la página para unirse siga contando y cambiando, sigue trabajando, así que deja la página abierta.
 
 ---
 
 ## Qué incluir
 
-No necesitas responder todo: los dos primeros puntos valen más que todos los demás juntos.
+No necesitas responder todo. Los dos primeros puntos son los que más ayudan.
 
 ### 1. Qué pasó y qué esperabas que pasara
 
-Con una o dos oraciones alcanza. Si apareció un mensaje de error en pantalla, cópialo exactamente, incluida cualquier línea gris más pequeña que haya abajo. Una foto o una captura de pantalla es perfecta.
+Con una o dos oraciones alcanza. Si apareció un error, cópialo exactamente, incluida la línea gris más pequeña que hay abajo, o publica una captura o una foto de la pantalla.
 
-### 2. Si el problema es al unirse o en la sala: el informe de conexión
+### 2. El informe de conexión (problemas al unirse o en la sala)
 
-*Si tu problema ocurre más tarde (durante una partida o en el propio juego), pasa directamente al paso 3.*
+*Omite este punto si el problema ocurrió durante una partida.*
 
-Desde la sala, abre la pantalla **Código QR de Couch Co-Op**. El panel **Conexiones** está ahí, debajo del código. Todo lo que salió mal se guarda en **Problemas de conexión** (con un número al lado).
+En la computadora, abre **Código QR de Couch Co-Op** y busca **Conexiones**. Selecciona la conexión que falló en **Problemas de conexión**, elige **Copiar informe** y pégalo en tu comentario.
 
-Selecciona la fila que falló, presiona **Copiar informe** y pégalo en tu comentario. Si el problema es al unirse, es lo más útil que puedes adjuntar: ya incluye el paso que falla, los tiempos, el diagnóstico del propio anfitrión y las rutas de los archivos de registro que se describen más abajo.
+El informe indica qué paso falló y cuánto tardó cada uno, incluye lo que el anfitrión cree que falló y muestra las rutas de los archivos de registro de abajo.
 
 ### 3. Los archivos de registro
 
-Hay dos tipos, y cuál importa depende del problema.
+Si copiaste el informe de conexión, ya contiene las rutas exactas.
 
-**El registro principal del juego**, en la computadora anfitriona:
+**El registro del juego**, en la computadora anfitriona:
 
 - Windows: `%APPDATA%\SlayTheSpire2\logs\godot.log`
 - Linux: `~/.local/share/SlayTheSpire2/logs/godot.log`
 - macOS: `~/Library/Application Support/SlayTheSpire2/logs/godot.log`
 
-**El registro de cada jugador.** Cada jugador que se une tiene su propia copia del juego corriendo en segundo plano en la computadora anfitriona, y cada una guarda su propio registro. **Si un jugador se quedó trabado al unirse, este es el archivo que explica por qué**; el registro principal de arriba normalmente no lo explica.
+**Los registros de los jugadores.** Cada jugador que se une ejecuta su propia copia oculta del juego en la computadora anfitriona, con su propio registro. Si un jugador se quedó trabado al unirse, su registro suele explicar por qué; el del juego normalmente no lo explica.
 
-Los jugadores se numeran a partir del 2, así que la primera persona que se une a tu partida es **`slot-2`**. En Linux, el registro de ese jugador está en:
+El primer jugador que se une es `slot-2`, el siguiente `slot-3` y así sucesivamente. Para `slot-2`:
 
-`~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`
+- Windows: `%APPDATA%\SlayTheSpire2\couch-coop\headless-slots\slot-2\SlayTheSpire2\logs\godot.log`
+- Linux: `~/.local/share/SlayTheSpire2/couch-coop/headless-slots/slot-2/SlayTheSpire2/logs/godot.log`
+- macOS: `~/Library/Application Support/SlayTheSpire2/couch-coop/headless-slots/slot-2/Library/Application Support/SlayTheSpire2/logs/godot.log`
 
-(Sí, `SlayTheSpire2` de verdad aparece dos veces; no es un error de tipeo). En Windows y macOS la estructura es la misma, dentro de la carpeta de la lista de arriba. En algunas configuraciones, en cambio, es un solo archivo en `couch-coop/seat-logs/slot-2.log`. En cualquier caso, **el informe del paso 2 indica la ruta exacta**, así que si lo copias primero te ahorras buscarla.
+Si no hay una carpeta `headless-slots`, el registro es `couch-coop/seat-logs/slot-2.log`, dentro de la misma carpeta `SlayTheSpire2` que el registro del juego.
 
-**Qué líneas importan.** En cualquiera de los dos archivos, las útiles contienen `[couchcoop]` (se ven así: `[INFO] [couchcoop] ...`), además de cualquier línea `[ERROR]`, aunque no mencione couchcoop. Normalmente con esas líneas alcanza.
+**Qué líneas importan.** En ambos registros, las líneas que más necesito son las que contienen `[couchcoop]` (por ejemplo, `[INFO] [couchcoop] ...`), además de cualquier línea `[ERROR]`, aunque no mencione couchcoop. Normalmente con esas líneas alcanza.
 
-**Antes de pegar un registro completo:** la discusión de Steam es pública, y un registro contiene tu propio **SteamID64** (un número largo que empieza con 7656 y que lleva a tu perfil de Steam) y el **nombre de usuario** de tu computadora, en las rutas de archivo. *No* contiene contraseñas, y tampoco contiene las cuentas de otros jugadores: solo la tuya. Si prefieres no publicar eso, alcanza con usar buscar y reemplazar en esos dos datos antes de pegarlo, o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, te lo pido.
+**Antes de pegar un registro completo:** esta discusión es pública. Un registro contiene tu SteamID64 (un número largo que empieza con 7656 y lleva a tu perfil de Steam) y el nombre de usuario de tu computadora en las rutas de archivo. No contiene contraseñas ni cuentas de otros jugadores. Si prefieres no compartir esos dos datos, reemplázalos antes de pegarlo o publica solo las líneas `[couchcoop]` y `[ERROR]` y, si necesito más, te lo pediré.
 
 ### 4. Versiones y mods
 
 - Si estás en la rama **estable** o en la rama **beta pública** del juego.
-- **Qué otros mods tienes instalados.** Cada copia de jugador en segundo plano carga los mismos mods que el anfitrión, así que otro mod puede impedir que un jugador termine de unirse aunque la partida del propio anfitrión se vea perfectamente bien.
+- **Qué otros mods tienes instalados.** La copia del juego de cada jugador carga los mismos mods que el anfitrión, así que otro mod puede impedir que un jugador se una aunque el juego del anfitrión funcione bien.
 - El sistema operativo del anfitrión.
-- La versión de CouchCoop, si la sabes; si no, voy a suponer que es la más reciente.
+- Tu versión de CouchCoop, si la sabes. Si no, voy a suponer que es la más reciente.
 
 ### 5. Cualquier cosa que ayude a acotarlo
 
 - ¿Pasa siempre o solo a veces?
 - ¿Le pasa a todos los jugadores o solo a uno?
-- ¿Alguna vez funcionó, y cambió algo desde entonces, como una actualización del juego o un mod nuevo?
-
----
-
-## Algo que conviene saber antes de reportar
-
-Iniciar la partida de un jugador puede tardar hasta un minuto, y en una computadora más lenta va a usar casi todo ese tiempo. Es normal, no una falla. Mientras trabaja, la página para unirse va contando y cambiando de etapa debajo de *Uniéndote…*; si esa línea sigue moviéndose, todavía no falló nada, así que deja la página abierta.
+- ¿Funcionaba antes y cambió algo desde entonces, como una actualización del juego o un mod nuevo?
