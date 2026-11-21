@@ -762,7 +762,7 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // this table (and its spec), and the panel binds it normally again.
 //
 // Rows NOT here are supported as saved: Audio, Safe-area padding, Refresh rate, Show overlay (and the network RTT),
-// Widescreen stretch, which under the new renderer means "launch my seat at my aspect" (PRES-A), and — since TAG3 —
+// Widescreen stretch, which updates the active stream's requested width (shared seats use the squarest viewer), and
 // Raise hand cards and Readability scaling, which run as opt-in render-stream extension modules
 // (stream-ext/raisedHand.ts and viewScale.ts) on the viewer's saved value. Stage is disabled but keeps its saved
 // value — see STREAM_DISABLED_ROWS. Since INP2, Tap to focus is the viewer's again: the input channel

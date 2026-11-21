@@ -101,8 +101,11 @@ internal sealed class RenderStreamSwap : IDisposable
     }
 
     private bool HasStream => _pages.Values.Any(p => p.Stream && p.Connected);
+    // Share the squarest connected viewer's width, with a 16:9 floor. Mirror watchers require that floor;
+    // stream aspect changes re-arm capture so every viewer receives the same presentation.
     private int TargetWidth => _pages.Values.Any(p => !p.Stream && p.Watch && p.Connected)
-        ? 1920 : StreamingSeatLaunch.PresentationWidth(_pages.Values.OrderBy(p => p.Order).FirstOrDefault(p => p.Stream && p.Connected)?.Aspect, _maxWidth);
+        ? 1920 : _pages.Values.Where(p => p.Stream && p.Connected)
+            .Select(p => StreamingSeatLaunch.PresentationWidth(p.Aspect, _maxWidth)).DefaultIfEmpty(1920).Min();
 
     private void Recompute(bool explicitMirror = false)
     {

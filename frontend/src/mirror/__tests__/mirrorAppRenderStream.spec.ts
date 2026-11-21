@@ -1595,7 +1595,144 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     expect(seat.ofType("input").at(-1)).toMatchObject({ presentationEpoch: 3 });
   });
 
-  it.each(["arming", "disarming", "armed"])("does not fail a deliberate %s presentation rearm", async (state) => {
+  it("keeps a stream request through the complete width rearm sequence", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    for (const state of ["disarming", "mirror", "arming"]) {
+      seat.emit(seatSession({ renderStream: null, rendererState: { state, presentationEpoch: 2,
+        presentationReady: false, presentationWidth: 1920, presentationHeight: 1080 } }));
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+    }
+    seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+  });
+
+  describe("stream seat width updates", () => {
+    let resize: () => void;
+    let disconnect: ReturnType<typeof vi.fn>;
+    beforeEach(() => {
+      vi.stubGlobal("innerWidth", 2340);
+      vi.stubGlobal("innerHeight", 1080);
+      mirrorSettings.safeAreaPaddingEnabled = false;
+      disconnect = vi.fn();
+      vi.stubGlobal("ResizeObserver", class {
+        constructor(callback: () => void) { resize = callback; }
+        observe(): void {}
+        disconnect = disconnect;
+      });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      mirrorSettings.safeAreaPaddingEnabled = true;
+    });
+
+    async function widthRequest(): Promise<MockWebSocket> {
+      Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true, stopped: null });
+      mirrorSettings.renderer = "stream";
+      return joinSeat();
+    }
+
+    it("sends one width update for a stretch toggle without resetting first-frame history", async () => {
+      const seat = await widthRequest();
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+      seat.sent.length = 0;
+      renderStreamContext.firstFrame = true;
+      mirrorSettings.stretchEnabled = true;
+      await settle();
+      expect(seat.ofType("renderer")).toEqual([
+        { type: "renderer", rendererProtocol: 2, renderer: "stream", aspect: 2340 / 1080 }
+      ]);
+      expect(renderStreamContext.firstFrame).toBe(true);
+      seat.sent.length = 0;
+      mirrorSettings.stretchEnabled = false;
+      await settle();
+      expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+    });
+
+    it("updates immediately when safe-area padding changes the desired width", async () => {
+      const surface = document.createElement("main");
+      surface.style.padding = "0 90px";
+      vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({ width: 2340, height: 1080 } as DOMRect);
+      const query = document.querySelector.bind(document);
+      vi.spyOn(document, "querySelector").mockImplementation((selector: string) =>
+        selector === ".mirror-surface" ? surface : query(selector));
+      mirrorSettings.stretchEnabled = true;
+      const seat = await widthRequest();
+      seat.sent.length = 0;
+      mirrorSettings.safeAreaPaddingEnabled = true;
+      await settle();
+      expect(seat.ofType("renderer")).toEqual([
+        { type: "renderer", rendererProtocol: 2, renderer: "stream", aspect: 2160 / 1080 }
+      ]);
+    });
+
+    it("coalesces a resize burst into one trailing width update", async () => {
+      mirrorSettings.stretchEnabled = true;
+      const seat = await widthRequest();
+      seat.sent.length = 0;
+      vi.useFakeTimers();
+      vi.stubGlobal("innerWidth", 2400);
+      resize();
+      await vi.advanceTimersByTimeAsync(300);
+      vi.stubGlobal("innerWidth", 2520);
+      resize();
+      await vi.advanceTimersByTimeAsync(399);
+      expect(seat.ofType("renderer")).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(seat.ofType("renderer")).toEqual([
+        { type: "renderer", rendererProtocol: 2, renderer: "stream", aspect: 2520 / 1080 }
+      ]);
+    });
+
+    it("does not send when the quantized width is unchanged", async () => {
+      mirrorSettings.stretchEnabled = true;
+      const seat = await widthRequest();
+      seat.sent.length = 0;
+      vi.useFakeTimers();
+      vi.stubGlobal("innerWidth", 2340.1);
+      resize();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(seat.ofType("renderer")).toEqual([]);
+    });
+
+    it("sends nothing without an active stream request", async () => {
+      const seat = await joinSeat();
+      seat.sent.length = 0;
+      mirrorSettings.stretchEnabled = true;
+      await settle();
+      expect(seat.ofType("renderer")).toEqual([]);
+    });
+
+    it.each(["mirror", "disconnect", "unmount"])("cancels pending resize work on %s", async (end) => {
+      mirrorSettings.stretchEnabled = true;
+      const seat = await widthRequest();
+      vi.useFakeTimers();
+      vi.stubGlobal("innerWidth", 2520);
+      resize();
+      if (end === "mirror") mirrorSettings.renderer = "mirror";
+      else if (end === "disconnect") seat.close();
+      else { app!.unmount(); app = null; }
+      await nextTick();
+      seat.sent.length = 0;
+      await vi.advanceTimersByTimeAsync(400);
+      expect(seat.ofType("renderer")).toEqual([]);
+      expect(disconnect).toHaveBeenCalled();
+    });
+  });
+
+  it.each(["arming", "disarming", "mirror", "armed"])("does not fail a deliberate %s presentation rearm", async (state) => {
     const seat = await showMirror();
     await startStream(seat);
     fail({ kind: "streaming", firstFrame: true });

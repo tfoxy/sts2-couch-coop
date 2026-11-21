@@ -12,10 +12,14 @@ internal static class RenderStreamSwapTests
             MixedRendererJoinOrders,
             MirrorWatchIntentResizesBeforeAdmission,
             HiddenAndDisconnectedMirrorReleaseConstraint,
-            OldestStreamAndNewestTargetWin,
+            SquarestStreamAndNewestTargetWin,
+            StandardStreamConstrainsWideViewer,
+            NullAspectConstrainsArmedSeat,
+            AspectUpdateRearmsAtNewWidth,
+            QuantizedAspectUpdateKeepsCapture,
             GracePreservesPageFacts,
             DisconnectedPreferencesAreBounded,
-            ReconnectRetainsRequesterOrder,
+            ReconnectRespectsSquarestViewer,
             PresentationReadyIsIndependentOfCapture,
             FailedReassertInvalidatesPendingReadiness,
             FailedPresentationRestoresOrRemainsUnready,
@@ -140,20 +144,66 @@ internal static class RenderStreamSwapTests
         }
     }
 
-    private static void OldestStreamAndNewestTargetWin()
+    private static void SquarestStreamAndNewestTargetWin()
     {
         using var f = new Fixture();
         f.Swap.Request("first", true, 2);
         f.Capture.EmitArmed(Snapshot("first"));
         f.Swap.Request("second", true, 3);
-        Assert(f.Capture.DisarmCalls == 0, "new requester cannot override the oldest");
+        Assert(f.Capture.DisarmCalls == 0, "wider requester cannot override the squarest");
         f.Swap.Release("first");
-        Assert(f.Swap.State == "disarming", "oldest disconnect recomputes");
+        Assert(f.Swap.State == "disarming", "squarest disconnect recomputes");
         f.Swap.Request("second", true, 2.2);
         f.Swap.Request("second", true, 2.3);
         f.Capture.EmitDisarmed();
         Assert(f.Capture.DisarmCalls == 1 && f.Capture.ArmCalls == 2
             && f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2484x1080", "one teardown applies only the latest target");
+    }
+
+    private static void StandardStreamConstrainsWideViewer()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("wide", true, 2);
+        f.Swap.Request("standard", true, 16.0 / 9);
+        f.Capture.EmitDisarmed();
+        f.Capture.EmitArmed(Snapshot("shared"));
+        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:1920x1080", "squarest stream constrains the shared arm");
+        f.Swap.Release("standard");
+        Assert(f.Swap.State == "disarming", "departing squarest stream starts teardown");
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2160x1080", "remaining wide stream supplies the next arm");
+    }
+
+    private static void NullAspectConstrainsArmedSeat()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("wide", true, 2340.0 / 1080);
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Swap.Request("unstretched", true);
+        Assert(f.Capture.DisarmCalls == 1 && f.Swap.State == "disarming", "null aspect narrows an armed seat");
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:1920x1080", "stretch off counts as standard aspect");
+    }
+
+    private static void AspectUpdateRearmsAtNewWidth()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("page", true, 2340.0 / 1080);
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Swap.UpdatePage("page", true, true, 21.0 / 9);
+        Assert(f.Capture.DisarmCalls == 1 && f.Capture.ArmCalls == 1, "aspect update waits for teardown");
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.ArmCalls == 2 && f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2520x1080", "aspect update re-arms at the new width");
+    }
+
+    private static void QuantizedAspectUpdateKeepsCapture()
+    {
+        using var f = new Fixture();
+        f.Swap.Request("page", true, 2340.0 / 1080);
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Swap.UpdatePage("page", true, true, 2340.1 / 1080);
+        Assert(f.Swap.State == "armed" && f.Capture.DisarmCalls == 0 && f.Capture.ArmCalls == 1,
+            "aspect update with the same quantized width leaves capture alone");
     }
 
     private static void GracePreservesPageFacts()
@@ -184,7 +234,7 @@ internal static class RenderStreamSwapTests
         Assert(f.Capture.Discoveries == 0, "retention maintenance does no capture work");
     }
 
-    private static void ReconnectRetainsRequesterOrder()
+    private static void ReconnectRespectsSquarestViewer()
     {
         using var f = new Fixture();
         f.Swap.Request("first", true, 2);
@@ -192,9 +242,8 @@ internal static class RenderStreamSwapTests
         f.Capture.EmitArmed(Snapshot("initial"));
         f.Swap.Release("first");
         f.Swap.UpdatePage("first", true, false, 3);
-        Assert(f.Swap.State == "disarming", "reconnected requester keeps its original place before a newer requester");
-        f.Capture.EmitDisarmed();
-        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2520x1080", "reconnected oldest request owns the aspect");
+        Assert(f.Swap.State == "armed" && f.Capture.DisarmCalls == 0, "reconnected wider requester respects the squarest viewer");
+        Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "presentation:2160x1080", "request order does not override the squarest aspect");
     }
 
     private static void PresentationReadyIsIndependentOfCapture()

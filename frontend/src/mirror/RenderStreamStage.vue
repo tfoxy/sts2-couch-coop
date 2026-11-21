@@ -5,10 +5,9 @@
 //
 // What this component owns:
 //   * the <canvas>: a W×1080 backing store, W being the seat's presentation width (`GRC_ROOT_SIZE=presentation:<W>x1080`,
-//     the descriptor's `presentation`: 1920, or wider when the seat was launched at this viewer's aspect),
-//     CSS-fitted at that aspect inside the frame (letterboxed: a box whose aspect changed since the seat started, a
-//     rotated phone, keeps the seat's width until its next start), honouring the safe-area padding
-//     preference exactly as MirrorView's frame does;
+//     the descriptor's `presentation`: at least 1920, sized for the squarest connected viewer),
+//     CSS-fitted at that aspect inside the frame. Settings changes and settled resizes can re-arm the seat;
+//     each new presentation rebuilds the client, honouring the safe-area padding preference as MirrorView does;
 //   * the client's lifetime: created and connected on mount, disposed on unmount (heap, socket, GL context);
 //   * the loading line until the first drawn transaction, and "Reconnecting…" while the package backs off;
 //   * the hidden tab: rAF stops by itself (so no credit returns and the hub stops publishing to us); after
@@ -733,7 +732,7 @@ defineExpose({
     var(--surface-inset-bottom, 0px) var(--surface-inset-left, 0px);
 }
 
-/* Letterboxed at the seat's presentation aspect (16:9, or wider for a seat launched at this viewer's aspect): the
+/* Letterboxed at the seat's current presentation aspect (at least 16:9, shared by all connected viewers): the
    largest such box inside the frame, centred. */
 .render-stream-box {
   position: absolute;

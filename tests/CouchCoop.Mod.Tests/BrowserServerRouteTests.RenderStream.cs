@@ -103,12 +103,12 @@ internal sealed partial class BrowserServerRouteTests
 
             foreach (var origin in new[] { AllowedPageOrigin, "http://localhost:13337" })
             {
-                using var session = await seat.SessionAsync(origin, wantsStream: true);
+                using var session = await seat.SessionAsync(origin, wantsStream: true, aspect: "2.1666666666666665");
                 ExpectDescriptor(session.RootElement, $"an armed seat's session for {origin}", 2340);
             }
             foreach (var origin in new string?[] { "http://192.168.1.20:13337", "https://127.0.0.1:13338", null })
             {
-                using var session = await seat.SessionAsync(origin, wantsStream: true);
+                using var session = await seat.SessionAsync(origin, wantsStream: true, aspect: "2.1666666666666665");
                 Expect(!session.RootElement.TryGetProperty("renderStream", out _), "the hub's origin gate still hides credentials");
                 Expect(session.RootElement.GetProperty("rendererState").GetProperty("state").GetString() == "armed",
                     "headless sessions still report renderer state without an allowed Origin");
@@ -458,14 +458,14 @@ internal sealed partial class BrowserServerRouteTests
             return socket;
         }
 
-        public async Task<JsonDocument> SessionAsync(string? origin, bool wantsStream = false)
+        public async Task<JsonDocument> SessionAsync(string? origin, bool wantsStream = false, string? aspect = null)
         {
             using var socket = await ConnectAsync(origin);
             var session = await ReadSessionAsync(socket);
             if (wantsStream)
             {
                 session.Dispose();
-                await SendRendererAsync(socket, "stream");
+                await SendRendererAsync(socket, "stream", aspect);
                 session = await ReadRendererAsync(socket, "armed");
             }
             await CloseWebSocketSilentlyAsync(socket);

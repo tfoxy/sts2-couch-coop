@@ -353,8 +353,8 @@ export function measureStreamBox(
 
 /**
  * Ask for the mirror's design aspect, using its current frame and stretch rule. Stretch off (or an unmeasurable
- * frame) sends none, which is 1920x1080. A later rotation or resize letterboxes the seat's fixed presentation
- * into the new frame until the stream's next start.
+ * frame) sends none, which is 1920x1080. Settings changes and settled resizes update the active request;
+ * the seat re-arms at the squarest connected viewer's width so every viewer can fit the presentation.
  */
 export function streamSeatAspect(
   settings: Pick<MirrorSettings, "stretchEnabled" | "safeAreaPaddingEnabled"> = mirrorSettings,

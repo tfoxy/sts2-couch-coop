@@ -33,6 +33,7 @@ import {
   syncRuntimeRenderer
 } from "@/mirror/renderStreamAvailability";
 import { renderStreamCoreConfig } from "@/mirror/renderStreamCore";
+import { streamSeatWidth, useStreamSeatWidth } from "@/mirror/streamSeatWidth";
 import { importRenderStreamStage } from "@/mirror/renderStreamStageLoader";
 import { rendererComparisonViewRevision } from "@/mirror/rendererComparison";
 import StaticBackground from "@/mirror/StaticBackground.vue";
@@ -1086,8 +1087,10 @@ watch(() => JSON.stringify(renderStreamEndpoint.value), () => {
   if (renderStreamEndpoint.value !== null) holdMirrorForStream.value = hasScene();
 }, { flush: "sync" });
 const rendererRequests = new WeakMap<MirrorClient, {
-  renderer: "stream" | "mirror"; retry: number; descriptorReceived: boolean;
+  renderer: "stream" | "mirror"; retry: number; descriptorReceived: boolean; lastSentWidth: number;
 }>();
+const rendererRequestRevision = ref(0);
+const mirrorSurface = shallowRef<HTMLElement | null>(null);
 // A host's renderer state advertises its own capture; the seat LAN offer still describes seats only.
 const hostSelfStream = computed(() => hostSession.value?.rendererState !== undefined);
 const selfStreamingView = computed(() => directView.value && hostSelfStream.value);
@@ -1110,7 +1113,7 @@ watch(
     } else if (next === null && (joined.value || selfStreamingView.value) && seatRendererDemand.value === "stream"
       && mirrorSettings.renderStreamUrl === null
       && request?.renderer === "stream" && request.descriptorReceived
-      && !(state?.presentationReady === false && ["arming", "disarming", "armed"].includes(state.state))) {
+      && !(state?.presentationReady === false && ["arming", "disarming", "mirror", "armed"].includes(state.state))) {
       onRenderStreamFailed("descriptor gone");
     }
     if (session === null || (state?.state === "mirror" && next === null)) {
@@ -1161,8 +1164,10 @@ function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"
   // A ready shared seat may still be awaiting this page's opt-in. Only a descriptor acknowledged on this
   // connection and request can later be withdrawn. An initial descriptor may already acknowledge the page;
   // subsequent attempts must receive a new session rather than inherit their predecessor's descriptor.
-  rendererRequests.set(client, { renderer, retry, descriptorReceived: renderer === "stream"
+  const aspect = renderer === "stream" ? streamSeatAspect(mirrorSettings) : undefined;
+  rendererRequests.set(client, { renderer, retry, lastSentWidth: streamSeatWidth(aspect), descriptorReceived: renderer === "stream"
     && previous === undefined && sessionRenderStreamEndpoint(client.session.renderStream) !== null });
+  rendererRequestRevision.value++;
   // Close admission synchronously, before the request can resize the shared seat.
   client.setSceneAdmission(false);
   seatRendererDemand.value = renderer;
@@ -1174,9 +1179,22 @@ function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"
   }
   renderStreamContext.returningToMirror = renderer === "mirror";
   syncRuntimeRenderer(mirrorSettings);
-  client.sendRenderer(renderer, renderer === "stream" ? streamSeatAspect(mirrorSettings) : undefined);
+  client.sendRenderer(renderer, aspect);
   if (renderer === "mirror" && mirrorReturnRestored.value) client.setSceneAdmission(true);
 }
+
+useStreamSeatWidth({
+  request: () => {
+    void rendererRequestRevision.value;
+    const request = rendererRequests.get(activeClient);
+    return status.value === "connected" && activeClient.status === "connected" && request?.renderer === "stream"
+      ? request : null;
+  },
+  surface: mirrorSurface,
+  settings: mirrorSettings,
+  aspect: () => streamSeatAspect(mirrorSettings),
+  send: (aspect) => activeClient.sendRenderer("stream", aspect)
+});
 
 // Capability can arrive after the first connected session. Only an admitted, changed request spends a slot.
 watch(
@@ -1865,6 +1883,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main
+    ref="mirrorSurface"
     class="game-surface mirror-surface"
     :class="{ 'surface-covered': surfaceCovered }"
     data-testid="mirror-surface"

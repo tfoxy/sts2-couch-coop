@@ -290,8 +290,8 @@ function forcedBind<K extends StreamForcedKey>(key: K, persist = true): Writable
   });
 }
 
-// Widescreen stretch stays the viewer's under the new renderer too: there it sets the width the streaming seat is
-// launched at (PRES-A), from the seat's next start.
+// Widescreen stretch updates the active stream's requested width. A shared seat uses its squarest viewer
+// (at least 16:9), re-arming capture when that width changes.
 const stretchEnabled = bind("stretchEnabled");
 const safeAreaPaddingEnabled = bind("safeAreaPaddingEnabled");
 // Raise held card and Un-focus on release run as the held-card stream-ext module plus the input channel's peek /
