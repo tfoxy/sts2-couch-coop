@@ -309,7 +309,14 @@ const raiseHandCards = bind("raiseHandCards");
 const uiScaling = bind("uiScaling");
 const backstopOcclusion = forcedBind("backstopOcclusion");
 const refreshRate = bind("refreshRate");
-const tweenReplay = forcedBind("tweenReplay");
+const tweenReplay = computed<boolean>({
+  get: () => effectivePanelSetting(settings, "tweenReplay"),
+  set: (value) => {
+    const key = streamActive.value ? "streamClientTweens" : "tweenReplay";
+    settings[key] = value;
+    persistMirrorSetting(key, value);
+  }
+});
 const latencyOverlay = bind("latencyOverlay");
 const audio = bind("audio");
 const audioUnavailable = computed(() => props.audioUnavailable);
@@ -322,7 +329,15 @@ const freezeSpines = computed<boolean>({
     else settings.freezeSpines = value;
   }
 });
-const freezeDecor = forcedBind("freezeDecor", false);
+const freezeDecor = computed<boolean>({
+  get: () => effectivePanelSetting(settings, "freezeDecor"),
+  set: (value) => {
+    if (streamActive.value) {
+      settings.streamClientDecor = value;
+      persistMirrorSetting("streamClientDecor", value);
+    } else settings.freezeDecor = value;
+  }
+});
 
 // Whether THIS BUILD ships the repro recorder's row at all (buildFlags). A published build sets
 // `VITE_REPRO_UI=off` and the row below — and its help tip — are compiled out, because a developer tool in an end
@@ -690,10 +705,10 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row">
-            <input type="checkbox" v-model="tweenReplay" :disabled="streamActive" data-testid="mirror-tween-replay" />
-            <span>{{ t('settings.tweenReplay') }}</span>
+            <input type="checkbox" v-model="tweenReplay" data-testid="mirror-tween-replay" />
+            <span>{{ t(streamActive ? 'settings.streamClientTweens' : 'settings.tweenReplay') }}</span>
           </label>
-          <SettingsHelpTip v-bind="help('tweenReplay', t('settings.tweenReplay'))" />
+          <SettingsHelpTip v-bind="help('tweenReplay', t(streamActive ? 'settings.streamClientTweens' : 'settings.tweenReplay'), 'below', streamActive ? t('settings.help.streamClientTweens') : undefined)" />
         </div>
       </div>
 
@@ -718,10 +733,10 @@ onBeforeUnmount(() => setHelpListeners(false));
         </div>
         <div class="settings-item">
           <label class="settings-row settings-row-advanced">
-            <input type="checkbox" v-model="freezeDecor" :disabled="streamActive" data-testid="mirror-freeze-decor" />
-            <span>{{ t('settings.freezeDecor') }} <em>{{ t('settings.advancedSuffix') }}</em></span>
+            <input type="checkbox" v-model="freezeDecor" data-testid="mirror-freeze-decor" />
+            <span>{{ t(streamActive ? 'settings.streamClientDecor' : 'settings.freezeDecor') }} <em>{{ t('settings.advancedSuffix') }}</em></span>
           </label>
-          <SettingsHelpTip v-bind="help('freezeDecor', t('settings.freezeDecor'))" />
+          <SettingsHelpTip v-bind="help('freezeDecor', t(streamActive ? 'settings.streamClientDecor' : 'settings.freezeDecor'), 'below', streamActive ? t('settings.help.streamClientDecor') : undefined)" />
         </div>
       </div>
 

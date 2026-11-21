@@ -199,7 +199,7 @@ describe("extensions — off is an empty list", () => {
     settings.raiseHeldCard = false;
     settings.confirmTap = false;
     const built = buildStreamExtensions({ settings, presentationWidth: 1920 });
-    expect(built.extensions).toEqual([]);
+    expect(built.extensions.map((e) => e.id)).toEqual(["couchcoop.decor"]);
     expect(built.heldCard).toBeNull();
     expect(built.confirmTap).toBeNull();
   });
@@ -211,6 +211,6 @@ describe("extensions — off is an empty list", () => {
     settings.raiseHeldCard = false;
     settings.confirmTap = false;
     const list = buildStreamExtensions({ settings, presentationWidth: 2520 }).extensions;
-    expect(list.map((e) => e.id)).toEqual(["couchcoop.raisedHand"]);
+    expect(list.map((e) => e.id)).toEqual(["couchcoop.raisedHand", "couchcoop.decor"]);
   });
 });

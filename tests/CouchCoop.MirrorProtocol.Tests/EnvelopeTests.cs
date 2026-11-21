@@ -18,6 +18,7 @@ internal static class EnvelopeTests
         StreamFreezeSpinesRoundTrips();
         StreamStaticBackgroundReadyRoundTrips();
         StreamStaticParticlesRoundTrips();
+        StreamClientSettingsRoundTrip();
     }
 
     private static void ParsesAFullSessionEnvelope()
@@ -333,6 +334,24 @@ internal static class EnvelopeTests
             if (value is null)
                 Check.Equal(json, """{"freezeSpines":true,"type":"settings"}""",
                     "absent stream spine field keeps the old settings bytes");
+        }
+    }
+
+    private static void StreamClientSettingsRoundTrip()
+    {
+        foreach (var decor in new bool?[] { null, false, true })
+        foreach (var tweens in new bool?[] { null, false, true })
+        {
+            var message = new SettingsMessage(StreamClientDecor: decor, StreamClientTweens: tweens);
+            var json = ProtocolJson.Serialize(message);
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            Check.That(JsonSerializer.Deserialize<SettingsMessage>(json, options) == message, "stream client wishes round-trip");
+            var request = JsonSerializer.Deserialize<BrowserSettingsRequestEnvelope>(json, options)!;
+            Check.Equal(request.StreamClientDecor, decor, "server reads decor wish");
+            Check.Equal(request.StreamClientTweens, tweens, "server reads tween wish");
+            using var doc = JsonDocument.Parse(json);
+            Check.That(doc.RootElement.TryGetProperty("streamClientDecor", out _) == decor.HasValue, "decor omission");
+            Check.That(doc.RootElement.TryGetProperty("streamClientTweens", out _) == tweens.HasValue, "tweens omission");
         }
     }
 

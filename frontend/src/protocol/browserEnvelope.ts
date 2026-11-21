@@ -180,6 +180,8 @@ export interface BrowserSessionEnvelope extends BrowserEnvelopeBase {
   freezeParticles?: boolean | null;
   freezeSpines?: boolean | null;
   streamFreezeSpines?: boolean | null;
+  streamDecorFrozen?: boolean | null;
+  streamClientTweens?: boolean | null;
   freezeDecor?: boolean | null;
   // The GAME's own Settings → Text Effects preference on the instance serving this connection, so the mirror's
   // animated rich text (the wavy and bouncing tags) obeys the switch the player at the keyboard set. It has to be
@@ -623,6 +625,8 @@ export function parseBrowserEnvelopeValue(raw: unknown): BrowserEnvelope {
       freezeParticles: typeof value.freezeParticles === "boolean" ? value.freezeParticles : null,
       freezeSpines: typeof value.freezeSpines === "boolean" ? value.freezeSpines : null,
       streamFreezeSpines: typeof value.streamFreezeSpines === "boolean" ? value.streamFreezeSpines : null,
+      streamDecorFrozen: typeof value.streamDecorFrozen === "boolean" ? value.streamDecorFrozen : null,
+      streamClientTweens: typeof value.streamClientTweens === "boolean" ? value.streamClientTweens : null,
       freezeDecor: typeof value.freezeDecor === "boolean" ? value.freezeDecor : null,
       hostName: requiredString(value.hostName, "hostName"),
       assetCacheToken: typeof value.assetCacheToken === "string" ? value.assetCacheToken : null,

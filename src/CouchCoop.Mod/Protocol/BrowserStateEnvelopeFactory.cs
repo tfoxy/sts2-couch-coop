@@ -93,6 +93,8 @@ public sealed class BrowserStateEnvelopeFactory(
         bool? freezeSpines = null;
         bool? freezeDecor = null;
         bool? streamFreezeSpines = null;
+        bool? streamDecorFrozen = null;
+        bool? streamClientTweens = null;
         try
         {
             maxFps = await CouchCoopHeadlessVisualSuspender.GetEffectiveBaselineMaxFpsAsync().ConfigureAwait(false);
@@ -106,6 +108,8 @@ public sealed class BrowserStateEnvelopeFactory(
             freezeSpines = freezes.Spines;
             freezeDecor = freezes.Decor;
             streamFreezeSpines = CouchCoopHeadlessVisualSuspender.StreamFreezeSpines;
+            streamDecorFrozen = CouchCoopStreamDecorFreeze.Active;
+            streamClientTweens = CouchCoopStreamDecorFreeze.ClientTweensActive;
         }
         catch (Exception exception) when (
             exception is FileNotFoundException or FileLoadException or TypeLoadException or BadImageFormatException
@@ -188,6 +192,8 @@ public sealed class BrowserStateEnvelopeFactory(
             FreezeSpines: freezeSpines,
             FreezeDecor: freezeDecor,
             StreamFreezeSpines: streamFreezeSpines,
+            StreamDecorFrozen: streamDecorFrozen,
+            StreamClientTweens: streamClientTweens,
             TextEffects: textEffects,
             // Browsers key their asset caches by this token — the `?b=` on every asset url they mint
             // (plus the service-worker /res/ store) — and it changes

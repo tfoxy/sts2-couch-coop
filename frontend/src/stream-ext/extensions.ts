@@ -13,6 +13,7 @@ import { createHandPresenceExtension, createRaisedHandExtension } from "@/stream
 import { createHoverTipsModule } from "@/stream-ext/hoverTips";
 import { createClipAxisExtension } from "@/stream-ext/clipAxis";
 import { createViewScaleExtension } from "@/stream-ext/viewScale";
+import { createDecorExtension } from "@/stream-ext/decor";
 import { createTextScaleExtension } from "@/stream-ext/textScale";
 
 export interface StreamExtensionsOptions {
@@ -59,6 +60,12 @@ export function buildStreamExtensions(options: StreamExtensionsOptions): StreamE
     extensions.push(settingGated(createHoverTipsModule({ designWidth: options.presentationWidth }).extension, enabled("uiScaling")));
     // Label anchors must see every ancestor's override for this frame.
     extensions.push(settingGated(createTextScaleExtension(), enabled("uiScaling")));
+  }
+  if (options.interactive === true || options.settings.streamClientDecor) {
+    const decor = createDecorExtension();
+    extensions.push(settingGated(decor,
+      () => options.settings.streamClientDecor && options.settings.streamDecorFrozen,
+      () => decor.resetClocks()));
   }
   if (install("confirmTap")) {
     const confirm = createConfirmTapExtension();

@@ -55,6 +55,21 @@ afterEach(() => {
 });
 
 describe("mirrorSettings — the renderer keys", () => {
+  it("defaults client decor and tweens on and persists independent wishes", () => {
+    const settings = createMirrorSettings(undefined, "", { storage: null });
+    expect(settings).toMatchObject({ streamClientDecor: true, streamClientTweens: true, streamDecorFrozen: false });
+    const storage = memoryStorage();
+    persistMirrorSetting("streamClientDecor", false, storage);
+    persistMirrorSetting("streamClientTweens", false, storage);
+    const saved = createMirrorSettings(undefined, "", { storage });
+    expect(saved).toMatchObject({ streamClientDecor: false, streamClientTweens: false });
+    saved.runtimeRenderer = "stream";
+    expect(serverSettingsPayload(saved)).toMatchObject({ streamClientDecor: false, streamClientTweens: false });
+    expect(effectivePanelSetting(saved, "freezeDecor")).toBe(false);
+    expect(effectivePanelSetting(saved, "tweenReplay")).toBe(false);
+    expect(NEVER_PERSISTED_SETTING_KEYS).toContain("streamDecorFrozen");
+    expect(readStoredMirrorSettings(memoryStorage({ streamClientDecor: "yes", streamClientTweens: 1 }))).toEqual({});
+  });
   it("persists `renderer` and never the live renderer or the QA endpoint", () => {
     expect(PERSISTED_SETTING_KEYS).toContain("renderer");
     for (const key of ["runtimeRenderer", "renderStreamUrl", "renderStreamProtocol", "renderStreamCarrier"] as const) {
@@ -114,7 +129,8 @@ describe("mirrorSettings — the renderer keys", () => {
     settings.runtimeRenderer = "stream";
     expect(serverSettingsPayload(settings)).toEqual({
       refreshRate: 40, freezeParticles: true, freezeSpines: true, freezeDecor: true, tweenReplay: false,
-      staticBg: false, trailDrive: true, streamFreezeSpines: false, streamStaticBg: false, streamStaticBgSource: "", streamStaticBgSourceFor: ""
+      staticBg: false, trailDrive: true, streamFreezeSpines: false, streamStaticBg: false, streamStaticBgSource: "", streamStaticBgSourceFor: "",
+      streamClientDecor: true, streamClientTweens: true
     });
     expect(staticBgWireValue(settings)).toBe(false);
     // The store itself is untouched, so switching back sends the instance's own values again.
@@ -163,8 +179,8 @@ describe("mirrorSettings — the renderer keys", () => {
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("unfocusOnRelease"); // the peek-release pair
     expect(Object.keys(STREAM_RENDER_OVERRIDES)).not.toContain("confirmTap"); // the confirm-tap module
     expect(Object.keys(STREAM_RENDER_OVERRIDES).sort()).toEqual([
-      "backstopOcclusion", "freezeDecor", "freezeParticles", "quality",
-      "reproRecorder", "tweenReplay"
+      "backstopOcclusion", "freezeParticles", "quality",
+      "reproRecorder"
     ]);
   });
 

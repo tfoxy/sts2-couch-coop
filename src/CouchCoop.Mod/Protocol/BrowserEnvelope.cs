@@ -51,6 +51,9 @@ public sealed record BrowserEnvelope(
     bool? FreezeDecor = null,
     // Stream-specific seat preference; independent of the old-renderer freezes above.
     bool? StreamFreezeSpines = null,
+    // Actual capture suspension, independent of each page's saved preference.
+    bool? StreamDecorFrozen = null,
+    bool? StreamClientTweens = null,
     // The game's own Settings -> Text Effects preference on THIS instance, so the mirror's animated rich text
     // (wavy / bouncing) obeys the same switch the player at the keyboard set. It cannot be inferred client-side:
     // the game leaves the effect markup in the label's string and skips the per-character transform instead, so a

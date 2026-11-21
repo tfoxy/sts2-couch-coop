@@ -108,7 +108,9 @@ public sealed record SettingsMessage(
     // Demand for the host still, before the image has loaded. Independent of readiness and StaticBg.
     bool? StreamStaticBg = null,
     // Per-page CPU particle freeze vote. Omit-null preserves the faithful stream's settings bytes.
-    bool? StreamStaticParticles = null)
+    bool? StreamStaticParticles = null,
+    bool? StreamClientDecor = null,
+    bool? StreamClientTweens = null)
 {
     public string Type => "settings";
 }

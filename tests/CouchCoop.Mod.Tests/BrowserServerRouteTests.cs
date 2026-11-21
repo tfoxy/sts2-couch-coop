@@ -49,7 +49,7 @@ if (args is ["player-names", ..])
 if (args is ["host-performance", ..])
 {
     HostPerformanceEnvelopeTests.Run();
-    Console.WriteLine("host performance: ok (8 cases)");
+    Console.WriteLine("host performance: ok (9 cases)");
     return;
 }
 
@@ -57,6 +57,13 @@ if (args is ["stream-spine", ..])
 {
     HeadlessSpineFreezeTests.Run();
     StreamSpineStillsTests.Run();
+    return;
+}
+
+if (args is ["stream-decor", ..])
+{
+    StreamDecorFreezeTests.Run();
+    await BrowserServerRouteTests.RunStreamClientDecorAsync();
     return;
 }
 
@@ -1098,6 +1105,8 @@ HeadlessParticleFreezeExemptionTests.Run();
 // (a node whose ProcessMode came back used to be skipped forever; see the file header).
 HeadlessSpineFreezeTests.Run();
 StreamSpineStillsTests.Run();
+StreamDecorFreezeTests.Run();
+await BrowserServerRouteTests.RunStreamClientDecorAsync();
 StreamStaticParticlesTests.Run();
 await BrowserServerRouteTests.RunStreamStaticParticlesAsync();
 await HeadlessAssetLoadingActivityTests.RunAsync();
@@ -2644,6 +2653,70 @@ internal sealed partial class BrowserServerRouteTests
         await server.StopGenerationAsync("test", CancellationToken.None);
         await Desired(false, "server teardown releases demand");
         Console.WriteLine("stream static particles socket lifecycle: 13 checks passed");
+    }
+
+    internal static async Task RunStreamClientDecorAsync()
+    {
+        using var root = new TempStaticRoot();
+        var renderer = new StaticBackgroundRendererHost();
+        var runtime = new RecordingSpirectlRuntime { Mode = RuntimeStateMode.MultiplayerRun };
+        await using var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(root.Path),
+            new CapturingAssetAdapter(), runtime.NewEnvelopeFactory(), isHeadlessClient: true,
+            rendererSwapHost: renderer, log: _ => { });
+        var baseUri = await server.StartAsync();
+        async Task Send(ClientWebSocket socket, object message)
+        {
+            await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(message), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(new { type = "ping" }), WebSocketMessageType.Text,
+                WebSocketMessageFlags.EndOfMessage, CancellationToken.None);
+            _ = await ReadNextWsMessageOfTypeAsync(socket, "pong");
+        }
+        async Task Connect(ClientWebSocket socket)
+        {
+            await socket.ConnectAsync(new UriBuilder(baseUri) { Scheme = "ws", Path = "/ws",
+                Query = "watch=0&staticBg=0&cardFlight=1&handTween=1&trailDrive=0" }.Uri, CancellationToken.None);
+            _ = await ReadWsMessageAsync(socket);
+            await Send(socket, new { type = "renderer", renderer = "stream", rendererProtocol = 2 });
+        }
+        async Task Desired(bool expected, string message)
+            => Expect(await WaitForAsync(() => server.StreamDecorFreezeDesiredForTest == expected), message);
+
+        using var first = new ClientWebSocket();
+        await Connect(first);
+        await Desired(true, "new pages default client decor on");
+        await Send(first, new { type = "settings", streamClientDecor = false, streamClientTweens = false });
+        await Desired(false, "decor opt-out reaches the aggregate");
+        Expect(!server.StreamClientTweensDesiredForTest, "tween opt-out reaches the aggregate");
+        await Send(first, new { type = "settings", streamClientDecor = true });
+        await Desired(true, "settings reach the seat aggregate");
+        await Send(first, new { type = "settings", staticBg = false });
+        await Desired(true, "absent decor demand leaves the vote intact");
+        using var second = new ClientWebSocket();
+        await Connect(second);
+        await Desired(true, "a new page defaults on");
+        Expect(!server.StreamClientTweensDesiredForTest, "one tween opt-out keeps playback off");
+        await Send(first, new { type = "settings", streamClientTweens = true });
+        Expect(server.StreamClientTweensDesiredForTest, "unanimous tween wishes combine independently");
+        await Send(second, new { type = "settings", streamClientDecor = true });
+        await Desired(true, "every stream page opted in");
+        await Send(second, new { type = "settings", streamClientDecor = false });
+        await Desired(false, "one page retracting restores live decor");
+        await CloseWebSocketSilentlyAsync(second);
+        await Desired(true, "disconnect removes the non-demanding page");
+        renderer.SetArmed(false);
+        await Desired(false, "disarming releases the aggregate");
+        renderer.SetArmed(true);
+        await Desired(true, "arming recomputes retained page demand");
+        await Send(first, new { type = "renderer", renderer = "mirror" });
+        await Desired(false, "leaving the stream removes demand");
+        await Send(first, new { type = "renderer", renderer = "stream", rendererProtocol = 2 });
+        await Desired(true, "returning to the stream resets the page vote to on");
+        await Send(first, new { type = "settings", streamClientDecor = true });
+        await Desired(true, "the page can opt in again");
+        await server.StopGenerationAsync("test", CancellationToken.None);
+        await Desired(false, "server teardown releases demand");
+        Console.WriteLine("stream client decor/tweens socket lifecycle: 18 checks passed");
     }
 
     private sealed class StaticBackgroundRendererHost : IHotRendererSwapHost, IHotSelfRenderStreamHost

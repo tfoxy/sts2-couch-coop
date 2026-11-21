@@ -346,6 +346,26 @@ describe("MirrorApp — the new renderer's stream branch", () => {
     expect(seat.ofType("settings").at(-1)).toMatchObject({ streamStaticParticles: false });
   });
 
+  it("adopts effective decor freeze on every seat session without replacing the saved wish", async () => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    mirrorSettings.streamClientDecor = true;
+    const seat = await joinSeat({ streamDecorFrozen: false });
+    expect(mirrorSettings.streamDecorFrozen).toBe(false);
+    expect(seat.ofType("settings").at(-1)).toMatchObject({ streamClientDecor: true, streamClientTweens: true });
+    seat.emit(sessionMessage({ streamDecorFrozen: true }));
+    await settle();
+    expect(mirrorSettings.streamDecorFrozen).toBe(true);
+    expect(mirrorSettings.streamClientDecor).toBe(true);
+    seat.emit(sessionMessage({ streamDecorFrozen: false }));
+    await settle();
+    expect(mirrorSettings.streamDecorFrozen).toBe(false);
+    expect(mirrorSettings.streamClientDecor).toBe(true);
+    seat.emit(sessionMessage({}));
+    await settle();
+    expect(mirrorSettings.streamDecorFrozen).toBe(false);
+  });
+
   it.each(["mirror", "arming", "armed", "disarming"])("seeds stream spine truth while %s and forwards later viewer changes", async (state) => {
     streamAvailable();
     mirrorSettings.renderer = "stream";

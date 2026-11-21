@@ -57,7 +57,8 @@ describe("catalogue integrity", () => {
   it("translates stream settings help in every locale", () => {
     for (const [locale, catalog] of Object.entries(messages)) {
       for (const key of ["settings.help.streamFreezeSpines", "settings.help.streamShaders", "settings.help.streamParticles",
-        "settings.help.streamStaticBg", "settings.hostStream"] as const) {
+        "settings.help.streamStaticBg", "settings.hostStream", "settings.streamClientDecor", "settings.streamClientTweens",
+        "settings.help.streamClientDecor", "settings.help.streamClientTweens"] as const) {
         expect(catalog[key].trim(), `${locale}: ${key}`).not.toBe("");
         if (locale !== "en") expect(catalog[key], `${locale}: ${key}`).not.toBe(en[key]);
       }

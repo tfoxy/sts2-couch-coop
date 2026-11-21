@@ -32,6 +32,7 @@ internal static class HostPerformanceEnvelopeTests
         SessionEnvelopeReportsAnInstalledInstancesFlags();
         RequiredNullableSessionFieldsSerializeAsNull();
         SettingsMessageCarriesTheThreeFreezes();
+        StreamDecorReportsEffectiveState();
         StreamFreezeSpinesDefaultsOff();
         StreamFreezeSpinesSettingsAreStoredAndEchoedIndependently();
     }
@@ -133,6 +134,36 @@ internal static class HostPerformanceEnvelopeTests
         Assert(parsed.FreezeSpines == true, "settings: freezeSpines true round-trips");
         Assert(parsed.FreezeDecor == false, "settings: freezeDecor false round-trips");
         Assert(parsed.RefreshRate is null && parsed.TweenReplay is null, "settings: absent fields stay null (unchanged)");
+    }
+
+    private static void StreamDecorReportsEffectiveState()
+    {
+        using var restore = SuspenderState.Push(installed: true, particles: true, spines: true, decor: true);
+        var type = typeof(CouchCoopStreamDecorFreeze);
+        var active = type.GetField("_active", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var tweens = type.GetField("_tweensActive", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var prior = (active.GetValue(null), tweens.GetValue(null));
+        try
+        {
+            foreach (var frozen in new[] { false, true })
+            foreach (var playback in new[] { false, true })
+            {
+                active.SetValue(null, frozen);
+                tweens.SetValue(null, playback);
+                var envelope = CreateSessionEnvelope();
+                Assert(envelope.StreamDecorFrozen == frozen, "session reports effective decor freeze independently");
+                Assert(envelope.StreamClientTweens == playback, "session reports unanimous tween preference");
+                var json = JsonSerializer.SerializeToElement(envelope, BrowserJson.Options);
+                Assert(json.GetProperty("streamDecorFrozen").GetBoolean() == frozen, "decor wire preserves false and true");
+                Assert(json.GetProperty("streamClientTweens").GetBoolean() == playback, "tween wire preserves false and true");
+                Assert(envelope.FreezeDecor == true, "stream state never replaces the old renderer's freeze");
+            }
+        }
+        finally
+        {
+            active.SetValue(null, prior.Item1);
+            tweens.SetValue(null, prior.Item2);
+        }
     }
 
     private static void StreamFreezeSpinesDefaultsOff()

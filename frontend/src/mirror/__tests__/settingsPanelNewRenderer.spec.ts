@@ -43,9 +43,7 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
   ["mirror-quality", "quality", "select"],
   ["mirror-backstop-occlusion", "backstopOcclusion", "checkbox"],
   ["mirror-repro-recorder", "reproRecorder", "checkbox"],
-  ["mirror-tween-replay", "tweenReplay", "checkbox"],
-  ["mirror-freeze-particles", "freezeParticles", "checkbox"],
-  ["mirror-freeze-decor", "freezeDecor", "checkbox"]
+  ["mirror-freeze-particles", "freezeParticles", "checkbox"]
 ];
 // Widescreen stretch is supported since PRES-A: under the new renderer it sets the width the seat is launched at.
 // Raise hand cards and Readability scaling are supported since TAG3: they run as render-stream extension modules.
@@ -55,7 +53,7 @@ const FORCED_ROWS: Array<[string, keyof typeof STREAM_RENDER_OVERRIDES, "select"
 const SUPPORTED_ROWS = ["mirror-audio", "mirror-safe-area-padding", "mirror-stretch", "mirror-refresh-rate",
   "mirror-latency-overlay", "mirror-raise-hand", "mirror-ui-scaling", "mirror-tap-focus",
   "mirror-raise-card", "mirror-unfocus", "mirror-confirm-tap", "mirror-shader-mode", "mirror-particle-mode",
-  "mirror-static-bg", "mirror-freeze-spines"];
+  "mirror-static-bg", "mirror-freeze-spines", "mirror-freeze-decor", "mirror-tween-replay"];
 
 function available(): void {
   renderStreamContext.coreProblem = null;
@@ -89,6 +87,24 @@ afterEach(() => {
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
+  it("routes decor and tween rows to saved stream wishes", async () => {
+    available();
+    Object.assign(mirrorSettings, { streamClientDecor: true, streamClientTweens: true, freezeDecor: true, tweenReplay: true });
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    for (const id of ["mirror-freeze-decor", "mirror-tween-replay"]) {
+      expect(el(id).disabled).toBe(false);
+      expect(el(id).checked).toBe(true);
+      await wrapper!.get(`[data-testid="${id}"]`).setValue(false);
+    }
+    expect(mirrorSettings).toMatchObject({ streamClientDecor: false, streamClientTweens: false, freezeDecor: true, tweenReplay: true });
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}"))
+      .toMatchObject({ streamClientDecor: false, streamClientTweens: false });
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(el("mirror-freeze-decor").checked).toBe(true);
+    expect(el("mirror-tween-replay").checked).toBe(true);
+  });
+
   it("enables the checkbox for a self-streaming direct view without a seat offer", async () => {
     Object.assign(renderStreamContext, { directView: true, hostSelfStream: true, seatJoined: true,
       lanOffer: null, hostUnavailableReason: "no-capture" });
@@ -203,7 +219,7 @@ describe("SettingsPanel — Use new renderer (Beta)", () => {
       freezeSpines: false, particleMode: "off", staticBgEnabled: false });
     expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}"))
       .toEqual({ renderer: "stream", streamParticleMode: "static", streamStaticBg: true });
-    for (const id of ["mirror-freeze-particles", "mirror-freeze-decor"]) expect(el(id).disabled).toBe(true);
+    expect(el("mirror-freeze-particles").disabled).toBe(true);
 
     await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
     expect(el("mirror-freeze-spines").checked).toBe(false);

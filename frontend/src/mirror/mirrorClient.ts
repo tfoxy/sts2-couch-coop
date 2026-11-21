@@ -154,6 +154,8 @@ export interface MirrorSettingsPayload {
   freezeParticles?: boolean;
   freezeSpines?: boolean;
   streamFreezeSpines?: boolean;
+  streamClientDecor?: boolean;
+  streamClientTweens?: boolean;
   // The seat's current static-background descriptor URL, only after the HOST still loads. Empty retracts it;
   // absent leaves the connection's vote unchanged. Separate from the node mirror's staticBg walk-skip vote.
   streamStaticBgReady?: string;

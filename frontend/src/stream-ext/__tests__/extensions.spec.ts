@@ -63,7 +63,7 @@ describe("stream extension live settings", () => {
     try {
       expect(f.built.extensions.map((extension) => extension.id)).toEqual([
         "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.heldCard", "couchcoop.hoverTips",
-        "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets"
+        "couchcoop.textScale", "couchcoop.decor", "couchcoop.confirmTap", "couchcoop.pointerTargets"
       ]);
     } finally {
       f.dispose();

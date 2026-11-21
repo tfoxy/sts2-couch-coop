@@ -328,6 +328,7 @@ internal sealed class RenderStreamSwap : IDisposable
             {
                 CouchCoopStreamSpineStills.SetArmed(armed);
                 CouchCoopStreamStaticParticles.SetArmed(armed);
+                CouchCoopStreamDecorFreeze.SetArmed(armed);
             });
         HeadlessViewportConfigurator.PresentationInvalidated += swap.InvalidatePresentation;
         HeadlessViewportConfigurator.PresentationReasserted += swap.ReassertedPresentation;

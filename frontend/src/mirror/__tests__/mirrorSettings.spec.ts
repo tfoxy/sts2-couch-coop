@@ -807,7 +807,7 @@ describe("serverSettingsPayload", () => {
     // Lockstep with the watch list: every payload key is fed by SERVER_SETTING_KEYS entries. The two documented
     // name differences are staticBgEnabled → staticBg and trailDriveCapable → trailDrive. Stream spine stills
     // are sent only while the stream is active.
-    const expectedPayloadKeys = SERVER_SETTING_KEYS.filter((key) => key !== "streamFreezeSpines").map((key) => {
+    const expectedPayloadKeys = SERVER_SETTING_KEYS.filter((key) => !["streamFreezeSpines", "streamClientDecor", "streamClientTweens"].includes(key)).map((key) => {
       if (key === "staticBgEnabled") return "staticBg";
       if (key === "trailDriveCapable") return "trailDrive";
       return key;

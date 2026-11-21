@@ -238,7 +238,10 @@ public sealed record BrowserSettingsRequestEnvelope(
     // Admitted host-relative still image path. Empty retracts; null leaves this connection unchanged.
     string? StreamStaticBgSource = null,
     // Full seat descriptor identity that admitted the source. Empty retracts; null leaves it unchanged.
-    string? StreamStaticBgSourceFor = null);
+    string? StreamStaticBgSourceFor = null,
+    // Per-page client decor / client tween votes; null leaves this connection unchanged.
+    bool? StreamClientDecor = null,
+    bool? StreamClientTweens = null);
 
 public sealed record BrowserServerReloadEnvelope(
     string Type,

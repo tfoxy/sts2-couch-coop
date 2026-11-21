@@ -241,6 +241,10 @@ export interface MirrorSettings {
   streamShaderMode: StreamShaderMode;
   streamParticleMode: StreamParticleMode;
   streamStaticBg: boolean;
+  streamClientDecor: boolean;
+  streamClientTweens: boolean;
+  /** Effective capture state, adopted on every seat session; never a saved vote. */
+  streamDecorFrozen: boolean;
   // CLIENT render (browser-only) — THE QUALITY ROW (see QualityChoice). `auto` (the default) leaves this device to
   // auto-detection and leaves every row below at its product default; a rung is this device's tier AND a preset
   // over the three rows it implies (shaders, particles, static background — qualityPreset.ts). The rows stay
@@ -400,6 +404,8 @@ export const SERVER_SETTING_KEYS = [
   "freezeParticles",
   "freezeSpines",
   "streamFreezeSpines",
+  "streamClientDecor",
+  "streamClientTweens",
   "freezeDecor",
   "tweenReplay",
   "staticBgEnabled",
@@ -427,6 +433,8 @@ export type PersistedSettingKey =
   | "streamShaderMode"
   | "streamParticleMode"
   | "streamStaticBg"
+  | "streamClientDecor"
+  | "streamClientTweens"
   | "safeAreaPaddingEnabled"
   | "stretchEnabled"
   | "raiseHeldCard"
@@ -456,6 +464,8 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   "streamShaderMode",
   "streamParticleMode",
   "streamStaticBg",
+  "streamClientDecor",
+  "streamClientTweens",
   "safeAreaPaddingEnabled",
   "stretchEnabled",
   "raiseHeldCard",
@@ -504,6 +514,7 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
   "freezeParticles",
   "freezeSpines",
   "streamFreezeSpines",
+  "streamDecorFrozen",
   "freezeDecor",
   // textEffects — the GAME's setting, not this viewer's. Same reasoning as the freezes: a saved copy would speak
   // for a preference that has since moved, and there is no panel control here to correct it with.
@@ -582,6 +593,8 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   streamShaderMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
   streamParticleMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
   streamStaticBg: boolValue,
+  streamClientDecor: boolValue,
+  streamClientTweens: boolValue,
   safeAreaPaddingEnabled: boolValue,
   stretchEnabled: boolValue,
   raiseHeldCard: boolValue,
@@ -774,7 +787,7 @@ export function staticBgWireValue(settings: MirrorSettings): boolean {
 // keys instead of the old renderer's defaults.
 export type StreamForcedKey =
   | "quality"
-  | "backstopOcclusion" | "reproRecorder" | "tweenReplay" | "freezeParticles" | "freezeDecor";
+  | "backstopOcclusion" | "reproRecorder" | "freezeParticles";
 
 export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protocol: RenderStreamWireVersion) => MirrorSettings[K] } = {
   // No client lever: the stream draws what the game draws.
@@ -783,11 +796,8 @@ export const STREAM_RENDER_OVERRIDES: { readonly [K in StreamForcedKey]: (protoc
   backstopOcclusion: () => false,
   // Records the node-geometry wire and input, neither of which exists here.
   reproRecorder: () => false,
-  // Node-mirror wire only.
-  tweenReplay: () => false,
   // A freeze on the streaming seat would freeze what is streamed.
-  freezeParticles: () => false,
-  freezeDecor: () => false
+  freezeParticles: () => false
 };
 
 /** Rows disabled under the new renderer that keep showing their saved value (they choose between old backends). */
@@ -811,12 +821,14 @@ export function streamForcedValue<K extends StreamForcedKey>(settings: MirrorSet
  * stream unmounts that renderer, and flipping its inputs on the way out would only make it rebuild effect
  * runtimes it is about to dispose.
  */
-export function effectivePanelSetting<K extends StreamForcedKey | "shaderMode" | "particleMode" | "staticBgEnabled" | "freezeSpines">(settings: MirrorSettings, key: K): MirrorSettings[K] {
+export function effectivePanelSetting<K extends StreamForcedKey | "shaderMode" | "particleMode" | "staticBgEnabled" | "freezeSpines" | "freezeDecor" | "tweenReplay">(settings: MirrorSettings, key: K): MirrorSettings[K] {
   if (streamRendererActive(settings)) {
     if (key === "shaderMode") return settings.streamShaderMode as MirrorSettings[K];
     if (key === "particleMode") return settings.streamParticleMode as MirrorSettings[K];
     if (key === "staticBgEnabled") return settings.streamStaticBg as MirrorSettings[K];
     if (key === "freezeSpines") return settings.streamFreezeSpines as MirrorSettings[K];
+    if (key === "freezeDecor") return settings.streamClientDecor as MirrorSettings[K];
+    if (key === "tweenReplay") return settings.streamClientTweens as MirrorSettings[K];
   }
   const forced = key in STREAM_RENDER_OVERRIDES ? streamForcedValue(settings, key as StreamForcedKey) : undefined;
   if (forced !== undefined) return forced as MirrorSettings[K];
@@ -872,14 +884,16 @@ export function serverSettingsPayload(settings: MirrorSettings, staticBackground
     freezeParticles: settings.freezeParticles,
     freezeSpines: settings.freezeSpines,
     freezeDecor: settings.freezeDecor,
-    tweenReplay: stream ? STREAM_RENDER_OVERRIDES.tweenReplay(settings.renderStreamProtocol) : settings.tweenReplay,
+    tweenReplay: stream ? false : settings.tweenReplay,
     staticBg: staticBgWireValue(settings),
     trailDrive: settings.trailDriveCapable,
     ...(stream ? {
       streamStaticBg: settings.streamStaticBg,
       streamStaticBgSource: source,
       streamStaticBgSourceFor: source ? seatStaticBackgroundId : "",
-      streamFreezeSpines: settings.streamFreezeSpines
+      streamFreezeSpines: settings.streamFreezeSpines,
+      streamClientDecor: settings.streamClientDecor,
+      streamClientTweens: settings.streamClientTweens
     } : {}),
     ...(stream && settings.streamParticleMode === "static" ? { streamStaticParticles: true } : {})
   };
@@ -964,6 +978,9 @@ export function createMirrorSettings(
     streamShaderMode: saved.streamShaderMode ?? "dynamic",
     streamParticleMode: saved.streamParticleMode ?? "dynamic",
     streamStaticBg: saved.streamStaticBg ?? false,
+    streamClientDecor: saved.streamClientDecor ?? true,
+    streamClientTweens: saved.streamClientTweens ?? true,
+    streamDecorFrozen: false,
     effectModePinned: false,
     safeAreaPaddingEnabled: saved.safeAreaPaddingEnabled ?? isIphonePlatform(userAgent),
     stretchEnabled: urlOffFlag(params, "stretch") ?? saved.stretchEnabled ?? true,

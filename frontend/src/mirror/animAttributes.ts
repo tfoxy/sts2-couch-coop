@@ -51,7 +51,7 @@ const SPIN_BASE_TURN_MS = 12566;
 const SPIN_FIRST_LAYER_NUMBER: Record<string, number> = { Layers: 2, Icon: 1 };
 const SPIN_PATH_RE = /(?:^|\/)([^/]+)\/RotationLayers\/Layer(\d+)$/;
 
-function spinDurationMs(sceneRelPath: string): number | null {
+export function spinDurationMs(sceneRelPath: string): number | null {
   const match = SPIN_PATH_RE.exec(sceneRelPath);
   if (!match) return null;
   const firstLayerNumber = SPIN_FIRST_LAYER_NUMBER[match[1]];
@@ -76,13 +76,21 @@ const FLAME_PHASE_MOD_MS = 2600;
 // Stable 32-bit FNV-1a string hash → a per-flame phase seed (ms). Deterministic across reloads so a flame's phase
 // never jumps, and shared by a flame's three quads (same PARENT path) so they stay mutually layered while the 79
 // flames desync. Byte-for-byte twin of native CosmeticAnimator.FlamePhaseMs.
-function flamePhaseMs(parentPath: string): number {
+export function flamePhaseMs(parentPath: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < parentPath.length; i++) {
     h ^= parentPath.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0) % FLAME_PHASE_MOD_MS;
+}
+
+/** Two browser flame tracks, shared by stream replay without changing the mirror's CSS animation. */
+export function flameFlickerPose(elapsedMs: number, phaseMs: number): { scaleY: number; skew: number } {
+  return {
+    scaleY: 1 + 0.08 * Math.sin(2 * Math.PI * (elapsedMs + phaseMs) / 1700),
+    skew: 0.1 * Math.sin(2 * Math.PI * (elapsedMs + phaseMs) / FLAME_PHASE_MOD_MS)
+  };
 }
 
 // ---- Pinned-loop replay --------------------------------------------------------------------------------

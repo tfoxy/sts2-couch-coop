@@ -368,6 +368,8 @@ public sealed partial class CouchCoopBrowserServer(
     }
 
     private IDisposable? _rendererSubscription;
+    private bool _decorSubscribed;
+    private void OnStreamDecorChanged() => _ = Task.Run(ResendSessions);
 
     private void OnRendererChanged()
     {
@@ -386,6 +388,11 @@ public sealed partial class CouchCoopBrowserServer(
             // the connection snapshot. Reject it before it can remain usable without a scene stream.
             if (_generationStopped) throw new OperationCanceledException("Browser server generation stopped.");
             _rendererSubscription ??= HasSelfRenderStream ? rendererSwapHost?.SubscribeRendererChanged(OnRendererChanged) : null;
+            if (!_decorSubscribed)
+            {
+                CouchCoopStreamDecorFreeze.Changed += OnStreamDecorChanged;
+                _decorSubscribed = true;
+            }
             _mirrorConnectionCount++;
             RefreshObserversLocked();
             count = _mirrorConnectionCount;
@@ -539,6 +546,8 @@ public sealed partial class CouchCoopBrowserServer(
         var streamStaticBg = 0;
         var streamPages = new List<(bool WantsStaticBg, string? Ready)>();
         var particlePages = new List<bool>();
+        var decorPages = new List<bool>();
+        var tweenPages = new List<bool>();
         foreach (var connection in _connections.Values)
         {
             var wantsSceneStream = connection.WantsSceneStream;
@@ -549,6 +558,8 @@ public sealed partial class CouchCoopBrowserServer(
             {
                 streamPages.Add((connection.WantsStreamStaticBg, connection.StreamStaticBgReady));
                 particlePages.Add(connection.WantsStreamStaticParticles);
+                decorPages.Add(connection.WantsStreamClientDecor);
+                tweenPages.Add(connection.WantsStreamClientTweens);
             }
             if (NeedsBgStream(wantsSceneStream, wantsStaticBg))
             {
@@ -584,6 +595,10 @@ public sealed partial class CouchCoopBrowserServer(
         _streamParticleFreezeDesired = ComputeStreamParticleFreezeDesired(
             !_generationStopped && rendererSwapHost?.RendererStatus.State == "armed", particlePages);
         CouchCoopStreamStaticParticles.SetDesired(_streamParticleFreezeDesired);
+        var armed = !_generationStopped && rendererSwapHost?.RendererStatus.State == "armed";
+        _streamDecorFreezeDesired = ComputeStreamClientDesired(armed, decorPages);
+        _streamClientTweensDesired = ComputeStreamClientDesired(armed, tweenPages);
+        CouchCoopStreamDecorFreeze.SetDesired(_streamDecorFreezeDesired, _streamClientTweensDesired);
 
         var desired = ComputeBgSkipDesired(_streamingMirrorConnectionCount, needed);
         if (desired == _bgSkipDesired)
@@ -601,6 +616,13 @@ public sealed partial class CouchCoopBrowserServer(
         bool armed, string? descriptorId, int liveBgNeeded, IReadOnlyList<(bool WantsStaticBg, string? Ready)> pages)
         => armed && !string.IsNullOrEmpty(descriptorId) && liveBgNeeded == 0 && pages.Count > 0
             && pages.All(page => page.WantsStaticBg);
+
+    private volatile bool _streamDecorFreezeDesired;
+    private volatile bool _streamClientTweensDesired;
+    internal bool StreamDecorFreezeDesiredForTest => _streamDecorFreezeDesired;
+    internal bool StreamClientTweensDesiredForTest => _streamClientTweensDesired;
+    internal static bool ComputeStreamClientDesired(bool armed, IReadOnlyList<bool> pages)
+        => armed && pages.Count > 0 && pages.All(wants => wants);
 
     private volatile bool _streamParticleFreezeDesired;
     internal bool StreamParticleFreezeDesiredForTest => _streamParticleFreezeDesired;
@@ -1511,8 +1533,13 @@ public sealed partial class CouchCoopBrowserServer(
             _generationStopped = true;
             _streamParticleFreezeDesired = false;
             CouchCoopStreamStaticParticles.SetDesired(false);
+            _streamDecorFreezeDesired = false;
+            _streamClientTweensDesired = false;
+            CouchCoopStreamDecorFreeze.SetDesired(false, false);
             _rendererSubscription?.Dispose();
             _rendererSubscription = null;
+            if (_decorSubscribed) CouchCoopStreamDecorFreeze.Changed -= OnStreamDecorChanged;
+            _decorSubscribed = false;
             _mirrorConnectionCount = 0;
             _streamingMirrorConnectionCount = 0;
             _gatedStaticBgViewerCount = 0;

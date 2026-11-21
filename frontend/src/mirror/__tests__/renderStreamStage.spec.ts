@@ -283,7 +283,7 @@ describe("RenderStreamStage", () => {
     expect(options.canvas).toBe(wrapper!.get('[data-testid="render-stream-canvas"]').element);
     expect(options.canvas.width).toBe(1920);
     expect(options.canvas.height).toBe(1080);
-    expect(options.extensions).toEqual([]);
+    expect((options.extensions ?? []).map((e) => e.id)).toEqual(["couchcoop.decor"]);
     expect(options.endpoint).toEqual(endpoint);
     expect(options.core).toEqual(core);
     expect(options.carrier).toBe("auto");
@@ -315,7 +315,7 @@ describe("RenderStreamStage", () => {
     mirrorSettings.uiScaling = true;
     mountStage();
     expect((clients[0].options.extensions ?? []).map((e) => e.id))
-      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.hoverTips", "couchcoop.textScale"]);
+      .toEqual(["couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.decor"]);
   });
 
   it("attaches the held-card and confirm-tap modules on the viewer's saved choices", () => {
@@ -323,7 +323,7 @@ describe("RenderStreamStage", () => {
     mirrorSettings.confirmTap = true;
     mountStage();
     expect((clients[0].options.extensions ?? []).map((e) => e.id))
-      .toEqual(["couchcoop.heldCard", "couchcoop.confirmTap"]);
+      .toEqual(["couchcoop.heldCard", "couchcoop.decor", "couchcoop.confirmTap"]);
   });
 
   // PRES-A: a seat launched at the viewer's aspect describes a wider presentation; the canvas takes that backing size
@@ -533,7 +533,7 @@ describe("RenderStreamStage", () => {
       const original = clients[0];
       const canvas = original.options.canvas;
       expect(ids(original)).toEqual([
-        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
+        "couchcoop.raisedHand", "couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.heldCard", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.decor", "couchcoop.confirmTap", "couchcoop.pointerTargets", "couchcoop.handRaiseChrome"
       ]);
       for (const key of ["raiseHandCards", "uiScaling", "raiseHeldCard", "confirmTap"] as const) {
         for (const enabled of [true, false, true]) {
@@ -569,7 +569,7 @@ describe("RenderStreamStage", () => {
       expect(clients).toHaveLength(2);
       expect(clients[1].options.endpoint).toEqual(wide);
       expect(clients[1].options.canvas.width).toBe(2340);
-      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.hoverTips", "couchcoop.textScale"]);
+      expect(ids(clients[1])).toEqual(["couchcoop.viewScale", "couchcoop.clipAxis", "couchcoop.hoverTips", "couchcoop.textScale", "couchcoop.decor"]);
     });
 
     it("a suspended stage remounts nothing, and builds from the current settings when it wakes", async () => {
@@ -583,7 +583,7 @@ describe("RenderStreamStage", () => {
       setVisibility("visible");
       await nextTick();
       expect(clients).toHaveLength(2);
-      expect(ids(clients[1])).toEqual(["couchcoop.confirmTap"]);
+      expect(ids(clients[1])).toEqual(["couchcoop.decor", "couchcoop.confirmTap"]);
     });
   });
 

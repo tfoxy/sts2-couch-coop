@@ -47,6 +47,8 @@ public sealed class CouchCoopWebSocketConnection
     private volatile bool _wantsStaticBg;
     private volatile bool _wantsStreamStaticBg;
     private volatile bool _wantsStreamStaticParticles;
+    private volatile bool _wantsStreamClientDecor = true;
+    private volatile bool _wantsStreamClientTweens = true;
     private string? _streamStaticBgReady;
     private SeatStillAdmission? _streamStaticBgSource;
     // A socket cannot be written concurrently; this gate serializes the scene fan-out (background thread)
@@ -278,6 +280,8 @@ public sealed class CouchCoopWebSocketConnection
 
     public bool WantsStreamStaticBg => !_closing && _wantsStreamStaticBg;
     public bool WantsStreamStaticParticles => !_closing && _wantsStreamStaticParticles;
+    public bool WantsStreamClientDecor => !_closing && _wantsStreamClientDecor;
+    public bool WantsStreamClientTweens => !_closing && _wantsStreamClientTweens;
     public string? StreamStaticBgReady => Volatile.Read(ref _streamStaticBgReady);
     internal SeatStillAdmission? StreamStaticBgAdmission => Volatile.Read(ref _streamStaticBgSource);
     public bool IsRenderStreamPage => !_closing && IsSelfRenderStreamPage
@@ -1200,6 +1204,16 @@ public sealed class CouchCoopWebSocketConnection
                         }
 
                         var streamChanged = false;
+                        if (settings.StreamClientDecor is bool decor && decor != _wantsStreamClientDecor)
+                        {
+                            _wantsStreamClientDecor = decor;
+                            streamChanged = true;
+                        }
+                        if (settings.StreamClientTweens is bool tweens && tweens != _wantsStreamClientTweens)
+                        {
+                            _wantsStreamClientTweens = tweens;
+                            streamChanged = true;
+                        }
                         if (settings.StreamStaticParticles is bool streamStaticParticles && streamStaticParticles != _wantsStreamStaticParticles)
                         {
                             _wantsStreamStaticParticles = streamStaticParticles;
@@ -1401,6 +1415,8 @@ public sealed class CouchCoopWebSocketConnection
         if (!stream)
         {
             _wantsStreamStaticParticles = false;
+            _wantsStreamClientDecor = true;
+            _wantsStreamClientTweens = true;
             _wantsStreamStaticBg = false;
             Volatile.Write(ref _streamStaticBgReady, null);
             Volatile.Write(ref _streamStaticBgSource, null);

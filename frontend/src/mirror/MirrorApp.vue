@@ -564,6 +564,7 @@ function adoptTextEffects(c: MirrorClient): void {
 
 function seedHostPerf(c: MirrorClient): void {
   adoptTextEffects(c);
+  mirrorSettings.streamDecorFrozen = c.session?.streamDecorFrozen === true;
   if (!streamSpinesSeeded.has(c) && typeof c.session?.streamFreezeSpines === "boolean") {
     mirrorSettings.streamFreezeSpines = c.session.streamFreezeSpines;
     streamSpinesSeeded.add(c);
