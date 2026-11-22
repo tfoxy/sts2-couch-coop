@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using CouchCoop.Mod.Contracts;
+using CouchCoop.Mod.Protocol;
 using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Server;
 using CouchCoop.Mod.Session;
@@ -31,6 +32,9 @@ internal sealed partial class BrowserServerRouteTests
             await SendRendererAsync(socket, "mirror");
             using (var session = await ReadSessionAsync(socket)) ExpectRenderer(session.RootElement, "mirror");
         }
+
+        await AssertSessionRefreshFailureAsync(correlated: false);
+        await AssertSessionRefreshFailureAsync(correlated: true);
 
         var start = new ProcessStartInfo("dotnet")
         {
@@ -69,7 +73,53 @@ internal sealed partial class BrowserServerRouteTests
         var output = await stdout + await stderr;
         Expect(process.ExitCode == 0, $"the streaming seat child passed (exit {process.ExitCode}): {output}");
         Expect(!output.Contains(RenderStreamSeatToken, StringComparison.Ordinal), "the child printed no token");
-        Console.WriteLine("render-stream descriptor routes: 4 passed.");
+        Console.WriteLine("render-stream descriptor routes: 6 passed.");
+    }
+
+    private static async Task AssertSessionRefreshFailureAsync(bool correlated)
+    {
+        var failNextRead = 0;
+        var failedRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new RecordingSpirectlRuntime();
+        await using var seat = await RelayedSeat.StartAsync(readSessionFacts: withLobbyCap =>
+        {
+            if (Interlocked.Exchange(ref failNextRead, 0) == 1)
+            {
+                failedRead.SetResult();
+                throw new InvalidOperationException("injected session facts failure");
+            }
+            return runtime.SessionFactsFor(withLobbyCap);
+        });
+        using var socket = await seat.ConnectAsync(AllowedPageOrigin);
+        using (var initial = await ReadSessionAsync(socket)) ExpectRenderer(initial.RootElement, "mirror");
+        Volatile.Write(ref failNextRead, 1);
+        await SendControlAsync(socket, correlated
+            ? "{\"type\":\"session-refresh\",\"requestId\":\"stream-end:failed\"}"
+            : "{\"type\":\"session-refresh\"}");
+        await failedRead.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        if (!correlated)
+        {
+            await SendControlAsync(socket, "{\"type\":\"session-refresh\",\"requestId\":\"recovered\"}");
+            using var recovered = await ReadSessionAsync(socket, "recovered");
+            ExpectRenderer(recovered.RootElement, "mirror");
+            Expect(socket.State == WebSocketState.Open, "an uncorrelated refresh failure keeps the socket open");
+            await CloseWebSocketSilentlyAsync(socket);
+            return;
+        }
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var closed = false;
+        try
+        {
+            var buffer = new byte[4096];
+            while (!closed)
+            {
+                var result = await socket.ReceiveAsync(buffer, deadline.Token);
+                closed = result.MessageType == WebSocketMessageType.Close;
+            }
+        }
+        catch (WebSocketException) { closed = true; }
+        Expect(closed, "a failed correlated refresh invalidates the socket instead of leaving its reply pending");
     }
 
     /// <summary>The streaming seat's half, in a process launched with the seat's environment.</summary>
@@ -115,6 +165,13 @@ internal sealed partial class BrowserServerRouteTests
             }
             await SendControlAsync(socket, "{\"type\":\"session-refresh\"}");
             using (var refreshed = await ReadSessionAsync(socket)) ExpectDescriptor(refreshed.RootElement, "session-refresh", 2340);
+            await SendControlAsync(socket, "{\"type\":\"session-refresh\",\"requestId\":\"stream-end:1\"}");
+            using (var refreshed = await ReadSessionAsync(socket, "stream-end:1"))
+            {
+                ExpectDescriptor(refreshed.RootElement, "correlated session-refresh", 2340);
+                Expect(refreshed.RootElement.GetProperty("requestId").GetString() == "stream-end:1",
+                    "a session refresh echoes its request id so queued renderer updates cannot settle a stream end");
+            }
 
             // Credentials belong only to pages that explicitly ask, even while the seat is already armed.
             using var second = await seat.ConnectAsync(AllowedPageOrigin);
@@ -337,13 +394,14 @@ internal sealed partial class BrowserServerRouteTests
         }
     }
 
-    private static async Task<JsonDocument> ReadSessionAsync(ClientWebSocket socket)
+    private static async Task<JsonDocument> ReadSessionAsync(ClientWebSocket socket, string? requestId = null)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         while (true)
         {
             var document = JsonDocument.Parse(await ReadWsMessageAsync(socket, deadline.Token));
-            if (document.RootElement.TryGetProperty("type", out var type) && type.GetString() == "session") return document;
+            if (document.RootElement.TryGetProperty("type", out var type) && type.GetString() == "session"
+                && (requestId is null || document.RootElement.GetProperty("requestId").GetString() == requestId)) return document;
             document.Dispose();
         }
     }
@@ -408,7 +466,8 @@ internal sealed partial class BrowserServerRouteTests
             _relay = RelayLoopAsync(pipeName, pipeToken);
         }
 
-        public static async Task<RelayedSeat> StartAsync(bool withCapture = false, bool hotGeneration = false, bool deferRestore = false)
+        public static async Task<RelayedSeat> StartAsync(bool withCapture = false, bool hotGeneration = false, bool deferRestore = false,
+            Func<bool, SessionFacts>? readSessionFacts = null)
         {
             var root = new TempStaticRoot();
             var previous = GameMainThread.Source;
@@ -431,8 +490,11 @@ internal sealed partial class BrowserServerRouteTests
             }
             var demandHost = host is null ? null : new TrackingRendererHost(host);
             RelayedSeat? seat = null;
+            var envelopeFactory = runtime.NewEnvelopeFactory();
+            if (readSessionFacts is not null)
+                envelopeFactory = new BrowserStateEnvelopeFactory(envelopeFactory.RuntimeHost, readSessionFacts: readSessionFacts);
             var server = new CouchCoopBrowserServer(new StaticSpaFileProvider(root.Path), new CapturingAssetAdapter(),
-                runtime.NewEnvelopeFactory(), preferredPort: 0, isHeadlessClient: true,
+                envelopeFactory, preferredPort: 0, isHeadlessClient: true,
                 hostBrowserAccess: new TestHostBrowserAccess(), rendererSwapHost: demandHost,
                 onSceneStreamingDemandChanged: (count, _) => { if (seat is not null) seat.StreamingDemand = count; });
             await server.StartAsync();

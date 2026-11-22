@@ -886,6 +886,49 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
     expect(renderStreamAvailability.value.reason).toBe("host-view");
   });
 
+  it.each(["ended", "connect-failed"])("keeps a host self-stream through a rearm after %s", async (ending) => {
+    canStream();
+    app = mount(MirrorApp);
+    await settle();
+    const host = latest();
+    host.emit(sessionMessage());
+    await settle();
+    await app.findAll('[data-testid="player-picker"] button')[0].trigger("click");
+    await settle();
+    const state = (epoch: number, ready: boolean, name = "armed") => ({ state: name,
+      presentationEpoch: epoch, presentationReady: ready, presentationWidth: 1920, presentationHeight: 1080 });
+    host.emit(sessionMessage({ directView: true, requestId: host.ofType("join").at(-1)!.requestId,
+      rendererState: state(1, true, "mirror") }));
+    await settle();
+    host.sent.length = 0;
+    mirrorSettings.renderer = "stream";
+    await settle();
+    host.emit(sessionMessage({ renderStream: descriptor, rendererState: state(1, true) }));
+    await settle();
+    if (ending === "ended") {
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      fail({ kind: "ended" });
+    } else {
+      host.emit(sessionMessage({ renderStream: descriptor, rendererState: state(1, true, "arming") }));
+      await settle();
+      fail({ kind: "failed", reason: "live-connect-failed", detail: "the connection closed (code 1000) before its session" });
+    }
+    await settle();
+    const requestId = host.ofType("session-refresh")[0].requestId;
+    host.emit(sessionMessage({ requestId, rendererState: state(2, false, "disarming") }));
+    await settle();
+    host.emit(sessionMessage({ renderStream: descriptor, rendererState: state(2, true) }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(host.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
   it("requests and displays the host's own stream, fences its epochs, and unticks on the host socket", async () => {
     canStream();
     globalThis.__couchCoopHostBase = "http://127.0.0.1:13337";
@@ -1667,6 +1710,7 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
       vi.stubGlobal("ResizeObserver", class {
         constructor(callback: () => void) { resize = callback; }
         observe(): void {}
+        unobserve(): void {}
         disconnect = disconnect;
       });
     });
@@ -1697,6 +1741,151 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
       mirrorSettings.stretchEnabled = false;
       await settle();
       expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "stream" }]);
+    });
+
+    const retiredConnectDetails = [
+      "no open connection (close code 1006, never opened)", // A refused HTTP 410 handshake.
+      "the connection closed (code 1000) before its session"
+    ];
+
+    it.each(retiredConnectDetails)("keeps a connecting stream retired by a pending width change: %s", async (detail) => {
+      const seat = await showMirror();
+      await startStream(seat);
+      fail({ kind: "streaming", firstFrame: true });
+      mirrorSettings.stretchEnabled = true;
+      await settle();
+      const intermediate = { renderStream: { ...descriptor, presentation: [2340, 1080] },
+        rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+          presentationWidth: 2340, presentationHeight: 1080 } };
+      seat.emit(seatSession(intermediate));
+      await settle();
+      expect(fake.clients).toHaveLength(2);
+      const connecting = fake.clients[1];
+      const stage = app!.getComponent({ name: "RenderStreamStage" });
+      mirrorSettings.stretchEnabled = false;
+      await settle();
+      expect(seat.ofType("renderer").map(m => m.aspect ?? 1920 / 1080)).toEqual([
+        1920 / 1080, 2340 / 1080, 1920 / 1080
+      ]);
+      const failure: RenderStreamStatus = { kind: "failed", reason: "live-connect-failed", detail };
+      connecting.options.onStatus?.(failure);
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(connecting.disposed).toBe(true);
+      expect(renderStreamContext.firstFrame).toBe(false);
+      const refresh = seat.ofType("session-refresh");
+      expect(refresh).toHaveLength(1);
+      expect(refresh[0].requestId).toEqual(expect.stringMatching(/^stream-end:/));
+      // An already queued session cannot settle the newer width request.
+      seat.emit(seatSession(intermediate));
+      connecting.options.onStatus?.(failure);
+      stage.vm.$emit("failed", `live-connect-failed: ${detail}`);
+      await settle();
+      expect(fake.clients).toHaveLength(2);
+      expect(seat.ofType("session-refresh")).toHaveLength(1);
+      expect(renderStreamContext.stopped).toBeNull();
+      seat.emit(seatSession({ requestId: refresh[0].requestId, renderStream: null,
+        rendererState: { state: "arming", presentationEpoch: 3, presentationReady: true,
+          presentationWidth: 1920, presentationHeight: 1080 } }));
+      await settle();
+      const replacement = { renderStream: descriptor,
+        rendererState: { state: "armed", presentationEpoch: 3, presentationReady: true,
+          presentationWidth: 1920, presentationHeight: 1080 } };
+      seat.emit(seatSession({ ...replacement, rendererState: { ...replacement.rendererState, state: "arming" } }));
+      await settle();
+      seat.emit(seatSession(replacement));
+      await settle();
+      expect(fake.clients).toHaveLength(3);
+      expect(fake.clients[2].options.endpoint.presentation).toEqual([1920, 1080]);
+      expect(renderStreamContext.firstFrame).toBe(false);
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      connecting.options.onStatus?.(failure);
+      stage.vm.$emit("failed", `live-connect-failed: ${detail}`);
+      seat.emit(seatSession({ requestId: refresh[0].requestId, ...replacement }));
+      await settle();
+      expect(renderStreamContext.firstFrame).toBe(true);
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(fake.clients[2].disposed).toBe(false);
+      expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "stream", "stream"]);
+      expect(seat.ofType("session-refresh")).toHaveLength(1);
+      // The fulfilled width change must not shelter a later, unrelated connection failure.
+      fail(failure);
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      const terminalRefresh = seat.ofType("session-refresh");
+      expect(terminalRefresh).toHaveLength(2);
+      expect(terminalRefresh[1].requestId).toEqual(expect.stringMatching(/^stream-end:/));
+      expect(terminalRefresh[1].requestId).not.toBe(refresh[0].requestId);
+      seat.emit(seatSession({ requestId: terminalRefresh[1].requestId, ...replacement }));
+      await settle();
+      expect(renderStreamContext.stopped).toBe(`live-connect-failed: ${detail}`);
+      expect(seat.ofType("session-refresh")).toHaveLength(2);
+      expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "stream", "stream", "mirror"]);
+    });
+
+    it("keeps a pending connect failure terminal when its correlated descriptor is ready and unchanged", async () => {
+      const seat = await showMirror();
+      await startStream(seat);
+      mirrorSettings.stretchEnabled = true;
+      await settle();
+      fail({ kind: "failed", reason: "live-connect-failed", detail: retiredConnectDetails[0] });
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      const refresh = seat.ofType("session-refresh");
+      expect(refresh).toHaveLength(1);
+      seat.emit(seatSession({ requestId: refresh[0].requestId }));
+      await settle();
+      expect(renderStreamContext.stopped).toBe(`live-connect-failed: ${retiredConnectDetails[0]}`);
+      expect(fake.clients).toHaveLength(1);
+      expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "stream", "mirror"]);
+    });
+
+    it.each(["mirror", "disconnect"])("cancels a pending connect failure on %s", async (end) => {
+      const seat = await showMirror();
+      await startStream(seat);
+      mirrorSettings.stretchEnabled = true;
+      await settle();
+      fail({ kind: "failed", reason: "live-connect-failed", detail: retiredConnectDetails[0] });
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      const refresh = seat.ofType("session-refresh");
+      expect(refresh).toHaveLength(1);
+      if (end === "mirror") mirrorSettings.renderer = "mirror";
+      else seat.close();
+      await settle();
+      seat.emit(seatSession({ requestId: refresh[0].requestId }));
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(fake.clients).toHaveLength(1);
+      expect(fake.clients[0].disposed).toBe(true);
+      expect(seat.ofType("session-refresh")).toHaveLength(1);
+    });
+
+    it("keeps a width change pending when a quick toggle returns to the connecting descriptor's width", async () => {
+      const seat = await showMirror();
+      await startStream(seat);
+      mirrorSettings.stretchEnabled = true;
+      await settle();
+      mirrorSettings.stretchEnabled = false;
+      await settle();
+      seat.emit(seatSession());
+      await settle();
+      fail({ kind: "failed", reason: "live-connect-failed", detail: retiredConnectDetails[1] });
+      await settle();
+      expect(renderStreamContext.stopped).toBeNull();
+      const refresh = seat.ofType("session-refresh");
+      expect(refresh).toHaveLength(1);
+      seat.emit(seatSession({ requestId: refresh[0].requestId, rendererState: { state: "arming" }, renderStream: null }));
+      await settle();
+      seat.emit(seatSession({ rendererState: { state: "armed", presentationEpoch: 2 } }));
+      await settle();
+      expect(fake.clients).toHaveLength(2);
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      expect(renderStreamContext.firstFrame).toBe(true);
+      expect(renderStreamContext.stopped).toBeNull();
+      expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "stream", "stream"]);
     });
 
     it("updates immediately when safe-area padding changes the desired width", async () => {
@@ -1791,6 +1980,318 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     fail({ kind: "streaming", firstFrame: true });
     await settle();
     expect(renderStreamContext.firstFrame).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+  });
+
+  it.each([false, true])("keeps stream demand when end precedes disarming, separate turn=%s", async (separateTurn) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+
+    fail({ kind: "ended" });
+    if (separateTurn) await settle();
+    for (const state of ["disarming", "arming"]) {
+      seat.emit(seatSession({ requestId: seat.ofType("session-refresh")[0].requestId,
+        renderStream: null, rendererState: { state, presentationEpoch: 2,
+          presentationReady: false, presentationWidth: 2340, presentationHeight: 1080 } }));
+      await settle();
+    }
+    seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+    expect(fake.clients).toHaveLength(2);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+  });
+
+  it.each([false, true])("waits for capture while the arming layout is ready, ended=%s", async (ended) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    if (ended) {
+      fail({ kind: "ended" });
+      await settle();
+    }
+    seat.emit(seatSession({ requestId: ended ? seat.ofType("session-refresh")[0].requestId : "session",
+      renderStream: null, rendererState: { state: "arming", presentationEpoch: 2,
+        presentationReady: true, presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+    expect(fake.clients[0].disposed).toBe(true);
+    seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    expect(renderStreamContext.firstFrame).toBe(false);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+  });
+
+  it.each([
+    "no open connection (close code 1006, never opened)",
+    "the connection closed (code 1000) before its session"
+  ])("keeps a connecting stream when another viewer rearms before its rendererState arrives: %s", async (detail) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    vi.stubGlobal("innerWidth", 2340);
+    vi.stubGlobal("innerHeight", 1080);
+    mirrorSettings.stretchEnabled = true;
+    await settle();
+    expect(seat.ofType("renderer")).toHaveLength(2);
+    expect(seat.ofType("renderer")[1].aspect).toBeCloseTo(2340 / 1080, 10);
+    seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 2340, presentationHeight: 1080 } }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    const connecting = fake.clients[1];
+    fail({ kind: "failed", reason: "live-connect-failed", detail });
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(connecting.disposed).toBe(true);
+    const refresh = seat.ofType("session-refresh");
+    expect(refresh).toHaveLength(1);
+    expect(refresh[0].requestId).toEqual(expect.stringMatching(/^stream-end:/));
+    seat.emit(seatSession({ renderStream: null,
+      rendererState: { state: "disarming", presentationEpoch: 3, presentationReady: false,
+        presentationWidth: 1920, presentationHeight: 1080 } }));
+    await settle();
+    seat.emit(seatSession({ renderStream: descriptor,
+      rendererState: { state: "armed", presentationEpoch: 3, presentationReady: true,
+        presentationWidth: 1920, presentationHeight: 1080 } }));
+    await settle();
+    expect(fake.clients).toHaveLength(3);
+    expect(fake.clients[2].options.endpoint.presentation).toEqual([1920, 1080]);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "stream"]);
+    expect(seat.ofType("session-refresh")).toHaveLength(1);
+  });
+
+  it.each([
+    "no open connection (close code 1006, never opened)",
+    "the connection closed (code 1000) before its session"
+  ])("refreshes a connect failure during a host rearm without a local width change: %s", async (detail) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    seat.emit(seatSession({ rendererState: { state: "arming", presentationReady: true } }));
+    await settle();
+    fail({ kind: "failed", reason: "live-connect-failed", detail });
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    const refresh = seat.ofType("session-refresh");
+    expect(refresh).toHaveLength(1);
+    seat.emit(seatSession({ requestId: refresh[0].requestId, renderStream: { ...descriptor, token: "b".repeat(64) } }));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+  });
+
+  it.each([
+    "no open connection (close code 1006, never opened)",
+    "the connection closed (code 1000) before its session"
+  ])("keeps a connect failure terminal after one unchanged correlated reply: %s", async (detail) => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "failed", reason: "live-connect-failed", detail });
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    const refresh = seat.ofType("session-refresh");
+    expect(refresh).toHaveLength(1);
+    expect(refresh[0].requestId).toEqual(expect.stringMatching(/^stream-end:/));
+    seat.emit(seatSession({ requestId: refresh[0].requestId }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe(`live-connect-failed: ${detail}`);
+    expect(seat.ofType("session-refresh")).toHaveLength(1);
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "mirror"]);
+  });
+
+  it("cancels a pending end on disconnect without choosing mirror", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    const old = fake.clients[0];
+    fail({ kind: "ended" });
+    await settle();
+    seat.close();
+    await settle();
+    old.options.onStatus?.({ kind: "ended" });
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+    expect(seat.ofType("session-refresh")).toHaveLength(1);
+    expect(fake.clients.every(client => client.disposed)).toBe(true);
+  });
+
+  it("rearms from an authoritative new epoch even when the descriptor is unchanged", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "ended" });
+    await settle();
+    seat.emit(seatSession({ requestId: seat.ofType("session-refresh")[0].requestId, renderStream: descriptor,
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 1920, presentationHeight: 1080 } }));
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(fake.clients).toHaveLength(2);
+    expect(renderStreamContext.firstFrame).toBe(false);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+  });
+
+  it("settles a terminal end only from its authoritative refresh reply", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    const old = fake.clients[0];
+    const stage = app!.getComponent({ name: "RenderStreamStage" });
+    fail({ kind: "ended" });
+    expect(old.disposed).toBe(true);
+    expect(renderStreamContext.firstFrame).toBe(false);
+    await settle();
+    const refresh = seat.ofType("session-refresh");
+    expect(refresh).toHaveLength(1);
+    expect(refresh[0].requestId).toEqual(expect.stringMatching(/^stream-end:/));
+    const inputs = seat.ofType("input").length;
+    document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyA", key: "a", bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyA", key: "a", bubbles: true }));
+    expect(seat.ofType("input")).toHaveLength(inputs);
+    old.options.onStatus?.({ kind: "ended" });
+    stage.vm.$emit("ended");
+    seat.emit(seatSession({ renderStream: descriptor }));
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(fake.clients).toHaveLength(1);
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+    expect(seat.ofType("session-refresh")).toHaveLength(1);
+    seat.emit(seatSession({ requestId: refresh[0].requestId, renderStream: descriptor }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe("ended");
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "mirror"]);
+  });
+
+  it("reports a failed capture while an end decision is pending", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "ended" });
+    await settle();
+    seat.emit(seatSession({ rendererState: { state: "failed", reason: "capture failed" } }));
+    await settle();
+    expect(renderStreamContext.stopped).toBe("capture failed");
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "mirror"]);
+  });
+
+  it("cancels the pending end when mirror is selected and ignores its late reply", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    fail({ kind: "ended" });
+    await settle();
+    const requestId = seat.ofType("session-refresh")[0].requestId;
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    seat.emit(seatSession({ requestId, renderStream: descriptor }));
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    expect(fake.clients).toHaveLength(1);
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream", "mirror"]);
+  });
+
+  it("ignores old end callbacks and refresh replies after a new presentation draws", async () => {
+    const seat = await showMirror();
+    await startStream(seat);
+    const old = fake.clients[0];
+    const stage = app!.getComponent({ name: "RenderStreamStage" });
+    fail({ kind: "ended" });
+    await settle();
+    const requestId = seat.ofType("session-refresh")[0].requestId;
+    const next = { renderStream: { ...descriptor, presentation: [2340, 1080] },
+      rendererState: { state: "armed", presentationEpoch: 2, presentationReady: true,
+        presentationWidth: 2340, presentationHeight: 1080 } };
+    seat.emit(seatSession(next));
+    await settle();
+    expect(fake.clients).toHaveLength(2);
+    fail({ kind: "streaming", firstFrame: true });
+    await settle();
+    old.options.onStatus?.({ kind: "ended" });
+    stage.vm.$emit("ended");
+    seat.emit(seatSession({ requestId, ...next }));
+    await settle();
+    expect(renderStreamContext.stopped).toBeNull();
+    expect(renderStreamContext.firstFrame).toBe(true);
+    expect(fake.clients[1].disposed).toBe(false);
+    expect(seat.ofType("session-refresh")).toHaveLength(1);
+    expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
+  });
+
+  it("releases frame-paced credits and retires the old loop across repeated same-page rearms", async () => {
+    const seat = await showMirror();
+    const lifecycles: ReturnType<typeof resourceLifecycleClient>[] = [];
+    fake.clientFactory = (options) => {
+      const lifecycle = resourceLifecycleClient(options);
+      lifecycles.push(lifecycle);
+      return lifecycle.client;
+    };
+    await startStream(seat);
+
+    for (let generation = 0; generation < 3; generation++) {
+      const current = lifecycles[generation];
+      const acks = (stage: string) => current.transport.sent
+        .filter(m => m.type === "ack" && m.stage === stage).map(m => m.seq);
+      current.open();
+      current.transaction(1, []);
+      current.frame();
+      await settle();
+      expect(renderStreamContext.firstFrame).toBe(true);
+      expect(acks("submitted")).toEqual([1]);
+
+      // Message delivery continues while no frame callback runs. Two undrawn applies
+      // fill the pacing allowance; the next credit window waits for a draw.
+      for (const seq of [2, 3, 4, 5]) current.transaction(seq, []);
+      expect(acks("received")).toEqual([1, 2, 3, 4, 5]);
+      expect(acks("applied")).toEqual([1, 2, 3]);
+      expect(acks("submitted")).toEqual([1]);
+      current.frameAt(current.now + 4280);
+      expect(acks("applied")).toEqual([1, 2, 3, 4, 5]);
+      expect(acks("submitted")).toEqual([1, 2, 3, 4, 5]);
+
+      if (generation === 2) break;
+      const epoch = generation + 2;
+      const width = generation === 0 ? 2340 : 1920;
+      seat.emit(seatSession({ renderStream: null, rendererState: { state: "disarming", presentationEpoch: epoch,
+        presentationReady: false, presentationWidth: width, presentationHeight: 1080 } }));
+      await settle();
+      expect(current.transport.closed).toMatchObject({ code: 1000 });
+      const sent = current.transport.sent.length;
+      current.transaction(6, []);
+      current.frame();
+      expect(current.transport.sent).toHaveLength(sent);
+      seat.emit(seatSession({ renderStream: { ...descriptor, presentation: [width, 1080] },
+        rendererState: { state: "armed", presentationEpoch: epoch, presentationReady: true,
+          presentationWidth: width, presentationHeight: 1080 } }));
+      await settle();
+      expect(lifecycles).toHaveLength(generation + 2);
+    }
     expect(renderStreamContext.stopped).toBeNull();
     expect(seat.ofType("renderer").map(m => m.renderer)).toEqual(["stream"]);
   });
@@ -2052,6 +2553,10 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     await startStream(seat);
     fail(kind === "ended" ? { kind: "ended" } : { kind: "failed", reason: "host-error", detail: "capture stopped" });
     await settle();
+    if (kind === "ended") {
+      seat.emit(seatSession({ requestId: seat.ofType("session-refresh")[0].requestId, renderStream: descriptor }));
+      await settle();
+    }
     expect(app!.getComponent(MirrorView).element).toBe(mirror);
     expect(app!.find('[data-testid="render-stream-stage"]').exists()).toBe(false);
     expect(seat.ofType("watch")).toEqual([{ type: "watch", on: false }, { type: "watch", on: true }]);
@@ -2071,6 +2576,8 @@ describe("MirrorApp — switching renderers with a mirror on screen", () => {
     seat.sent.length = 0;
     if (cause === "failure") {
       fail({ kind: "ended" });
+      await settle();
+      seat.emit(seatSession({ requestId: seat.ofType("session-refresh")[0].requestId, renderStream: descriptor }));
       await settle();
       expect(seat.ofType("renderer")).toEqual([{ type: "renderer", rendererProtocol: 2, renderer: "mirror" }]);
     } else if (cause === "checkbox") {

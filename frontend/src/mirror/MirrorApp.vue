@@ -1066,7 +1066,8 @@ watch(stageAttempt, () => { streamStageReady.value = false; }, { flush: "sync" }
 const streamCallbacks = computed(() => {
   const attempt = stageAttempt.value;
   return {
-    failed: (reason: string) => onRenderStreamFailed(reason, attempt),
+    failed: (reason: string) => onRenderStreamStageFailed(reason, attempt),
+    ended: () => onRenderStreamEnded(attempt),
     frameReset: () => { if (!unmounted && attempt === stageAttempt.value) onStreamFrameReset(); },
     firstFrame: () => { if (attempt === stageAttempt.value) onStreamFirstFrame(); }
   };
@@ -1089,8 +1090,23 @@ watch(() => JSON.stringify(renderStreamEndpoint.value), () => {
 }, { flush: "sync" });
 const rendererRequests = new WeakMap<MirrorClient, {
   renderer: "stream" | "mirror"; retry: number; descriptorReceived: boolean; lastSentWidth: number;
+  widthRequestPending: { endpoint: string; epoch: number | undefined } | null;
 }>();
 const rendererRequestRevision = ref(0);
+// An end and rendererState arrive on independent sockets. Keep demand until a current presentation or the
+// explicitly requested session settles it; an unsolicited, queued session cannot declare this end terminal.
+const streamEndPending = shallowRef<{
+  client: MirrorClient; request: object; requestId: string; endpoint: string; epoch: number | undefined; reason: string;
+} | null>(null);
+let streamEndSequence = 0;
+function cancelStaleStreamEnd(): void {
+  const pending = streamEndPending.value;
+  if (pending && (pending.client !== activeClient || activeClient.status !== "connected"
+    || mirrorSettings.renderer !== "stream" || rendererRequests.get(activeClient) !== pending.request)) {
+    streamEndPending.value = null;
+  }
+}
+watch([status, () => mirrorSettings.renderer, rendererRequestRevision], cancelStaleStreamEnd, { flush: "sync" });
 const mirrorSurface = shallowRef<HTMLElement | null>(null);
 // A host's renderer state advertises its own capture; the seat LAN offer still describes seats only.
 const hostSelfStream = computed(() => hostSession.value?.rendererState !== undefined);
@@ -1102,20 +1118,46 @@ watch([directView, hostSelfStream], ([direct, selfStream]) => {
   renderStreamContext.directView = direct;
   renderStreamContext.hostSelfStream = selfStream;
 }, { immediate: true });
+function rendererIsTransitioning(state: typeof renderStreamContext.rendererState): boolean {
+  return state?.state === "arming" || (state?.presentationReady === false
+    && ["arming", "disarming", "mirror", "armed"].includes(state.state));
+}
 watch(
   rendererSession,
   (session) => {
     if (session !== null) mirrorRequestPending.value = false;
     const next = sessionRenderStreamEndpoint(session?.renderStream);
     const state = session?.rendererState ?? null;
+    // Layout can settle before capture publishes its descriptor, while the host is still arming.
+    const transitioning = rendererIsTransitioning(state);
     const request = rendererRequests.get(activeClient);
-    if (next !== null && request?.renderer === "stream") request.descriptorReceived = true;
+    cancelStaleStreamEnd();
+    const pending = streamEndPending.value;
+    if (pending && session !== null) {
+      const replaced = next !== null && (JSON.stringify(next) !== pending.endpoint
+        || state?.presentationEpoch !== pending.epoch);
+      if (transitioning || replaced) streamEndPending.value = null;
+      else if (session.requestId === pending.requestId) {
+        streamEndPending.value = null;
+        onRenderStreamFailed(state?.state === "failed" ? state.reason ?? t("settings.newRendererFailed") : pending.reason);
+      }
+    }
+    if (next !== null && request?.renderer === "stream") {
+      request.descriptorReceived = true;
+      // Queued copies of the old session cannot acknowledge a width change, even one back to its old width.
+      const widthRequest = request.widthRequestPending;
+      const replaced = widthRequest && (JSON.stringify(next) !== widthRequest.endpoint
+        || state?.presentationEpoch !== widthRequest.epoch);
+      if (replaced && !transitioning && (next.presentation?.[0] ?? 1920) === request.lastSentWidth) {
+        request.widthRequestPending = null;
+      }
+    }
     if (state?.state === "failed" && mirrorSettings.renderer === "stream") {
       onRenderStreamFailed(state.reason ?? t("settings.newRendererFailed"));
     } else if (next === null && (joined.value || selfStreamingView.value) && seatRendererDemand.value === "stream"
       && mirrorSettings.renderStreamUrl === null
       && request?.renderer === "stream" && request.descriptorReceived
-      && !(state?.presentationReady === false && ["arming", "disarming", "mirror", "armed"].includes(state.state))) {
+      && !transitioning) {
       onRenderStreamFailed("descriptor gone");
     }
     if (session === null || (state?.state === "mirror" && next === null)) {
@@ -1167,8 +1209,9 @@ function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"
   // connection and request can later be withdrawn. An initial descriptor may already acknowledge the page;
   // subsequent attempts must receive a new session rather than inherit their predecessor's descriptor.
   const aspect = renderer === "stream" ? streamSeatAspect(mirrorSettings) : undefined;
-  rendererRequests.set(client, { renderer, retry, lastSentWidth: streamSeatWidth(aspect), descriptorReceived: renderer === "stream"
-    && previous === undefined && sessionRenderStreamEndpoint(client.session.renderStream) !== null });
+  rendererRequests.set(client, { renderer, retry, widthRequestPending: null, lastSentWidth: streamSeatWidth(aspect),
+    descriptorReceived: renderer === "stream" && previous === undefined
+      && sessionRenderStreamEndpoint(client.session.renderStream) !== null });
   rendererRequestRevision.value++;
   // Close admission synchronously, before the request can resize the shared seat.
   client.setSceneAdmission(false);
@@ -1195,7 +1238,12 @@ useStreamSeatWidth({
   surface: mirrorSurface,
   settings: mirrorSettings,
   aspect: () => streamSeatAspect(mirrorSettings),
-  send: (aspect) => activeClient.sendRenderer("stream", aspect)
+  send: (aspect) => {
+    const request = rendererRequests.get(activeClient);
+    if (request) request.widthRequestPending = { endpoint: JSON.stringify(renderStreamContext.sessionEndpoint),
+      epoch: viewRendererState.value?.presentationEpoch };
+    activeClient.sendRenderer("stream", aspect);
+  }
 });
 
 // Capability can arrive after the first connected session. Only an admitted, changed request spends a slot.
@@ -1223,7 +1271,7 @@ const wantsHostStream = computed(() =>
 // The stream shows where the scene would: on a granted view, once it has somewhere to connect.
 const showStream = computed(() =>
   streamRendererOn.value && (joined.value || directView.value) && renderStreamEndpoint.value !== null
-  && renderStreamCore !== null
+  && renderStreamCore !== null && streamEndPending.value === null
 );
 // Retire a pending chunk load as soon as its stage is no longer wanted. A late rejection or timeout must not
 // turn an intentional switch back into a sticky failure.
@@ -1317,7 +1365,31 @@ watch(
   () => syncRuntimeRenderer(mirrorSettings),
   { immediate: true }
 );
-// A stopped stream (failed, ended, refused) falls back to the old renderer for the session; `renderer` stays saved.
+// A shared-view re-arm can retire a connecting socket before its rendererState arrives. The stage has
+// disposed that receiver; settle its failure like an end with one authoritative session refresh.
+function onRenderStreamStageFailed(reason: string, attempt: number): void {
+  if (reason.startsWith("live-connect-failed: ") && reason !== "live-connect-failed: unauthorized") {
+    onRenderStreamEnded(attempt, reason);
+  } else onRenderStreamFailed(reason, attempt);
+}
+
+// A negotiated end may precede the host's re-arm notification; ask once before withdrawing stream demand.
+function onRenderStreamEnded(attempt: number, reason = "ended"): void {
+  if (unmounted || attempt !== stageAttempt.value || renderStreamContext.stopped !== null) return;
+  const request = rendererRequests.get(activeClient);
+  if (mirrorSettings.renderStreamUrl !== null || request?.renderer !== "stream"
+    || activeClient.status !== "connected" || renderStreamEndpoint.value === null) {
+    onRenderStreamFailed(reason, attempt);
+    return;
+  }
+  if (streamEndPending.value !== null) return;
+  const requestId = `stream-end:${++streamEndSequence}`;
+  streamEndPending.value = { client: activeClient, request, requestId,
+    endpoint: JSON.stringify(renderStreamEndpoint.value), epoch: viewRendererState.value?.presentationEpoch, reason };
+  activeClient.requestSession(requestId);
+}
+
+// A stopped stream falls back for the session; the saved renderer choice stays.
 function onRenderStreamFailed(reason: string, attempt = stageAttempt.value): void {
   if (unmounted || attempt !== stageAttempt.value || renderStreamContext.stopped !== null) return;
   stopRenderStream(reason, mirrorSettings);
@@ -1997,9 +2069,11 @@ onBeforeUnmount(() => {
         :send-input="viewControls.sendInput"
         :input-enabled="renderStreamContext.firstFrame && !hostAccessBlocked && viewRendererState?.presentationReady !== false"
         :presentation-epoch="viewRendererState?.presentationEpoch"
+        :negotiated="mirrorSettings.renderStreamUrl === null"
         :show-chrome="showStreamChrome"
         :access-generation="hostAccess?.generation"
         @failed="streamCallbacks.failed"
+        @ended="streamCallbacks.ended"
         @chrome-ready="streamStageReady = true"
         @frame-reset="streamCallbacks.frameReset"
         @first-frame="streamCallbacks.firstFrame"

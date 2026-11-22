@@ -486,6 +486,21 @@ describe("RenderStreamStage", () => {
     expect(wrapper!.emitted("failed")).toEqual([["ended"]]);
   });
 
+  it("retires a negotiated end immediately and leaves its decision to the app", async () => {
+    mountStage();
+    await wrapper!.setProps({ negotiated: true });
+    clients[0].emit({ kind: "ended" });
+    expect(clients[0].disposed).toBe(true);
+    expect(wrapper!.emitted("ended")).toEqual([[]]);
+    expect(wrapper!.emitted("failed")).toBeUndefined();
+    clients[0].emit({ kind: "ended" });
+    setVisibility("hidden");
+    setVisibility("visible");
+    await nextTick();
+    expect(wrapper!.emitted("ended")).toHaveLength(1);
+    expect(clients).toHaveLength(1);
+  });
+
   it("disposes on unmount", () => {
     mountStage();
     wrapper!.unmount();

@@ -1103,8 +1103,9 @@ public sealed class CouchCoopWebSocketConnection
                 {
                     // `{type:"session-refresh"}`: send this connection's `session` again. The new renderer asks once
                     // when the hub refused its token (the seat restarted with a new one), to learn the current
-                    // descriptor. Read-only and cheap: one roster read, no game state.
-                    await ResendSessionAsync(null, cancellationToken).ConfigureAwait(false);
+                    // descriptor. Echo an optional id so a stream end can distinguish this answer from queued
+                    // renderer updates. Read-only and cheap: one roster read, no game state.
+                    await ResendSessionAsync(null, cancellationToken, inboundRequestId).ConfigureAwait(false);
                     continue;
                 }
 
@@ -1659,10 +1660,11 @@ public sealed class CouchCoopWebSocketConnection
     }
 
     // Re-send this connection's `session` envelope (identity + roster + run status). The server calls it when
-    // the lobby roster / run status changes so the shared join screen stays live. Best-effort: no-op if the session handle isn't set yet or the socket is gone.
+    // the lobby roster / run status changes so the shared join screen stays live. Fan-outs are best-effort;
+    // a correlated refresh must answer or invalidate the connection so its caller can reconnect.
     // `facts` is what the server's fan-out read ONCE for every connection (CouchCoopBrowserServer.ResendSessions); this
     // connection still classifies it against its own session. Null reads the roster here.
-    public async Task ResendSessionAsync(SessionFacts? facts, CancellationToken cancellationToken)
+    public async Task ResendSessionAsync(SessionFacts? facts, CancellationToken cancellationToken, string? requestId = null)
     {
         var session = _session;
         if (session is null || _socket is not { State: WebSocketState.Open })
@@ -1674,14 +1676,16 @@ public sealed class CouchCoopWebSocketConnection
         {
             await SendEnvelopeAsync(await _envelopeFactory.CreateSessionEnvelope(
                 _viewerName,
-                "session",
+                requestId ?? "session",
                 session,
                 cancellationToken: cancellationToken,
                 facts: facts).ConfigureAwait(false)).ConfigureAwait(false);
         }
         catch
         {
-            // Socket closing/closed, or a transient classify failure — the next change re-sends.
+            if (requestId is not null && _socket is { State: WebSocketState.Open } socket)
+                socket.Abort();
+            // Unsolicited updates tolerate transient classify failures — the next change re-sends.
         }
     }
 

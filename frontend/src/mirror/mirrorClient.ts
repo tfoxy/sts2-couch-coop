@@ -261,8 +261,9 @@ export interface MirrorClient {
   // host resolve the exact seat instead of matching the label, which is what makes a rejoin land on the right netId.
   sendJoin(name: string, playerId?: string): void;
   // Ask the connected instance to send its `session` envelope again (`{type:"session-refresh"}`). The new renderer
-  // asks once when its hub refused the token, to learn the seat's current descriptor. No-op when not open.
-  requestSession(): void;
+  // asks once when its hub refused the token or ended. An optional id distinguishes the answer from queued
+  // renderer updates. No-op when not open.
+  requestSession(requestId?: string): void;
   // Retire a local join attempt after timeout/rollback. Late replies cannot reopen its view.
   // This does not cancel a server-side spawn or alter the connection's watch request.
   cancelPendingJoin(): void;
@@ -800,12 +801,12 @@ export function connectMirrorClient(options: {
     }
   }
 
-  function requestSession(): void {
+  function requestSession(requestId?: string): void {
     if (socket.readyState !== WebSocketCtor.OPEN) {
       return;
     }
     try {
-      socket.send(JSON.stringify({ type: "session-refresh" }));
+      socket.send(JSON.stringify({ type: "session-refresh", ...(requestId ? { requestId } : {}) }));
     } catch {
       // Racing close — drop it; a reconnect sends a fresh session anyway.
     }

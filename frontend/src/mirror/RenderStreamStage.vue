@@ -17,7 +17,7 @@
 //   * `unauthorized` (the hub refused the token: the seat restarted with a new one): ask MirrorApp ONCE for the
 //     seat's current descriptor (`refresh-endpoint`); a different one arriving reconnects with it, the same one (or
 //     none within `refreshTimeoutMs`) is a stop;
-//   * the fallback: a `failed` or `ended` status is emitted as `failed(reason)` for MirrorApp to fall back on;
+//   * the fallback: failures stop; a negotiated end retires the client while MirrorApp checks the host lifecycle;
 //   * the extension modules: interactive stages install them once and gate their work on live settings. A changed
 //     presentation width or input capability needs a fresh client because its hello cannot change in place.
 //
@@ -75,6 +75,8 @@ const props = withDefaults(defineProps<{
    */
   accessGeneration?: number;
   presentationEpoch?: number;
+  /** The app settles a negotiated stream's end against the host's current renderer state. */
+  negotiated?: boolean;
   hiddenDisposeMs?: number;
   /** How long an `unauthorized` stream waits for the seat's current descriptor before it stops. */
   refreshTimeoutMs?: number;
@@ -85,6 +87,7 @@ const props = withDefaults(defineProps<{
   showChrome: false,
   accessGeneration: undefined,
   presentationEpoch: undefined,
+  negotiated: false,
   hiddenDisposeMs: RENDER_STREAM_HIDDEN_DISPOSE_MS,
   refreshTimeoutMs: 10_000
 });
@@ -92,6 +95,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   /** The stream stopped for good this session (`<reason>: <detail>`, or `ended`). */
   failed: [reason: string];
+  /** A negotiated stream ended; the app must settle it against the host's current session. */
+  ended: [];
   status: [status: RenderStreamStatus];
   /** The current client was retired or created; its replacement must draw before owning input. */
   "frame-reset": [];
@@ -269,7 +274,17 @@ function onStatus(status: RenderStreamStatus): void {
       stop(`${status.reason}: ${status.detail}`);
       break;
     case "ended":
-      stop("ended");
+      if (!props.negotiated) stop("ended");
+      else {
+        clearRefresh();
+        stopped = true;
+        phase.value = "connecting";
+        try {
+          disposeClient();
+        } finally {
+          emit("ended");
+        }
+      }
       break;
   }
 }
