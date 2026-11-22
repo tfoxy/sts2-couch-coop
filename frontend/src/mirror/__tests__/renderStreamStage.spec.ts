@@ -15,6 +15,7 @@ import type {
   RenderStreamStats,
   RenderStreamStatus
 } from "@godot-scene-web/render-stream-client";
+import { createRenderStreamClient } from "@godot-scene-web/render-stream-client";
 
 import RenderStreamStage from "@/mirror/RenderStreamStage.vue";
 import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
@@ -97,6 +98,7 @@ beforeEach(() => {
   mirrorSettings.streamStaticBg = false;
   mirrorSettings.streamShaderMode = "dynamic";
   mirrorSettings.streamParticleMode = "dynamic";
+  mirrorSettings.streamClientTweens = false;
   mirrorSettings.raiseHandCards = false;
   mirrorSettings.uiScaling = false;
   mirrorSettings.raiseHeldCard = false;
@@ -115,6 +117,58 @@ const mountStage = (props: Record<string, unknown> = {}) =>
 const status = () => wrapper!.find('[data-testid="render-stream-status"]');
 
 describe("RenderStreamStage", () => {
+  describe("client tweens", () => {
+    const tweenEndpoint = { ...endpoint, protocol: 17 as const };
+
+    it("requests client tweens using the seat's advertised /17", () => {
+      mirrorSettings.streamClientTweens = true;
+      mountStage({ endpoint: tweenEndpoint });
+      expect(clients[0].options).toMatchObject({ endpoint: tweenEndpoint, clientTweens: true });
+    });
+
+    it.each([endpoint, tweenEndpoint])("keeps /16 and omits the option when off (seat /$protocol)", (offered) => {
+      mountStage({ endpoint: offered });
+      expect(clients[0].options.endpoint).toEqual(endpoint);
+      expect(clients[0].options).not.toHaveProperty("clientTweens");
+    });
+
+    it("fails a tween request on /16 without silently upgrading or disabling it", () => {
+      mirrorSettings.streamClientTweens = true;
+      mountStage({ createClient: createRenderStreamClient });
+      expect(wrapper!.emitted("failed")).toEqual([["receiver-error: render-stream client: clientTweens needs protocol 17"]]);
+    });
+
+    it("remounts once per toggle with a fresh canvas and hello options", async () => {
+      mirrorSettings.streamClientTweens = true;
+      mountStage({ endpoint: tweenEndpoint });
+      for (const enabled of [false, true]) {
+        const previous = clients.at(-1)!;
+        const count = clients.length;
+        mirrorSettings.streamClientTweens = enabled;
+        await flushPromises();
+        expect(clients).toHaveLength(count + 1);
+        const current = clients.at(-1)!;
+        expect(previous.disposed).toBe(true);
+        expect(current.options.canvas).not.toBe(previous.options.canvas);
+        expect(current.connects).toBe(1);
+        expect(current.options.endpoint.protocol).toBe(enabled ? 17 : 16);
+        if (enabled) expect(current.options.clientTweens).toBe(true);
+        else expect(current.options).not.toHaveProperty("clientTweens");
+      }
+    });
+
+    it("keeps the tween client mounted when an unrelated setting changes", async () => {
+      mirrorSettings.streamClientTweens = true;
+      mountStage({ endpoint: tweenEndpoint });
+      mirrorSettings.streamClientDecor = !mirrorSettings.streamClientDecor;
+      await flushPromises();
+      mirrorSettings.streamClientDecor = !mirrorSettings.streamClientDecor;
+      await flushPromises();
+      expect(clients).toHaveLength(1);
+      expect(clients[0].disposed).toBe(false);
+    });
+  });
+
   describe("static stream visuals", () => {
     it("keeps one opaque client when static background is toggled", async () => {
       mountStage();

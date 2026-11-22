@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Animar el decorado en el navegador",
   "settings.streamClientTweens": "Suavizar movimientos interpolados en el navegador",
   "settings.help.streamClientDecor": "El navegador anima los anillos del orbe de energía y las llamas de las velas con su propio reloj. Es posible que no coincidan con el juego fotograma a fotograma. Todas las páginas que estén viendo esta plaza deben activar este ajuste.",
-  "settings.help.streamClientTweens": "Suaviza solo los movimientos interpolados en el navegador, no todas las animaciones. La reproducción estará disponible pronto.",
+  "settings.help.streamClientTweens": "Suaviza solo los movimientos interpolados en el navegador, no todas las animaciones. La reproducción puede no coincidir fotograma a fotograma con el juego.",
   "settings.help.streamFreezeSpines": "Muestra cada animación de personaje en una sola pose representativa. Reduce la carga del anfitrión y de tu móvil.",
   "settings.help.streamShaders": "Dinámico anima los efectos de sombreado con normalidad. Estático los mantiene inmóviles para reducir la carga de este dispositivo.",
   "settings.help.streamParticles": "Dinámico anima las partículas con normalidad. Estático muestra una sola ráfaga congelada para reducir la carga de este dispositivo.",

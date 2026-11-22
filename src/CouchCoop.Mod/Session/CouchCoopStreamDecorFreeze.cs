@@ -19,7 +19,7 @@ public static class CouchCoopStreamDecorFreeze
     private static int _generation;
 
     public static bool Active => _active;
-    // Reserved for client playback; no stage consumes this yet.
+    // Any interested stream page enables schedule capture; playback is negotiated per client.
     public static bool ClientTweensActive => _tweensActive;
     public static event Action? Changed;
 

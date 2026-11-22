@@ -152,7 +152,7 @@ internal static class HostPerformanceEnvelopeTests
                 tweens.SetValue(null, playback);
                 var envelope = CreateSessionEnvelope();
                 Assert(envelope.StreamDecorFrozen == frozen, "session reports effective decor freeze independently");
-                Assert(envelope.StreamClientTweens == playback, "session reports unanimous tween preference");
+                Assert(envelope.StreamClientTweens == playback, "session reports effective tween preference");
                 var json = JsonSerializer.SerializeToElement(envelope, BrowserJson.Options);
                 Assert(json.GetProperty("streamDecorFrozen").GetBoolean() == frozen, "decor wire preserves false and true");
                 Assert(json.GetProperty("streamClientTweens").GetBoolean() == playback, "tween wire preserves false and true");

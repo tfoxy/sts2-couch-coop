@@ -21,6 +21,7 @@ internal static class RenderStreamPairingTests
 
     public static async Task RunAsync()
     {
+        DescriptorsAcceptTheRunningSeatVersion();
         ConfigResolvesTheCalibrationBesideTheCapture();
         APackagedCaptureIsTheFallback();
         AllowedOriginsAreTheHostPageAndValidExtras();
@@ -167,7 +168,7 @@ internal static class RenderStreamPairingTests
             ["GRC_CALIBRATION"] = Calibration,
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
             ["GRC_LIVE_CARRIERS"] = "ws",
-            ["GRC_STREAM_VERSION"] = "16",
+            ["GRC_STREAM_VERSION"] = "17",
             ["GRC_RESOURCE_HINTS"] = "off",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = "/home/p/couch-coop/render-stream/slot-2",
@@ -453,15 +454,28 @@ internal static class RenderStreamPairingTests
     }
 
     private static (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion) Snapshot(
-        string? token = null, string hash = "", string listen = "127.0.0.1:13366", string rootSize = "1920x1080", int version = 16)
+        string? token = null, string hash = "", string listen = "127.0.0.1:13366", string rootSize = "1920x1080", int version = StreamingSeatLaunch.StreamVersion)
         => (listen, token ?? Token, hash, rootSize, version);
+
+    private static void DescriptorsAcceptTheRunningSeatVersion()
+    {
+        var env = SeatEnvironment(auth: "token");
+        foreach (var version in new[] { 16, StreamingSeatLaunch.StreamVersion })
+        {
+            var snapshot = Snapshot(version: version);
+            var direct = StreamingSeatDescriptor.Build(snapshot, "http://127.0.0.1:13337", env.GetValueOrDefault);
+            var relayed = StreamingSeatDescriptor.BuildRelayed(snapshot, new string('c', 32));
+            Assert(direct?.Protocol == version, $"direct descriptor preserves seat wire version {version}");
+            Assert(relayed?.Protocol == version, $"relayed descriptor preserves seat wire version {version}");
+        }
+    }
 
     private static void DescriptorOnlyForTheStreamingSeatAndAnAllowedOrigin()
     {
         var env = SeatEnvironment(auth: "token");
         var ok = StreamingSeatDescriptor.Build(Snapshot(), "http://127.0.0.1:13337", env.GetValueOrDefault);
         Assert(ok is not null && ok.Url == "ws://127.0.0.1:13366/render-stream" && ok.ResourceBase == "http://127.0.0.1:13366"
-               && ok.Token == Token && ok.Protocol == 16 && ok.Presentation is [1920, 1080],
+               && ok.Token == Token && ok.Protocol == StreamingSeatLaunch.StreamVersion && ok.Presentation is [1920, 1080],
             "an armed seat's allowed page gets this arm's descriptor");
         Assert(StreamingSeatDescriptor.Build(Snapshot(), "http://localhost:13337", env.GetValueOrDefault) is not null,
             "the localhost spelling of the host page too");
@@ -473,15 +487,15 @@ internal static class RenderStreamPairingTests
             "no armed snapshot: no descriptor");
         Assert(StreamingSeatDescriptor.Build(Snapshot(listen: "0.0.0.0:13366"), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
             "a non-loopback listener without LAN exposure is never described");
-        foreach (var version in new[] { 8, 11, 12, 13, 14, 15, 17 })
+        foreach (var version in new[] { 8, 11, 12, 13, 14, 15, 18 })
         {
             Assert(StreamingSeatDescriptor.Build(Snapshot(version: version), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
                 $"direct descriptors reject unsupported wire version {version}");
             Assert(StreamingSeatDescriptor.BuildRelayed(Snapshot(version: version), new string('c', 32)) is null,
                 $"relayed descriptors reject unsupported wire version {version}");
         }
-        Assert(StreamingSeatDescriptor.BuildRelayed(Snapshot(), new string('c', 32)) is { Protocol: 16 },
-            "relayed descriptors use wire version 16");
+        Assert(StreamingSeatDescriptor.BuildRelayed(Snapshot(), new string('c', 32)) is { Protocol: StreamingSeatLaunch.StreamVersion },
+            "relayed descriptors use the running seat wire version");
         var open = SeatEnvironment(auth: "none");
         Assert(StreamingSeatDescriptor.Build(Snapshot(token: ""), "http://127.0.0.1:13337", open.GetValueOrDefault) is { Token: null },
             "a hub without token auth is described with no token");
@@ -813,7 +827,7 @@ internal static class RenderStreamPairingTests
             || key.StartsWith("GRC_LIVE_TLS_", StringComparison.Ordinal)
             || key.StartsWith("GRC_LIVE_WT_", StringComparison.Ordinal)
             || key == StreamingSeatDescriptor.LanPlaintextEnvironmentVariable), "host has no LAN, TLS or WT settings");
-        Assert(environment["GRC_STREAM_VERSION"] == "16", "host uses wire version 16");
+        Assert(environment["GRC_STREAM_VERSION"] == "17", "host uses wire version 17");
         Assert(environment["GRC_RESOURCE_HINTS"] == "off", "host skips unused resource hints");
         Assert(!environment.ContainsKey("GRC_VIEWPORTS"), "host uses viewport surfaces by default");
         Assert(environment["GRC_MODE"] == "standby" && environment["GRC_CALIBRATION"] == Calibration,
@@ -1022,7 +1036,7 @@ internal static class RenderStreamPairingTests
     {
         ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337, http://localhost:13337",
         ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
-        ["GRC_STREAM_VERSION"] = "16",
+        ["GRC_STREAM_VERSION"] = "17",
         ["GRC_LIVE_AUTH"] = auth,
         ["GRC_EVIDENCE_DIR"] = "/home/p/ev",
         ["GRC_ROOT_SIZE"] = "presentation:1920x1080",

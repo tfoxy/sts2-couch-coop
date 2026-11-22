@@ -597,7 +597,8 @@ public sealed partial class CouchCoopBrowserServer(
         CouchCoopStreamStaticParticles.SetDesired(_streamParticleFreezeDesired);
         var armed = !_generationStopped && rendererSwapHost?.RendererStatus.State == "armed";
         _streamDecorFreezeDesired = ComputeStreamClientDesired(armed, decorPages);
-        _streamClientTweensDesired = ComputeStreamClientDesired(armed, tweenPages);
+        _streamClientTweensDesired = ComputeStreamTweenDesired(armed, tweenPages);
+        CouchCoopStreamTweenAnnouncer.SetDesired(_streamClientTweensDesired);
         CouchCoopStreamDecorFreeze.SetDesired(_streamDecorFreezeDesired, _streamClientTweensDesired);
 
         var desired = ComputeBgSkipDesired(_streamingMirrorConnectionCount, needed);
@@ -623,6 +624,9 @@ public sealed partial class CouchCoopBrowserServer(
     internal bool StreamClientTweensDesiredForTest => _streamClientTweensDesired;
     internal static bool ComputeStreamClientDesired(bool armed, IReadOnlyList<bool> pages)
         => armed && pages.Count > 0 && pages.All(wants => wants);
+
+    internal static bool ComputeStreamTweenDesired(bool armed, IReadOnlyList<bool> pages)
+        => armed && pages.Any(wants => wants);
 
     private volatile bool _streamParticleFreezeDesired;
     internal bool StreamParticleFreezeDesiredForTest => _streamParticleFreezeDesired;
@@ -1535,6 +1539,7 @@ public sealed partial class CouchCoopBrowserServer(
             CouchCoopStreamStaticParticles.SetDesired(false);
             _streamDecorFreezeDesired = false;
             _streamClientTweensDesired = false;
+            CouchCoopStreamTweenAnnouncer.SetDesired(false);
             CouchCoopStreamDecorFreeze.SetDesired(false, false);
             _rendererSubscription?.Dispose();
             _rendererSubscription = null;

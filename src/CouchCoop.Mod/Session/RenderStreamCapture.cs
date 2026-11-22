@@ -29,7 +29,13 @@ internal sealed record RenderStreamCaptureSignals(
     Action<long> ClientConnected,
     Action<long, string> ClientLeft);
 
-internal sealed class GodotRenderStreamCapture : IRenderStreamCapture
+internal interface IRenderStreamTweenCapture
+{
+    void TweenBegin(IReadOnlyDictionary<string, object> schedule);
+    void TweenCancel(long tweenId);
+}
+
+internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderStreamTweenCapture
 {
     private const string SingletonName = "RenderStreamCapture";
 
@@ -48,6 +54,38 @@ internal sealed class GodotRenderStreamCapture : IRenderStreamCapture
 
     public int Disarm(string reason, int lingerMs) => Singleton().Call(
         "disarm", new Godot.Collections.Dictionary { ["reason"] = reason, ["linger_ms"] = lingerMs }).AsInt32();
+
+    public void TweenBegin(IReadOnlyDictionary<string, object> schedule)
+        => Singleton().Call("tween_begin", ToGodotDictionary(schedule));
+
+    public void TweenCancel(long tweenId) => Singleton().Call("tween_cancel", tweenId);
+
+    private static Godot.Collections.Dictionary ToGodotDictionary(IReadOnlyDictionary<string, object> source)
+    {
+        var result = new Godot.Collections.Dictionary();
+        foreach (var (key, value) in source)
+            result[key] = value switch
+            {
+                long number => Variant.From(number),
+                ulong number => Variant.From(unchecked((long)number)),
+                int number => Variant.From(number),
+                double number => Variant.From(number),
+                string text => Variant.From(text),
+                IReadOnlyList<double> components => Endpoint(components),
+                IReadOnlyList<IReadOnlyDictionary<string, object>> steps => Variant.From(
+                    new Godot.Collections.Array(steps.Select(step => Variant.From(ToGodotDictionary(step))))),
+                _ => throw new ArgumentException($"Unsupported tween value for {key}.")
+            };
+        return result;
+    }
+
+    private static Variant Endpoint(IReadOnlyList<double> components) => components.Count switch
+    {
+        1 => Variant.From(components[0]),
+        2 => Variant.From(new Vector2((float)components[0], (float)components[1])),
+        4 => Variant.From(new Color((float)components[0], (float)components[1], (float)components[2], (float)components[3])),
+        _ => default
+    };
 
     public IDisposable Subscribe(RenderStreamCaptureSignals signals)
     {

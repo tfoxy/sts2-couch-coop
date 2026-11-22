@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Dekor im Browser animieren",
   "settings.streamClientTweens": "Tween-Bewegungen im Browser glätten",
   "settings.help.streamClientDecor": "Der Browser animiert die Ringe der Energiekugel und die Kerzenflammen nach seiner eigenen Uhr. Sie stimmen daher möglicherweise nicht Bild für Bild mit dem Spiel überein. Alle Seiten, die diesen Platz ansehen, müssen diese Einstellung aktivieren.",
-  "settings.help.streamClientTweens": "Glättet nur Tween-Bewegungen im Browser, nicht jede Animation. Die Unterstützung für die Wiedergabe kommt bald.",
+  "settings.help.streamClientTweens": "Glättet nur Tween-Bewegungen im Browser, nicht jede Animation. Die Wiedergabe stimmt möglicherweise nicht Bild für Bild mit dem Spiel überein.",
   "settings.help.streamFreezeSpines": "Zeigt jede Charakteranimation als eine repräsentative Pose. Entlastet sowohl den Host als auch dein Handy.",
   "settings.help.streamShaders": "Dynamisch animiert Shader-Effekte wie gewohnt. Statisch hält sie an und entlastet dieses Gerät.",
   "settings.help.streamParticles": "Dynamisch animiert Partikel wie gewohnt. Statisch zeigt einen einzelnen eingefrorenen Partikeleffekt und entlastet dieses Gerät.",

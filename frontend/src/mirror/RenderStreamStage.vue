@@ -311,9 +311,10 @@ function stop(reason: string): void {
   }
 }
 
-// Presentation/input changes refresh extensions.
+// Presentation/input changes refresh extensions; tween changes need a fresh hello.
 function extensionsKey(): string {
-  return [presentation.value.join("x"), props.presentationEpoch, props.sendInput !== undefined].join("|");
+  return [presentation.value.join("x"), props.presentationEpoch, props.sendInput !== undefined,
+    mirrorSettings.streamClientTweens].join("|");
 }
 
 function mountClient(): void {
@@ -340,7 +341,11 @@ function mountClient(): void {
     client = create({
       canvas,
       core: props.core,
-      endpoint: props.endpoint,
+      // A /17 seat also serves /16. Opting out preserves the existing connection bytes;
+      // opting in uses the advertised version (GSW rejects tween requests below /17).
+      endpoint: !mirrorSettings.streamClientTweens && props.endpoint.protocol === 17
+        ? { ...props.endpoint, protocol: 16 } : props.endpoint,
+      ...(mirrorSettings.streamClientTweens ? { clientTweens: true } : {}),
       extensions: built.extensions,
       creditWindow: 2,
       staticShaders: mirrorSettings.streamShaderMode === "static",

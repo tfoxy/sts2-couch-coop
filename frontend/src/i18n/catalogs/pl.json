@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Animuj dekoracje w przeglądarce",
   "settings.streamClientTweens": "Wygładzaj ruch interpolowany w przeglądarce",
   "settings.help.streamClientDecor": "Przeglądarka animuje pierścienie kuli energii i płomienie świec według własnego zegara. Mogą więc nie odpowiadać grze klatka po klatce. Wszystkie strony oglądające to miejsce muszą włączyć to ustawienie.",
-  "settings.help.streamClientTweens": "Wygładza w przeglądarce tylko ruch interpolowany, a nie każdą animację. Obsługa odtwarzania pojawi się wkrótce.",
+  "settings.help.streamClientTweens": "Wygładza w przeglądarce tylko ruch interpolowany, a nie każdą animację. Odtwarzanie może nie odpowiadać grze klatka po klatce.",
   "settings.help.streamFreezeSpines": "Pokazuje każdą animację postaci jako jedną reprezentatywną pozę. Odciąża zarówno hosta, jak i telefon.",
   "settings.help.streamShaders": "Tryb dynamiczny animuje efekty shaderów normalnie. Tryb statyczny zatrzymuje je, aby odciążyć to urządzenie.",
   "settings.help.streamParticles": "Tryb dynamiczny animuje cząsteczki normalnie. Tryb statyczny pokazuje jeden zatrzymany efekt, aby odciążyć to urządzenie.",

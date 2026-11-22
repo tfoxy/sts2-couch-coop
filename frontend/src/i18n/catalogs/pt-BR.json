@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Animar decorações no navegador",
   "settings.streamClientTweens": "Suavizar movimentos interpolados no navegador",
   "settings.help.streamClientDecor": "O navegador anima os anéis do orbe de energia e as chamas das velas usando seu próprio relógio. Por isso, eles podem não corresponder ao jogo quadro a quadro. Todas as páginas que assistem a este jogador devem ativar esta opção.",
-  "settings.help.streamClientTweens": "Suaviza apenas movimentos interpolados no navegador, não todas as animações. O suporte à reprodução estará disponível em breve.",
+  "settings.help.streamClientTweens": "Suaviza apenas movimentos interpolados no navegador, não todas as animações. A reprodução pode não corresponder ao jogo quadro a quadro.",
   "settings.help.streamFreezeSpines": "Mostra cada animação de personagem em uma única pose representativa. Reduz a carga tanto no anfitrião quanto no celular.",
   "settings.help.streamShaders": "Dinâmico anima os efeitos de shader normalmente. Estático os mantém parados para reduzir a carga neste dispositivo.",
   "settings.help.streamParticles": "Dinâmico anima as partículas normalmente. Estático mostra um único efeito congelado para reduzir a carga neste dispositivo.",

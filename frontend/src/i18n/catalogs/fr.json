@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Animer le décor dans le navigateur",
   "settings.streamClientTweens": "Lisser les mouvements interpolés dans le navigateur",
   "settings.help.streamClientDecor": "Le navigateur anime les anneaux de l’orbe d’énergie et les flammes des bougies selon sa propre horloge. Ils peuvent donc ne pas correspondre au jeu image par image. Toutes les pages qui regardent cet emplacement doivent activer ce réglage.",
-  "settings.help.streamClientTweens": "Lisse uniquement les mouvements interpolés dans le navigateur, pas toutes les animations. La prise en charge de la lecture arrive bientôt.",
+  "settings.help.streamClientTweens": "Lisse uniquement les mouvements interpolés dans le navigateur, pas toutes les animations. La lecture peut ne pas correspondre au jeu image par image.",
   "settings.help.streamFreezeSpines": "Affiche chaque animation de personnage sous une seule pose représentative. Allège la charge de l’hôte et de votre téléphone.",
   "settings.help.streamShaders": "Dynamique anime les effets de shader normalement. Statique les fige pour alléger la charge de cet appareil.",
   "settings.help.streamParticles": "Dynamique anime les particules normalement. Statique affiche une seule gerbe figée pour alléger la charge de cet appareil.",

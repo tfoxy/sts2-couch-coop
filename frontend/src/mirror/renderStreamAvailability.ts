@@ -176,7 +176,7 @@ export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): Re
   if (raw === null || raw === undefined) return null;
   try {
     const value = raw as Record<string, unknown>;
-    if (value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL
+    if ((value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL && value.protocol !== 17)
       || typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
     const url = hostRouteUrl(value.url, base);
     if (url.protocol === "http:") url.protocol = "ws:";
@@ -377,7 +377,8 @@ export function resolveRuntimeRenderer(
 /** Re-derive `runtimeRenderer` (and the stream's protocol) after any input changed. */
 export function syncRuntimeRenderer(settings: MirrorSettings = mirrorSettings): void {
   const availability = renderStreamAvailability.value;
-  if (availability.available) settings.renderStreamProtocol = DEFAULT_RENDER_STREAM_PROTOCOL;
+  if (availability.available) settings.renderStreamProtocol = settings.streamClientTweens
+    && availability.endpoint?.protocol === 17 ? 17 : DEFAULT_RENDER_STREAM_PROTOCOL;
   const next = renderStreamContext.returningToMirror ? "mirror"
     : resolveRuntimeRenderer(settings.renderer, availability, renderStreamContext.stopped);
   if (settings.runtimeRenderer !== next) settings.runtimeRenderer = next;

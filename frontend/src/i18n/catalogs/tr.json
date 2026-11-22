@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Süslemeleri tarayıcıda canlandır",
   "settings.streamClientTweens": "Ara değerlemeli hareketleri tarayıcıda yumuşat",
   "settings.help.streamClientDecor": "Tarayıcı, enerji küresinin halkalarını ve mum alevlerini kendi saatine göre canlandırır. Bu nedenle oyunla kare kare eşleşmeyebilirler. Bu oyuncuyu izleyen tüm sayfalarda bu ayar etkinleştirilmelidir.",
-  "settings.help.streamClientTweens": "Tarayıcıda yalnızca ara değerlemeli hareketleri yumuşatır, her animasyonu değil. Oynatma desteği yakında gelecek.",
+  "settings.help.streamClientTweens": "Tarayıcıda yalnızca ara değerlemeli hareketleri yumuşatır, her animasyonu değil. Oynatma, oyunla kare kare eşleşmeyebilir.",
   "settings.help.streamFreezeSpines": "Her karakter animasyonunu tek bir temsili poz olarak gösterir. Hem sunucunun hem de telefonunuzun yükünü azaltır.",
   "settings.help.streamShaders": "Dinamik, gölgelendirici efektlerini normal şekilde oynatır. Statik, bu cihazın yükünü azaltmak için onları sabit tutar.",
   "settings.help.streamParticles": "Dinamik, parçacıkları normal şekilde oynatır. Statik, bu cihazın yükünü azaltmak için tek bir donmuş parçacık efekti gösterir.",

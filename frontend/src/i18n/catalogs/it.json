@@ -167,7 +167,7 @@
   "settings.streamClientDecor": "Animare le decorazioni nel browser",
   "settings.streamClientTweens": "Rendere fluidi i movimenti interpolati nel browser",
   "settings.help.streamClientDecor": "Il browser anima gli anelli della sfera di energia e le fiamme delle candele seguendo il proprio orologio. Potrebbero quindi non corrispondere al gioco fotogramma per fotogramma. Tutte le pagine che guardano questo posto devono attivare questa impostazione.",
-  "settings.help.streamClientTweens": "Rende fluidi solo i movimenti interpolati nel browser, non tutte le animazioni. Il supporto alla riproduzione arriverà presto.",
+  "settings.help.streamClientTweens": "Rende fluidi solo i movimenti interpolati nel browser, non tutte le animazioni. La riproduzione potrebbe non corrispondere al gioco fotogramma per fotogramma.",
   "settings.help.streamFreezeSpines": "Mostra ogni animazione dei personaggi con una sola posa rappresentativa. Riduce il carico sia sull’host sia sul telefono.",
   "settings.help.streamShaders": "Dinamico anima gli effetti degli shader normalmente. Statico li mantiene fermi per ridurre il carico su questo dispositivo.",
   "settings.help.streamParticles": "Dinamico anima le particelle normalmente. Statico mostra un singolo effetto congelato per ridurre il carico su questo dispositivo.",

@@ -1313,7 +1313,7 @@ watch(
 // What renders follows the saved choice, availability and this session's stop (renderStreamAvailability.ts).
 watch(
   [() => mirrorSettings.renderer, renderStreamAvailability, () => renderStreamContext.stopped,
-    () => renderStreamContext.returningToMirror],
+    () => renderStreamContext.returningToMirror, () => mirrorSettings.streamClientTweens],
   () => syncRuntimeRenderer(mirrorSettings),
   { immediate: true }
 );

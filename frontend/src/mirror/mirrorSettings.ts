@@ -190,7 +190,7 @@ export function parseSpineMode(raw: string | null): SpineMode {
 /** Which renderer draws the game: the node-geometry mirror, or the render-stream (the "new renderer", Beta). */
 export type MirrorRenderer = "mirror" | "stream";
 /** The render-stream protocol version CouchCoop speaks. */
-export type RenderStreamWireVersion = 16;
+export type RenderStreamWireVersion = 16 | 17;
 /** Which live carrier the new renderer's client opens (godot-scene-web's `RenderStreamCarrier`). */
 export type RenderStreamCarrierChoice = "auto" | "websocket" | "webtransport";
 export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 16;

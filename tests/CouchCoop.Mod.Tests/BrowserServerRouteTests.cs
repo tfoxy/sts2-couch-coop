@@ -60,6 +60,13 @@ if (args is ["stream-spine", ..])
     return;
 }
 
+if (args is ["stream-tweens", ..])
+{
+    StreamTweenAnnouncerTests.Run();
+    await BrowserServerRouteTests.RunStreamClientDecorAsync();
+    return;
+}
+
 if (args is ["stream-decor", ..])
 {
     StreamDecorFreezeTests.Run();
@@ -1106,6 +1113,7 @@ HeadlessParticleFreezeExemptionTests.Run();
 HeadlessSpineFreezeTests.Run();
 StreamSpineStillsTests.Run();
 StreamDecorFreezeTests.Run();
+StreamTweenAnnouncerTests.Run();
 await BrowserServerRouteTests.RunStreamClientDecorAsync();
 StreamStaticParticlesTests.Run();
 await BrowserServerRouteTests.RunStreamStaticParticlesAsync();
@@ -2695,9 +2703,9 @@ internal sealed partial class BrowserServerRouteTests
         using var second = new ClientWebSocket();
         await Connect(second);
         await Desired(true, "a new page defaults on");
-        Expect(!server.StreamClientTweensDesiredForTest, "one tween opt-out keeps playback off");
+        Expect(server.StreamClientTweensDesiredForTest, "any stream page enables tween announcements");
         await Send(first, new { type = "settings", streamClientTweens = true });
-        Expect(server.StreamClientTweensDesiredForTest, "unanimous tween wishes combine independently");
+        Expect(server.StreamClientTweensDesiredForTest, "tween wishes combine independently");
         await Send(second, new { type = "settings", streamClientDecor = true });
         await Desired(true, "every stream page opted in");
         await Send(second, new { type = "settings", streamClientDecor = false });

@@ -86,7 +86,8 @@ internal sealed partial class BrowserServerRouteTests
                 RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(resource)).StartsWith("HTTP/1.1 502"), "arm replacement fences a pending response");
                 fixture.OnRequest = null;
                 RelayExpect(fixture.SeatAlive, "render refusals and upstream failures never retire the managed seat");
-                await fixture.AssertWebSocketAsync();
+                foreach (var version in new[] { 16, StreamingSeatLaunch.StreamVersion })
+                    await fixture.AssertWebSocketAsync(version);
                 await AssertRenderRelayDeadlineAndEofAsync();
                 await AssertRendererNegotiationAsync(fixture);
                 await AssertHostSelfRelayAsync(fixture);
@@ -343,7 +344,7 @@ internal sealed partial class BrowserServerRouteTests
         public bool SupportsRenderStreamRelay => SupportsRelay;
         public string? RenderStreamSeatRoute { get; internal set; } = new string('c', 32);
         public (string State, string? Reason, (string Listen, string Token, string CertificateHash, string RootSize, int StreamVersion)? Snapshot) RendererStatus
-            => (State, null, (ListenOverride ?? $"127.0.0.1:{Port}", Token, "", "1920x1080", 16));
+            => (State, null, (ListenOverride ?? $"127.0.0.1:{Port}", Token, "", "1920x1080", StreamingSeatLaunch.StreamVersion));
         public bool WantsRenderStream(string pageId) => Wants;
         public void RequestRenderer(string pageId, bool wantsStream, double? aspect) { Requests++; Wants = wantsStream; Changed?.Invoke(); }
         public void ReleaseRenderer(string pageId) => Wants = false;
@@ -436,8 +437,9 @@ internal sealed partial class BrowserServerRouteTests
                 {
                     var eof = HubEof;
                     var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(LastRequest.Header("Sec-WebSocket-Key") + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-                    await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: render-stream.16\r\n\r\n"));
-                    using var ws = WebSocket.CreateFromStream(stream, true, "render-stream.16", TimeSpan.FromSeconds(30));
+                    var protocol = LastRequest.Header("Sec-WebSocket-Protocol");
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: {protocol}\r\n\r\n"));
+                    using var ws = WebSocket.CreateFromStream(stream, true, protocol, TimeSpan.FromSeconds(30));
                     var bytes = new byte[1024];
                     var read = await ws.ReceiveAsync(bytes.AsMemory(), _stop.Token);
                     await ws.SendAsync(bytes.AsMemory(0, read.Count), WebSocketMessageType.Binary, true, _stop.Token);
@@ -468,15 +470,16 @@ internal sealed partial class BrowserServerRouteTests
             return output.ToArray();
         }
 
-        internal async Task AssertWebSocketAsync()
+        internal async Task AssertWebSocketAsync(int version)
         {
             Response = "websocket";
             using var ws = new ClientWebSocket();
             ws.Options.SetRequestHeader("Origin", CouchCoopWebOrigin.DefaultOrigin);
-            ws.Options.AddSubProtocol("render-stream.16");
+            var protocol = $"render-stream.{version}";
+            ws.Options.AddSubProtocol(protocol);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await ws.ConnectAsync(new Uri($"ws://127.0.0.1:{_public.BaseUri!.Port}/render-stream/{Host.RenderStreamSeatRoute}/ws"), deadline.Token);
-            RelayExpect(ws.SubProtocol == "render-stream.16", "subprotocol survives both hops");
+            RelayExpect(ws.SubProtocol == protocol, $"{protocol} subprotocol survives both hops");
             await ws.SendAsync(new byte[] { 1, 255, 2 }, WebSocketMessageType.Binary, true, deadline.Token);
             var buffer = new byte[16];
             var read = await ws.ReceiveAsync(buffer.AsMemory(), deadline.Token);

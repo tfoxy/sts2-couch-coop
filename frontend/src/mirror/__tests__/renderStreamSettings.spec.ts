@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { BrowserRenderStreamDescriptor } from "@/protocol/browserEnvelope";
+
 import {
   createMirrorSettings,
   effectivePanelSetting,
@@ -327,10 +329,31 @@ describe("renderStreamAvailability", () => {
     sessionEndpoint: null, pageLoopback: true, lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
   };
 
-  it.each([8, 11, 12, 13, 14, 15, 17])("rejects a session descriptor with protocol %s", (protocol) => {
+  it.each([8, 11, 12, 13, 14, 15, 18])("rejects a session descriptor with protocol %s", (protocol) => {
     expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
       resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol })).toBeNull();
   });
+
+  it.each([16, 17])("accepts a seat advertising /%s", (protocol) => {
+    expect(sessionRenderStreamEndpoint({ url: "/render-stream/seat-1/ws", resourceBase: "/render-stream/seat-1",
+      token: null, protocol }, "http://host.example")).toMatchObject({ protocol });
+  });
+
+  it.each([[17, true, 17], [17, false, 16], [16, false, 16]] as const)(
+    "derives the effective protocol from seat /%s and client tweens %s", (protocol, clientTweens, expected) => {
+      const settings = createMirrorSettings(undefined, "", { storage: null });
+      Object.assign(settings, { renderer: "stream", streamClientTweens: clientTweens });
+      const descriptor: BrowserRenderStreamDescriptor = { url: "/render-stream/seat-1/ws",
+        resourceBase: "/render-stream/seat-1", token: "a".repeat(64), protocol };
+      const sessionEndpoint = sessionRenderStreamEndpoint(descriptor, "http://host.example");
+      expect(sessionEndpoint).toMatchObject({ protocol, url: "ws://host.example/render-stream/seat-1/ws" });
+      Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true,
+        lanOffer: { relay: true, webTransport: false, tls: false, ws: true }, sessionEndpoint });
+      syncRuntimeRenderer(settings);
+      expect(settings.renderStreamProtocol).toBe(expected);
+      expect(settings.runtimeRenderer).toBe("stream");
+    }
+  );
 
   it("derives the QA descriptor: the hub's origin, no token, 1920x1080", () => {
     expect(qa).toEqual({ url: "ws://127.0.0.1:14861/render-stream", resourceBase: "http://127.0.0.1:14861",
