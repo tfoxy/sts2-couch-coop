@@ -49,7 +49,7 @@ import { confirmButtonReady, primeConfirmSprites } from "@/mirror/confirmTap";
 import type { MirrorInputMessage } from "@/mirror/mirrorClient";
 import { mirrorSettings } from "@/mirror/mirrorSettings";
 import { streamChromeGeometry } from "@/mirror/streamChrome";
-import { RENDER_STREAM_HIDDEN_DISPOSE_MS } from "@/mirror/renderStreamAvailability";
+import { RENDER_STREAM_HIDDEN_DISPOSE_MS, streamProtocolFor } from "@/mirror/renderStreamAvailability";
 import { createKeyPadInput, type KeyPadInput } from "@/mirror/keyPadInput";
 import { createStreamInput, type StreamInput } from "@/mirror/streamInput";
 import { buildStreamExtensions } from "@/stream-ext/extensions";
@@ -352,17 +352,18 @@ function mountClient(): void {
   confirmController.value = built.confirmTap;
   if (built.confirmTap && props.sendInput) void primeConfirmSprites();
   const create = props.createClient ?? createRenderStreamClient;
+  const protocol = streamProtocolFor(props.endpoint.protocol, mirrorSettings.streamClientTweens);
   try {
     client = create({
       canvas,
       core: props.core,
-      // A /17 seat also serves /16. Opting out preserves the existing connection bytes;
-      // opting in uses the advertised version (GSW rejects tween requests below /17).
-      endpoint: !mirrorSettings.streamClientTweens && props.endpoint.protocol === 17
-        ? { ...props.endpoint, protocol: 16 } : props.endpoint,
+      // A /18 seat also serves /17 and /16 (streamProtocolFor picks): /18 always, /17 only for client tweens.
+      endpoint: { ...props.endpoint, protocol },
       ...(mirrorSettings.streamClientTweens ? { clientTweens: true } : {}),
       extensions: built.extensions,
-      creditWindow: 2,
+      // /18's window is sized by the seat from the round trip; 8 is its ceiling, so frames keep flowing while
+      // acks travel back over a slower link.
+      creditWindow: protocol >= 18 ? 8 : 2,
       staticShaders: mirrorSettings.streamShaderMode === "static",
       // Damage-limited redraw is exact; it pays on a weak GPU once shader time is pinned, so it follows
       // the static-shaders setting.

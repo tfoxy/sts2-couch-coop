@@ -79,10 +79,11 @@ internal static class StreamingSeatLaunch
     internal const string PerfTimelineMaxBytes = "8388608";
 
     /// <summary>
-    /// The seat offers render-stream/17 with optional client tween playback, alongside /16 for pages
-    /// that opt out (godot-scene-web experiments/render-stream/protocol/render-stream-17.md).
+    /// The seat offers render-stream/18 (/17's optional client tweens plus a credit window sized from each
+    /// viewer's round trip, and pacing to its draw rate), alongside /17 and /16
+    /// (godot-scene-web experiments/render-stream/protocol/render-stream-18.md).
     /// </summary>
-    internal const int StreamVersion = 17;
+    internal const int StreamVersion = 18;
 
     /// <summary>
     /// The hub listens on the last port of the seat's 10-port band (<see cref="HeadlessClientManager.SlotToPort"/>

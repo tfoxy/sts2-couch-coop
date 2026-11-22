@@ -329,17 +329,17 @@ describe("renderStreamAvailability", () => {
     sessionEndpoint: null, pageLoopback: true, lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
   };
 
-  it.each([8, 11, 12, 13, 14, 15, 18])("rejects a session descriptor with protocol %s", (protocol) => {
+  it.each([8, 11, 12, 13, 14, 15, 19])("rejects a session descriptor with protocol %s", (protocol) => {
     expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
       resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol })).toBeNull();
   });
 
-  it.each([16, 17])("accepts a seat advertising /%s", (protocol) => {
+  it.each([16, 17, 18])("accepts a seat advertising /%s", (protocol) => {
     expect(sessionRenderStreamEndpoint({ url: "/render-stream/seat-1/ws", resourceBase: "/render-stream/seat-1",
       token: null, protocol }, "http://host.example")).toMatchObject({ protocol });
   });
 
-  it.each([[17, true, 17], [17, false, 16], [16, false, 16]] as const)(
+  it.each([[18, true, 18], [18, false, 18], [17, true, 17], [17, false, 16], [16, false, 16]] as const)(
     "derives the effective protocol from seat /%s and client tweens %s", (protocol, clientTweens, expected) => {
       const settings = createMirrorSettings(undefined, "", { storage: null });
       Object.assign(settings, { renderer: "stream", streamClientTweens: clientTweens });

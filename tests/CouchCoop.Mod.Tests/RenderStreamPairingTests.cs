@@ -168,7 +168,7 @@ internal static class RenderStreamPairingTests
             ["GRC_CALIBRATION"] = Calibration,
             ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
             ["GRC_LIVE_CARRIERS"] = "ws",
-            ["GRC_STREAM_VERSION"] = "17",
+            ["GRC_STREAM_VERSION"] = "18",
             ["GRC_RESOURCE_HINTS"] = "off",
             ["GRC_LIVE_AUTH"] = "token",
             ["GRC_EVIDENCE_DIR"] = "/home/p/couch-coop/render-stream/slot-2",
@@ -460,7 +460,7 @@ internal static class RenderStreamPairingTests
     private static void DescriptorsAcceptTheRunningSeatVersion()
     {
         var env = SeatEnvironment(auth: "token");
-        foreach (var version in new[] { 16, StreamingSeatLaunch.StreamVersion })
+        foreach (var version in new[] { 16, 17, StreamingSeatLaunch.StreamVersion })
         {
             var snapshot = Snapshot(version: version);
             var direct = StreamingSeatDescriptor.Build(snapshot, "http://127.0.0.1:13337", env.GetValueOrDefault);
@@ -487,7 +487,7 @@ internal static class RenderStreamPairingTests
             "no armed snapshot: no descriptor");
         Assert(StreamingSeatDescriptor.Build(Snapshot(listen: "0.0.0.0:13366"), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
             "a non-loopback listener without LAN exposure is never described");
-        foreach (var version in new[] { 8, 11, 12, 13, 14, 15, 18 })
+        foreach (var version in new[] { 8, 11, 12, 13, 14, 15, 19 })
         {
             Assert(StreamingSeatDescriptor.Build(Snapshot(version: version), "http://127.0.0.1:13337", env.GetValueOrDefault) is null,
                 $"direct descriptors reject unsupported wire version {version}");
@@ -827,7 +827,7 @@ internal static class RenderStreamPairingTests
             || key.StartsWith("GRC_LIVE_TLS_", StringComparison.Ordinal)
             || key.StartsWith("GRC_LIVE_WT_", StringComparison.Ordinal)
             || key == StreamingSeatDescriptor.LanPlaintextEnvironmentVariable), "host has no LAN, TLS or WT settings");
-        Assert(environment["GRC_STREAM_VERSION"] == "17", "host uses wire version 17");
+        Assert(environment["GRC_STREAM_VERSION"] == "18", "host uses wire version 18");
         Assert(environment["GRC_RESOURCE_HINTS"] == "off", "host skips unused resource hints");
         Assert(!environment.ContainsKey("GRC_VIEWPORTS"), "host uses viewport surfaces by default");
         Assert(environment["GRC_MODE"] == "standby" && environment["GRC_CALIBRATION"] == Calibration,
@@ -1036,7 +1036,7 @@ internal static class RenderStreamPairingTests
     {
         ["GRC_LIVE_ALLOWED_ORIGINS"] = "http://127.0.0.1:13337, http://localhost:13337",
         ["GRC_LIVE_LISTEN"] = "127.0.0.1:13366",
-        ["GRC_STREAM_VERSION"] = "17",
+        ["GRC_STREAM_VERSION"] = "18",
         ["GRC_LIVE_AUTH"] = auth,
         ["GRC_EVIDENCE_DIR"] = "/home/p/ev",
         ["GRC_ROOT_SIZE"] = "presentation:1920x1080",

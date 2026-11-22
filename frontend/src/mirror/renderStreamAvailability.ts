@@ -35,7 +35,7 @@ import { hostBase, hostRouteUrl } from "@/join/hostBase";
 import type { BrowserRendererState } from "@/protocol/browserEnvelope";
 
 import { mirrorDesignSize } from "@/mirror/mirrorDesign";
-import { DEFAULT_RENDER_STREAM_PROTOCOL, mirrorSettings, type MirrorSettings } from "@/mirror/mirrorSettings";
+import { DEFAULT_RENDER_STREAM_PROTOCOL, mirrorSettings, type MirrorSettings, type RenderStreamWireVersion } from "@/mirror/mirrorSettings";
 import { renderStreamCoreConfig, type RenderStreamCoreProblem } from "@/mirror/renderStreamCore";
 
 /** After this long in a hidden tab the stage disposes its client (its heap, and the hub's carried set for us, are
@@ -176,7 +176,7 @@ export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): Re
   if (raw === null || raw === undefined) return null;
   try {
     const value = raw as Record<string, unknown>;
-    if ((value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL && value.protocol !== 17)
+    if ((value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL && value.protocol !== 17 && value.protocol !== 18)
       || typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
     const url = hostRouteUrl(value.url, base);
     if (url.protocol === "http:") url.protocol = "ws:";
@@ -374,11 +374,22 @@ export function resolveRuntimeRenderer(
   return renderer === "stream" && availability.available && stopped === null ? "stream" : "mirror";
 }
 
+/**
+ * The version a page speaks to a seat advertising `advertised`. A /18 seat is always used at /18: its credit
+ * window keeps the stream at full rate when the round trip spans several frames, and client tweens stay a separate
+ * opt-in on it. A /17 seat is used at /17 only for client tweens; otherwise the page keeps /16's bytes.
+ */
+export function streamProtocolFor(advertised: number | undefined, clientTweens: boolean): RenderStreamWireVersion {
+  if (advertised === 18) return 18;
+  if (advertised === 17 && clientTweens) return 17;
+  return DEFAULT_RENDER_STREAM_PROTOCOL;
+}
+
 /** Re-derive `runtimeRenderer` (and the stream's protocol) after any input changed. */
 export function syncRuntimeRenderer(settings: MirrorSettings = mirrorSettings): void {
   const availability = renderStreamAvailability.value;
-  if (availability.available) settings.renderStreamProtocol = settings.streamClientTweens
-    && availability.endpoint?.protocol === 17 ? 17 : DEFAULT_RENDER_STREAM_PROTOCOL;
+  if (availability.available) settings.renderStreamProtocol = streamProtocolFor(
+    availability.endpoint?.protocol, settings.streamClientTweens);
   const next = renderStreamContext.returningToMirror ? "mirror"
     : resolveRuntimeRenderer(settings.renderer, availability, renderStreamContext.stopped);
   if (settings.runtimeRenderer !== next) settings.runtimeRenderer = next;
