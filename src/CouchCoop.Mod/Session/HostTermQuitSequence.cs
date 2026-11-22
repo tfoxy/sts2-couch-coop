@@ -13,14 +13,16 @@ internal sealed class HostTermQuitSequence
     private readonly Action<TimeSpan, Action> _schedule;
     private readonly Action<string> _log;
     private int _started;
+    private readonly Action _beginExit;
 
     internal HostTermQuitSequence(
         Action<Action> post,
         Action quit,
         Action? forceExit = null,
         Action<TimeSpan, Action>? schedule = null,
-        Action<string>? log = null)
+        Action<string>? log = null, Action? beginExit = null)
     {
+        _beginExit = beginExit ?? (() => { });
         _post = post;
         _quit = quit;
         _forceExit = forceExit ?? HeadlessForceExit.Now;
@@ -30,6 +32,7 @@ internal sealed class HostTermQuitSequence
 
     internal bool TryStart()
     {
+        _beginExit();
         if (Interlocked.CompareExchange(ref _started, 1, 0) != 0) return true;
         try
         {

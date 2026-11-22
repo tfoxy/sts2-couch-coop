@@ -827,6 +827,8 @@ internal static class RenderStreamPairingTests
             || key.StartsWith("GRC_LIVE_TLS_", StringComparison.Ordinal)
             || key.StartsWith("GRC_LIVE_WT_", StringComparison.Ordinal)
             || key == StreamingSeatDescriptor.LanPlaintextEnvironmentVariable), "host has no LAN, TLS or WT settings");
+        Assert(!environment.Keys.Any(key => key is "GRC_HEADLESS_CANVAS_TEXTURE" or "GRC_HEADLESS_PARTICLES"
+            or "GRC_PREDRAW_PUMP"), "host omits shims that refuse a rendered display");
         Assert(environment["GRC_STREAM_VERSION"] == "19", "host uses wire version 19");
         Assert(environment["GRC_RESOURCE_HINTS"] == "off", "host skips unused resource hints");
         Assert(!environment.ContainsKey("GRC_VIEWPORTS"), "host uses viewport surfaces by default");
@@ -839,6 +841,10 @@ internal static class RenderStreamPairingTests
         var derived = StreamingSeatLaunch.HostEnvironment(config with { AbiTable = "/capture/abi" }, evidence, origins);
         Assert(derived["GRC_ABI_TABLE"] == "/capture/abi" && !derived.ContainsKey("GRC_CALIBRATION"),
             "host can derive calibration from the ABI table");
+        var windowed = StreamingSeatLaunch.HostEnvironment(config, evidence, origins, windowedHost: true);
+        Assert(windowed["GRC_MODE"] == "detached", "windowed host starts lean detached at first couch use");
+        Assert(environment.All(kv => kv.Key == "GRC_MODE" || windowed[kv.Key] == kv.Value),
+            "windowed host changes only the capture mode");
         var seatEnvironment = StreamingSeatLaunch.Environment(config, StreamingSeatLaunch.HubPortForSlot(2), "/seat/evidence", origins);
         Assert(environment.All(kv => kv.Key is "GRC_LIVE_LISTEN" or "GRC_HEADLESS_TEXTURE_RELEASE" or "GRC_LIVE_CARRIERS"
             or "GRC_LIVE_MAX_CONNECTIONS" or "GRC_EVIDENCE_DIR" || seatEnvironment[kv.Key] == kv.Value),
@@ -849,7 +855,7 @@ internal static class RenderStreamPairingTests
         StreamingSeatLaunch.ClearInherited(psi);
         Assert(!psi.Environment.Keys.Any(key => key.StartsWith("GRC_", StringComparison.Ordinal)),
             "seat launches strip the host's capture environment including unknown GRC keys");
-        Console.WriteLine("host capture environment: 15 assertions passed.");
+        Console.WriteLine("host capture environment: 18 assertions passed.");
     }
 
     private static void HostCaptureFailuresKeepTheMirror()
@@ -860,25 +866,39 @@ internal static class RenderStreamPairingTests
         StreamingSeatLaunch.ConfigResult Resolve() => new(config, null);
         void Prepare(StreamingSeatLaunch.Config value) { Assert(value == config, "prepare receives resolved config"); prepares++; }
         RenderCaptureExtensionLoader.LoadResult Load(string path) { Assert(path == Extension, "load uses resolved extension"); loads++; return new(true, "Ok"); }
-        var windowed = RenderStreamSelf.StartHostCapture(false, false, () => throw new Exception(), Prepare, Load);
-        Assert(windowed.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off && windowed.Message is null, "windowed host never resolves or loads capture");
-        var seat = RenderStreamSelf.StartHostCapture(true, true, () => throw new Exception(), Prepare, Load);
-        Assert(seat.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off, "host load path excludes clients");
+        var windowed = RenderStreamSelf.StartHostCapture(false, false, Resolve, Prepare, Load);
+        Assert(windowed.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Prepared && prepares == 1 && loads == 0,
+            "configured windowed host prepares without loading or an opt-in gate");
+        Assert(windowed.Deferred is not null && windowed.Deferred.EnsureLoaded() is null && loads == 1,
+            "first windowed use loads the prepared extension");
+        Assert(windowed.Deferred!.EnsureLoaded() is null && loads == 1, "later requests reuse the loaded extension");
+        foreach (var headless in new[] { false, true })
+        {
+            var seat = RenderStreamSelf.StartHostCapture(true, headless, () => throw new Exception(), Prepare, Load);
+            Assert(seat.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off, "host load path excludes clients");
+            var unresolved = RenderStreamSelf.StartHostCapture(false, headless, () => new(null, "missing capture"), Prepare, Load);
+            Assert(unresolved.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && loads == 1,
+                "invalid configuration never loads capture");
+            var unconfigured = RenderStreamSelf.StartHostCapture(false, headless, () => new(null, null), Prepare, Load);
+            Assert(unconfigured.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off, "unconfigured host stays off");
+            var thrown = RenderStreamSelf.StartHostCapture(false, headless, Resolve,
+                _ => throw new IOException("evidence unavailable"), Load);
+            Assert(thrown.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && loads == 1,
+                "preparation exceptions also keep the host running");
+        }
         var loaded = RenderStreamSelf.StartHostCapture(false, true, Resolve, Prepare, Load);
-        Assert(loaded.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Loaded && prepares == 1 && loads == 1,
-            "configured headless host prepares and loads exactly once");
+        Assert(loaded.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Loaded && prepares == 2 && loads == 2,
+            "configured headless host prepares and loads immediately");
         var failed = RenderStreamSelf.StartHostCapture(false, true, Resolve, Prepare, _ => new(false, "Failed"));
         Assert(failed.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && failed.Message!.Contains("Failed"),
-            "a host load failure is reported without refusing process startup");
-        var unresolved = RenderStreamSelf.StartHostCapture(false, true, () => new(null, "missing capture"), Prepare, Load);
-        Assert(unresolved.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && loads == 1,
-            "invalid configuration never loads capture");
-        var unconfigured = RenderStreamSelf.StartHostCapture(false, true, () => new(null, null), Prepare, Load);
-        Assert(unconfigured.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Off, "unconfigured headless host stays off");
-        var thrown = RenderStreamSelf.StartHostCapture(false, true, Resolve, _ => throw new IOException("evidence unavailable"), Load);
-        Assert(thrown.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Unavailable && loads == 1,
-            "preparation exceptions also keep the host running");
-        Console.WriteLine("host capture outcomes: 10 assertions passed.");
+            "a headless host load failure is reported without refusing process startup");
+        var deferredFailure = RenderStreamSelf.StartHostCapture(false, false, Resolve, Prepare, _ => new(false, "Failed"));
+        Assert(deferredFailure.Kind == RenderStreamSelf.HostCaptureOutcomeKind.Prepared
+            && deferredFailure.Deferred!.EnsureLoaded() == "load-failed:Failed",
+            "windowed load failure is deferred until a page requests capture");
+        Assert(!StreamingSeatLaunch.HostEnvironment(config, "/host/evidence", []).ContainsKey(StreamingSeatRole.EnvironmentVariable),
+            "host capture never assigns the seat role");
+        Console.WriteLine("host capture outcomes: 21 assertions passed.");
     }
 
     private static void HostEnvironmentReachesBothReaders()

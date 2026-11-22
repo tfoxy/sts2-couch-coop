@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes.Audio;
 using System;
@@ -139,7 +140,7 @@ public static class HeadlessFmodShutdown
             {
                 if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
                 {
-                    Callable.From(() => AttachOnMainThread(root)).CallDeferred();
+                    GameDeferred.Post(() => AttachOnMainThread(root));
                     return;
                 }
             }

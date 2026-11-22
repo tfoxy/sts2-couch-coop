@@ -277,8 +277,7 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
                 return;
             }
 
-            var timer = tree.CreateTimer(0.0, processAlways: true, ignoreTimeScale: true);
-            timer.Timeout += () =>
+            GameDeferred.Delay(tree, 0, () =>
             {
                 if (!GodotObject.IsInstanceValid(this)
                     || _pauseMenu is null
@@ -288,7 +287,7 @@ internal sealed partial class CouchCoopPauseMenuQrEntry : Control
                 }
 
                 Refresh();
-            };
+            });
         }
         catch (Exception exception)
         {

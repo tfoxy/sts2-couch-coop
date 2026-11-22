@@ -190,6 +190,13 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         RendererChanged?.Invoke();
     }
 
+    // Called on the main thread before capture teardown; pending swap callbacks cannot re-arm.
+    internal void StopRenderer()
+    {
+        _rendererDisposed = true;
+        _rendererSwap?.Dispose();
+    }
+
     public IDisposable SubscribeRendererChanged(Action handler)
     {
         RendererChanged += handler;
@@ -206,7 +213,17 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
         }
     }
 
-    public Action<int, long> CreateBrowserDemandReporter() => _browserDemand.CreateReporter();
+    internal Action CaptureFirstUse { get; set; } = RenderStreamSelf.CouchUsed;
+
+    public Action<int, long> CreateBrowserDemandReporter()
+    {
+        var report = _browserDemand.CreateReporter();
+        return (count, generation) =>
+        {
+            if (count > 0 && !IsHeadlessClient) CaptureFirstUse();
+            report(count, generation);
+        };
+    }
 
     /// <summary>
     /// The seat manager's owned-seat count, fanned out to its two consumers. The tripwire hears first: the hosting
@@ -535,7 +552,7 @@ public sealed class HotReloadableBrowserServerHost : IHotServerHost, IHotBrowser
     public async ValueTask DisposeAsync()
     {
         if (IsHeadlessClient)
-            GameMainThread.Invoke(() => { _rendererDisposed = true; _rendererSwap?.Dispose(); return true; });
+            GameMainThread.Invoke(() => { StopRenderer(); return true; });
         _inputGuardDemand(0, long.MaxValue);
         _zeroClientSeatDemand(0, long.MaxValue);
         _connectionHosting?.Dispose();

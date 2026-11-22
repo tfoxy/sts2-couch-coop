@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Localization;
 using CouchCoop.Mod.Server;
 using Godot;
@@ -75,7 +76,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
             {
                 _flow.ChooseDevice(captured);
                 RefreshText();
-                Callable.From(() => { if (GodotObject.IsInstanceValid(this) && IsOpen) _scroll.EnsureControlVisible(_deviceHeading); }).CallDeferred();
+                GameDeferred.Post(() => { if (GodotObject.IsInstanceValid(this) && IsOpen) _scroll.EnsureControlVisible(_deviceHeading); });
             });
             _deviceButtons[choice].SetPlatformIcon(DirectIpSetupCopy.DeviceKey(choice));
         }
@@ -288,13 +289,13 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
                 path = Path.GetFullPath(actions.ExportPublicRoot());
             }
             catch { error = CouchCoopText.Create("couchcoop_https_operation_failed"); }
-            Callable.From(() =>
+            GameDeferred.Post(() =>
             {
                 if (!GodotObject.IsInstanceValid(this)) return;
                 _flow.CompleteOperation(CouchCoopMod.HostUiSnapshot.DirectIpHttps, path, error);
                 RefreshText();
                 _scroll.ScrollVertical = 0;
-            }).CallDeferred();
+            });
         });
     }
 
@@ -315,7 +316,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
 
             }
             catch { error = CouchCoopText.Create("couchcoop_https_export_failed"); }
-            Callable.From(() =>
+            GameDeferred.Post(() =>
             {
                 if (!GodotObject.IsInstanceValid(this)) return;
                 _flow.Refresh(CouchCoopMod.HostUiSnapshot.DirectIpHttps);
@@ -333,7 +334,7 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
                 }
                 RefreshText();
                 if (_flow.Error is not null || _fileOpenError is not null) Reveal(_status);
-            }).CallDeferred();
+            });
         });
     }
 
@@ -374,11 +375,11 @@ internal sealed partial class CouchCoopDirectIpSetupDialog : CouchCoopModalDialo
         Reveal(_flow.ShowAdvanced ? _advanced.Start : _advancedButton);
     }
 
-    private void Reveal(Control control) => Callable.From(() =>
+    private void Reveal(Control control) => GameDeferred.Post(() =>
     {
         if (GodotObject.IsInstanceValid(this) && IsOpen && control.IsVisibleInTree())
             _scroll.EnsureControlVisible(control);
-    }).CallDeferred();
+    });
 
     private void ScrollInput(InputEvent input)
     {

@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -100,7 +101,7 @@ internal sealed class CouchCoopSeatStillSource(Func<CouchCoopStaticBackgroundSta
         }
         catch (Exception) { image?.Dispose(); image = null; }
         var decoded = image;
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             using (decoded)
             {
@@ -111,7 +112,7 @@ internal sealed class CouchCoopSeatStillSource(Func<CouchCoopStaticBackgroundSta
                 catch (Exception) { texture?.Dispose(); texture = null; }
                 _cache.Complete(ticket, texture);
             }
-        }).CallDeferred();
+        });
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

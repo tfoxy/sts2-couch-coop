@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using CouchCoop.Mod.Patches;
@@ -23,8 +24,8 @@ internal static class StreamCreaturePlacementPatch
             ? layoutParent.GetGlobalTransformWithCanvas() : Transform2D.Identity,
         node => node.TreeExiting += () => Creatures!.Forget(node));
     private static readonly DeferredResize<NCombatRoom> Resize = new(
-        action => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(action),
-            (uint)GodotObject.ConnectFlags.OneShot),
+        action => GameDeferred.Register(() => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(action),
+            (uint)GodotObject.ConnectFlags.OneShot)),
         room =>
         {
             if (!Creatures.Wide || !Valid(room)) return;
@@ -161,14 +162,17 @@ internal static class StreamCreaturePlacementPatch
 
     private sealed record CompanionScope(NCreature? Previous, bool Native);
 
-    private static void BeforeCompanion(NCreature __instance, out CompanionScope __state)
+    private static void BeforeCompanion(NCreature __instance, out CompanionScope? __state)
     {
+        __state = null;
+        if (HeadlessViewportConfigurator.WindowedHostPresentation && !RenderStreamSelf.HelpersInstalled) return;
         __state = new(_companion, Creatures.BeginNative());
         _companion = __instance;
     }
 
-    private static Exception? FinishCompanion(NCreature __instance, CompanionScope __state, Exception? __exception)
+    private static Exception? FinishCompanion(NCreature __instance, CompanionScope? __state, Exception? __exception)
     {
+        if (__state is null) return __exception;
         _companion = __state.Previous;
         if (__state.Native) Creatures.EndNative([__instance]);
         return __exception;

@@ -45,6 +45,7 @@ internal static class ZeroClientContractTests
 
     public static async Task RunAsync()
     {
+        Expect(!CouchCoop.Mod.CouchCoopMod.HostExiting, "zero-client tests start before process exit");
         var oldSecure = Environment.GetEnvironmentVariable("COUCHCOOP_SECURE_ORIGIN");
         var oldMdns = Environment.GetEnvironmentVariable("COUCHCOOP_MDNS_RESPONDER");
         var root = Path.Combine(Path.GetTempPath(), "couchcoop-zero-client-" + Guid.NewGuid().ToString("N"));
@@ -989,7 +990,7 @@ internal static class ZeroClientContractTests
         }
     }
 
-    // Counts every marshal and runs none of them: the closures reach Godot types, which cannot exist in this process.
+    // Count every marshal and run managed runtime cleanup too. Engine reads remain behind their game-free seams.
     private sealed class FakeMainThread : IGameMainThread
     {
         private long _dispatches;
@@ -999,13 +1000,13 @@ internal static class ZeroClientContractTests
         public T Invoke<T>(Func<T> action)
         {
             Interlocked.Increment(ref _dispatches);
-            return default!;
+            return action();
         }
 
         public Task<T> InvokeAsync<T>(Func<Task<T>> action)
         {
             Interlocked.Increment(ref _dispatches);
-            return Task.FromResult(default(T)!);
+            return action();
         }
     }
 

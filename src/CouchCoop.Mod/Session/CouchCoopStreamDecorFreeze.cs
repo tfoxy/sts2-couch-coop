@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using DecorFreeze = CouchCoop.Mod.Session.CouchCoopHeadlessVisualSuspender.DecorFreeze;
 
@@ -49,7 +50,7 @@ public static class CouchCoopStreamDecorFreeze
     private static void Reconcile()
     {
         if (!CouchCoopMod.EngineAvailable) return;
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             if (!ShouldFreeze(_armed, _desired)) Deactivate();
             if (Engine.GetMainLoop() is not SceneTree tree) return;
@@ -67,7 +68,7 @@ public static class CouchCoopStreamDecorFreeze
                 _tweensActive = ShouldFreeze(_armed, _tweensDesired);
                 if (before != (_active, _tweensActive)) Changed?.Invoke();
             });
-        }).CallDeferred();
+        });
     }
 
     private static void NextFrame(Action action)
@@ -81,7 +82,7 @@ public static class CouchCoopStreamDecorFreeze
             if (generation == _generation) action();
         });
         DeferredFrames.Add(callback);
-        _tree.Connect(SceneTree.SignalName.ProcessFrame, callback, (uint)GodotObject.ConnectFlags.OneShot);
+        GameDeferred.Register(() => _tree.Connect(SceneTree.SignalName.ProcessFrame, callback, (uint)GodotObject.ConnectFlags.OneShot));
     }
 
     private static void OnNodeAdded(Node node) => NextFrame(() =>

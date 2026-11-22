@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using System;
 using System.Threading.Tasks;
@@ -59,7 +60,7 @@ public static class CouchCoopHeadlessCpuProfiler
     }
 
     // Poll from a background task until the SceneTree root exists, then marshal the timer create + attach onto the
-    // GAME MAIN THREAD via Callable.From(...).CallDeferred() (creating a Godot node / touching the tree off-thread
+    // GAME MAIN THREAD via GameDeferred.Post(...) (creating a Godot node / touching the tree off-thread
     // is unsafe; the mod's Init runs before the pump is marshaling, so this is the reliable path).
     private static async Task InstallLoopAsync()
     {
@@ -69,7 +70,7 @@ public static class CouchCoopHeadlessCpuProfiler
             {
                 if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
                 {
-                    Callable.From(() => AttachOnMainThread(root)).CallDeferred();
+                    GameDeferred.Post(() => AttachOnMainThread(root));
                     return;
                 }
             }

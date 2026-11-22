@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using System.Reflection;
 using CouchCoop.Mod.Patches;
 using Godot;
@@ -50,9 +51,10 @@ internal static class StreamMapDrawingToolsPatch
 
     private static void AfterReady(NMapScreen __instance)
     {
+        if (!Toolbar.Wide) return;
         if (Engine.GetMainLoop() is SceneTree tree)
-            tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() => Register(__instance)),
-                (uint)GodotObject.ConnectFlags.OneShot);
+            GameDeferred.Register(() => tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() => Register(__instance)),
+                (uint)GodotObject.ConnectFlags.OneShot));
     }
 
     private static void Register(NMapScreen? map)

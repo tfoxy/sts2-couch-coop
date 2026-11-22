@@ -28,7 +28,13 @@ internal static class HostTermExitTests
         FailedWindowedBackstopArmCanRetry();
         ThrowingWindowedQuitKeepsTheBackstopArmed();
         ThrowingWindowedLogsCannotPreventQuitOrBackstop();
-        Console.WriteLine("HostTermExitTests: 20 passed.");
+        await WindowedCaptureDisarmsBeforeQuit();
+        WindowedQuitWithoutCaptureDoesNoWork();
+        WindowedQuitWhileDetachedFencesWithoutWaiting();
+        await WindowedCaptureTimeoutStillQuits();
+        await ThrowingWindowedDisarmStillQuits();
+        await BlockingWindowedDisarmIsBounded();
+        Console.WriteLine("HostTermExitTests: 26 passed.");
     }
 
     private static void RegistrationDependsOnRoleDisplayAndPlatform()
@@ -344,6 +350,135 @@ internal static class HostTermExitTests
         }
     }
 
+    private static async Task WindowedCaptureDisarmsBeforeQuit()
+    {
+        var disarm = Pending();
+        var entered = Pending();
+        var events = new ConcurrentQueue<string>();
+        var mainThread = Environment.CurrentManagedThreadId;
+        Action? posted = null;
+        var sequence = new HostCaptureQuitSequence(
+            () => { events.Enqueue("disarm"); entered.SetResult(); return disarm.Task; },
+            action => { events.Enqueue("post"); posted = action; },
+            stopRenderer: () =>
+            {
+                Assert(Environment.CurrentManagedThreadId == mainThread, "renderer demand is fenced on the calling main thread");
+                events.Enqueue("fence");
+            });
+        var quits = 0;
+        void Quit()
+        {
+            Assert(sequence.BeforeQuit(true, () => throw new Exception("unexpected replay")),
+                "the main-thread continuation may re-enter the original quit");
+            events.Enqueue("quit");
+            quits++;
+        }
+        Assert(!sequence.BeforeQuit(true, Quit), "loaded capture defers the original quit");
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert(!sequence.BeforeQuit(true, Quit), "another quit while disarming is suppressed");
+        Assert(events.SequenceEqual(new[] { "fence", "disarm" }) && quits == 0 && posted is null,
+            "quit and its main-thread dispatch wait for disarm");
+        disarm.SetResult();
+        await sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert(events.SequenceEqual(new[] { "fence", "disarm", "post" }) && quits == 0,
+            "disarm completion posts quit without running it off-thread");
+        posted!();
+        Assert(events.SequenceEqual(new[] { "fence", "disarm", "post", "quit" }) && quits == 1,
+            "posted continuation quits once after disarm");
+        Assert(!sequence.BeforeQuit(true, Quit) && quits == 1, "later requests cannot restart capture shutdown");
+    }
+
+    private static void WindowedQuitWithoutCaptureDoesNoWork()
+    {
+        var disarms = 0;
+        var posts = 0;
+        var quits = 0;
+        var clock = new Clock();
+        var sequence = new HostCaptureQuitSequence(
+            () => { disarms++; return Task.CompletedTask; }, _ => posts++, timeProvider: clock,
+            stopRenderer: () => throw new Exception("capture-off quit must not fence the renderer"));
+        if (sequence.BeforeQuit(false, () => quits++)) quits++;
+        Assert(quits == 1 && disarms == 0 && posts == 0 && !clock.FirstTimer.Task.IsCompleted,
+            "without capture quit proceeds synchronously without disarm, dispatch or timer");
+        Assert(sequence.Completion.IsCompletedSuccessfully, "without capture no asynchronous work is started");
+    }
+
+    private static void WindowedQuitWhileDetachedFencesWithoutWaiting()
+    {
+        var fences = 0;
+        var clock = new Clock();
+        var sequence = new HostCaptureQuitSequence(
+            () => throw new Exception("detached quit must not disarm"),
+            _ => throw new Exception("detached quit must not dispatch"), timeProvider: clock,
+            stopRenderer: () => fences++);
+        Assert(sequence.BeforeQuit(true, () => throw new Exception("quit proceeds synchronously"), captureAttached: false),
+            "detached capture allows the original quit");
+        Assert(fences == 1 && sequence.Completion.IsCompletedSuccessfully && !clock.FirstTimer.Task.IsCompleted,
+            "detached quit fences requests without a disarm wait or timer");
+    }
+
+    private static async Task WindowedCaptureTimeoutStillQuits()
+    {
+        var disarm = Pending();
+        var entered = Pending();
+        var clock = new Clock();
+        var quits = 0;
+        var sequence = new HostCaptureQuitSequence(
+            () => { entered.SetResult(); return disarm.Task; }, action => action(),
+            log: _ => { }, timeProvider: clock);
+        Assert(!sequence.BeforeQuit(true, () => quits++), "pending disarm defers quit");
+        await Task.WhenAll(clock.FirstTimer.Task, entered.Task).WaitAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(RenderStreamCaptureQuit.DisarmTimeout - TimeSpan.FromTicks(1));
+        Assert(quits == 0 && !sequence.Completion.IsCompleted, "disarm timeout never quits early");
+        clock.Advance(TimeSpan.FromTicks(1));
+        await sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert(quits == 1, "missing disarm completion still quits at the existing disarm bound");
+        disarm.SetResult();
+        Assert(quits == 1, "a late disarm cannot quit twice");
+    }
+
+    private static async Task ThrowingWindowedDisarmStillQuits()
+    {
+        foreach (var synchronous in new[] { false, true })
+        foreach (var failingLog in new[] { false, true })
+        {
+            var quits = 0;
+            Task Fail() => synchronous ? throw new IOException("disarm failed")
+                : Task.FromException(new IOException("disarm failed"));
+            var sequence = new HostCaptureQuitSequence(Fail, action => action(),
+                log: _ => { if (failingLog) throw new IOException("logger failed"); });
+            Assert(!sequence.BeforeQuit(true, () => quits++), "failing disarm still intercepts quit");
+            await sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert(quits == 1, "synchronous/asynchronous disarm failures and failed logging still quit");
+        }
+    }
+
+    private static async Task BlockingWindowedDisarmIsBounded()
+    {
+        using var release = new ManualResetEventSlim();
+        var entered = Pending();
+        var finished = Pending();
+        var clock = new Clock();
+        var quits = 0;
+        var sequence = new HostCaptureQuitSequence(() =>
+        {
+            entered.SetResult();
+            release.Wait();
+            finished.SetResult();
+            return Task.CompletedTask;
+        }, action => action(), log: _ => { }, timeProvider: clock);
+        try
+        {
+            Assert(!sequence.BeforeQuit(true, () => quits++), "blocking disarm never blocks the quit hook");
+            await Task.WhenAll(clock.FirstTimer.Task, entered.Task).WaitAsync(TimeSpan.FromSeconds(2));
+            clock.Advance(RenderStreamCaptureQuit.DisarmTimeout);
+            await sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert(quits == 1 && !finished.Task.IsCompleted, "synchronous blocking is bounded before quit");
+        }
+        finally { release.Set(); }
+        await finished.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     private static void FireWindowedBackstop(Clock clock, Fixture fixture)
     {
         clock.Advance(HostTermQuitSequence.ForceExitDelay - TimeSpan.FromTicks(1));
@@ -397,6 +532,7 @@ internal static class HostTermExitTests
         private readonly object _gate = new();
         private readonly List<ManualTimer> _timers = [];
         private long _now;
+        internal readonly TaskCompletionSource FirstTimer = Pending();
         internal readonly TaskCompletionSource BothTimers = Pending();
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override long GetTimestamp() { lock (_gate) return _now; }
@@ -408,6 +544,7 @@ internal static class HostTermExitTests
                 var timer = new ManualTimer(this, callback, state);
                 timer.Change(dueTime, period);
                 _timers.Add(timer);
+                FirstTimer.TrySetResult();
                 if (_timers.Count == 2) BothTimers.TrySetResult();
                 return timer;
             }

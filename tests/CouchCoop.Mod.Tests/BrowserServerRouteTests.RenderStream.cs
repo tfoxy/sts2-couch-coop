@@ -139,6 +139,7 @@ internal sealed partial class BrowserServerRouteTests
             }
             // The injected capture replaces native startup in this isolated streaming-seat process.
             RenderStreamSelf.MarkLoaded();
+            await AssertQuitDuringAspectChangeAsync();
             await using var seat = await RelayedSeat.StartAsync(withCapture: true);
             using var socket = await seat.ConnectAsync(AllowedPageOrigin);
             using (var first = await ReadSessionAsync(socket)) ExpectRenderer(first.RootElement, "mirror");
@@ -317,6 +318,65 @@ internal sealed partial class BrowserServerRouteTests
             Console.Error.WriteLine(error);
             return 1;
         }
+    }
+
+    private static async Task AssertQuitDuringAspectChangeAsync()
+    {
+        await using var seat = await RelayedSeat.StartAsync(withCapture: true, deferRestore: true);
+        var host = seat.Host!;
+        var capture = seat.Capture!;
+        host.RequestRenderer("quitting", true, 21.0 / 9);
+        seat.Armed(RenderStreamSeatToken, 2520);
+        var signals = capture.Signals!;
+        host.RequestRenderer("quitting", true, 2);
+        Expect(capture.CurrentState == "disarming" && capture.ArmCalls == 1,
+            "aspect change retains demand for a replacement arm before quit");
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disarmed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action? postedQuit = null;
+        var quits = 0;
+        var sequence = new HostCaptureQuitSequence(() =>
+        {
+            GameMainThread.Invoke(() =>
+            {
+                new RenderStreamCaptureQuit(capture, () => disarmed.TrySetResult(), (_, _) => { }).Run();
+                entered.SetResult();
+                return true;
+            });
+            return disarmed.Task;
+        }, action => postedQuit = action, stopRenderer: host.StopRenderer);
+        GameMainThread.Invoke(() =>
+        {
+            Expect(!sequence.BeforeQuit(true, () => quits++), "quit waits for the in-flight aspect disarm");
+            return true;
+        });
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        GameMainThread.Invoke(() =>
+        {
+            // Deliver even a callback retained before the fence, as well as the quit's one-shot signal.
+            signals.Disarmed();
+            capture.EmitDisarmed();
+            return true;
+        });
+        await sequence.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        GameMainThread.Invoke(() =>
+        {
+            Expect(seat.PendingRestore!.Count > 0 && postedQuit is not null && quits == 0,
+                "the swap callback can run before the queued quit replay");
+            while (seat.PendingRestore.TryDequeue(out var callback)) callback();
+            Expect(capture.ArmCalls == 1 && capture.CurrentState == "standby",
+                "quit fence prevents the aspect-change callback from rearming capture");
+            host.ClaimPresentationPage("late", "owner");
+            host.UpdatePresentationPage("late", "owner", true, true, 21.0 / 9);
+            host.RequestRenderer("late", true, 21.0 / 9);
+            Expect(!host.IsPresentationPageOwner("late", "owner") && capture.ArmCalls == 1,
+                "renderer requests and presentation claims are refused after the quit fence");
+            postedQuit!();
+            Expect(quits == 1 && capture.ArmCalls == 1 && capture.DisarmCalls == 1,
+                "quit replays once without a replacement arm or duplicate disarm");
+            return true;
+        });
+        Console.WriteLine("windowed capture quit fence: 6 passed.");
     }
 
     private static async Task AssertMirrorReturnRestorationAsync()

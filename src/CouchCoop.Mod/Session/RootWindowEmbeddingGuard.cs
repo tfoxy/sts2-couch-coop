@@ -227,7 +227,7 @@ public static class RootWindowEmbeddingGuard
             {
                 if (TryGetRoot() is { } root)
                 {
-                    Callable.From(() => Attach(root, addTimerDeferred: false)).CallDeferred();
+                    GameDeferred.Post(() => Attach(root, addTimerDeferred: false));
                     return;
                 }
             }
@@ -267,11 +267,11 @@ public static class RootWindowEmbeddingGuard
         timer.Timeout += OnBackstop;
         if (addTimerDeferred)
         {
-            Callable.From(() =>
+            GameDeferred.Post(() =>
             {
                 root.AddChild(timer);
                 ReconcileBackstopDemand();
-            }).CallDeferred();
+            });
         }
         else
         {
@@ -461,13 +461,13 @@ public static class RootWindowEmbeddingGuard
         {
             if (GodotObject.IsInstanceValid(window) && window.Visible)
             {
-                Callable.From(() =>
+                GameDeferred.Post(() =>
                 {
                     if (GodotObject.IsInstanceValid(window) && window.Visible)
                     {
                         window.Hide();
                     }
-                }).CallDeferred();
+                });
             }
         };
     }

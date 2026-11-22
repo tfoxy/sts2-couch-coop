@@ -69,6 +69,20 @@ public static class CouchCoopMod
     /// </remarks>
     public static volatile bool EngineAvailable;
 
+    // This root type is not link-compiled into hot generations: every server sees the same latch.
+    internal static HostExitGate HostExit { get; } = new(CouchCoopLog.Stderr);
+    public static bool HostExiting => HostExit.IsExiting;
+    internal static void BeginHostExit() => HostExit.BeginExit();
+
+    internal static Task? BeginHostExit(Func<Task>? prepareDisarm)
+    {
+        // Headless capture needs one admitted main-thread disarm before the queue closes.
+        try { return prepareDisarm?.Invoke(); }
+        finally { BeginHostExit(); }
+    }
+
+    internal static void OnHostWindowCloseRequested() => BeginHostExit();
+
     // True when this instance has NO real window — a spawned headless CLIENT (above) OR a host launched with
     // Godot's `--headless` (dev/server). Any windowless instance needs the 16:9 viewport force: with no window and
     // no saved aspect setting the root viewport goes Auto→Expand → a ~1920x1920 SQUARE that vertically offsets the
@@ -182,9 +196,9 @@ public static class CouchCoopMod
 
             if (_runtime is not null)
             {
-                // Any windowless instance (headless client OR a --headless host) needs the 16:9 viewport force so
-                // its mirror isn't a square-viewport mis-frame; a windowed host keeps its own NGame display apply.
-                if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
+                // Windowless mirrors need 16:9; windowed captures reassert only while streaming.
+                if (IsHeadlessClient || IsHeadlessDisplay() || HeadlessViewportConfigurator.WindowedHostPresentation)
+                    HeadlessViewportConfigurator.Configure();
                 if (!IsHeadlessClient) InitializeQrHostPanel();
                 if (!IsHeadlessClient) RetryPauseMenuMountPatch();
                 RetryRosterSignalPatch();
@@ -212,9 +226,19 @@ public static class CouchCoopMod
             // with no protection installed. Nothing above it here but EnsureMonoModCanPatch(), which it needs;
             // everything that can fail belongs below the protection, not above it.
             if (IsHeadlessClient) HeadlessSeatCloudIsolationGuard.EnforceOrExit();
-            // Load a standby capture for a streaming seat or a configured headless host. A seat requires it;
-            // a host can keep serving the old renderer if capture loading fails.
+            // Seats and headless hosts load in standby; windowed hosts prepare for loading on demand.
+            // A host can keep serving the old renderer if capture loading fails.
             RenderStreamSelf.StartCaptureOrExit(IsHeadlessClient, IsHeadlessDisplay());
+            HeadlessViewportConfigurator.InitializePresentation(
+                RenderStreamSelf.Enabled && !IsHeadlessClient && !IsHeadlessDisplay());
+            if (!IsHeadlessClient && Godot.Engine.GetMainLoop() is Godot.SceneTree exitTree)
+                exitTree.Root.CloseRequested += OnHostWindowCloseRequested;
+            if (RenderStreamSelf.Enabled && !IsHeadlessClient && !IsHeadlessDisplay())
+            {
+                HostQuitPatch.Apply(null);
+                // Keep a window close in the quit hook until capture disarm completes.
+                if (Godot.Engine.GetMainLoop() is Godot.SceneTree tree) tree.AutoAcceptQuit = false;
+            }
             if (RenderStreamSelf.Enabled) StreamDesignPlacementPatch.Apply();
             if (RenderStreamSelf.Enabled) StreamMapDrawingToolsPatch.Apply();
             if (RenderStreamSelf.Enabled) StreamHandPlacementPatch.Apply();
@@ -336,11 +360,8 @@ public static class CouchCoopMod
             {
                 CouchCoopHeadlessVisualSuspender.Install();
             }
-            // Item-identity groups are needed only where a local capture reads them.
-            if (RenderStreamSelf.Enabled)
-            {
-                Session.RenderStreamItemTagger.Install();
-            }
+            // Windowed hosts install node observers only when capture attaches.
+            RenderStreamSelf.StartHelpers(HeadlessViewportConfigurator.WindowedHostPresentation);
             // Deadlock backstop for the same freeze, WINDOWLESS ONLY (positive COUCHCOOP_HEADLESS_DEATH_DELAY_CAP
             // overrides the safe default):
             // A dying creature waits on every death delayer attached to it and nothing bounds that wait; the one
@@ -372,9 +393,9 @@ public static class CouchCoopMod
             StartSpinePrerenderIfRequested(_runtime);
             StartGeoclipPrerenderIfRequested(_runtime);
             StartStaticBackgroundPrerenderIfRequested(_runtime);
-            // Any windowless instance (headless client OR a --headless host) needs the 16:9 viewport force so its
-            // mirror isn't a square-viewport mis-frame; a windowed host keeps its own NGame display apply.
-            if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessViewportConfigurator.Configure();
+            // Windowless mirrors need 16:9; windowed captures reassert only while streaming.
+            if (IsHeadlessClient || IsHeadlessDisplay() || HeadlessViewportConfigurator.WindowedHostPresentation)
+                HeadlessViewportConfigurator.Configure();
             if (!IsHeadlessClient) InitializeQrHostPanel();
             if (!IsHeadlessClient) RetryPauseMenuMountPatch();
             RetryRosterSignalPatch();
@@ -525,6 +546,7 @@ public static class CouchCoopMod
     {
         lock (Gate)
         {
+            RenderStreamSelf.StopDeferredCapture();
             if ((_hostUi?.HotServerHost as IHotServerHost)?.HeadlessManager is HeadlessClientManager manager)
                 manager.Dispose();
             HostQuitPatch.Bind(null);
@@ -891,7 +913,8 @@ public static class CouchCoopMod
                     {
                         if (Godot.Engine.GetMainLoop() is Godot.SceneTree tree)
                         {
-                            tree.Root.CloseRequested += manager.Dispose;
+                            // Capture disarm needs frames before quit; wait for seats only when the tree exits.
+                            if (!RenderStreamSelf.Enabled || IsHeadlessDisplay()) tree.Root.CloseRequested += manager.Dispose;
                             tree.Root.TreeExiting += manager.Dispose;
                         }
                         return true;
@@ -1132,13 +1155,14 @@ internal static class HostQuitPatch
     private static readonly object Sync = new();
     private static bool _applied;
     private static HeadlessClientManager? _manager;
+    private static HostCaptureQuitSequence? _captureQuit;
 
     internal static System.Reflection.MethodInfo? ResolveTarget()
         => AccessTools.Method(typeof(NGame), nameof(NGame.Quit), Type.EmptyTypes);
 
     internal static void Bind(HeadlessClientManager? manager) => Volatile.Write(ref _manager, manager);
 
-    internal static void Apply(HeadlessClientManager manager)
+    internal static void Apply(HeadlessClientManager? manager)
     {
         Bind(manager);
         lock (Sync)
@@ -1161,6 +1185,20 @@ internal static class HostQuitPatch
         }
     }
 
-    // Non-blocking: teardown callbacks and ProcessExit share the manager's one deadline and wait.
-    internal static void BeforeQuit() => Volatile.Read(ref _manager)?.BeginHostExit();
+    // Teardown callbacks and ProcessExit share the manager's one deadline and wait.
+    internal static bool BeforeQuit(NGame __instance)
+    {
+        CouchCoopMod.BeginHostExit();
+        Volatile.Read(ref _manager)?.BeginHostExit();
+        if (!RenderStreamSelf.Enabled || CouchCoopMod.IsHeadlessClient || CouchCoopMod.IsHeadlessDisplay()) return true;
+        var sequence = _captureQuit ??= new HostCaptureQuitSequence(
+            RenderStreamCaptureQuit.DisarmOnMainThreadAsync, GameDeferred.PostQuitReplay,
+            disarmOnMainThread: true,
+            stopRenderer: () =>
+            {
+                RenderStreamSelf.StopDeferredCapture();
+                (CouchCoopMod.HotServerHost as HotReloadableBrowserServerHost)?.StopRenderer();
+            });
+        return sequence.BeforeQuit(captureEnabled: true, __instance.Quit, captureAttached: RenderStreamSelf.IsAttached);
+    }
 }

@@ -76,15 +76,23 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public ISpirectlAssetProvider Assets { get; }
     public void CancelInjectedInput()
     {
-        if (_actionSource is not IInjectedInputControlSource input)
-            throw new NotSupportedException("The runtime cannot safely cancel injected input.");
-        input.CancelInjectedInput();
+        // Access-monitor teardown can run on a socket thread, outside the connection's input dispatcher.
+        GameMainThread.Invoke(() =>
+        {
+            if (_actionSource is not IInjectedInputControlSource input)
+                throw new NotSupportedException("The runtime cannot safely cancel injected input.");
+            input.CancelInjectedInput();
+            return true;
+        });
     }
     /// <summary>Host-side seat lifecycle operation, exposed to the source-linked hot-reload server.</summary>
     public void DisconnectSeatPeer(ulong netId) => _disconnectSeatPeer(netId);
     public ISpineGeoClipBaker SpineGeoClipBaker => _spineGeoClipBaker;
     public EmbeddableAssetBatchResult GetPresentationAssets(PresentationAssetBatchRequest request)
-        => _assetsSource.GetPresentationAssets(request);
+    {
+        ThrowIfExiting();
+        return _assetsSource.GetPresentationAssets(request);
+    }
     public IRuntimeSceneWatchControls SceneWatchControls => _sceneWatchControlSource.SceneWatchControls;
     public MultiplayerConnectionSnapshot? GetCurrentMultiplayerConnection()
     {
@@ -124,6 +132,7 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
 
     public CouchCoopRuntimeNotice RequireCapability(string capabilityId)
     {
+        ThrowIfExiting();
         if (!TryFindCapability(capabilityId, out var capability))
         {
             var missing = new CouchCoopRuntimeNotice(
@@ -182,19 +191,19 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     {
         ZeroClientGuard.EnterPort(ZeroClientEntries.SceneSubscribe);
         RequireCapability(SceneCapability);
-        return _sceneDeltaSource.SubscribeRuntimeSceneDelta(request, onDelta, onError);
+        return new MainThreadLifetime(_sceneDeltaSource.SubscribeRuntimeSceneDelta(request, onDelta, onError));
     }
 
     public ModelCatalogOperationResult GetModels(ModelCatalogRequestSnapshot request)
     {
         RequireCapability(GameModelsCapability);
-        return _modelSource.GetModels(request);
+        return GameMainThread.Invoke(() => _modelSource.GetModels(request));
     }
 
     public SpineCatalogOperationResult GetSpineCatalog(SpineCatalogRequestSnapshot request)
     {
         RequireCapability(SpineCatalogCapability);
-        return _spineCatalogSource.GetSpineCatalog(request);
+        return GameMainThread.Invoke(() => _spineCatalogSource.GetSpineCatalog(request));
     }
 
     /// <summary>
@@ -218,12 +227,24 @@ public sealed class CouchCoopRuntimeHost : IDisposable, ICouchCoopCapabilityPoli
     public EmbeddableActionResult ExecuteAction(EmbeddableActionRequest request)
     {
         RequireCapability(SemanticActionsCapability);
-        return _actionSource.ExecuteAction(request);
+        return GameMainThread.Invoke(() => _actionSource.ExecuteAction(request))
+            ?? new EmbeddableActionResult(false, null, new EmbeddableRuntimeError("host-exiting", "The host is exiting."));
     }
 
     public void Dispose()
     {
-        _lifetime?.Dispose();
+        if (_lifetime is not null) new MainThreadLifetime(_lifetime).Dispose();
+    }
+
+    private static void ThrowIfExiting()
+    {
+        if (CouchCoopMod.HostExiting) throw new OperationCanceledException("The host is exiting.");
+    }
+
+    // Runtime scene unsubscription and disposal can themselves synchronously dispatch to the game thread.
+    private sealed class MainThreadLifetime(IDisposable inner) : IDisposable
+    {
+        public void Dispose() => GameMainThread.Invoke(() => { inner.Dispose(); return true; });
     }
 
     private EmbeddableRuntimeCapabilities DiscoverCapabilities()

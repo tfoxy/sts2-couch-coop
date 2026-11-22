@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Session;
 using Godot;
 
@@ -189,8 +190,7 @@ internal sealed partial class CouchCoopQrCopyButton : Button
         {
             // ignoreTimeScale: a receipt on a UI control should last 1.5 seconds of the player's time
             // whatever the game has done to its own clock.
-            GetTree().CreateTimer(FeedbackSeconds, processAlways: true, processInPhysics: false, ignoreTimeScale: true)
-                .Connect(SceneTreeTimer.SignalName.Timeout, Callable.From(() => OnRevertElapsed(token)));
+            GameDeferred.Delay(GetTree(), FeedbackSeconds, () => OnRevertElapsed(token));
         }
         catch (Exception exception)
         {

@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Contracts;
 using CouchCoop.Mod.Connections;
 using System.Diagnostics;
@@ -1409,7 +1410,7 @@ public sealed partial class HeadlessClientManager : IDisposable
         {
             var sequence = new HostTermExitSequence(
                 stopSeats: StopHostSeatsAsync,
-                disarm: RenderStreamCaptureQuit.DisarmDeferredAsync,
+                disarm: DisarmHostCaptureAsync,
                 captureEnabled: () => RenderStreamSelf.Enabled,
                 seatCount: CountLiveSeatProcesses,
                 leave: reason => HeadlessProcessExit.Leave(reason, CouchCoopLog.Info, CouchCoopLog.Stderr,
@@ -1420,7 +1421,8 @@ public sealed partial class HeadlessClientManager : IDisposable
         else if (registration == HostTermSignal.Registration.HostQuit)
         {
             var sequence = new HostTermQuitSequence(
-                post: action => Godot.Callable.From(action).CallDeferred(),
+                post: GameDeferred.PostQuitReplay,
+                beginExit: CouchCoopMod.BeginHostExit,
                 quit: () =>
                 {
                     var game = MegaCrit.Sts2.Core.Nodes.NGame.Instance;
@@ -1435,6 +1437,14 @@ public sealed partial class HeadlessClientManager : IDisposable
         }
     }
 
+    private Task? _hostCaptureDisarm;
+
+    private Task DisarmHostCaptureAsync()
+    {
+        BeginHostExit();
+        lock (_lock) return _hostCaptureDisarm ?? Task.CompletedTask;
+    }
+
     /// <summary>Signals every live seat once without waiting, freeing slots or disposing process handles.</summary>
     internal void BeginHostExit()
     {
@@ -1442,6 +1452,14 @@ public sealed partial class HeadlessClientManager : IDisposable
         lock (_lock)
         {
             if (_hostExiting) return;
+            if (CouchCoopMod.EngineAvailable)
+            {
+                // Headless TERM exits directly. Admit its disarm before sealing the queue; the windowed
+                // quit prefix instead starts disarm synchronously on the main thread after sealing it.
+                _hostCaptureDisarm = CouchCoopMod.BeginHostExit(
+                    !CouchCoopMod.HostExiting && RenderStreamSelf.Enabled && CouchCoopMod.IsHeadlessDisplay()
+                        ? RenderStreamCaptureQuit.DisarmDeferredAsync : null);
+            }
             _hostExiting = true;
             _hostExitStarted = Stopwatch.GetTimestamp();
             foreach (var slot in _browserReconnectPending.Keys.ToArray()) CancelBrowserReconnectGraceLocked(slot);

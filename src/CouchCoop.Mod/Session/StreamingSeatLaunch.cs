@@ -397,12 +397,16 @@ internal static class StreamingSeatLaunch
 
     /// <summary>The host's private capture keeps texture pixels available to the mirror's asset routes.</summary>
     internal static IReadOnlyDictionary<string, string> HostEnvironment(
-        Config config, string evidenceDirectory, IReadOnlyList<string> allowedOrigins)
+        Config config, string evidenceDirectory, IReadOnlyList<string> allowedOrigins, bool windowedHost = false)
     {
         var environment = new Dictionary<string, string>(
             Environment(config with { NetModule = null }, HubPortForSlot(0), evidenceDirectory, allowedOrigins),
             StringComparer.Ordinal);
         environment.Remove(StreamingSeatRole.EnvironmentVariable);
+        environment.Remove("GRC_HEADLESS_CANVAS_TEXTURE");
+        environment.Remove("GRC_HEADLESS_PARTICLES");
+        environment.Remove("GRC_PREDRAW_PUMP");
+        if (windowedHost) environment["GRC_MODE"] = "detached";
         environment["GRC_HEADLESS_TEXTURE_RELEASE"] = "off";
         environment["GRC_LIVE_MAX_CONNECTIONS"] = "4";
         return environment;

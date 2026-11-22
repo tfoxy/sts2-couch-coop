@@ -94,6 +94,8 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
             dismissBottomInset: DismissBottomInset)
     {
         DismissText = CloseButtonText;
+        Connect(CanvasItem.SignalName.VisibilityChanged,
+            Callable.From(() => NoteVisibilityChanged(Visible, RenderStreamSelf.CouchUsed)));
 
         ConfigureLabel(_title, HorizontalAlignment.Center, CouchCoopGameUiTheme.ButtonFontColor);
         _title.Text = Solo ? CouchCoopLocalization.Resolve("couchcoop_solo_qr_title") : TitleText;
@@ -294,6 +296,11 @@ internal sealed partial class CouchCoopQrDialog : CouchCoopModalDialog
         {
             _qrCacheKey = null;
         }
+    }
+
+    internal static void NoteVisibilityChanged(bool visible, Action couchUsed)
+    {
+        if (visible) couchUsed();
     }
 
     /// <summary>

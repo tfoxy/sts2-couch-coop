@@ -19,6 +19,7 @@ internal static class GameNextFrame
     internal static void Schedule(Action work)
     {
         ArgumentNullException.ThrowIfNull(work);
+        if (CouchCoopMod.HostExiting) return;
         if (!CouchCoopMod.EngineAvailable)
         {
             ThreadPool.QueueUserWorkItem(static state => ((Action)state!).Invoke(), work);
@@ -43,7 +44,7 @@ internal static class GameNextFrame
     {
         if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
         {
-            root.GetTree().CreateTimer(0, processAlways: true, ignoreTimeScale: true).Timeout += work;
+            GameDeferred.Delay(root.GetTree(), 0, work);
         }
         else
         {

@@ -58,15 +58,51 @@ internal static class StreamCardRewardPlacementPatch
 
     private sealed record Endpoint(NGridCardHolder Holder, Vector2 Design);
     private static readonly Dictionary<NGridCardHolder, PropertyTweener> Tweeners = new();
+    private static readonly Dictionary<NCardRewardSelectionScreen, Action> ScreenExits = new();
+
+    internal static void Attach()
+    {
+        if (Engine.GetMainLoop() is not SceneTree tree) return;
+        // On-demand capture may begin with a reward screen already open. The tagger has just walked the tree.
+        foreach (var screen in tree.GetNodesInGroup(RenderStreamItemTagger.CardRewardRootGroup)
+                     .OfType<NCardRewardSelectionScreen>()) TrackScreen(screen);
+    }
+
+    internal static void Remove()
+    {
+        foreach (var (screen, exit) in ScreenExits)
+        {
+            if (GodotObject.IsInstanceValid(screen)) screen.TreeExiting -= exit;
+            Row.Remove(screen);
+        }
+        ScreenExits.Clear();
+        Tweeners.Clear();
+    }
+
+    private static bool TrackScreen(NCardRewardSelectionScreen screen)
+    {
+        if (!Row.BeginRefresh(screen)) return false;
+        Action? exit = null;
+        exit = () =>
+        {
+            screen.TreeExiting -= exit;
+            foreach (var holder in Row.Remove(screen)) Tweeners.Remove(holder);
+            ScreenExits.Remove(screen);
+        };
+        ScreenExits.Add(screen, exit);
+        screen.TreeExiting += exit;
+        return true;
+    }
+
+    internal static bool CanTrack(bool windowedHost, bool helpersInstalled) => !windowedHost || helpersInstalled;
+
+    private static bool CanTrackCurrentCapture => CanTrack(
+        HeadlessViewportConfigurator.WindowedHostPresentation, RenderStreamSelf.HelpersInstalled);
 
     private static void BeforeRefresh(NCardRewardSelectionScreen __instance)
     {
-        if (Row.BeginRefresh(__instance))
-            __instance.TreeExiting += () =>
-            {
-                foreach (var holder in Row.Remove(__instance)) Tweeners.Remove(holder);
-            };
-        else
+        if (!CanTrackCurrentCapture) return;
+        if (!TrackScreen(__instance))
             foreach (var holder in Row.Holders(__instance)) Tweeners.Remove(holder);
         Row.Clear(__instance);
     }
@@ -74,6 +110,7 @@ internal static class StreamCardRewardPlacementPatch
     private static void BeforeTween(GodotObject __0, NodePath __1, ref Variant __2, out Endpoint? __state)
     {
         __state = null;
+        if (!CanTrackCurrentCapture) return;
         if (__0 is not NGridCardHolder holder) return;
         if (__1.ToString() != "position"
             || __2.VariantType != Variant.Type.Vector2) return;

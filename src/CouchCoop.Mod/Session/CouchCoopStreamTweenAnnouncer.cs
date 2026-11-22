@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using System.Text.Json;
 using Spirectl.Sts2.Embedding;
@@ -34,7 +35,7 @@ public sealed class CouchCoopStreamTweenAnnouncer
         if (_pageDesired == desired) return;
         _pageDesired = desired;
         if (CouchCoopMod.EngineAvailable)
-            Callable.From(() => Shared.UpdateDesired(_pageDesired)).CallDeferred();
+            GameDeferred.Post(() => Shared.UpdateDesired(_pageDesired));
     }
 
     internal void UpdateArmed(bool armed)

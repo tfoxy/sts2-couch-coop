@@ -1015,6 +1015,12 @@ public sealed class CouchCoopWebSocketConnection
                 {
                     inboundRequestId = requestIdElement.GetString();
                 }
+                if (CouchCoopMod.HostExiting)
+                {
+                    await SendResultAsync(InvalidMessage(inboundRequestId, "host-exiting")).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (string.Equals(type, "join", StringComparison.Ordinal))
                 {
                     var join = document.Deserialize<BrowserJoinRequestEnvelope>(BrowserJson.Options);
@@ -1596,11 +1602,11 @@ public sealed class CouchCoopWebSocketConnection
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
-            Godot.Callable.From(() =>
+            GameDeferred.Post(() =>
             {
                 _mainThreadPingGate.Complete();
                 tcs.TrySetResult();
-            }).CallDeferred();
+            });
         }
         catch
         {

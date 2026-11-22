@@ -16,7 +16,7 @@ internal static class HostSeatExitTests
         await CooperativeAndEmptyHostsDoNotWaitForTheDeadline();
         await BindingCallbackCannotLaunchAfterExit();
         await QueuedReconnectExpiryCannotInterruptHostExit();
-        await BrowserAndHostingTeardownCannotInterruptHostExit();
+        await HostExitPostTests.RunInFreshProcessAsync("seat-teardown");
         await AsyncSeatStopReusesTheDisposeTask();
         Console.WriteLine("host seat exit: 9 passed.");
     }
@@ -153,7 +153,7 @@ internal static class HostSeatExitTests
         Assert(child.Signals == 1 && child.Disposals == 1, "the retained seat belongs to host shutdown");
     }
 
-    private static async Task BrowserAndHostingTeardownCannotInterruptHostExit()
+    internal static async Task BrowserAndHostingTeardownCannotInterruptHostExit()
     {
         var child = new Child(2);
         using var manager = new HeadlessClientManager(_ => child, (_, _) => Task.FromResult(true),
@@ -164,8 +164,8 @@ internal static class HostSeatExitTests
         HostQuitPatch.Bind(manager);
         try
         {
-            HostQuitPatch.BeforeQuit();
-            HostQuitPatch.BeforeQuit();
+            Assert(HostQuitPatch.BeforeQuit(null!), "without capture the original quit proceeds immediately");
+            Assert(HostQuitPatch.BeforeQuit(null!), "repeated quit without capture proceeds immediately");
         }
         finally { HostQuitPatch.Bind(null); }
         manager.EndHosting();

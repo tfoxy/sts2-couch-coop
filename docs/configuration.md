@@ -482,14 +482,28 @@ listener on loopback. Explicit direct capture endpoints remain available for QA.
 To enable that direct QA mode, set `COUCHCOOP_RENDER_STREAM_DIRECT=1` before launching the host; normal viewing
 does not require it.
 
-A host started with Godot `--headless` automatically loads its own capture in standby when the packaged
-`render-capture/` or the operator's `COUCHCOOP_RENDER_CAPTURE_EXTENSION` configuration resolves. Open the
-browser page, choose the host's view, and tick "Use new renderer (Beta)"; no extra opt-in flag is needed.
+Windowed and headless hosts offer the new renderer when the packaged `render-capture/` or the operator's
+`COUCHCOOP_RENDER_CAPTURE_EXTENSION` configuration resolves. Open the browser page, choose the host's view,
+and tick "Use new renderer (Beta)"; no extra opt-in flag is needed.
+
+A windowed host first loads its capture when you open the QR/join panel from the lobby or pause menu,
+or when any browser connects for a seat or the host's view. It starts in lean tracking mode, remembering
+resources for later streaming without per-frame capture work or background threads. Playing ordinary
+multiplayer without using couch never loads the capture or installs its native hooks. Content created
+before that first use, such as an animated main-menu background, may be missing from the stream until
+you leave that screen.
+
+Choosing the new renderer on a host-view page attaches the capture and starts streaming. After the last
+streaming viewer leaves or switches to the old renderer, a short grace period allows reconnection
+before capture stops and detaches back to lean tracking. The next request attaches it again. The picture
+letterboxes inside the player's window, which is never resized, and stopping the stream restores the
+player's display settings. Hosts started with Godot `--headless` and streaming seats load their capture
+in standby at startup and keep it attached.
+
 The host's capture listens only on `127.0.0.1:13346`, supports up to four capture connections, and keeps
 texture pixels available for the old renderer's `/res` routes. Its evidence directory is
 `couch-coop/render-stream/slot-0` under the host's game user directory. If capture configuration or loading
-fails, the host logs the reason and continues with the old renderer. Windowed hosts do not load their
-own capture, and their host-view pages keep using the old renderer.
+fails, or capture cannot attach again, the host logs the reason and continues with the old renderer.
 
 Players can switch renderers without restarting their game instance. When browsers using different renderers
 watch the same player, the game viewport stays at 1920×1080 so the old renderer receives compatible geometry.

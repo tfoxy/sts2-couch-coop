@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using System;
 using System.Collections.Generic;
@@ -18,9 +19,9 @@ namespace CouchCoop.Mod.Session;
 /// <c>is_in_group</c> when the first viewer asks. Groups are replaced on each tree entry so pooled nodes
 /// carry their current context when the capture refreshes their identity.</para>
 ///
-/// <para><b>Cost.</b> Runs only on the streaming seat (<see cref="StreamingSeatRole.IsStreamingSeat"/>): the
-/// host's headed instance and a normal headless seat have no capture reading groups, so nothing is installed. On
-/// the streaming seat it is one <c>SceneTree.NodeAdded</c> handler; the per-node work reads the managed type leaf,
+/// <para><b>Cost.</b> Runs only where a local capture reads groups. Windowed hosts install on attachment and
+/// remove on detachment; headless captures retain their startup observer. While installed it is one
+/// <c>SceneTree.NodeAdded</c> handler; the per-node work reads the managed type leaf,
 /// name and current group membership. Context is read only for the nodes that can use it: the parent's scene path and name
 /// only for the four creature HUD names, and the bounded ancestor walk only for NCard nodes. Only this tagger's
 /// groups are changed; groups owned by the game or other mods are preserved.</para>
@@ -93,8 +94,24 @@ internal static class RenderStreamItemTagger
         }
 
         _installed = true;
-        RenderStreamHoverTipOwner.Install();
         _ = Task.Run(InstallLoopAsync);
+    }
+
+    // On-demand attachment already runs on the main thread with a live tree; no startup retry is needed.
+    internal static void Attach()
+    {
+        if (_installed) return;
+        if (Engine.GetMainLoop() is not SceneTree { Root: { } root } tree || !GodotObject.IsInstanceValid(root))
+            throw new InvalidOperationException("No SceneTree for capture item tags.");
+        _installed = true;
+        AttachOnMainThread(tree, root);
+    }
+
+    internal static void Remove()
+    {
+        if (_tree is { } tree && GodotObject.IsInstanceValid(tree)) tree.NodeAdded -= OnNodeAdded;
+        _tree = null;
+        _installed = false;
     }
 
     private static async Task InstallLoopAsync()
@@ -105,7 +122,7 @@ internal static class RenderStreamItemTagger
             {
                 if (Engine.GetMainLoop() is SceneTree { Root: { } root } tree && GodotObject.IsInstanceValid(root))
                 {
-                    Callable.From(() => AttachOnMainThread(tree, root)).CallDeferred();
+                    GameDeferred.Post(() => AttachOnMainThread(tree, root));
                     return;
                 }
             }
@@ -123,7 +140,7 @@ internal static class RenderStreamItemTagger
 
     private static void AttachOnMainThread(SceneTree tree, Node root)
     {
-        if (_tree is not null)
+        if (!_installed || _tree is not null)
         {
             return;
         }

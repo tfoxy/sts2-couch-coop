@@ -1,16 +1,114 @@
 using CouchCoop.Mod.Diagnostics;
+using CouchCoop.Mod.Runtime;
 
 namespace CouchCoop.Mod.Session;
 
-/// <summary>A capture loaded for this process's own view, in standby until a browser requests it.</summary>
+/// <summary>Capture availability for this process's own view, with deferred loading on a windowed host.</summary>
 internal static class RenderStreamSelf
 {
+    private static DeferredCapture? _deferredCapture;
+    private static RenderStreamCaptureHelpers? _helpers;
+
+    // Availability is advertised before a windowed host loads the capture.
     public static bool Enabled { get; private set; }
 
     internal static void MarkLoaded() => Enabled = true;
 
-    internal enum HostCaptureOutcomeKind { Off, Loaded, Unavailable }
-    internal readonly record struct HostCaptureOutcome(HostCaptureOutcomeKind Kind, string? Message);
+    internal static bool HelpersInstalled => _helpers?.Installed == true;
+
+    internal static void StartHelpers(bool windowedHost)
+    {
+        if (!Enabled || _helpers is not null) return;
+        _helpers = new(windowedHost, () =>
+        {
+            if (!windowedHost) { RenderStreamItemTagger.Install(); return; }
+            RenderStreamItemTagger.Attach();
+            StreamCardRewardPlacementPatch.Attach();
+        }, () =>
+        {
+            StreamCardRewardPlacementPatch.Remove();
+            RenderStreamItemTagger.Remove();
+        }, RenderStreamHoverTipOwner.Install);
+        _helpers.Start();
+    }
+
+    internal static void SetCaptureAttached(bool attached) => _helpers?.SetAttached(attached);
+
+    internal enum HostCaptureOutcomeKind { Off, Prepared, Loaded, Unavailable }
+    internal readonly record struct HostCaptureOutcome(HostCaptureOutcomeKind Kind, string? Message,
+        DeferredCapture? Deferred = null);
+
+    internal sealed class DeferredCapture(string extension, Func<string, RenderCaptureExtensionLoader.LoadResult> load)
+    {
+        private readonly object _gate = new();
+        private bool _loaded;
+        private bool _pending;
+        private bool _stopped;
+
+        internal void CouchUsed(Action<Action> defer)
+        {
+            lock (_gate)
+            {
+                if (_loaded || _pending || _stopped) return;
+                _pending = true;
+            }
+            try
+            {
+                defer(() =>
+                {
+                    lock (_gate)
+                    {
+                        _pending = false;
+                        if (_stopped) return;
+                        try
+                        {
+                            if (EnsureLoaded() is { } failure)
+                                CouchCoopLog.Info($"host render-capture {failure}; keeping the old renderer");
+                        }
+                        catch (Exception exception) { Report(exception); }
+                    }
+                });
+            }
+            catch (Exception exception)
+            {
+                lock (_gate) _pending = false;
+                Report(exception);
+            }
+        }
+
+        internal void Stop() { lock (_gate) _stopped = true; }
+
+        private static void Report(Exception exception)
+            => CouchCoopLog.Info($"host render-capture first use failed: {exception.GetType().Name}: {exception.Message}");
+
+        internal string? EnsureLoaded()
+        {
+            lock (_gate)
+            {
+                if (_stopped) return "capture-stopped";
+                if (_loaded) return null;
+                var result = load(extension);
+                CouchCoopLog.Info($"host render-capture load status={result.Status}");
+                _loaded = result.Loaded;
+                return result.Loaded ? null : $"load-failed:{result.Status}";
+            }
+        }
+    }
+
+    internal static void CouchUsed() => _deferredCapture?.CouchUsed(GameNextFrame.Schedule);
+
+    internal static void StopDeferredCapture() => _deferredCapture?.Stop();
+
+    internal static string? EnsureLoaded() => _deferredCapture?.EnsureLoaded();
+
+    internal static bool IsAttached
+    {
+        get
+        {
+            var capture = new GodotRenderStreamCapture();
+            return capture.HasSingleton && capture.AttachmentState != "detached";
+        }
+    }
 
     // A host failure leaves the old renderer available; only a streaming seat refuses to start.
     internal static HostCaptureOutcome StartHostCapture(
@@ -19,7 +117,7 @@ internal static class RenderStreamSelf
         Action<StreamingSeatLaunch.Config> prepare,
         Func<string, RenderCaptureExtensionLoader.LoadResult> load)
     {
-        if (isHeadlessClient || !isHeadlessDisplay) return new(HostCaptureOutcomeKind.Off, null);
+        if (isHeadlessClient) return new(HostCaptureOutcomeKind.Off, null);
         try
         {
             var resolved = resolve();
@@ -28,6 +126,9 @@ internal static class RenderStreamSelf
                     ? new(HostCaptureOutcomeKind.Unavailable, $"host render-capture unavailable: {refusal}")
                     : new(HostCaptureOutcomeKind.Off, null);
             prepare(config);
+            if (!isHeadlessDisplay)
+                return new(HostCaptureOutcomeKind.Prepared, "host render-capture available at first couch use",
+                    new DeferredCapture(config.Extension, load));
             var result = load(config.Extension);
             return new(result.Loaded ? HostCaptureOutcomeKind.Loaded : HostCaptureOutcomeKind.Unavailable,
                 $"host render-capture load status={result.Status}; "
@@ -47,7 +148,8 @@ internal static class RenderStreamSelf
             StreamingSeatRole.StartCaptureOrExit();
             return;
         }
-        var outcome = StartHostCapture(false, isHeadlessDisplay, StreamingSeatLaunch.ResolveConfigFromEnvironment,
+        var outcome = StartHostCapture(false, isHeadlessDisplay,
+            StreamingSeatLaunch.ResolveConfigFromEnvironment,
             config =>
             {
                 var hostUserDir = HeadlessUserDirSeeder.ResolveHostUserDir()
@@ -56,9 +158,11 @@ internal static class RenderStreamSelf
                 Directory.CreateDirectory(evidence);
                 ApplyHostEnvironment(StreamingSeatLaunch.HostEnvironment(config, evidence,
                     StreamingSeatLaunch.AllowedOrigins(HeadlessClientManager.HostPort,
-                        Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable))));
+                        Environment.GetEnvironmentVariable(StreamingSeatLaunch.ExtraOriginsEnvironmentVariable)),
+                    windowedHost: !isHeadlessDisplay));
             }, RenderCaptureExtensionLoader.Load);
-        if (outcome.Kind == HostCaptureOutcomeKind.Loaded) MarkLoaded();
+        _deferredCapture = outcome.Deferred;
+        if (outcome.Kind is HostCaptureOutcomeKind.Loaded or HostCaptureOutcomeKind.Prepared) Enabled = true;
         if (outcome.Message is { } message) CouchCoopLog.Info(message);
     }
 

@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using System;
 using System.Collections.Generic;
@@ -79,7 +80,7 @@ namespace CouchCoop.Mod.Session;
 /// Implementation mirrors <see cref="CouchCoopHeadlessCpuProfiler"/>: the mod has no Godot source generator, so
 /// a custom <c>Node._Process</c> never fires — the tick is driven off a built-in <see cref="Godot.Timer"/>'s
 /// <c>Timeout</c> signal, and the timer create + tree walk marshal onto the game main thread via
-/// <c>Callable.From(...).CallDeferred()</c>. It runs for any WINDOWLESS instance (a spawned headless client OR a
+/// <c>GameDeferred.Post(...)</c>. It runs for any WINDOWLESS instance (a spawned headless client OR a
 /// <c>--headless</c> dev/server host — both serve the browser mirror, with no display of their own). Installed from
 /// <see cref="CouchCoopMod"/>.Init's windowless branch.
 ///
@@ -388,7 +389,7 @@ public static class CouchCoopHeadlessVisualSuspender
         if (!_started) return;
 
         if (OS.GetThreadCallerId() == OS.GetMainThreadId()) ReconcileEnabledStateOnMainThread();
-        else Callable.From(ReconcileEnabledStateOnMainThread).CallDeferred();
+        else GameDeferred.Post(ReconcileEnabledStateOnMainThread);
     }
 
     internal readonly record struct EnableActions(bool ReleaseAll, FreezeStates FreezeNow);
@@ -466,7 +467,7 @@ public static class CouchCoopHeadlessVisualSuspender
             {
                 if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
                 {
-                    Callable.From(() => AttachOnMainThread(root)).CallDeferred();
+                    GameDeferred.Post(() => AttachOnMainThread(root));
                     return;
                 }
             }
@@ -515,7 +516,7 @@ public static class CouchCoopHeadlessVisualSuspender
     {
         if (_started && _enabled && _rescanOnly)
         {
-            Callable.From(ReconcileTimerDemandOnMainThread).CallDeferred();
+            GameDeferred.Post(ReconcileTimerDemandOnMainThread);
         }
     }
 
@@ -1102,7 +1103,7 @@ public static class CouchCoopHeadlessVisualSuspender
         }
 
         // Engine.MaxFps must be set on the main thread; CallDeferred marshals there regardless of caller thread.
-        Callable.From(RestoreFps).CallDeferred();
+        GameDeferred.Post(RestoreFps);
     }
 
     internal static bool ShouldTrackAssetLoading(bool enabled, bool started, bool rescanOnly, bool completed)
@@ -1317,7 +1318,7 @@ public static class CouchCoopHeadlessVisualSuspender
     // ---- Runtime control (browser Settings panel via the WS `settings` message) ---------------------------------
     // These flip the always-on freezes / frame-rate at runtime so a viewer can A/B the optimizations from the
     // mirror. Safe from any thread: every Godot touch (ProcessMode / SetProcess / Engine.MaxFps / tree walk) is
-    // marshalled onto the game main thread via Callable.From(...).CallDeferred(), exactly like
+    // marshalled onto the game main thread via GameDeferred.Post(...), exactly like
     // Install/NotifyMainThreadActivity. Turning a freeze OFF restores the saved node state and clears the
     // bookkeeping; turning it ON re-freezes immediately (not just on the next scan) so the effect is instant.
     //
@@ -1341,7 +1342,7 @@ public static class CouchCoopHeadlessVisualSuspender
         // rather than only in Install because an on-demand install starts with the flag OFF. Idempotent +
         // best-effort.
         if (on) Patches.HeadlessParticleRestartNudgePatch.Apply();
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             if (_enabled && _freezeParticles)
             {
@@ -1352,7 +1353,7 @@ public static class CouchCoopHeadlessVisualSuspender
                 Unfreeze(_particleFrozenIds);
                 ClearPendingFinishNudges();
             }
-        }).CallDeferred();
+        });
     }
 
     // Drop every queued `finished` emit (used when the particle freeze is turned off at runtime — the nodes own
@@ -1384,14 +1385,14 @@ public static class CouchCoopHeadlessVisualSuspender
         // branch already caps at startup. Apply the cap alongside the
         // freeze that creates the hazard (idempotent; an explicit positive cap override is honoured).
         if (on) Patches.HeadlessDeathDelayCapPatch.Apply();
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             if (_enabled && _freezeSpine)
             {
                 if (RootOrNull() is { } root) FreezeAllSpine(root);
             }
             else Unfreeze(_spineFrozenIds);
-        }).CallDeferred();
+        });
     }
 
     /// <summary>
@@ -1403,7 +1404,7 @@ public static class CouchCoopHeadlessVisualSuspender
         if ((_started && _freezeDecor) == on) return;
         if (on && !EnsureFreezeMachinery()) return;
         _freezeDecor = on;
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             if (_enabled && _freezeDecor)
             {
@@ -1414,7 +1415,7 @@ public static class CouchCoopHeadlessVisualSuspender
                 Unfreeze(_decorativeFrozenIds);
                 UnfreezeProcess(_decorativeProcessFrozenIds);
             }
-        }).CallDeferred();
+        });
     }
 
     /// <summary>
@@ -1425,7 +1426,7 @@ public static class CouchCoopHeadlessVisualSuspender
     public static void SetBaselineMaxFps(int fps)
     {
         if (fps <= 0) return;
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             // Mark captured so the first Tick doesn't overwrite our chosen baseline with the engine default.
             _baselineCaptured = true;
@@ -1436,7 +1437,7 @@ public static class CouchCoopHeadlessVisualSuspender
             {
                 Engine.MaxFps = fps;
             }
-        }).CallDeferred();
+        });
     }
 
     /// <summary>
@@ -1447,7 +1448,7 @@ public static class CouchCoopHeadlessVisualSuspender
     /// IsHeadlessClient) so no baseline was captured — reads the live <see cref="Engine.MaxFps"/> (the game's real
     /// FpsLimit) on the game main thread. 0 means unlimited/vsync; callers map that as they see fit.
     ///
-    /// Main-thread-safe: the live read is marshalled via the same <c>Callable.From(...).CallDeferred()</c> idiom
+    /// Main-thread-safe: the live read is marshalled via the same <c>GameDeferred.Post(...)</c> idiom
     /// used across this file, with a TaskCompletionSource fallback (mirrors
     /// <c>CouchCoopWebSocketConnection.AnswerMainThreadPingAsync</c>). Off-engine — every C# test runner here — the
     /// deferred read is skipped entirely on the <c>CouchCoopMod.EngineAvailable</c> latch and this resolves to the
@@ -1465,7 +1466,7 @@ public static class CouchCoopHeadlessVisualSuspender
 
         // THE LATCH, NOT THE TRY/CATCH, IS WHAT MAKES THE NEXT LINE SAFE — the same correction already written out
         // at CouchCoopCacheRoot's ResolveGameDataDir, for the same reason, because the comment this replaced made
-        // exactly the promise that one warns against. `Callable.From(...).CallDeferred()` is a GodotSharp native
+        // exactly the promise that one warns against. `GameDeferred.Post(...)` is a GodotSharp native
         // call. The catch below only covers a process where GodotSharp fails to LOAD; in one that has the DLL on
         // its probing path but no engine behind it — which every C# test runner here is, because they copy
         // GodotSharp.dll — the managed call BINDS, JITS AND THEN SEGFAULTS, uncatchably. Measured: a bare
@@ -1475,7 +1476,7 @@ public static class CouchCoopHeadlessVisualSuspender
         // The old comment's claim — "in a unit test the deferred call can't run, so it resolves immediately …
         // nothing breaks" — described the THROW path, which is not the path a test takes. Nothing broke only for
         // as long as every suite that reached here happened to have latched `_baselineCaptured` above first.
-        if (!CouchCoopMod.EngineAvailable)
+        if (!CouchCoopMod.EngineAvailable || CouchCoopMod.HostExiting)
         {
             return _baselineMaxFps; // no engine → the uncaptured baseline (0), and the caller emits null
         }
@@ -1484,7 +1485,7 @@ public static class CouchCoopHeadlessVisualSuspender
         var tcs = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
-            Callable.From(() => tcs.TrySetResult(Engine.MaxFps)).CallDeferred();
+            GameDeferred.Post(() => tcs.TrySetResult(Engine.MaxFps));
         }
         catch
         {

@@ -8,7 +8,10 @@ internal interface IRenderStreamCapture
 {
     bool HasSingleton { get; }
     string State();
+    string AttachmentState { get; }
     int Clients { get; }
+    int Attach();
+    int Detach();
     int Arm(IReadOnlyDictionary<string, string> options);
     int Disarm(string reason, int lingerMs);
     IDisposable Subscribe(RenderStreamCaptureSignals signals);
@@ -46,6 +49,12 @@ internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderSt
     public bool HasSingleton => CouchCoopMod.EngineAvailable && Engine.HasSingleton(SingletonName);
 
     public string State() => Singleton().Call("state").AsGodotDictionary()["state"].AsString();
+
+    public string AttachmentState => Singleton().Call("state").AsGodotDictionary()["attachment_state"].AsString();
+
+    public int Attach() => Singleton().Call("attach", new Godot.Collections.Dictionary()).AsInt32();
+
+    public int Detach() => Singleton().Call("detach", new Godot.Collections.Dictionary()).AsInt32();
 
     public int Clients => Singleton().Call("state").AsGodotDictionary()["clients"].AsInt32();
 

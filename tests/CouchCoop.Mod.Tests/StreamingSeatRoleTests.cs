@@ -165,7 +165,10 @@ internal static class StreamingSeatRoleTests
 
         AssertGated(init, "HeadlessTextureImageEvictor.Install();", "StreamingSeatRole.InstallsTextureEvictor(");
         AssertGated(init, "CouchCoopHeadlessVisualSuspender.Install();", "StreamingSeatRole.InstallsVisualSuspender(");
-        AssertGated(init, "Session.RenderStreamItemTagger.Install();", "if (RenderStreamSelf.Enabled)");
+        Assert(init.Contains("RenderStreamSelf.StartHelpers(HeadlessViewportConfigurator.WindowedHostPresentation);",
+                StringComparison.Ordinal), "mod init delegates observer lifetime to the capture role");
+        Assert(!init.Contains("RenderStreamItemTagger.Install();", StringComparison.Ordinal),
+            "mod init does not install windowed capture observers directly");
         AssertGated(init, "StreamDesignPlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");
         AssertGated(init, "StreamMapDrawingToolsPatch.Apply();", "if (RenderStreamSelf.Enabled)");
         AssertGated(init, "StreamHandPlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");

@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using MegaCrit.Sts2.Core.Bindings.MegaSpine;
 using Spirectl.Sts2.Live;
@@ -51,8 +52,8 @@ internal static class CouchCoopStreamSpineStills
             if (!CouchCoopHeadlessVisualSuspender.StreamFreezeSpines) return;
             // Arming arrives inside a capture signal. Defer the initial tree read by one frame too.
             if (Engine.GetMainLoop() is SceneTree tree)
-                tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ReconcileOnMainThread),
-                    (uint)GodotObject.ConnectFlags.OneShot);
+                GameDeferred.Register(() => tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(ReconcileOnMainThread),
+                    (uint)GodotObject.ConnectFlags.OneShot));
         }
         else Reconcile();
     }
@@ -61,7 +62,7 @@ internal static class CouchCoopStreamSpineStills
     {
         if (!_armed && !_active) return;
         if (OS.GetThreadCallerId() == OS.GetMainThreadId()) ReconcileOnMainThread();
-        else Callable.From(ReconcileOnMainThread).CallDeferred();
+        else GameDeferred.Post(ReconcileOnMainThread);
     }
 
     private static void ReconcileOnMainThread()
@@ -102,7 +103,7 @@ internal static class CouchCoopStreamSpineStills
         var generation = _generation;
         // Defer every node read out of the signal by one frame. New skeletons are caught by tree notifications,
         // without extending the mirror suspender's existing periodic scans to capture mode.
-        _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
+        GameDeferred.Register(() => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
         {
             if (!_active || generation != _generation || !GodotObject.IsInstanceValid(node) || !node.IsInsideTree()) return;
             for (Node? ancestor = node; ancestor is not null; ancestor = ancestor.GetParent())
@@ -110,7 +111,7 @@ internal static class CouchCoopStreamSpineStills
                 if (CouchCoopHeadlessVisualSuspender.IsSpineFreezeExempt(ancestor.GetType().Name, ancestor.Name.ToString())) return;
             }
             QueueSpines(node);
-        }), (uint)GodotObject.ConnectFlags.OneShot);
+        }), (uint)GodotObject.ConnectFlags.OneShot));
     }
 
     private static void OnScheduleRecorded(Sts2SpineAnimationSchedules.Schedule schedule)
@@ -143,13 +144,13 @@ internal static class CouchCoopStreamSpineStills
     {
         if (!_active || !Pending.Add(id)) return;
         var generation = _generation;
-        _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
+        GameDeferred.Register(() => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
         {
             if (!_active || generation != _generation) return;
             Pending.Remove(id);
             FinishPose(id);
             Pose(id);
-        }), (uint)GodotObject.ConnectFlags.OneShot);
+        }), (uint)GodotObject.ConnectFlags.OneShot));
     }
 
     private static void Pose(ulong id)
@@ -240,7 +241,7 @@ internal static class CouchCoopStreamSpineStills
                 // Remove crossfade weights so this animation supplies the sampled pose.
                 current.SetMixDuration(0);
                 current.SetTrackTime(sample);
-            }, () => { state.Update(0); state.Apply(skeleton); }, finish => _tree!.Connect(
+            }, () => { state.Update(0); state.Apply(skeleton); }, finish => GameDeferred.Register(() => _tree!.Connect(
                 SceneTree.SignalName.ProcessFrame, Callable.From(() =>
             {
                 if (Frames.GetValueOrDefault(id) == frame) Frames.Remove(id);
@@ -249,7 +250,7 @@ internal static class CouchCoopStreamSpineStills
                 {
                     CouchCoopLog.Info($"[stream-spine] restore failed for {id}: {exception.GetType().Name}: {exception.Message}");
                 }
-            }), (uint)GodotObject.ConnectFlags.OneShot));
+            }), (uint)GodotObject.ConnectFlags.OneShot)));
             if (Sts2SpineAnimationSchedules.ReadRecorded(id) is { } latest)
                 Deadlines.Refresh(latest, Time.GetTicksMsec(), paused);
         };
@@ -281,20 +282,10 @@ internal static class CouchCoopStreamSpineStills
     {
         // This is a deadline derived from the SetNextState hook's schedule, not a poll. The maintainer approved
         // this specific one-shot exception; the timeout queues a pose and all game reads wait until next frame.
-        var timer = _tree!.CreateTimer(delaySeconds, ignoreTimeScale: true);
-        var callable = Callable.From(callback);
-        timer.Connect(SceneTreeTimer.SignalName.Timeout, callable, (uint)GodotObject.ConnectFlags.OneShot);
-        return new DeadlineCancellation(timer, callable);
+        return GameDeferred.Delay(_tree!, delaySeconds, callback);
     }
 
-    private sealed class DeadlineCancellation(SceneTreeTimer timer, Callable callback) : IDisposable
-    {
-        public void Dispose()
-        {
-            if (GodotObject.IsInstanceValid(timer) && timer.IsConnected(SceneTreeTimer.SignalName.Timeout, callback))
-                timer.Disconnect(SceneTreeTimer.SignalName.Timeout, callback);
-        }
-    }
+
 }
 
 /// <summary>At most one cancellable end-of-clip deadline per recorded, running one-shot.</summary>

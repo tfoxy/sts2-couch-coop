@@ -1,4 +1,6 @@
 using CouchCoop.Mod.Session;
+using CouchCoop.Mod.HostUi;
+using CouchCoop.Mod.Server;
 
 internal static class RenderStreamSwapTests
 {
@@ -29,6 +31,26 @@ internal static class RenderStreamSwapTests
             ArmUsesTheRequestingAspectAndConfiguredCap,
             WideArmOwnsPresentationUntilDisarmed,
             MirrorAndStandardArmKeepTheirPresentation,
+            WindowedHostQrOpeningLoadsDetachedOnce,
+            WindowedHostBrowserConnectionLoadsDetachedOnce,
+            WindowedHostRequestBeforeDeferredLoadAttachesOnce,
+            WindowedHostQuitBeforeUseOrWhileLeanDoesNotLoad,
+            WindowedHostLoadsThenAttachesOnLaterRequests,
+            WindowedHostHelpersFollowAttachment,
+            WindowedHostHelperFailureKeepsMirror,
+            WindowedHostIdleDisarmsThenDetaches,
+            WindowedHostReturningPageSkipsDetach,
+            WindowedHostAttachFailureKeepsMirror,
+            WindowedHostLoadFailureCanRetry,
+            WindowedHostDetachFailureStaysAttached,
+            HeadlessCaptureNeverAttachesOrDetaches,
+            WindowedHostQuitCannotAttachAgain,
+            WindowedHostQuitDuringDisarmCannotRearmOrDetach,
+            WindowedHostObservesAndRestoresPresentation,
+            WindowedHostAspectRearmKeepsPlayerSettings,
+            WindowedHostArmFailureRestoresPresentation,
+            WindowedHostMissingAutoHooksKeepsMirror,
+            WindowedHostDisposalRestoresPresentation,
             WideArmFailuresRestoreBeforeResumingMirror,
             DeferredDisarmedRestoresBeforeRearm,
             RestoreCompletionFollowsDeferredRestoration,
@@ -84,6 +106,363 @@ internal static class RenderStreamSwapTests
         f.Arm();
         f.Swap.Dispose();
         Assert(!f.StreamSpinesArmed, "disposal releases the stream freeze");
+    }
+
+    private static void WindowedHostQrOpeningLoadsDetachedOnce()
+    {
+        var frames = new Queue<Action>();
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        void Used() => f.Deferred!.CouchUsed(frames.Enqueue);
+        CouchCoopQrDialog.NoteVisibilityChanged(false, Used);
+        Assert(frames.Count == 0 && f.LoadCalls == 0, "mounting a closed join dialog does no capture work");
+        CouchCoopQrDialog.NoteVisibilityChanged(true, Used);
+        CouchCoopQrDialog.NoteVisibilityChanged(false, Used);
+        CouchCoopQrDialog.NoteVisibilityChanged(true, Used);
+        Assert(frames.Count == 1 && f.LoadCalls == 0, "QR openings coalesce and defer loading out of the signal");
+        frames.Dequeue()();
+        Assert(f.LoadCalls == 1 && f.Capture.CurrentAttachmentState == "detached"
+            && f.Capture.AttachCalls == 0 && f.Capture.ArmCalls == 0 && !f.Helpers.Installed,
+            "opening either join dialog starts only lean detached capture");
+        CouchCoopQrDialog.NoteVisibilityChanged(true, Used);
+        Assert(frames.Count == 0, "reopening QR after loading schedules no work");
+        f.Arm();
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 1 && f.Capture.ArmCalls == 1,
+            "host-view request after QR first use attaches and arms without another load");
+    }
+
+    private static void WindowedHostBrowserConnectionLoadsDetachedOnce()
+    {
+        var frames = new Queue<Action>();
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        var runtime = new BrowserServerRouteTests.RecordingSpirectlRuntime().NewEnvelopeFactory().RuntimeHost;
+        var host = new HotReloadableBrowserServerHost(runtime, ".")
+        {
+            CaptureFirstUse = () => f.Deferred!.CouchUsed(frames.Enqueue),
+        };
+        var report = host.CreateBrowserDemandReporter();
+        report(0, 1);
+        Assert(frames.Count == 0 && f.LoadCalls == 0, "server startup and zero browser demand never load capture");
+        report(1, 2);
+        report(2, 3);
+        Assert(frames.Count == 1 && f.LoadCalls == 0, "browser admissions defer and coalesce first use");
+        frames.Dequeue()();
+        report(0, 4);
+        report(1, 5);
+        host.CreateBrowserDemandReporter()(1, 1);
+        Assert(f.LoadCalls == 1 && frames.Count == 0 && f.Capture.CurrentAttachmentState == "detached"
+            && f.Capture.AttachCalls == 0 && f.Capture.ArmCalls == 0,
+            "seat or host-view connections load lean once across reconnects and server generations");
+        f.Arm();
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 1 && f.Capture.ArmCalls == 1,
+            "host view attaches and arms the browser-triggered lean capture");
+        host.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    private static void WindowedHostRequestBeforeDeferredLoadAttachesOnce()
+    {
+        var frames = new Queue<Action>();
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        f.Deferred!.CouchUsed(frames.Enqueue);
+        f.Arm();
+        frames.Dequeue()();
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 1 && f.Capture.ArmCalls == 1,
+            "request racing first use loads detached and attaches in the request turn; deferred callback is inert");
+    }
+
+    private static void WindowedHostQuitBeforeUseOrWhileLeanDoesNotLoad()
+    {
+        foreach (var state in new[] { "unused", "pending", "lean", "detached" })
+        {
+            var frames = new Queue<Action>();
+            using var f = new Fixture(windowedHost: true, deferredLoad: true);
+            if (state != "unused") f.Deferred!.CouchUsed(frames.Enqueue);
+            if (state is "lean" or "detached") frames.Dequeue()();
+            if (state == "detached")
+            {
+                f.Arm();
+                f.Advance(RenderStreamSwap.GracePeriod);
+                f.Capture.EmitDisarmed();
+            }
+            var loads = f.LoadCalls;
+            var sequence = new HostCaptureQuitSequence(
+                () => throw new Exception("unattached quit must not disarm"),
+                _ => throw new Exception("unattached quit must not dispatch"),
+                stopRenderer: () => { f.Deferred!.Stop(); f.Swap.Dispose(); });
+            Assert(sequence.BeforeQuit(true, () => { }, captureAttached: false), $"{state} quit proceeds immediately");
+            while (frames.TryDequeue(out var callback)) callback();
+            f.Deferred!.CouchUsed(frames.Enqueue);
+            f.Swap.Request("late", true);
+            Assert(f.LoadCalls == loads && frames.Count == 0 && f.Deferred.EnsureLoaded() == "capture-stopped",
+                $"{state} quit cancels pending first use and fences later loads");
+        }
+    }
+
+    private static void WindowedHostLoadsThenAttachesOnLaterRequests()
+    {
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        Assert(f.LoadCalls == 0 && f.Capture.Discoveries == 0 && f.Capture.Subscriptions == 0,
+            "initial mirror demand never loads or queries capture");
+        f.Arm();
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 1 && f.Capture.ArmCalls == 1,
+            "first request without prior couch use loads detached, attaches and arms");
+        Assert(f.Events.IndexOf("load") < f.Events.IndexOf("attach")
+            && f.Events.IndexOf("attach") < f.Events.IndexOf("subscribe")
+            && f.Events.IndexOf("subscribe") < f.Events.IndexOf("arm"), "load precedes subscription and arm");
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.AttachmentState == "detached", "mirror switch detaches after disarm");
+        f.Events.Clear();
+        f.Swap.Request("page", true);
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 2 && f.Capture.ArmCalls == 2,
+            "later request attaches without loading again");
+        Assert(f.Events.IndexOf("attach") < f.Events.IndexOf("arm"), "attach precedes the next arm");
+    }
+
+    private static void WindowedHostHelpersFollowAttachment()
+    {
+        var callbacks = new Queue<Action>();
+        using var f = new Fixture(windowedHost: true, deferredLoad: true, deferSignal: callbacks.Enqueue);
+        Assert(!f.Helpers.Installed && f.HelperInstalls == 0, "unused windowed host has no capture observers");
+        f.Arm();
+        Assert(f.Helpers.Installed && f.HelperInstalls == 1
+            && f.Events.IndexOf("load") < f.Events.IndexOf("helpers:install")
+            && f.Events.IndexOf("helpers:install") < f.Events.IndexOf("arm"),
+            "load and current-node adoption finish before arm");
+        f.Advance(RenderStreamSwap.GracePeriod);
+        Assert(f.Helpers.Installed && f.HelperRemoves == 0, "observers remain installed during disarm");
+        f.Capture.EmitDisarmed();
+        f.Swap.Request("returning", true);
+        callbacks.Dequeue()();
+        Assert(f.Helpers.Installed && f.HelperInstalls == 1 && f.HelperRemoves == 0,
+            "a returning page reuses observers without a detach cycle");
+        f.Capture.EmitArmed(Snapshot("returning"));
+        f.Swap.Request("page", false);
+        f.Swap.Request("returning", false);
+        f.Capture.EmitDisarmed();
+        callbacks.Dequeue()();
+        Assert(!f.Helpers.Installed && f.HelperRemoves == 1
+            && f.Events.IndexOf("detach") < f.Events.IndexOf("helpers:remove"),
+            "fully disarmed capture detaches before observers are removed");
+        f.Events.Clear();
+        f.Swap.Request("page", true);
+        Assert(f.Helpers.Installed && f.HelperInstalls == 2
+            && f.Events.IndexOf("attach") < f.Events.IndexOf("helpers:install")
+            && f.Events.IndexOf("helpers:install") < f.Events.IndexOf("arm"),
+            "reattach reinstalls observers before arming");
+    }
+
+    private static void WindowedHostHelperFailureKeepsMirror()
+    {
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        f.HelpersSucceed = false;
+        f.Swap.Request("page", true);
+        Assert(f.Swap.State == "failed" && f.Capture.ArmCalls == 0 && !f.Helpers.Installed
+            && f.HelperRemoves == 1 && f.Capture.DetachCalls == 1,
+            "failed observer installation rolls back, detaches and keeps the mirror");
+        f.HelpersSucceed = true;
+        f.Swap.Request("page", true);
+        Assert(f.Helpers.Installed && f.Capture.ArmCalls == 1, "explicit retry installs observers and arms");
+    }
+
+    private static void WindowedHostIdleDisarmsThenDetaches()
+    {
+        foreach (var release in new[] { false, true })
+        {
+            using var f = new Fixture(windowedHost: true, deferredLoad: true);
+            f.Arm();
+            if (release) f.Swap.Release("page");
+            f.Advance(RenderStreamSwap.GracePeriod);
+            Assert(f.Capture.DisarmCalls == 1 && f.Capture.DetachCalls == 0,
+                "grace disarms before attempting detach, even with retained page preferences");
+            f.Capture.EmitDisarmed();
+            Assert(f.Capture.DetachCalls == 1 && f.Capture.AttachmentState == "detached"
+                && f.Swap.State == "mirror", "disarmed detaches the idle host");
+        }
+    }
+
+    private static void WindowedHostReturningPageSkipsDetach()
+    {
+        var callbacks = new Queue<Action>();
+        using var f = new Fixture(windowedHost: true, deferredLoad: true, deferSignal: callbacks.Enqueue);
+        f.Arm();
+        f.Advance(RenderStreamSwap.GracePeriod);
+        f.Capture.EmitDisarmed();
+        f.Swap.Request("page", true);
+        Assert(f.Capture.ArmCalls == 1 && f.Capture.DetachCalls == 0, "return waits for deferred disarm completion");
+        callbacks.Dequeue()();
+        Assert(f.Capture.ArmCalls == 2 && f.Capture.DetachCalls == 0 && f.Capture.AttachCalls == 1,
+            "return during disarming re-arms the still attached capture");
+    }
+
+    private static void WindowedHostAttachFailureKeepsMirror()
+    {
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        f.Arm();
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        f.Capture.AttachResult = 71;
+        f.Swap.Request("page", true);
+        Assert(f.Swap.State == "failed" && f.Swap.Reason == "attach-refused:71"
+            && f.Swap.Snapshot is null && f.Swap.MirrorRestoreComplete,
+            "attach refusal publishes the existing mirror fallback");
+        Assert(f.Capture.ArmCalls == 1 && f.Capture.DetachCalls == 1
+            && f.Logs.Any(log => log.Contains("attach-refused:71")), "failed attach is logged and never arms");
+        Assert(!f.Helpers.Installed && f.HelperInstalls == 1, "failed attach leaves observers removed");
+        f.Capture.AttachResult = 0;
+        f.Swap.Request("page", true);
+        Assert(f.Capture.AttachCalls == 3 && f.Capture.ArmCalls == 2, "explicit request retries failed attach");
+    }
+
+    private static void WindowedHostLoadFailureCanRetry()
+    {
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        f.LoadSucceeds = false;
+        f.Swap.Request("page", true);
+        Assert(f.Swap.State == "failed" && f.Swap.Reason == "load-failed:Failed"
+            && f.Swap.MirrorRestoreComplete && f.Capture.ArmCalls == 0 && f.Capture.AttachCalls == 0,
+            "failed load leaves mirror available without attaching or arming");
+        f.LoadSucceeds = true;
+        f.Swap.Request("page", true);
+        Assert(f.LoadCalls == 2 && f.Capture.ArmCalls == 1, "explicit request retries a failed load");
+    }
+
+    private static void WindowedHostDetachFailureStaysAttached()
+    {
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        f.Arm();
+        f.Capture.DetachResult = 72;
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        Assert(f.Swap.State == "mirror" && f.Capture.CurrentState == "standby"
+            && f.Capture.AttachmentState == "attached" && f.Logs.Any(log => log.Contains("detach-refused:72")),
+            "detach refusal logs its code and keeps attached standby usable");
+        Assert(f.Helpers.Installed && f.HelperRemoves == 0, "detach failure keeps attached observers");
+        f.Swap.Request("page", true);
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 1 && f.Capture.ArmCalls == 2,
+            "attached standby arms directly after a failed detach");
+    }
+
+    private static void HeadlessCaptureNeverAttachesOrDetaches()
+    {
+        using var f = new Fixture();
+        f.Arm();
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        f.Arm();
+        f.Advance(RenderStreamSwap.GracePeriod);
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.AttachCalls == 0 && f.Capture.DetachCalls == 0
+            && f.Capture.AttachmentReads == 0, "headless host and seat paths keep their init-time attachment");
+        Assert(f.Helpers.Installed && f.HelperInstalls == 1 && f.HelperRemoves == 0,
+            "headless host and seat observers keep their startup lifetime");
+    }
+
+    private static void WindowedHostQuitCannotAttachAgain()
+    {
+        using var f = new Fixture(windowedHost: true, deferredLoad: true);
+        f.Arm();
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        f.Swap.Dispose();
+        f.Swap.Request("late", true);
+        Assert(f.LoadCalls == 1 && f.Capture.AttachCalls == 1 && f.Capture.ArmCalls == 1,
+            "quit fence rejects requests while detached");
+    }
+
+    private static void WindowedHostQuitDuringDisarmCannotRearmOrDetach()
+    {
+        var callbacks = new Queue<Action>();
+        using var f = new Fixture(windowedHost: true, deferredLoad: true, deferSignal: callbacks.Enqueue);
+        f.Arm();
+        f.Swap.Request("page", false);
+        f.Swap.Request("page", true);
+        f.Capture.EmitDisarmed();
+        f.Swap.Dispose();
+        callbacks.Dequeue()();
+        Assert(f.Capture.ArmCalls == 1 && f.Capture.DetachCalls == 0 && f.Capture.AttachCalls == 1,
+            "quit fence rejects deferred teardown and rearm callbacks");
+    }
+
+    private static void WindowedHostObservesAndRestoresPresentation()
+    {
+        foreach (var aspect in new[] { 16.0 / 9, 21.0 / 9 })
+        {
+            var frames = new Queue<Action>();
+            using var f = new Fixture(windowedHost: true, deferPresentation: frames.Enqueue);
+            f.Swap.Request("page", true, aspect);
+            var width = aspect > 2 ? 2520 : 1920;
+            Assert(f.Capture.Options!["GRC_ROOT_SIZE"] == "observe", "windowed capture observes the root");
+            Assert(f.Window!.SizeWrites == 0 && f.Window.ContentScaleSize == new Godot.Vector2I(width, 1080)
+                && f.Window.ContentScaleAspect == Godot.Window.ContentScaleAspectEnum.Keep,
+                "arm sets the logical viewport without resizing the window");
+            Assert(!f.Swap.PresentationReady, "logical viewport readiness waits for the frame");
+            frames.Dequeue()();
+            Assert(f.Swap.PresentationReady && f.Swap.PresentationWidth == width,
+                "logical presentation settles independently of the physical window size");
+            f.Capture.EmitArmed(Snapshot("windowed"));
+            f.Swap.Request("page", false);
+            f.Capture.EmitDisarmed();
+            Assert(f.Window.ContentScaleSize == new Godot.Vector2I(1680, 1080)
+                && f.Window.ContentScaleAspect == Godot.Window.ContentScaleAspectEnum.Expand
+                && f.Window.ContentScaleMode == Godot.Window.ContentScaleModeEnum.CanvasItems
+                && !f.Presentation.StreamOwnsPresentation && f.Window.SizeWrites == 0,
+                "capture teardown restores the player's settings without window writes");
+            Assert(!f.Swap.MirrorRestoreComplete, "restoration readiness waits for a frame too");
+            frames.Dequeue()();
+            Assert(f.Swap.MirrorRestoreComplete && f.Swap.PresentationReady, "restored mirror settles");
+        }
+    }
+
+    private static void WindowedHostMissingAutoHooksKeepsMirror()
+    {
+        using var f = new Fixture(windowedHost: true, autoHandlersAvailable: false);
+        f.Swap.Request("page", true, 21.0 / 9);
+        Assert(f.Capture.ArmCalls == 0 && f.Window!.Writes == 0 && !f.Presentation.StreamOwnsPresentation,
+            "missing Auto hooks keep capture in standby and the player display unchanged");
+        Assert(f.Swap.State == "failed" && f.Swap.Reason == "presentation-unavailable"
+            && f.Swap.MirrorRestoreComplete && f.SuspenderEnabled,
+            "the host keeps the old renderer when safe windowed presentation is unavailable");
+    }
+
+    private static void WindowedHostDisposalRestoresPresentation()
+    {
+        using var f = new Fixture(windowedHost: true);
+        f.Swap.Request("page", true, 21.0 / 9);
+        f.Swap.Dispose();
+        Assert(!f.Presentation.StreamOwnsPresentation && f.Window!.ContentScaleSize == new Godot.Vector2I(1680, 1080)
+            && f.Window.ContentScaleAspect == Godot.Window.ContentScaleAspectEnum.Expand
+            && f.Window.SizeWrites == 0, "quit or renderer disposal releases the player's presentation snapshot");
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.ArmCalls == 1, "disposal restoration cannot rearm capture");
+    }
+
+    private static void WindowedHostArmFailureRestoresPresentation()
+    {
+        using var f = new Fixture(windowedHost: true);
+        f.Capture.ArmResult = 1;
+        f.Swap.Request("page", true, 21.0 / 9);
+        Assert(f.Swap.State == "failed" && f.Swap.MirrorRestoreComplete && !f.Presentation.StreamOwnsPresentation,
+            "failed windowed arm releases presentation");
+        Assert(f.Window!.ContentScaleSize == new Godot.Vector2I(1680, 1080)
+            && f.Window.ContentScaleAspect == Godot.Window.ContentScaleAspectEnum.Expand && f.Window.SizeWrites == 0,
+            "failed arm restores player settings without window writes");
+    }
+
+    private static void WindowedHostAspectRearmKeepsPlayerSettings()
+    {
+        using var f = new Fixture(windowedHost: true);
+        f.Swap.Request("page", true, 21.0 / 9);
+        f.Capture.EmitArmed(Snapshot("wide"));
+        f.Swap.Request("page", true, 2);
+        f.Capture.EmitDisarmed();
+        Assert(f.Capture.ArmCalls == 2 && f.Capture.Options!["GRC_ROOT_SIZE"] == "observe"
+            && f.Window!.ContentScaleSize == new Godot.Vector2I(2160, 1080),
+            "aspect rearm keeps observe mode and applies the new logical width");
+        f.Swap.Request("page", false);
+        f.Capture.EmitDisarmed();
+        Assert(f.Window!.ContentScaleSize == new Godot.Vector2I(1680, 1080)
+            && f.Window.ContentScaleAspect == Godot.Window.ContentScaleAspectEnum.Expand && f.Window.SizeWrites == 0,
+            "the second teardown restores the original player settings without resizing the window");
     }
 
     private static void FailedArmNeverArmsSpineFreeze()
@@ -823,11 +1202,19 @@ internal static class RenderStreamSwapTests
     private sealed class Fixture : IDisposable
     {
         internal readonly List<string> Events = [];
+        internal readonly List<string> Logs = [];
+        internal int LoadCalls;
+        internal readonly RenderStreamSelf.DeferredCapture? Deferred;
+        internal bool LoadSucceeds = true;
         internal readonly List<(string State, RenderStreamSnapshot? Snapshot)> Changes = [];
         internal readonly List<Deadline> Deadlines = [];
         internal readonly FakeCapture Capture;
         internal readonly RenderStreamSwap Swap;
+        internal readonly RenderStreamCaptureHelpers Helpers;
+        internal int HelperInstalls, HelperRemoves;
+        internal bool HelpersSucceed = true;
         internal readonly HeadlessViewportConfigurator.Presentation Presentation;
+        internal readonly HeadlessViewportTests.RecordingWindow? Window;
         internal readonly List<(bool Expand, int Width)> PresentationChanges = [];
         internal (bool Expand, int Width)? PresentationWhenResumed;
         internal bool SuspenderEnabled = true;
@@ -835,14 +1222,40 @@ internal static class RenderStreamSwapTests
         internal int TrimCalls;
         private TimeSpan _now;
 
-        internal Fixture(int maxWidth = 2520, Action<Action>? deferSignal = null, Action<Action>? deferPresentation = null, Func<int, bool>? canApply = null)
+        internal Fixture(int maxWidth = 2520, Action<Action>? deferSignal = null, Action<Action>? deferPresentation = null,
+            Func<int, bool>? canApply = null, bool windowedHost = false, bool autoHandlersAvailable = true, bool deferredLoad = false)
         {
             Capture = new FakeCapture(Events);
+            Helpers = new(windowedHost, () =>
+            {
+                HelperInstalls++;
+                Events.Add("helpers:install");
+                if (!HelpersSucceed) throw new InvalidOperationException("helper install failed");
+            }, () => { HelperRemoves++; Events.Add("helpers:remove"); }, () => { });
+            Helpers.Start();
+            Events.Clear();
+            if (deferredLoad)
+            {
+                Capture.Available = false;
+                Capture.CurrentAttachmentState = "detached";
+                Deferred = new RenderStreamSelf.DeferredCapture("/capture/stream.gdextension", _ =>
+                {
+                    LoadCalls++;
+                    Events.Add("load");
+                    if (LoadSucceeds)
+                    {
+                        Capture.Available = true;
+                        Capture.CurrentAttachmentState = "detached";
+                    }
+                    return new(LoadSucceeds, LoadSucceeds ? "Ok" : "Failed");
+                });
+            }
+            if (windowedHost) Window = new();
             Presentation = new HeadlessViewportConfigurator.Presentation((expand, width) =>
             {
                 PresentationChanges.Add((expand, width));
                 return canApply?.Invoke(width) ?? true;
-            });
+            }, windowedRoot: windowedHost ? () => Window : null, canPauseAuto: () => autoHandlersAvailable);
             Swap = new RenderStreamSwap(Capture, Schedule,
                 on =>
                 {
@@ -854,7 +1267,10 @@ internal static class RenderStreamSwapTests
                 () => { Events.Add($"changed:{Swap!.State}"); Changes.Add((Swap.State, Swap.Snapshot)); },
                 Presentation.SetStreamWidth, maxWidth, deferSignal, deferPresentation,
                 trySetPresentationWidth: Presentation.TrySetStreamWidth,
-                setStreamSpinesArmed: on => StreamSpinesArmed = on);
+                setStreamSpinesArmed: on => StreamSpinesArmed = on,
+                tryRestorePresentation: windowedHost ? Presentation.TryRestoreMirror : null,
+                windowedHost: windowedHost, ensureCaptureLoaded: () => Deferred?.EnsureLoaded(), log: Logs.Add,
+                setCaptureAttached: Helpers.SetAttached);
         }
 
         internal void Arm()
@@ -898,6 +1314,9 @@ internal static class RenderStreamSwapTests
         internal bool Available = true;
         internal int Discoveries, StateReads, ClientReads, ArmCalls, DisarmCalls, Subscriptions, Unsubscriptions;
         internal int ArmResult, DisarmResult, ClientCount;
+        internal int AttachCalls, DetachCalls, AttachmentReads;
+        internal int AttachResult, DetachResult;
+        internal string CurrentAttachmentState = "attached";
         internal string CurrentState = "standby";
         internal string? DisarmReason;
         internal int LingerMs;
@@ -910,8 +1329,29 @@ internal static class RenderStreamSwapTests
         public int Clients { get { ClientReads++; return ClientCount; } }
         public string State() { StateReads++; return CurrentState; }
 
+        public string AttachmentState { get { AttachmentReads++; return CurrentAttachmentState; } }
+
+        public int Attach()
+        {
+            Assert(CurrentState == "standby", "attach requires a disarmed capture");
+            AttachCalls++;
+            events.Add("attach");
+            if (AttachResult == 0) CurrentAttachmentState = "attached";
+            return AttachResult;
+        }
+
+        public int Detach()
+        {
+            Assert(CurrentState == "standby", "detach requires a fully disarmed capture");
+            DetachCalls++;
+            events.Add("detach");
+            if (DetachResult == 0) CurrentAttachmentState = "detached";
+            return DetachResult;
+        }
+
         public int Arm(IReadOnlyDictionary<string, string> options)
         {
+            Assert(CurrentAttachmentState == "attached", "arm requires attachment");
             Assert(Signals is not null, "persistent signals are subscribed before arm");
             ArmCalls++;
             Options = new(options);

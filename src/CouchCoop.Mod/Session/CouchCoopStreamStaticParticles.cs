@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 
 namespace CouchCoop.Mod.Session;
@@ -86,7 +87,7 @@ public static class CouchCoopStreamStaticParticles
     {
         if (!CouchCoopMod.EngineAvailable || (!ShouldFreeze(_armed, _desired) && !_active && _tree is null)) return;
         // Arming can arrive in a capture signal; the initial walk always waits a full frame.
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             if (!ShouldFreeze(_armed, _desired)) Deactivate();
             else if (!_active && Engine.GetMainLoop() is SceneTree tree)
@@ -94,7 +95,7 @@ public static class CouchCoopStreamStaticParticles
                 _tree = tree;
                 NextFrame(Activate);
             }
-        }).CallDeferred();
+        });
     }
 
     private static void Activate()
@@ -142,7 +143,7 @@ public static class CouchCoopStreamStaticParticles
             if (generation == _generation) action();
         });
         DeferredFrames.Add(callback);
-        _tree.Connect(SceneTree.SignalName.ProcessFrame, callback, (uint)GodotObject.ConnectFlags.OneShot);
+        GameDeferred.Register(() => _tree.Connect(SceneTree.SignalName.ProcessFrame, callback, (uint)GodotObject.ConnectFlags.OneShot));
     }
 
     private static void OnNodeAdded(Node node)
@@ -290,20 +291,10 @@ public static class CouchCoopStreamStaticParticles
 
     private static IDisposable ScheduleDeadline(double delaySeconds, Action callback)
     {
-        var timer = _tree!.CreateTimer(delaySeconds, ignoreTimeScale: true);
-        var callable = Callable.From(callback);
-        timer.Connect(SceneTreeTimer.SignalName.Timeout, callable, (uint)GodotObject.ConnectFlags.OneShot);
-        return new DeadlineCancellation(timer, callable);
+        return GameDeferred.Delay(_tree!, delaySeconds, callback);
     }
 
-    private sealed class DeadlineCancellation(SceneTreeTimer timer, Callable callback) : IDisposable
-    {
-        public void Dispose()
-        {
-            if (GodotObject.IsInstanceValid(timer) && timer.IsConnected(SceneTreeTimer.SignalName.Timeout, callback))
-                timer.Disconnect(SceneTreeTimer.SignalName.Timeout, callback);
-        }
-    }
+
 
     private sealed class Emitter(CpuParticles2D node) : StreamParticleWork
     {

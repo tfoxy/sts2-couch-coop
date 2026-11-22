@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using System.Globalization;
 using Godot;
 
@@ -22,6 +23,11 @@ internal sealed class RenderStreamSwap : IDisposable
     private readonly Action _onChanged;
     private readonly Action<int> _setPresentationWidth;
     private readonly Func<int, bool>? _trySetPresentationWidth;
+    private readonly Func<bool>? _tryRestorePresentation;
+    private readonly bool _windowedHost;
+    private readonly Func<string?> _ensureCaptureLoaded;
+    private readonly Action<string> _log;
+    private readonly Action<bool> _setCaptureAttached;
     private Action? _unsubscribeViewport;
     private readonly Action<Action> _deferSignal;
     private readonly Action<Action> _deferPresentation;
@@ -59,7 +65,9 @@ internal sealed class RenderStreamSwap : IDisposable
         Action<int> setPresentationWidth,
         int maxWidth = StreamingSeatLaunch.DefaultMaxPresentationWidth,
         Action<Action>? deferSignal = null, Action<Action>? deferPresentation = null, Func<int, bool>? trySetPresentationWidth = null,
-        Action<bool>? setStreamSpinesArmed = null)
+        Action<bool>? setStreamSpinesArmed = null, Func<bool>? tryRestorePresentation = null,
+        bool windowedHost = false, Func<string?>? ensureCaptureLoaded = null, Action<string>? log = null,
+        Action<bool>? setCaptureAttached = null)
     {
         _capture = capture;
         _schedule = schedule;
@@ -71,6 +79,11 @@ internal sealed class RenderStreamSwap : IDisposable
         _deferSignal = deferSignal ?? (callback => callback());
         _deferPresentation = deferPresentation ?? (callback => callback());
         _trySetPresentationWidth = trySetPresentationWidth;
+        _tryRestorePresentation = tryRestorePresentation;
+        _windowedHost = windowedHost;
+        _ensureCaptureLoaded = ensureCaptureLoaded ?? (() => null);
+        _log = log ?? CouchCoopLog.Info;
+        _setCaptureAttached = setCaptureAttached ?? (_ => { });
         _maxWidth = maxWidth;
     }
 
@@ -118,10 +131,7 @@ internal sealed class RenderStreamSwap : IDisposable
             return;
         }
         if (!HasStream || _dormant) { Change(State == "failed" && !explicitMirror ? "failed" : "mirror", explicitMirror ? null : Reason); return; }
-        if (!_capture.HasSingleton) { Change("failed", "no-capture"); return; }
-        _signals ??= _capture.Subscribe(new RenderStreamCaptureSignals(
-            Armed, () => DeferSignal(Disarmed), reason => DeferSignal(() => ArmFailed(reason)),
-            StreamEnded, _ => CancelGrace(), (_, _) => ClientLeft()));
+        if (!_windowedHost && !_capture.HasSingleton) { Change("failed", "no-capture"); return; }
         Arm();
     }
 
@@ -140,6 +150,9 @@ internal sealed class RenderStreamSwap : IDisposable
         _setPresentationWidth(width);
         return true;
     }
+
+    private bool RestorePresentation()
+        => _tryRestorePresentation?.Invoke() ?? ApplyPresentation(StreamingSeatLaunch.PresentationBaseWidth);
 
     private void InvalidatePresentation()
     {
@@ -176,10 +189,41 @@ internal sealed class RenderStreamSwap : IDisposable
 
     private void Arm()
     {
+        if (_disposed) return;
         _armGeneration++;
+        _phase = Phase.Arming;
+        if (_windowedHost)
+        {
+            try
+            {
+                var failure = _ensureCaptureLoaded();
+                if (failure is null && !_capture.HasSingleton) failure = "no-capture";
+                if (failure is null && _capture.AttachmentState != "attached")
+                {
+                    var attachResult = _capture.Attach();
+                    if (attachResult != 0) failure = $"attach-refused:{attachResult.ToString(CultureInfo.InvariantCulture)}";
+                }
+                if (failure is not null)
+                {
+                    _log($"host render-capture {failure}; keeping the old renderer");
+                    ArmFailed(failure);
+                    return;
+                }
+                _setCaptureAttached(true);
+            }
+            catch (Exception exception)
+            {
+                var failure = $"attach-failed:{exception.GetType().Name}: {exception.Message}";
+                _log($"host render-capture {failure}; keeping the old renderer");
+                ArmFailed(failure);
+                return;
+            }
+        }
+        _signals ??= _capture.Subscribe(new RenderStreamCaptureSignals(
+            Armed, () => DeferSignal(Disarmed), reason => DeferSignal(() => ArmFailed(reason)),
+            StreamEnded, _ => CancelGrace(), (_, _) => ClientLeft()));
         if (PresentationReady) BeginTransition();
         _setSuspenderEnabled(false);
-        _phase = Phase.Arming;
         Change("arming");
         _armedWidth = TargetWidth;
         if (!ApplyPresentation(_armedWidth))
@@ -190,7 +234,8 @@ internal sealed class RenderStreamSwap : IDisposable
         Settle(_armedWidth);
         var result = _capture.Arm(new Dictionary<string, string>
         {
-            ["GRC_ROOT_SIZE"] = $"presentation:{_armedWidth.ToString(CultureInfo.InvariantCulture)}x1080",
+            ["GRC_ROOT_SIZE"] = _windowedHost ? "observe"
+                : $"presentation:{_armedWidth.ToString(CultureInfo.InvariantCulture)}x1080",
         });
         if (result != 0) ArmFailed($"arm-refused:{result.ToString(CultureInfo.InvariantCulture)}");
     }
@@ -212,10 +257,11 @@ internal sealed class RenderStreamSwap : IDisposable
         _setStreamSpinesArmed(false);
         _phase = Phase.Mirror;
         Snapshot = null;
-        var restored = ApplyPresentation(StreamingSeatLaunch.PresentationBaseWidth);
+        var restored = RestorePresentation();
         if (restored) _setSuspenderEnabled(true);
         if (restored) Settle(1920);
         _dormant = true;
+        DetachWhenIdle();
         Change("failed", reason);
     }
 
@@ -252,13 +298,30 @@ internal sealed class RenderStreamSwap : IDisposable
         _setStreamSpinesArmed(false);
         _phase = Phase.Mirror;
         Snapshot = null;
-        var restored = ApplyPresentation(StreamingSeatLaunch.PresentationBaseWidth);
+        var restored = RestorePresentation();
         if (restored) _setSuspenderEnabled(true);
         if (restored) Settle(1920);
         _requestTrim();
         if (State != "failed") Change("mirror");
         else _onChanged();
         if (rearm) Arm();
+        else DetachWhenIdle();
+    }
+
+    private void DetachWhenIdle()
+    {
+        if (!_windowedHost || _disposed || _phase != Phase.Mirror || (HasStream && !_dormant)) return;
+        try
+        {
+            if (!_capture.HasSingleton || _capture.AttachmentState != "attached") return;
+            var result = _capture.Detach();
+            if (result != 0) _log($"host render-capture detach-refused:{result.ToString(CultureInfo.InvariantCulture)}; capture remains attached");
+            else _setCaptureAttached(false);
+        }
+        catch (Exception exception)
+        {
+            _log($"host render-capture detach failed: {exception.GetType().Name}: {exception.Message}");
+        }
     }
 
     private void ClientLeft()
@@ -309,12 +372,13 @@ internal sealed class RenderStreamSwap : IDisposable
         CancelGrace();
         _signals?.Dispose();
         _unsubscribeViewport?.Invoke();
+        if (_windowedHost) RestorePresentation();
     }
 
     internal static RenderStreamSwap CreateForSeat(Action onChanged)
     {
         if (Engine.GetMainLoop() is not SceneTree tree) throw new InvalidOperationException("No SceneTree for capture swap.");
-        void Defer(Action callback) => tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(callback), (uint)GodotObject.ConnectFlags.OneShot);
+        void Defer(Action callback) => GameDeferred.Register(() => tree.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(callback), (uint)GodotObject.ConnectFlags.OneShot));
         var swap = new RenderStreamSwap(
             new GodotRenderStreamCapture(), ScheduleOnMainThread,
             CouchCoopHeadlessVisualSuspender.SetEnabled, HeadlessMallocTrim.Trim, onChanged,
@@ -330,7 +394,11 @@ internal sealed class RenderStreamSwap : IDisposable
                 CouchCoopStreamStaticParticles.SetArmed(armed);
                 CouchCoopStreamDecorFreeze.SetArmed(armed);
                 CouchCoopStreamTweenAnnouncer.SetArmed(armed);
-            });
+            },
+            tryRestorePresentation: HeadlessViewportConfigurator.TryRestoreMirrorPresentation,
+            windowedHost: HeadlessViewportConfigurator.WindowedHostPresentation,
+            ensureCaptureLoaded: RenderStreamSelf.EnsureLoaded,
+            setCaptureAttached: RenderStreamSelf.SetCaptureAttached);
         HeadlessViewportConfigurator.PresentationInvalidated += swap.InvalidatePresentation;
         HeadlessViewportConfigurator.PresentationReasserted += swap.ReassertedPresentation;
         swap._unsubscribeViewport = () =>
@@ -344,18 +412,8 @@ internal sealed class RenderStreamSwap : IDisposable
     private static IDisposable ScheduleOnMainThread(TimeSpan delay, Action callback)
     {
         if (Engine.GetMainLoop() is not SceneTree tree) throw new InvalidOperationException("No SceneTree for capture grace.");
-        var timer = tree.CreateTimer(delay.TotalSeconds, ignoreTimeScale: true);
-        var callable = Callable.From(callback);
-        timer.Connect(SceneTreeTimer.SignalName.Timeout, callable, (uint)GodotObject.ConnectFlags.OneShot);
-        return new TimerCancellation(timer, callable);
+        return GameDeferred.Delay(tree, delay.TotalSeconds, callback);
     }
 
-    private sealed class TimerCancellation(SceneTreeTimer timer, Callable callback) : IDisposable
-    {
-        public void Dispose()
-        {
-            if (GodotObject.IsInstanceValid(timer) && timer.IsConnected(SceneTreeTimer.SignalName.Timeout, callback))
-                timer.Disconnect(SceneTreeTimer.SignalName.Timeout, callback);
-        }
-    }
+
 }

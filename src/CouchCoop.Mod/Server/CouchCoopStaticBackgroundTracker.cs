@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using System.Runtime.CompilerServices;
 using CouchCoop.Mod.HostUi;
 using CouchCoop.MirrorProtocol.SceneModel;
@@ -72,7 +73,7 @@ public sealed record CouchCoopStaticBackgroundState(
 // server aggregate (accept loop / receive loop / teardown); RequestProbe on the game's main thread, from inside
 // the game's own screen transition (so it only schedules — see its remarks), and once from a server thread when
 // the server arms the screen-event probe; the probe body — locate, stamp,
-// publish — runs on the Godot main thread (Callable.From(...).CallDeferred(), the
+// publish — runs on the Godot main thread (GameDeferred.Post(...), the
 // CouchCoopHeadlessVisualSuspender idiom — reading live Node state off-thread is unsafe). The publish slot is a
 // process-wide volatile (one host process serves one game), read by BrowserStateEnvelopeFactory on whatever
 // thread builds a session envelope.
@@ -312,7 +313,7 @@ public sealed class CouchCoopStaticBackgroundTracker
     // poisoning the caller's JIT — the same contract as SpirectlAssetBinaryCache.TryResolveGameDataDir.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ScheduleProbeOnMainThread()
-        => Callable.From(() => _scheduler.RunProbe(ProbeOnMainThread)).CallDeferred();
+        => GameDeferred.Post(() => _scheduler.RunProbe(ProbeOnMainThread));
 
     // Main thread only (the scheduler arms the follow-up from inside RunProbe). A one-shot SceneTreeTimer that the
     // tree frees after it fires — never a repeating one. processAlways so a paused tree (a pause menu over the
@@ -325,8 +326,7 @@ public sealed class CouchCoopStaticBackgroundTracker
             return false;
         }
 
-        tree.CreateTimer(FollowUpProbeDelaySeconds, processAlways: true, processInPhysics: false, ignoreTimeScale: true)
-            .Timeout += onElapsed;
+        GameDeferred.Delay(tree, FollowUpProbeDelaySeconds, onElapsed);
         return true;
     }
 

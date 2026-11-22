@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 
 namespace CouchCoop.Mod.Session;
@@ -29,7 +30,7 @@ internal sealed class RenderStreamCaptureQuit
 
     internal void Run()
     {
-        var state = _capture.HasSingleton ? _capture.State() : null;
+        var state = _capture.HasSingleton && _capture.AttachmentState != "detached" ? _capture.State() : null;
         if (state is not ("arming" or "armed" or "ended" or "disarming"))
         {
             DoneOnce();
@@ -51,36 +52,36 @@ internal sealed class RenderStreamCaptureQuit
         _done();
     }
 
+    internal static Task DisarmOnMainThreadAsync()
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CompleteDisarmOnMainThread(completion);
+        return completion.Task;
+    }
+
+    private static void CompleteDisarmOnMainThread(TaskCompletionSource completion)
+    {
+        try
+        {
+            var sequence = new RenderStreamCaptureQuit(new GodotRenderStreamCapture(),
+                () => completion.TrySetResult(),
+                // The caller bounds disarm with WaitAsync; no engine timer is needed during host exit.
+                (_, _) => { });
+            sequence.Run();
+        }
+        catch (Exception exception)
+        {
+            HeadlessLog.Write($"render-stream disarm failed: {exception.GetType().Name}: {exception.Message}");
+            completion.TrySetResult();
+        }
+    }
+
     internal static Task DisarmDeferredAsync()
     {
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        // The exit sequence can run off-thread. Even singleton discovery belongs on the main thread.
-        Callable.From(() =>
-        {
-            try
-            {
-                if (Engine.GetMainLoop() is not SceneTree tree)
-                {
-                    HeadlessLog.Write("No SceneTree main loop to disarm capture; leaving the force-exit backstop armed.");
-                    completion.TrySetResult();
-                    return;
-                }
-
-                var sequence = new RenderStreamCaptureQuit(
-                    new GodotRenderStreamCapture(),
-                    () => completion.TrySetResult(),
-                    (delay, callback) => tree.CreateTimer(delay.TotalSeconds, ignoreTimeScale: true).Connect(
-                        SceneTreeTimer.SignalName.Timeout,
-                        Callable.From(callback),
-                        (uint)GodotObject.ConnectFlags.OneShot));
-                sequence.Run();
-            }
-            catch (Exception exception)
-            {
-                HeadlessLog.Write($"render-stream disarm failed: {exception.GetType().Name}: {exception.Message}");
-                completion.TrySetResult();
-            }
-        }).CallDeferred();
+        // Seat/headless exit can run off-thread; windowed quit calls the main-thread variant directly.
+        if (!GameDeferred.PostCaptureDisarm(() => CompleteDisarmOnMainThread(completion)))
+            completion.TrySetResult();
         return completion.Task;
     }
 }

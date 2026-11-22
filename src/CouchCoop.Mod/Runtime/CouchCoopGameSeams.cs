@@ -94,7 +94,14 @@ public static class GameMainThread
         [CallerFilePath] string? file = null)
     {
         ZeroClientGuard.Enter(ZeroClientEntries.MainThreadDispatch, caller, file);
-        return Source.Invoke(action);
+        if (!CouchCoopMod.EngineAvailable)
+        {
+            T result = default!;
+            CouchCoopMod.HostExit.TryPost(() => result = Source.Invoke(() =>
+                CouchCoopMod.HostExiting ? default! : action()));
+            return result;
+        }
+        return InvokeAdmittedAsync(() => Task.FromResult(action())).GetAwaiter().GetResult();
     }
 
     public static Task<T> InvokeAsync<T>(
@@ -103,7 +110,25 @@ public static class GameMainThread
         [CallerFilePath] string? file = null)
     {
         ZeroClientGuard.Enter(ZeroClientEntries.MainThreadDispatch, caller, file);
-        return Source.InvokeAsync(action);
+        return InvokeAdmittedAsync(action);
+    }
+
+    private static Task<T> InvokeAdmittedAsync<T>(Func<Task<T>> action)
+    {
+        Task<T>? pending = null;
+        CouchCoopMod.HostExit.TryPost(() => pending = Source.InvokeAsync(() =>
+            CouchCoopMod.HostExiting ? Task.FromResult(default(T)!) : action()));
+        return pending is null ? Task.FromResult(default(T)!) : CompleteOrExitAsync(pending);
+    }
+
+    private static async Task<T> CompleteOrExitAsync<T>(Task<T> pending)
+    {
+        if (await Task.WhenAny(pending, CouchCoopMod.HostExit.Exited).ConfigureAwait(false) == pending)
+            return await pending.ConfigureAwait(false);
+        // The engine may never drain this operation. Release its caller without waiting for another frame.
+        _ = pending.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return default!;
     }
 }
 

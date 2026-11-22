@@ -342,6 +342,18 @@ if (args is [WindowsSeatLifetimeTests.Verb, ..])
     return;
 }
 
+if (args is ["host-exit-entry", var entry])
+{
+    await HostExitPostTests.RunEntryAsync(entry);
+    return;
+}
+
+if (args is ["host-exit-posts", ..])
+{
+    await HostExitPostTests.RunAsync();
+    return;
+}
+
 if (args is [HostTermExitTests.Verb, ..])
 {
     await HostTermExitTests.RunAsync();
@@ -1368,6 +1380,8 @@ ConnectionHostingTrackerStateTests.Run();
 await ZeroClientContractTests.RunAsync();
 // The readiness deadline that manager waits on: the clamp band, the progress line, the untouched early exit.
 await SeatReadyTimeoutTests.RunAsync();
+// Irreversible process latch: this group must run last.
+await HostExitPostTests.RunAsync();
 Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");
 
 internal sealed partial class BrowserServerRouteTests
@@ -6243,8 +6257,13 @@ internal sealed partial class BrowserServerRouteTests
 
         public ManualResetEventSlim? ExecuteActionGate { get; set; }
         private int _inputCancellations;
+        internal Action? OnInputCancellation;
         public int InputCancellations => Volatile.Read(ref _inputCancellations);
-        public void CancelInjectedInput() => Interlocked.Increment(ref _inputCancellations);
+        public void CancelInjectedInput()
+        {
+            Interlocked.Increment(ref _inputCancellations);
+            OnInputCancellation?.Invoke();
+        }
         public EmbeddableActionRequest? LastActionRequest { get; private set; }
         public EmbeddableAssetRequest? LastAssetRequest { get; set; }
 

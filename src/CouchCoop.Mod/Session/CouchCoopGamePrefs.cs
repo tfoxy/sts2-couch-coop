@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using Godot;
 using MegaCrit.Sts2.Core.Saves;
 
@@ -27,7 +28,7 @@ public static class CouchCoopGamePrefs
     /// </summary>
     public static async Task<bool?> GetTextEffectsEnabledAsync()
     {
-        if (!CouchCoopMod.EngineAvailable)
+        if (!CouchCoopMod.EngineAvailable || CouchCoopMod.HostExiting)
         {
             return null;
         }
@@ -35,7 +36,7 @@ public static class CouchCoopGamePrefs
         var tcs = new TaskCompletionSource<bool?>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
-            Callable.From(() => tcs.TrySetResult(ReadOnMainThread())).CallDeferred();
+            GameDeferred.Post(() => tcs.TrySetResult(ReadOnMainThread()));
         }
         catch
         {

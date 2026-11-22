@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using CouchCoop.Mod.Connections;
 using CouchCoop.Mod.Localization;
 using Godot;
@@ -178,10 +179,11 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         }
         RenderDetails(all.First(row => row.Id == _selected));
         _renderedRevision = snapshot.Revision;
-        _scroll.GetVScrollBar().SetDeferred(Godot.Range.PropertyName.Value, scroll);
+        var bar = _scroll.GetVScrollBar();
+        GameDeferred.Post(() => { if (GodotObject.IsInstanceValid(bar)) bar.Value = scroll; });
         FocusChainChanged?.Invoke();
         if (focused != Guid.Empty && _rowControls.TryGetValue(focused, out var replacement))
-            replacement.CallDeferred(Control.MethodName.GrabFocus);
+            GameDeferred.Post(replacement.GrabFocus);
         if (_scroll.Size.Y != listHeight || localeChanged || !previousRows.SequenceEqual(_rowControls.Keys))
             EnsureSelectionVisible();
     }
@@ -311,7 +313,8 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
         _technical.Text = CouchCoopLocalization.Resolve(_technicalOpen ? "couchcoop_connection_hide_technical" : "couchcoop_connection_show_technical");
         var scroll = _detail.GetVScrollBar().Value;
         _detail.Text = ConnectionRegistry.Shared.BuildReport(row.Id) ?? string.Empty;
-        _detail.GetVScrollBar().SetDeferred(Godot.Range.PropertyName.Value, scroll);
+        var bar = _detail.GetVScrollBar();
+        GameDeferred.Post(() => { if (GodotObject.IsInstanceValid(bar)) bar.Value = scroll; });
         _copy.Text = CouchCoopLocalization.Resolve("couchcoop_connection_copy_report");
         _dismiss.Text = CouchCoopLocalization.Resolve("couchcoop_connection_dismiss");
         _focus.Add(_summaryScroll);
@@ -364,12 +367,12 @@ internal sealed partial class CouchCoopConnectionPanel : Panel
     {
         // Container sorting and the new list height settle after this input callback. Waiting until
         // then keeps the selected four-line row in view when opening or expanding its report.
-        Callable.From(() =>
+        GameDeferred.Post(() =>
         {
             if (!GodotObject.IsInstanceValid(this) || !IsInsideTree()) return;
             if (_selected is { } id && _rowControls.TryGetValue(id, out var row))
                 _scroll.EnsureControlVisible(row);
-        }).CallDeferred();
+        });
     }
 
     private void OnCopy()

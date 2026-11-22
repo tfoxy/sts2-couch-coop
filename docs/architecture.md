@@ -62,12 +62,25 @@ Browsers sharing a player also share its game viewport. An active old-renderer v
 scene with input disabled until the replacement presentation is ready, and presentation epochs fence stale
 scene updates and gameplay input.
 
-A host running Godot with `--headless` can also stream its own view. When capture configuration resolves,
-the host loads it in standby in its own process, and an authorized host-view browser can select the new
-renderer. The browser uses the same presentation negotiation as a streaming seat; the host relays its own
-stream to a private loopback capture instead of a seat connection. Host access checks remain in force,
-and presentation epochs fence scene delivery and input during renderer changes. Windowed hosts keep
-their existing host-view renderer.
+Windowed and headless hosts can also stream their own view. When capture configuration resolves,
+an authorized host-view browser can select the new renderer. The browser uses the same presentation
+negotiation as a streaming seat; the host relays its own stream to a private loopback capture instead of
+a seat connection. Host access checks remain in force,
+and presentation epochs fence scene delivery and input during renderer changes.
+
+A windowed host first loads its capture when the host opens the QR/join panel from the lobby or pause
+menu, or when any browser connects for a seat or the host's view. It starts in lean tracking mode,
+remembering resources for later streaming without per-frame capture work or background threads.
+Plain multiplayer without couch use never loads the capture or installs its native hooks. Content
+created before that first use, such as an animated main-menu background, may be missing from the stream
+until the player leaves that screen.
+
+A host-view request for the new renderer attaches the capture and starts streaming. After the last
+streaming viewer leaves or switches to the old renderer, a short grace period allows reconnection
+before capture stops and detaches back to lean tracking. A later request attaches it again. The picture
+letterboxes inside the player's window, which is never resized, and stopping the stream restores the
+player's display settings. Headless hosts and streaming seats load their capture at startup and keep
+it attached.
 
 ## Touch adaptation
 

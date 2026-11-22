@@ -645,6 +645,11 @@ public static class CouchCoopQrHostPanelController
             return;
         }
 
+        GameDeferred.Register(() => ScheduleScanOnMainThread(root, delaySeconds));
+    }
+
+    private static void ScheduleScanOnMainThread(Node root, double delaySeconds)
+    {
         var timer = root.GetTree().CreateTimer(delaySeconds,
             processAlways: true,
             ignoreTimeScale: true);
@@ -662,6 +667,7 @@ public static class CouchCoopQrHostPanelController
                 }
                 _scanTimer = null;
             }
+            if (CouchCoopMod.HostExiting) return;
             if (!GodotObject.IsInstanceValid(root))
             {
                 ParkScan();

@@ -278,7 +278,7 @@ internal sealed partial class BrowserServerRouteTests
                 await SendControlAsync(socket, "{\"type\":\"session-refresh\"}");
                 using var ignored = await ReadSessionAsync(socket);
                 RelayExpect(fixture.SelfHost.Requests == requests && !ignored.RootElement.TryGetProperty("rendererState", out _)
-                    && !ignored.RootElement.TryGetProperty("renderStream", out _), "a windowed host ignores renderer requests and keeps its existing envelope");
+                    && !ignored.RootElement.TryGetProperty("renderStream", out _), "a host without loaded capture ignores renderer requests and keeps its existing envelope");
             }
             await CloseWebSocketSilentlyAsync(socket);
             fixture.Access.Set(true);

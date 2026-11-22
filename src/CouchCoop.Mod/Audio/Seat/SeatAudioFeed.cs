@@ -1,3 +1,4 @@
+using CouchCoop.Mod.Runtime;
 using System.Diagnostics;
 using CouchCoop.MirrorProtocol.Audio;
 using CouchCoop.MirrorProtocol.Envelopes;
@@ -24,11 +25,11 @@ public static class SeatAudioFeed
     // One on-demand read on lane open, marshalled off the socket thread. The save singleton can enter Godot.
     private static async Task<SeatAudioVolumes> ReadInitialVolumesAsync()
     {
-        if (!CouchCoopMod.EngineAvailable) return new SeatAudioVolumes();
+        if (!CouchCoopMod.EngineAvailable || CouchCoopMod.HostExiting) return new SeatAudioVolumes();
         var result = new TaskCompletionSource<SeatAudioVolumes>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
-            Callable.From(() =>
+            GameDeferred.Post(() =>
             {
                 try
                 {
@@ -46,7 +47,7 @@ public static class SeatAudioFeed
                     CouchCoopLog.Error($"Seat audio volume snapshot unavailable ({ex.GetType().Name}).");
                     result.TrySetResult(new SeatAudioVolumes());
                 }
-            }).CallDeferred();
+            });
         }
         catch { result.TrySetResult(new SeatAudioVolumes()); }
         try { return await result.Task.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }

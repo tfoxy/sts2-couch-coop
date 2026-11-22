@@ -236,9 +236,10 @@ internal sealed class ConnectionHostingTracker : IDisposable
     private static void ScheduleOnNextFrame(Action evaluate)
         => GameMainThread.Invoke(() =>
         {
-            if (Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
+            if (CouchCoopMod.EngineAvailable
+                && Engine.GetMainLoop() is SceneTree { Root: { } root } && GodotObject.IsInstanceValid(root))
             {
-                root.GetTree().CreateTimer(0, processAlways: true, ignoreTimeScale: true).Timeout += evaluate;
+                GameDeferred.Delay(root.GetTree(), 0, evaluate);
             }
             else
             {

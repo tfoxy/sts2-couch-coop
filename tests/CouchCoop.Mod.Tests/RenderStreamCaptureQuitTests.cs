@@ -6,6 +6,7 @@ internal static class RenderStreamCaptureQuitTests
     {
         NoSingletonCompletesImmediately();
         InactiveCaptureCompletesImmediately();
+        DetachedCaptureCompletesImmediately();
         DisarmedSignalCompletesAfterDisarm();
         ArmingCaptureAlsoWaitsForDisarm();
         EndedCaptureWaitsForDisarm();
@@ -15,7 +16,7 @@ internal static class RenderStreamCaptureQuitTests
         MissingSignalCompletesAtTheFallbackDeadline();
         SignalsAndFallbackCompleteOnlyOnceInEitherOrder();
         DisarmTimeoutCoversTheCaptureCarrierStop();
-        Console.WriteLine("RenderStreamCaptureQuitTests: 11 passed.");
+        Console.WriteLine("RenderStreamCaptureQuitTests: 12 passed.");
     }
 
     private static void NoSingletonCompletesImmediately()
@@ -38,6 +39,15 @@ internal static class RenderStreamCaptureQuitTests
                 $"{state} does not disarm or schedule a fallback");
             Assert(fixture.Capture.Callbacks.Count == 0, $"{state} does not subscribe to capture signals");
         }
+    }
+
+    private static void DetachedCaptureCompletesImmediately()
+    {
+        var fixture = new Fixture { Capture = { AttachmentState = "detached" } };
+        fixture.Run();
+        Assert(fixture.Done == 1 && fixture.Capture.StateReads == 0 && fixture.Capture.DisarmCalls == 0
+            && fixture.Fallback is null && fixture.Capture.Callbacks.Count == 0,
+            "detached capture completes without disarm, wait or signal subscription");
     }
 
     private static void DisarmedSignalCompletesAfterDisarm()
@@ -178,6 +188,9 @@ internal static class RenderStreamCaptureQuitTests
         internal int? LingerMs;
         internal Dictionary<string, Action> Callbacks { get; } = new();
 
+        public string AttachmentState { get; set; } = "attached";
+        public int Attach() => throw new InvalidOperationException("Quit must not attach.");
+        public int Detach() => throw new InvalidOperationException("Quit must not detach.");
         public int Clients => throw new InvalidOperationException("Quit must not read client counts.");
         public int Arm(IReadOnlyDictionary<string, string> options) => throw new InvalidOperationException("Quit must not arm.");
         public IDisposable Subscribe(RenderStreamCaptureSignals signals) => throw new InvalidOperationException("Quit uses one-shot signals.");
