@@ -38,11 +38,15 @@ export async function bootWebsite(candidates: readonly string[], href: string,
   const rtc = seams.RTCPeerConnection === null ? undefined : seams.RTCPeerConnection ?? globalThis.RTCPeerConnection;
   const sw = seams.serviceWorker === undefined ? navigator.serviceWorker : seams.serviceWorker;
   const tunnelEnabled = canTunnel(candidates, href, rtc ?? null);
-  const tunnelFirst = new URL(href).searchParams.get("tunnel") === "first"
+  const forceTunnelFirst = new URL(href).searchParams.get("tunnel") === "first"
     || webKitPlatform(seams.platform ?? navigator) !== null;
+  // A link that carries `f` asks for the tunnel, so it goes first on every engine. A fingerprint remembered from
+  // an earlier scan only makes the tunnel available: Chromium keeps its faster direct path first for those.
+  const linkFingerprintHost = fingerprintFromUrl(href) ? hostFromUrl(href) : null;
   let controlPromise: ReturnType<typeof awaitServiceWorkerControl> | undefined;
   for (const origin of candidates) {
     const fingerprint = tunnelEnabled ? fingerprintForHost(origin, href) : null;
+    const tunnelFirst = forceTunnelFirst || origin === linkFingerprintHost;
     for (const transport of tunnelFirst ? ["tunnel", "direct"] : ["direct", "tunnel"]) {
       if (transport === "direct") {
         const outcome = await resolveHost([origin], seams);

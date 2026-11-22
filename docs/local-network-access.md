@@ -18,11 +18,13 @@ LAN port. The QR pins the host certificate's SHA-256 fingerprint: no certificate
 needed. The tunnel carries the client's HTTP requests and WebSockets, including render-stream resources, and
 works on iPhone and iPad without the direct path's mixed-content exemption.
 
-For each candidate host, WebKit (Safari on macOS and every browser on iPhone and iPad) tries the tunnel first,
-then direct HTTP. Chromium and other engines try direct HTTP first and use the tunnel only if the direct attempt
-fails before the app mounts. Both paths are tried before moving to the next host; the tunnel requires a pinned
-fingerprint, WebRTC and service workers. Bulk transfer over the data channel is slower than direct LAN HTTP on
-phones, so Chromium prefers its working direct path.
+A link that carries `f` tries the tunnel first on every engine, then direct HTTP; on Chromium that avoids the Local
+Network Access prompt. For any other candidate host, WebKit (Safari on macOS and every browser on iPhone and iPad)
+still tries the tunnel first, while Chromium and other engines try direct HTTP first and use the tunnel only if the
+direct attempt fails before the app mounts. That applies to a fingerprint remembered from an earlier scan: bulk
+transfer over the data channel is slower than direct LAN HTTP on phones, so a return visit keeps Chromium's working
+direct path. Both paths are tried before moving to the next host; the tunnel requires a pinned fingerprint, WebRTC
+and service workers.
 
 Add `?tunnel=first` to prefer the tunnel on any engine for testing, or `?tunnel=off` to disable it for
 troubleshooting (use `&` instead of `?` when the URL already has a query). A direct-first boot acquires service-worker

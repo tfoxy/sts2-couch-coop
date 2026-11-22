@@ -365,12 +365,17 @@ describe("Website tunnel boot", () => {
     sessionStorage.clear();
   });
 
+  // A bare return visit: the fingerprint is remembered from an earlier scan, not carried by this link.
+  const returnHref = "https://pages.example/";
+  const rememberPin = () => rememberHost(origin, 1, undefined, fingerprint);
+
   it("boots Chromium directly without worker control or a hard-reload retry", async () => {
     const { seams, sw, order } = rig(CHROMIUM);
     Object.assign(sw, { controller: null });
     seams.hardReload = true;
+    rememberPin();
     const { bootWebsite } = await import("@/boot/websiteBoot");
-    expect(await bootWebsite([origin], href, seams)).toMatchObject({ ok: true, origin });
+    expect(await bootWebsite([origin], returnHref, seams)).toMatchObject({ ok: true, origin });
     expect(order).toEqual(["direct", "inject"]);
     expect(seams.injectApp).toHaveBeenCalledExactlyOnceWith(origin, MANIFEST);
     expect(seams.openDirectPeer).not.toHaveBeenCalled();
@@ -387,8 +392,9 @@ describe("Website tunnel boot", () => {
     if (failure === "bundle") seams.injectApp.mockImplementationOnce(async base => {
       order.push("inject"); globalThis.__couchCoopHostBase = base; throw new Error("bundle");
     });
+    rememberPin();
     const { bootWebsite } = await import("@/boot/websiteBoot");
-    expect(await bootWebsite([origin], href, seams)).toMatchObject({ ok: true, origin });
+    expect(await bootWebsite([origin], returnHref, seams)).toMatchObject({ ok: true, origin });
     expect(order).toEqual(["direct", ...(failure === "bundle" ? ["inject"] : []),
       "worker", "peer", "bridge", "/app-boot.json", "inject"]);
     expect(seams.injectApp.mock.lastCall?.[0]).toBe(`https://pages.example${prefix.slice(0, -1)}`);
@@ -402,13 +408,47 @@ describe("Website tunnel boot", () => {
     expect(seams.fetch).not.toHaveBeenCalled();
   });
 
+  it("tunnels first on Chromium when the link carries the fingerprint", async () => {
+    const { seams, order } = rig(CHROMIUM);
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect((await bootWebsite([origin], href, seams))?.ok).toBe(true);
+    expect(order).toEqual(["worker", "peer", "bridge", "/app-boot.json", "inject"]);
+    expect(seams.fetch).not.toHaveBeenCalled();
+  });
+
+  it("falls back to direct on Chromium when a fingerprinted link's tunnel fails", async () => {
+    const { seams, order } = rig(CHROMIUM);
+    seams.openDirectPeer.mockRejectedValueOnce(new Error("timeout"));
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    expect(await bootWebsite([origin], href, seams)).toMatchObject({ ok: true, origin });
+    expect(order).toEqual(["worker", "direct", "inject"]);
+    expect(seams.injectApp).toHaveBeenCalledExactlyOnceWith(origin, MANIFEST);
+  });
+
+  it("keeps a remembered host direct-first on Chromium when the link fingerprints another host", async () => {
+    const { seams, order } = rig(CHROMIUM);
+    rememberPin();
+    seams.fetch.mockImplementation(async input => {
+      order.push(`direct ${new URL(String(input)).host}`);
+      if (String(input).startsWith(origin)) return jsonResponse(MANIFEST);
+      throw new Error("unreachable");
+    });
+    seams.openDirectPeer.mockRejectedValueOnce(new Error("timeout"));
+    const other = "http://192.168.1.9:13337";
+    const { bootWebsite } = await import("@/boot/websiteBoot");
+    const outcome = await bootWebsite([other, origin], `https://pages.example/?h=192.168.1.9:13337&f=${fingerprint}`, seams);
+    expect(outcome).toMatchObject({ ok: true, origin });
+    expect(order).toEqual(["worker", "direct 192.168.1.9:13337", "direct 192.168.1.5:13337", "inject"]);
+  });
+
   it("reads the browser platform when no platform seam is supplied", async () => {
     const { seams, order } = rig();
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue(CHROMIUM);
     const { platform: _platform, ...browserSeams } = seams;
+    rememberPin();
     try {
       const { bootWebsite } = await import("@/boot/websiteBoot");
-      expect((await bootWebsite([origin], href, browserSeams))?.ok).toBe(true);
+      expect((await bootWebsite([origin], returnHref, browserSeams))?.ok).toBe(true);
       expect(order).toEqual(["direct", "inject"]);
     } finally {
       vi.restoreAllMocks();
@@ -522,7 +562,7 @@ describe("Website tunnel boot", () => {
     expect(seams.openDirectPeer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ host: "192.168.1.5" }));
   });
 
-  it("tries a pinned scanned host's tunnel before Chromium advances to a remembered host", async () => {
+  it("tries a fingerprinted link's tunnel, then direct, before Chromium advances to a remembered host", async () => {
     const remembered = "http://192.168.1.20:13337";
     rememberHost(remembered, 1, undefined, fingerprint);
     const { seams, order } = rig(CHROMIUM);
@@ -530,7 +570,7 @@ describe("Website tunnel boot", () => {
     seams.openDirectPeer.mockImplementationOnce(async () => { order.push("peer"); throw new Error("timeout"); });
     const { bootWebsite } = await import("@/boot/websiteBoot");
     expect(await bootWebsite(candidatesForPage(href), href, seams)).toMatchObject({ ok: true, origin: remembered });
-    expect(order).toEqual(["direct", "worker", "peer", "direct", "inject"]);
+    expect(order).toEqual(["worker", "peer", "direct", "direct", "inject"]);
     expect(seams.fetch.mock.calls.map(call => call[0])).toEqual([
       `${origin}/app-boot.json`, `${remembered}/app-boot.json`
     ]);
@@ -566,7 +606,7 @@ describe("Website tunnel boot", () => {
       ok: false, failure: { kind: "origin-refused", origin, webOrigin: MANIFEST.webOrigin }
     });
     expect(seams.fetch).toHaveBeenCalledOnce();
-    expect(seams.openDirectPeer).toHaveBeenCalledTimes(userAgent === CHROMIUM ? 0 : 1);
+    expect(seams.openDirectPeer).toHaveBeenCalledOnce();
     expect(seams.injectApp).not.toHaveBeenCalled();
     expect(beforeInject).not.toHaveBeenCalled();
   });
@@ -582,7 +622,7 @@ describe("Website tunnel boot", () => {
     expect(await bootWebsite(candidatesForPage(href), href, seams)).toEqual({
       ok: false, failure: { kind: "origin-refused", origin, webOrigin: MANIFEST.webOrigin }
     });
-    expect(seams.fetch).toHaveBeenCalledTimes(userAgent === CHROMIUM ? 1 : 0);
+    expect(seams.fetch).not.toHaveBeenCalled();
     expect(seams.openDirectPeer).toHaveBeenCalledOnce();
     expect(bridge.stop).toHaveBeenCalledOnce();
     expect(peer.close).toHaveBeenCalledOnce();
