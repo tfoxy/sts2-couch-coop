@@ -1,4 +1,5 @@
 using Godot;
+using Spirectl.Sts2.Embedding;
 
 namespace CouchCoop.Mod.Session;
 
@@ -29,10 +30,13 @@ internal sealed record RenderStreamCaptureSignals(
     Action<long> ClientConnected,
     Action<long, string> ClientLeft);
 
+internal readonly record struct RenderStreamTweenEndpoint(TweenValueKind Kind, IReadOnlyList<double> Components);
+
 internal interface IRenderStreamTweenCapture
 {
     void TweenBegin(IReadOnlyDictionary<string, object> schedule);
     void TweenCancel(long tweenId);
+    IReadOnlyDictionary<string, object>? TweenCounters();
 }
 
 internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderStreamTweenCapture
@@ -60,6 +64,27 @@ internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderSt
 
     public void TweenCancel(long tweenId) => Singleton().Call("tween_cancel", tweenId);
 
+    public IReadOnlyDictionary<string, object>? TweenCounters()
+    {
+        if (!HasSingleton) return null;
+        var state = Singleton().Call("state").AsGodotDictionary();
+        return state.TryGetValue("client_tweens", out var counters) && counters.VariantType == Variant.Type.Dictionary
+            ? CounterValues(counters.AsGodotDictionary()) : null;
+    }
+
+    private static IReadOnlyDictionary<string, object> CounterValues(Godot.Collections.Dictionary source)
+    {
+        var result = new Dictionary<string, object>();
+        foreach (var (key, value) in source)
+            result[key.AsString()] = value.VariantType switch
+            {
+                Variant.Type.Int => value.AsInt64(),
+                Variant.Type.Dictionary => CounterValues(value.AsGodotDictionary()),
+                _ => throw new ArgumentException("Unsupported capture tween counter value.")
+            };
+        return result;
+    }
+
     private static Godot.Collections.Dictionary ToGodotDictionary(IReadOnlyDictionary<string, object> source)
     {
         var result = new Godot.Collections.Dictionary();
@@ -71,7 +96,7 @@ internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderSt
                 int number => Variant.From(number),
                 double number => Variant.From(number),
                 string text => Variant.From(text),
-                IReadOnlyList<double> components => Endpoint(components),
+                RenderStreamTweenEndpoint endpoint => Endpoint(endpoint),
                 IReadOnlyList<IReadOnlyDictionary<string, object>> steps => Variant.From(
                     new Godot.Collections.Array(steps.Select(step => Variant.From(ToGodotDictionary(step))))),
                 _ => throw new ArgumentException($"Unsupported tween value for {key}.")
@@ -79,13 +104,35 @@ internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderSt
         return result;
     }
 
-    private static Variant Endpoint(IReadOnlyList<double> components) => components.Count switch
+    private static Variant Endpoint(RenderStreamTweenEndpoint endpoint) => EndpointValue(endpoint) switch
     {
-        1 => Variant.From(components[0]),
-        2 => Variant.From(new Vector2((float)components[0], (float)components[1])),
-        4 => Variant.From(new Color((float)components[0], (float)components[1], (float)components[2], (float)components[3])),
+        double number => Variant.From(number),
+        Vector2 vector => Variant.From(vector),
+        Vector3 vector => Variant.From(vector),
+        Vector4 vector => Variant.From(vector),
+        Color color => Variant.From(color),
         _ => default
     };
+
+    internal static object? EndpointValue(RenderStreamTweenEndpoint endpoint)
+    {
+        var c = endpoint.Components;
+        return endpoint.Kind switch
+        {
+            TweenValueKind.Float or TweenValueKind.Int => c[0],
+            TweenValueKind.Vector2 => new Vector2((float)c[0], (float)c[1]),
+            TweenValueKind.Vector3 => new Vector3((float)c[0], (float)c[1], (float)c[2]),
+            TweenValueKind.Vector4 => new Vector4((float)c[0], (float)c[1], (float)c[2], (float)c[3]),
+            TweenValueKind.Color => new Color((float)c[0], (float)c[1], (float)c[2], (float)c[3]),
+            _ => c.Count switch
+            {
+                1 => c[0],
+                2 => new Vector2((float)c[0], (float)c[1]),
+                4 => new Color((float)c[0], (float)c[1], (float)c[2], (float)c[3]),
+                _ => null
+            }
+        };
+    }
 
     public IDisposable Subscribe(RenderStreamCaptureSignals signals)
     {

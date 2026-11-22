@@ -157,14 +157,14 @@ export function computeRenderStreamAvailability(inputs: RenderStreamAvailability
 
 /**
  * The `?renderStream=` descriptor: the hub's origin serves the resource GETs, no token (the QA hub runs
- * `GRC_LIVE_AUTH=none` on loopback), protocol 16, presentation 1920×1080.
+ * `GRC_LIVE_AUTH=none` on loopback), protocol 17 with client tweens or 16 without, presentation 1920×1080.
  */
-export function qaRenderStreamEndpoint(settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): RenderStreamEndpoint | null {
+export function qaRenderStreamEndpoint(settings: Pick<MirrorSettings, "renderStreamUrl" | "streamClientTweens">): RenderStreamEndpoint | null {
   if (!settings.renderStreamUrl) return null;
   try {
     const url = new URL(settings.renderStreamUrl);
     const origin = `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}`;
-    return validateEndpoint({ url: url.href, resourceBase: origin, token: null, protocol: settings.renderStreamProtocol,
+    return validateEndpoint({ url: url.href, resourceBase: origin, token: null, protocol: settings.streamClientTweens ? 17 : 16,
       presentation: [1920, 1080] });
   } catch {
     return null;
@@ -176,7 +176,7 @@ export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): Re
   if (raw === null || raw === undefined) return null;
   try {
     const value = raw as Record<string, unknown>;
-    if ((value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL && value.protocol !== 17 && value.protocol !== 18)
+    if ((value.protocol !== DEFAULT_RENDER_STREAM_PROTOCOL && value.protocol !== 17 && value.protocol !== 18 && value.protocol !== 19)
       || typeof value.url !== "string" || typeof value.resourceBase !== "string") return null;
     const url = hostRouteUrl(value.url, base);
     if (url.protocol === "http:") url.protocol = "ws:";
@@ -302,7 +302,7 @@ export function currentSeatRendererRequest(settings: MirrorSettings = mirrorSett
 
 /** Check an explicit renderer request against this page's capabilities, independently of its saved choice. */
 export function currentSeatRendererRequestFor(renderer: MirrorSettings["renderer"],
-  settings: Pick<MirrorSettings, "renderStreamUrl" | "renderStreamProtocol">): "stream" | undefined {
+  settings: Pick<MirrorSettings, "renderStreamUrl" | "streamClientTweens">): "stream" | undefined {
   return seatRendererRequest({
     renderer,
     directView: renderStreamContext.directView,
@@ -375,11 +375,12 @@ export function resolveRuntimeRenderer(
 }
 
 /**
- * The version a page speaks to a seat advertising `advertised`. A /18 seat is always used at /18: its credit
+ * The version a page speaks to a seat advertising `advertised`. /19 and /18 keep their advertised version: the credit
  * window keeps the stream at full rate when the round trip spans several frames, and client tweens stay a separate
  * opt-in on it. A /17 seat is used at /17 only for client tweens; otherwise the page keeps /16's bytes.
  */
 export function streamProtocolFor(advertised: number | undefined, clientTweens: boolean): RenderStreamWireVersion {
+  if (advertised === 19) return 19;
   if (advertised === 18) return 18;
   if (advertised === 17 && clientTweens) return 17;
   return DEFAULT_RENDER_STREAM_PROTOCOL;

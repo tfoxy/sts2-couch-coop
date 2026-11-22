@@ -95,7 +95,7 @@ jq --arg version "$dev_version" '.version = $version' "$manifest" > "$manifest.t
 mv "$manifest.tmp" "$manifest"
 
 # The sibling checkouts are live working trees for a dev build, not pinned commits, so record what is
-# actually checked out next door — including whether it is dirty, because an unpushed sibling edit is
+# actually used — including whether it is dirty, because an unpushed sibling edit is
 # live in this deploy with no build step (see AGENTS.md "Architecture Rules"). godot-scene-web is read
 # from COUCHCOOP_GSW_ROOT when it is set, the same checkout scripts/build-local-mod.sh built the
 # frontend and the render stream from; otherwise the record names a sibling this deploy never used.
@@ -117,13 +117,16 @@ sibling_commit() { # sibling_commit <path>
 # the version-to-lane table would disagree the first time a game build is added to one of them.
 lane=""
 game_version=""
+spirectl_root=""
 lane_probe="$(COUCHCOOP_GAME_MODS_DIR="${COUCHCOOP_GAME_MODS_DIR:-$output_dir}" dotnet msbuild \
   "$repo_root/src/CouchCoop.Mod.Loader/CouchCoop.Mod.Loader.csproj" \
-  -nologo -getProperty:Sts2GameApi -getProperty:Sts2GameVersion 2>/dev/null || true)"
+  -nologo -getProperty:Sts2GameApi -getProperty:Sts2GameVersion -getProperty:CouchCoopSpirectlRoot 2>/dev/null || true)"
 if [[ -n "$lane_probe" ]]; then
   lane="$(printf '%s' "$lane_probe" | jq -r '.Properties.Sts2GameApi // empty' 2>/dev/null || true)"
   game_version="$(printf '%s' "$lane_probe" | jq -r '.Properties.Sts2GameVersion // empty' 2>/dev/null || true)"
+  spirectl_root="$(printf '%s' "$lane_probe" | jq -r '.Properties.CouchCoopSpirectlRoot // empty' 2>/dev/null || true)"
 fi
+spirectl_root="${spirectl_root:-$repo_root/../spirectl}"
 
 # Same field names and nesting as the release build-info, so an operator (and the seat mismatch
 # report) reads one shape. `sourceCommit` is the value the runtime guard compares through: a local
@@ -138,7 +141,7 @@ jq -n \
   --arg manifestVersion "${manifest_version:-unknown}" \
   --arg configuration "$configuration" \
   --arg builtAtUtc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg spirectl "$(sibling_commit "$repo_root/../spirectl")" \
+  --arg spirectl "$(sibling_commit "$spirectl_root")" \
   --arg godotSceneWeb "$(sibling_commit "$gsw_root")" \
   --arg sts2Lane "${lane:-unknown}" \
   --arg sts2GameVersion "${game_version:-unknown}" \

@@ -357,7 +357,7 @@ function mountClient(): void {
     client = create({
       canvas,
       core: props.core,
-      // A /18 seat also serves /17 and /16 (streamProtocolFor picks): /18 always, /17 only for client tweens.
+      // Seats keep /19 and /18 with or without client tweens; /17 opts out through /16.
       endpoint: { ...props.endpoint, protocol },
       ...(mirrorSettings.streamClientTweens ? { clientTweens: true } : {}),
       extensions: built.extensions,

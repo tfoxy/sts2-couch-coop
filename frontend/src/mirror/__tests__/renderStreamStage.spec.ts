@@ -126,14 +126,16 @@ describe("RenderStreamStage", () => {
       expect(clients[0].options).toMatchObject({ endpoint: tweenEndpoint, clientTweens: true });
     });
 
-    it.each([false, true])("uses a /18 seat at /18 with credit window 8 (client tweens %s)", (tweens) => {
-      mirrorSettings.streamClientTweens = tweens;
-      const window18 = { ...endpoint, protocol: 18 as const };
-      mountStage({ endpoint: window18 });
-      expect(clients[0].options).toMatchObject({ endpoint: window18, creditWindow: 8 });
-      if (tweens) expect(clients[0].options.clientTweens).toBe(true);
-      else expect(clients[0].options).not.toHaveProperty("clientTweens");
-    });
+    it.each([[18, false], [18, true], [19, false], [19, true]] as const)(
+      "uses a /%s seat with credit window 8 (client tweens %s)", (protocol, tweens) => {
+        mirrorSettings.streamClientTweens = tweens;
+        const offered = { ...endpoint, protocol };
+        mountStage({ endpoint: offered });
+        expect(clients[0].options).toMatchObject({ endpoint: offered, creditWindow: 8 });
+        if (tweens) expect(clients[0].options.clientTweens).toBe(true);
+        else expect(clients[0].options).not.toHaveProperty("clientTweens");
+      }
+    );
 
     it.each([endpoint, tweenEndpoint])("keeps window 2 below /18 (seat /$protocol)", (offered) => {
       mountStage({ endpoint: offered });

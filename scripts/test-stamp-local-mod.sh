@@ -164,6 +164,22 @@ ok "without the override build-info falls back to the default sibling" \
   test "$(jq -r '.dependencies.godotSceneWeb' "$D3/build-info.txt")" != "$gsw_head"
 
 # ---------------------------------------------------------------------------------------------
+# 6c. CouchCoopSpirectlRoot selects the spirectl checkout used by MSBuild.
+# ---------------------------------------------------------------------------------------------
+SPIRECTL="$TMP/spirectl-worktree"
+git init -q "$SPIRECTL" && git -C "$SPIRECTL" -c user.name=t -c user.email=t@example.invalid \
+  commit -q --allow-empty -m spirectl || exit 1
+spirectl_head="$(git -C "$SPIRECTL" rev-parse HEAD)"
+D4="$TMP/deploy-spirectl-override"
+make_deploy "$D4" "0.0.0-snapshot.d71b0a1ea465" || exit 1
+CouchCoopSpirectlRoot="$SPIRECTL" "$STAMP" --output "$D4" >/dev/null 2>&1
+eq "CouchCoopSpirectlRoot selects the spirectl commit build-info records" \
+  "$spirectl_head" "$(jq -r '.dependencies.spirectl' "$D4/build-info.txt")"
+env -u CouchCoopSpirectlRoot "$STAMP" --output "$D4" >/dev/null 2>&1
+ok "without the spirectl override build-info falls back to the default sibling" \
+  test "$(jq -r '.dependencies.spirectl' "$D4/build-info.txt")" != "$spirectl_head"
+
+# ---------------------------------------------------------------------------------------------
 # 7. Refusals: no directory, no manifest.
 # ---------------------------------------------------------------------------------------------
 no "a missing output directory is refused" "$STAMP" --output "$TMP/does-not-exist"

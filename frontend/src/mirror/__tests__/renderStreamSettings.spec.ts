@@ -323,23 +323,23 @@ describe("mirrorSettings — the renderer keys", () => {
 });
 
 describe("renderStreamAvailability", () => {
-  const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://127.0.0.1:14861/render-stream", renderStreamProtocol: 16 });
+  const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://127.0.0.1:14861/render-stream", streamClientTweens: false });
   const base: RenderStreamAvailabilityInputs = {
     coreProblem: null, coreLoadFailed: false, webgl2: true, directView: false, qaEndpoint: null,
     sessionEndpoint: null, pageLoopback: true, lanOffer: { relay: true, webTransport: false, tls: false, ws: true }
   };
 
-  it.each([8, 11, 12, 13, 14, 15, 19])("rejects a session descriptor with protocol %s", (protocol) => {
+  it.each([8, 11, 12, 13, 14, 15, 20])("rejects a session descriptor with protocol %s", (protocol) => {
     expect(sessionRenderStreamEndpoint({ url: "ws://127.0.0.1:13366/render-stream",
       resourceBase: "http://127.0.0.1:13366", token: "a".repeat(64), protocol })).toBeNull();
   });
 
-  it.each([16, 17, 18])("accepts a seat advertising /%s", (protocol) => {
+  it.each([16, 17, 18, 19])("accepts a seat advertising /%s", (protocol) => {
     expect(sessionRenderStreamEndpoint({ url: "/render-stream/seat-1/ws", resourceBase: "/render-stream/seat-1",
       token: null, protocol }, "http://host.example")).toMatchObject({ protocol });
   });
 
-  it.each([[18, true, 18], [18, false, 18], [17, true, 17], [17, false, 16], [16, false, 16]] as const)(
+  it.each([[19, true, 19], [19, false, 19], [18, true, 18], [18, false, 18], [17, true, 17], [17, false, 16], [16, false, 16]] as const)(
     "derives the effective protocol from seat /%s and client tweens %s", (protocol, clientTweens, expected) => {
       const settings = createMirrorSettings(undefined, "", { storage: null });
       Object.assign(settings, { renderer: "stream", streamClientTweens: clientTweens });
@@ -355,12 +355,29 @@ describe("renderStreamAvailability", () => {
     }
   );
 
+  it.each([[true, 17], [false, 16]] as const)(
+    "derives the effective QA protocol from client tweens %s as /%s", (clientTweens, expected) => {
+      const saved = { ...mirrorSettings };
+      try {
+        Object.assign(mirrorSettings, { renderer: "stream", streamClientTweens: clientTweens,
+          renderStreamUrl: "ws://127.0.0.1:14861/render-stream", renderStreamProtocol: clientTweens ? 16 : 17 });
+        Object.assign(renderStreamContext, { coreProblem: null, webgl2: true, pageLoopback: true });
+        syncRuntimeRenderer();
+        expect(renderStreamAvailability.value).toMatchObject({ source: "qa-override", endpoint: { protocol: expected } });
+        expect(mirrorSettings.renderStreamProtocol).toBe(expected);
+        expect(mirrorSettings.runtimeRenderer).toBe("stream");
+      } finally {
+        Object.assign(mirrorSettings, saved);
+      }
+    }
+  );
+
   it("derives the QA descriptor: the hub's origin, no token, 1920x1080", () => {
     expect(qa).toEqual({ url: "ws://127.0.0.1:14861/render-stream", resourceBase: "http://127.0.0.1:14861",
       token: null, protocol: 16, presentation: [1920, 1080] });
-    expect(qaRenderStreamEndpoint({ renderStreamUrl: "wss://h.example/render-stream", renderStreamProtocol: 16 }))
+    expect(qaRenderStreamEndpoint({ renderStreamUrl: "wss://h.example/render-stream", streamClientTweens: false }))
       .toMatchObject({ resourceBase: "https://h.example", protocol: 16 });
-    expect(qaRenderStreamEndpoint({ renderStreamUrl: null, renderStreamProtocol: 16 })).toBeNull();
+    expect(qaRenderStreamEndpoint({ renderStreamUrl: null, streamClientTweens: false })).toBeNull();
   });
 
   it("applies the reasons in the design's precedence", () => {
@@ -671,7 +688,7 @@ describe("relay protocol2", () => {
       webgl2: true, directView: false, qaEndpoint: null, sessionEndpoint: null, pageLoopback: true };
     expect(computeRenderStreamAvailability(inputs).reason).toBe("host-update");
     expect(seatRendererRequest({ ...inputs, renderer: "stream" })).toBeUndefined();
-    const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://localhost:9/render-stream", renderStreamProtocol: 16 });
+    const qa = qaRenderStreamEndpoint({ renderStreamUrl: "ws://localhost:9/render-stream", streamClientTweens: false });
     expect(computeRenderStreamAvailability({ ...inputs, qaEndpoint: qa }).available).toBe(true);
     expect(parseLanOffer({ relay: true, webTransport: false, tls: false, ws: true })?.relay).toBe(true);
   });

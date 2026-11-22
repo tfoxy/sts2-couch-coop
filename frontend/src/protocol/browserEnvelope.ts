@@ -276,7 +276,7 @@ export interface BrowserRenderStreamDescriptor {
   /** 64 lowercase hex, sent in the hello and as `Authorization: Bearer`; null when the hub needs none. */
   token: string | null;
   /** The seat's `GRC_STREAM_VERSION`. */
-  protocol: 16 | 17 | 18;
+  protocol: 16 | 17 | 18 | 19;
   presentation?: [number, number];
   /** The hub's WebTransport carrier (CAR7; the client's `carrier: "auto"` prefers it on a secure-context page). */
   webTransport?: BrowserRenderStreamWebTransport;
