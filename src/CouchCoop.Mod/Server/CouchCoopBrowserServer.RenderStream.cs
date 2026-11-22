@@ -107,10 +107,10 @@ public sealed partial class CouchCoopBrowserServer
                 await RenderStreamRelay.ErrorAsync(browser, 410, request.Header("Origin"), token).ConfigureAwait(false);
                 return;
             }
-            using var upstream = new TcpClient();
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(relayToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(2));
-            await upstream.ConnectAsync(IPAddress.Parse(hub.Groups[1].Value.Trim('[', ']')), port, deadline.Token).ConfigureAwait(false);
+            using var upstream = await RenderStreamRelay.ConnectUpstreamAsync(
+                IPAddress.Parse(hub.Groups[1].Value.Trim('[', ']')), port, deadline.Token).ConfigureAwait(false);
             if (!Current())
             {
                 await RenderStreamRelay.ErrorAsync(browser, 410, request.Header("Origin"), token).ConfigureAwait(false);

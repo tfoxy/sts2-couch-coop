@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -8,6 +10,26 @@ namespace CouchCoop.Mod.Server;
 internal static class RenderStreamRelay
 {
     internal static readonly TimeSpan ResponseTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// The relay's socket to the capture hub. Viewer acks are a few hundred bytes each; with Nagle on, the kernel
+    /// holds each one until the hub's next frame carries back a TCP ACK, which adds a whole host frame to every
+    /// credit round trip. So the upstream socket always sends at once.
+    /// </summary>
+    internal static async Task<TcpClient> ConnectUpstreamAsync(IPAddress address, int port, CancellationToken cancellationToken)
+    {
+        var client = new TcpClient { NoDelay = true };
+        try
+        {
+            await client.ConnectAsync(address, port, cancellationToken).ConfigureAwait(false);
+            return client;
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+    }
 
     internal static async Task ForwardAsync(Stream upstream, Stream browser, CouchCoopHttpRequest request,
         ReadOnlyMemory<byte> header, CancellationToken cancellationToken,

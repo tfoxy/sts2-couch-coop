@@ -93,6 +93,7 @@ internal sealed partial class BrowserServerRouteTests
                 await AssertHostSelfRelayAccessAsync(fixture);
                 await AssertHostSelfRendererAsync(fixture);
                 await AssertHostRelayOfferAsync(fixture.Host);
+                await AssertUpstreamNoDelayAsync();
                 fixture.ExitSeat();
                 RelayExpect(Encoding.ASCII.GetString(await fixture.GetAsync(resource)).StartsWith("HTTP/1.1 410"), "an exited seat's public route is unavailable");
                 Console.WriteLine($"render-stream relay: {_relayAssertions} assertions passed.");
@@ -102,6 +103,26 @@ internal sealed partial class BrowserServerRouteTests
         {
             Environment.SetEnvironmentVariable("GRC_LIVE_ALLOWED_ORIGINS", oldOrigins);
             Environment.SetEnvironmentVariable(CouchCoopWebOrigin.OriginCheckEnvironmentVariable, oldCheck);
+        }
+    }
+
+    // Nagle on the hub socket held every viewer ack until the hub's next frame: one host frame per credit round trip.
+    private static async Task AssertUpstreamNoDelayAsync()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        try
+        {
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            var accept = listener.AcceptTcpClientAsync();
+            using var upstream = await RenderStreamRelay.ConnectUpstreamAsync(IPAddress.Loopback, port, CancellationToken.None);
+            using var accepted = await accept;
+            RelayExpect(upstream.Connected, "the relay's hub socket connects");
+            RelayExpect(upstream.NoDelay, "the relay's hub socket sends without Nagle delay");
+        }
+        finally
+        {
+            listener.Stop();
         }
     }
 
