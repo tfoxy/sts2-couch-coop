@@ -17,6 +17,7 @@ internal static class LanRtcHostTests
     public static async Task RunAsync()
     {
         LibraryPaths();
+        await OffByDefaultAsync();
         await HostLifecycleAsync();
         await MissingLibraryAsync();
         await InvalidBudgetAsync();
@@ -27,7 +28,7 @@ internal static class LanRtcHostTests
         var native = Environment.GetEnvironmentVariable(LanRtcModule.LibraryEnvironmentVariable);
         if (string.IsNullOrEmpty(native)) Console.WriteLine("LanRtcHostTests: native lifecycle skipped (COUCHCOOP_LAN_RTC_LIB unset)");
         else await NativeLifecycleAsync();
-        Console.WriteLine($"LanRtcHostTests: {(string.IsNullOrEmpty(native) ? 8 : 9)} cases passed");
+        Console.WriteLine($"LanRtcHostTests: {(string.IsNullOrEmpty(native) ? 9 : 10)} cases passed");
     }
 
     private static void LibraryPaths()
@@ -42,6 +43,44 @@ internal static class LanRtcHostTests
             "flat and lane payloads resolve the net module without capture/calibration files");
         Expect(LanRtcModule.ResolveLibraryPath(root, Path.Combine(root, "override", "capture.gdextension")) ==
             Path.Combine(root, "override", file), "capture override locates its adjacent net module");
+    }
+
+    private static async Task OffByDefaultAsync()
+    {
+        var old = Environment.GetEnvironmentVariable(LanRtcHost.EnableEnvironmentVariable);
+        try
+        {
+            foreach (var value in new string?[] { null, "0", "true" })
+            {
+                Environment.SetEnvironmentVariable(LanRtcHost.EnableEnvironmentVariable, value);
+                using var f = new Fixture();
+                await using var service = f.Services();
+                service.LanRtcEnabled = null;
+                var creates = 0;
+                service.CreateLanRtcModule = (_, _, _, _, _) => { creates++; return null; };
+                var snapshot = await service.StartAsync();
+                service.StartDiscoveryServices();
+                await service.DiscoveryServicesReady;
+                Expect(creates == 0 && !Directory.Exists(f.IdentityRoot) && LanRtcAvailability.FingerprintFor(f.Address, f.Port) is null,
+                    $"RTC stays off without {LanRtcHost.EnableEnvironmentVariable}=1 (value {value ?? "unset"})");
+                Expect(!f.WebQr().Contains("&f=", StringComparison.Ordinal), "an off tunnel keeps f out of the Website QR");
+                await f.AssertBootAsync(snapshot.JoinBaseUri!, false);
+                Expect(f.Logs.Any(line => line.Contains("LAN RTC off", StringComparison.Ordinal)), "off state is logged");
+            }
+            Environment.SetEnvironmentVariable(LanRtcHost.EnableEnvironmentVariable, "1");
+            using (var f = new Fixture())
+            {
+                await using var service = f.Services();
+                service.LanRtcEnabled = null;
+                var creates = 0;
+                service.CreateLanRtcModule = (_, _, _, _, _) => { creates++; return null; };
+                await service.StartAsync();
+                service.StartDiscoveryServices();
+                await service.DiscoveryServicesReady;
+                Expect(creates == 1, $"{LanRtcHost.EnableEnvironmentVariable}=1 starts RTC");
+            }
+        }
+        finally { Environment.SetEnvironmentVariable(LanRtcHost.EnableEnvironmentVariable, old); }
     }
 
     private static async Task HostLifecycleAsync()
@@ -258,7 +297,7 @@ internal static class LanRtcHostTests
             Runtime = new(new CouchCoopRuntimeDependencies(source, source, source, source, source, source, source, source, source), _ => { });
         }
         public CouchCoopHostUiServices Services() => new(Runtime, Root, Address, Port, Logs.Add, deferDiscoveryServices: true)
-            { LanRtcIdentityStorageRoot = IdentityRoot };
+            { LanRtcIdentityStorageRoot = IdentityRoot, LanRtcEnabled = true };
         public string WebQr() => QrHostOptions.DescribeWebFor(new("lan", QrAdapterKind.Wifi, Address), Port,
             CouchCoopWebOrigin.Resolve())!.AbsoluteUri!;
         public async Task AssertBootAsync(Uri uri, bool available)

@@ -37,6 +37,8 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
     private LanRtcHost? _lanRtc;
     internal string? LanRtcIdentityStorageRoot { get; set; }
     internal LanRtcModuleFactory? CreateLanRtcModule { get; set; }
+    /// <summary>Test seam; null reads <see cref="LanRtcHost.EnableEnvironmentVariable"/>.</summary>
+    internal bool? LanRtcEnabled { get; set; }
     private SecureOriginCertificates? _secureCertificates;
     private CouchCoopHostUiSnapshot _snapshot = CouchCoopHostUiSnapshot.Unavailable([]);
 
@@ -270,8 +272,13 @@ public sealed partial class CouchCoopHostUiServices : IAsyncDisposable
 
         if (_browserServer is { IsHeadlessClient: false } server &&
             joinBaseUri is not null && IPAddress.TryParse(joinBaseUri.Host, out var rtcAddress))
-            _lanRtc = LanRtcHost.TryStart(new IPEndPoint(rtcAddress, listenerBaseUri.Port), _discovery.UdpSocket,
-                server.ServeLanRtcAsync, _log, LanRtcIdentityStorageRoot, CreateLanRtcModule);
+        {
+            if (LanRtcEnabled ?? LanRtcHost.EnabledByEnvironment())
+                _lanRtc = LanRtcHost.TryStart(new IPEndPoint(rtcAddress, listenerBaseUri.Port), _discovery.UdpSocket,
+                    server.ServeLanRtcAsync, _log, LanRtcIdentityStorageRoot, CreateLanRtcModule);
+            else
+                _log($"LAN RTC off; set {LanRtcHost.EnableEnvironmentVariable}=1 to advertise the Website tunnel.");
+        }
 
         // WS8: publish `<machine>.local` ourselves. The QR dialog's default row is that name, and until now
         // we only PREDICTED that the OS would publish it — true for avahi/Bonjour, false on a stock Windows

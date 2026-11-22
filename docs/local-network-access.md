@@ -13,6 +13,12 @@ public origin with a normal certificate, and the host addressed by its literal I
 
 ## WebRTC tunnel
 
+**The tunnel is off by default for now.** Bulk transfer over the data channel is much slower than direct LAN HTTP
+on phones, so the first load of the new renderer's resources takes several times longer. Without the tunnel, the
+host does not put `f` in the Website QR and every engine uses the direct path below. Set `COUCHCOOP_LAN_RTC=1` in
+the game's environment to turn the tunnel back on, for example to test it. iPhone and iPad have no Website path
+while it is off: use the plain LAN link or Direct address (HTTPS).
+
 When the Website QR includes `f`, the browser can open an encrypted WebRTC data channel directly to the host's
 LAN port. The QR pins the host certificate's SHA-256 fingerprint: no certificate installation or trust setup is
 needed. The tunnel carries the client's HTTP requests and WebSockets, including render-stream resources, and

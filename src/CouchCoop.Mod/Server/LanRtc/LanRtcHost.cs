@@ -10,6 +10,13 @@ internal delegate LanRtcModule? LanRtcModuleFactory(LanRtcIdentity identity, IPE
 internal sealed class LanRtcHost : IAsyncDisposable
 {
     internal const string SendBudgetEnvironmentVariable = "COUCHCOOP_LAN_RTC_SEND_BUDGET";
+
+    // Opt-in while bulk transfer over the data channel stays much slower than direct LAN HTTP on phones: an
+    // unadvertised tunnel keeps `f` out of the Website QR, so players load over the fast direct path.
+    internal const string EnableEnvironmentVariable = "COUCHCOOP_LAN_RTC";
+
+    internal static bool EnabledByEnvironment()
+        => Environment.GetEnvironmentVariable(EnableEnvironmentVariable)?.Trim() == "1";
     private readonly LanRtcModule _module;
     private readonly LanRtcTunnel _tunnel;
     private readonly IDisposable _publication;
