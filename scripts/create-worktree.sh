@@ -173,6 +173,14 @@ if [[ -d "$repo_root/.ai" ]]; then
 fi
 (cd "$couch_path" && bash scripts/install-agent-config.sh)
 
+# A bundled spirectl worktree needs its own machine config too: spirectl's projects resolve
+# Sts2AssembliesDir from it, and without one its Full builds fail in couch's Directory.Build.targets,
+# which MSBuild finds by searching upward from the nested checkout.
+if (( bundle && has_spirectl )); then
+  [[ -f "$spirectl_root/sts2.local.yaml" ]] && cp "$spirectl_root/sts2.local.yaml" "$workspace/spirectl/sts2.local.yaml"
+  (cd "$workspace/spirectl" && bash scripts/install-agent-config.sh)
+fi
+
 trap - EXIT
 printf 'created CouchCoop worktree: %s\nbranch: %s\n' "$couch_path" "$couch_branch"
 if (( bundle )); then
