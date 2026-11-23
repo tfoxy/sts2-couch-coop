@@ -107,6 +107,24 @@ commit 'docs(agents): describe the aim guard
 
 Changelog: This should never reach the notes.'
 
+# 8. A Changelog line cut off from the trailer block by a later Co-Authored-By paragraph. Git sees
+#    no Changelog trailer here; the collector must still find the line.
+commit 'feat(stream): play shader effects in the browser
+
+Body.
+
+Changelog: Shader effects now animate smoothly in the browser.
+
+Co-Authored-By: Fixture <fixture@example.invalid>'
+
+# 9. The same layout with a wrapped value.
+commit 'fix(stream): keep a seat streaming after a reconnect
+
+Changelog: A seat that reconnects keeps streaming
+  instead of showing a blank screen.
+
+Co-Authored-By: Fixture <fixture@example.invalid>'
+
 OUT="$(collect "$base")"
 
 echo "== a wrapped trailer keeps its continuation =="
@@ -129,6 +147,13 @@ omits "none is not a line"        "- none"
 emits "an untrailered feat is flagged" \
   "$(printf '  %s  feat(mirror): add a display-space stage layout' "$(git -C "$REPO" log --format=%H --grep='display-space stage' | cut -c1-9)")"
 omits "a docs trailer is ignored" "This should never reach the notes."
+
+echo "== a Changelog line outside the trailer block is still collected =="
+emits "line before a Co-Authored-By paragraph" "- Shader effects now animate smoothly in the browser."
+emits "wrapped line before a Co-Authored-By paragraph" \
+  "- A seat that reconnects keeps streaming instead of showing a blank screen."
+omits "it is not reported as missing" "play shader effects in the browser"
+omits "the trailer after it is not read as the note" "Fixture <fixture"
 
 echo "== headings land under Keep a Changelog names =="
 emits "feat -> Added"   "### Added"

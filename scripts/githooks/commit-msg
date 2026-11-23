@@ -105,7 +105,15 @@ fi
 # ---------------------------------------------------------------------------------------------
 if printf '%s' "$subject" | grep -Eq "^($NEEDS_CHANGELOG)(\(|!|:)"; then
   if printf '%s\n' "$msg" | grep -Eq '^Changelog:[[:space:]]*[^[:space:]]'; then
-    :
+    # Git reads trailers from the last paragraph only, so a Changelog line with a blank line and a
+    # Co-Authored-By paragraph after it is invisible to `git log --format=%(trailers)`.
+    if ! printf '%s\n' "$msg" | git interpret-trailers --parse 2>/dev/null \
+        | grep -Eq '^Changelog:[[:space:]]*[^[:space:]]'; then
+      add "the \`Changelog:\` line is not in the trailer block, so git cannot read it as a trailer
+    Trailers are the LAST paragraph. Put any other trailer directly below it, with no blank line:
+      Changelog: Raise-hand cards now start off; turn them on in settings.
+      Co-Authored-By: Name <email>"
+    fi
   elif printf '%s\n' "$msg" | grep -Ei '^change[- ]?log[[:space:]]*:' | grep -qv '^Changelog:'; then
     add "the trailer is spelled exactly \`Changelog:\` (capital C, one word, no space before the colon)
     $(printf '%s\n' "$msg" | grep -Ei '^change[- ]?log[[:space:]]*:' | head -1)"

@@ -74,6 +74,10 @@ Rules that keep it cheap:
   sentence. A trailer is not limited to what fits in the first line — v0.3.0 published
   "…so a player whose phone dropped out can", stopping mid-clause, because the collector used to
   keep only that first line. `scripts/test-collect-changelog.sh` now holds that case.
+- **It sits in the last paragraph.** Git reads trailers from the final paragraph only, so other
+  trailers such as `Co-Authored-By:` go directly below it with no blank line between. The hook
+  rejects a `Changelog:` line that is cut off from that block; the collector still reads the
+  history written that way.
 - `Refs: spirectl@<sha>` is an optional second trailer for work that spans the sibling repos, which
   `release-dependencies.json` pins by commit.
 - **A sibling-repo fix earns no line here.** The collector walks this repo's commits only, so a fix

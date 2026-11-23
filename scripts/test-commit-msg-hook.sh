@@ -66,6 +66,11 @@ Changelog: none'
 accepts "perf with a trailer"        'perf(mirror): park still encodes off the frame path
 
 Changelog: Smoother card animations on slower phones.'
+accepts "Changelog with Co-Authored-By below it" 'feat(stream): play shader effects in the browser
+
+Changelog: Shader effects now animate smoothly in the browser, including a dying
+  enemy'"'"'s dissolve.
+Co-Authored-By: Fixture <fixture@example.invalid>'
 accepts "a breaking change"          'feat(protocol)!: drop the v1 browser state reader
 
 BREAKING CHANGE: clients older than 0.1.0 can no longer join.
@@ -132,6 +137,14 @@ rejects "a misspelled trailer"  'fix(validation): scan tracked blobs reliably
 
 changelog: something happened' \
         'spelled exactly'
+rejects "a Changelog cut off from the trailer block" 'feat(stream): play shader effects in the browser
+
+Body.
+
+Changelog: Shader effects now animate smoothly in the browser.
+
+Co-Authored-By: Fixture <fixture@example.invalid>' \
+        'not in the trailer block'
 rejects "uppercase type"        'Fix: scan tracked blobs reliably
 
 Changelog: none' \
