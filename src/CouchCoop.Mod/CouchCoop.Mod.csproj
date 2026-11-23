@@ -79,10 +79,16 @@
       the rest reads. The bridge and the CLI keep the Full default. The default profile lives in spirectl's
       project, so a reference that omits the property silently gets Full — scripts/validate-csharp-scaffold.sh
       checks that this one names it.
+
+      IntermediateOutputPath/OutputPath place this copy's obj and bin under this project, not in spirectl's own
+      obj/bin. Otherwise the same project builds two identities into one folder: the test runner also references
+      the Full Spirectl.Sts2 build, and every couch worktree shares the ../spirectl checkout. One build's
+      incremental clean then deletes the other's outputs (CS0006 on ref/CouchCoop.Spirectl.dll). The SDK keeps a
+      project's own obj/ and bin/ out of its default item globs, so these folders add no sources here.
     -->
     <ProjectReference
       Include="$(CouchCoopSpirectlRoot)/bridge-mod/src/Spirectl.Sts2/Spirectl.Sts2.csproj"
-      AdditionalProperties="EnableSts2LiveHost=true;Sts2Profile=Embedded;Sts2AssembliesDir=$(Sts2AssembliesDir);AssemblyName=CouchCoop.Spirectl" />
+      AdditionalProperties="EnableSts2LiveHost=true;Sts2Profile=Embedded;Sts2AssembliesDir=$(Sts2AssembliesDir);AssemblyName=CouchCoop.Spirectl;IntermediateOutputPath=$(MSBuildThisFileDirectory)obj/spirectl-embedded/$(Configuration)/;OutputPath=$(MSBuildThisFileDirectory)bin/spirectl-embedded/$(Configuration)/" />
     <ProjectReference Include="../CouchCoop.Mod.Contracts/CouchCoop.Mod.Contracts.csproj" />
     <!-- Shared, game-free wire protocol layer (scene model, envelopes, moved browser DTOs). -->
     <ProjectReference Include="../CouchCoop.MirrorProtocol/CouchCoop.MirrorProtocol.csproj" />

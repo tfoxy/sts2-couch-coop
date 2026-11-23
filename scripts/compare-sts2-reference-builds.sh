@@ -126,7 +126,7 @@ build_consumers() {
     -p:DebugSymbols=false -p:DebugType=None || return 1
   cp "$repo_root/src/CouchCoop.Mod/bin/Release/net9.0/CouchCoop.Mod.dll" "$output/" || return 1
   cp "$repo_root/src/CouchCoop.Mod.Loader/bin/Release/net9.0/couchcoop.dll" "$output/" || return 1
-  cp "$spirectl_root/bridge-mod/src/Spirectl.Sts2/bin/Release/net9.0/CouchCoop.Spirectl.dll" "$output/" || return 1
+  cp "$repo_root/src/CouchCoop.Mod/bin/Release/net9.0/CouchCoop.Spirectl.dll" "$output/" || return 1
 }
 
 compare_lane() {

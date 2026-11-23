@@ -63,15 +63,25 @@ assembly_name="$(jq -er '.Properties.AssemblyName' <<<"$metadata")"
 }
 
 # The premise: the copy Couch ships equals the upstream build of the same profile. The reference's own
-# properties, minus its private assembly name, ARE the upstream build's properties; nothing here re-spells them.
+# properties, minus its private assembly name and output placement, ARE the upstream build's properties; nothing
+# here re-spells them.
 reference_args=()
 upstream_args=()
 IFS=';' read -r -a property_list <<<"$reference_properties"
 for property in "${property_list[@]}"; do
   [[ -n "$property" ]] || continue
   reference_args+=("-p:$property")
-  [[ "$property" == AssemblyName=* ]] || upstream_args+=("-p:$property")
+  case "$property" in
+    # Identity and placement, not build input: the upstream build keeps its own name and folders.
+    AssemblyName=* | IntermediateOutputPath=* | OutputPath=*) ;;
+    *) upstream_args+=("-p:$property") ;;
+  esac
+  if [[ "$property" == OutputPath=* ]]; then embedded_output_dir="${property#OutputPath=}"; fi
 done
+[[ -n "${embedded_output_dir:-}" ]] || {
+  echo "Couch project reference does not give its private copy its own OutputPath: $reference_properties" >&2
+  exit 1
+}
 
 compile_items() {
   DOTNET_ROLL_FORWARD=Major dotnet msbuild "$shared_project" -nologo -getItem:Compile "$@" \
@@ -117,9 +127,9 @@ full_item_count="$(wc -l <<<"$full_items")"
 audit_dir="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-embedded-boundary.XXXXXX")"
 trap 'rm -rf "$audit_dir"' EXIT
 
-# Build each identity serially and retain each artifact before the second build changes the shared project's
-# output name. The identity changes the DLL by a small fixed amount, so the built sizes are only a sanity check
-# on top of the item-set equality above.
+# Build each identity serially: the upstream build writes spirectl's own bin, Couch's copy its own folder. The
+# identity changes the DLL by a small fixed amount, so the built sizes are only a sanity check on top of the
+# item-set equality above.
 DOTNET_ROLL_FORWARD=Major dotnet build "$shared_project" -c Release -m:1 --nologo \
   "${upstream_args[@]}" >/dev/null
 cp "$shared_output_dir/Spirectl.Sts2.dll" "$audit_dir/Spirectl.Sts2.dll"
@@ -127,8 +137,8 @@ cp "$shared_output_dir/Spirectl.Sts2.pdb" "$audit_dir/Spirectl.Sts2.pdb"
 
 DOTNET_ROLL_FORWARD=Major dotnet build "$mod_project" -c Release -m:1 --nologo \
   -p:CouchCoopBuildToLocalMods=false -p:Sts2AssembliesDir="$assemblies_dir" >/dev/null
-cp "$shared_output_dir/CouchCoop.Spirectl.dll" "$audit_dir/CouchCoop.Spirectl.dll"
-cp "$shared_output_dir/CouchCoop.Spirectl.pdb" "$audit_dir/CouchCoop.Spirectl.pdb"
+cp "$embedded_output_dir/CouchCoop.Spirectl.dll" "$audit_dir/CouchCoop.Spirectl.dll"
+cp "$embedded_output_dir/CouchCoop.Spirectl.pdb" "$audit_dir/CouchCoop.Spirectl.pdb"
 
 if [[ ! -f "$mod_output_dir/CouchCoop.Spirectl.dll" || -e "$mod_output_dir/Spirectl.Sts2.dll" ]] \
   || find "$mod_output_dir" -maxdepth 1 -type f -name 'Spirectl.BridgeMod*.dll' -print -quit | grep -q .; then
