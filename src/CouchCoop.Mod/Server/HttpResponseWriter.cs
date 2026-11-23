@@ -144,6 +144,17 @@ internal static class HttpResponseWriter
             cancellationToken);
     }
 
+    public static Task WriteHtmlAsync(
+        Stream stream,
+        HttpStatusCode statusCode,
+        string html,
+        CancellationToken cancellationToken = default)
+        => WriteBytesAsync(stream, (int)statusCode, statusCode.ToString(), Encoding.UTF8.GetBytes(html),
+            "text/html; charset=utf-8", new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Cache-Control"] = "no-store"
+            }, cancellationToken);
+
     public static Task WriteJsonAsync(
         Stream stream,
         HttpStatusCode statusCode,

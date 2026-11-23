@@ -37,6 +37,14 @@ if (args is ["connection-control-routes", ..])
     return;
 }
 
+if (args is ["internal-server-error", ..])
+{
+    await InternalServerErrorReportTests.RunAsync();
+    await BrowserServerRouteTests.RunInternalServerErrorsAsync();
+    Console.WriteLine("internal server error routes: ok (5 cases)");
+    return;
+}
+
 if (args is ["player-names", ..])
 {
     MultiplayerNameStoreTests.Run();
@@ -1386,6 +1394,12 @@ Console.WriteLine("""{"ok":true,"hostedServerRoutes":true}""");
 
 internal sealed partial class BrowserServerRouteTests
 {
+    internal static async Task RunInternalServerErrorsAsync()
+    {
+        using var root = new TempStaticRoot();
+        await AssertInternalServerErrorsAreStructuredAsync(root.Path);
+    }
+
     internal const string JoinFaultVerb = "join-fault-harness";
 
     /// <summary>
@@ -1705,6 +1719,7 @@ internal sealed partial class BrowserServerRouteTests
         Expect(Volatile.Read(ref callbacksInsideObserverGate) == 0,
             "streaming-demand callbacks run outside the observer gate on watch, disconnect and server teardown");
 
+        await InternalServerErrorReportTests.RunAsync();
         await AssertInternalServerErrorsAreStructuredAsync(root.Path);
         await AssertAppIconFailsOpenAsync(root.Path);
         // Prerequisite, on a DEDICATED server so no stateful connection can mask it.
@@ -3480,21 +3495,85 @@ internal sealed partial class BrowserServerRouteTests
             log: logs.Add, hostBrowserAccess: new TestHostBrowserAccess());
         var baseUri = await server.StartAsync();
 
-        var response = await GetAsync(baseUri, "/res/images/boom.png");
+        var response = await GetAsync(baseUri, "/res/images/boom.png?token=private-query");
         Expect(response.StatusLine.Contains("500 InternalServerError", StringComparison.Ordinal), "unexpected server errors return HTTP 500");
-        using (var document = JsonDocument.Parse(response.Body))
-        {
-            var root = document.RootElement;
-            Expect(root.GetProperty("type").GetString() == "error", "unexpected server errors use error envelopes");
-            Expect(root.GetProperty("code").GetString() == "internal-server-error", "unexpected server errors use a stable code");
-            Expect(!root.TryGetProperty("diagnostics", out _), "unexpected server errors do not expose internal diagnostics");
-            Expect(!response.Body.Contains(nameof(ApplicationException), StringComparison.Ordinal)
-                && !response.Body.Contains("asset test failure", StringComparison.Ordinal), "unexpected server errors keep exception details out of the wire response");
-        }
+        Expect(response.Headers["Content-Type"] == "application/json; charset=utf-8", "non-navigation failures stay JSON");
+        using var document = JsonDocument.Parse(response.Body);
+        var root = document.RootElement;
+        Expect(root.GetProperty("type").GetString() == "error", "unexpected server errors use error envelopes");
+        Expect(root.GetProperty("code").GetString() == "internal-server-error", "unexpected server errors use a stable code");
+        Expect(!root.TryGetProperty("diagnostics", out _), "unexpected server errors do not expose internal diagnostics");
+        var incident = root.GetProperty("incident").GetString()!;
+        var fault = root.GetProperty("fault").GetString()!;
+        var faultId = root.GetProperty("faultId").GetString()!;
+        var version = root.GetProperty("version").GetString()!;
+        Expect(System.Text.RegularExpressions.Regex.IsMatch(incident, "^E-[0-9A-HJKMNP-TV-Z]{6}$"), "incident uses Crockford base32");
+        Expect(root.GetProperty("requestId").GetString() == incident, "request id is the incident");
+        Expect(root.GetProperty("message").GetString() == $"The game host hit an unexpected error ({incident}). Screenshot this and send it with your report.", "message identifies the incident and next step");
+        Expect(fault.StartsWith("ApplicationException in ", StringComparison.Ordinal), "fault exposes the exception type and mod frame");
+        Expect(System.Text.RegularExpressions.Regex.IsMatch(faultId, "^[0-9a-f]{8}$"), "fault id is short lowercase hex");
+        Expect(!string.IsNullOrWhiteSpace(version), "version identifies the mod build");
+        Expect(root.GetProperty("route").GetString() == "/res/images/boom.png", "route names the page without query data");
+        AssertSafeInternalServerErrorBody(response.Body);
+        Expect(logs.Any(entry => entry.Contains($"incident={incident} faultId={faultId} version={version}", StringComparison.Ordinal)
+            && entry.Contains(nameof(ApplicationException), StringComparison.Ordinal)
+            && entry.Contains("asset test failure", StringComparison.Ordinal)
+            && entry.Contains("   at ", StringComparison.Ordinal)), "the log matches the wire incident and retains the full exception");
 
-        Expect(logs.Any(entry =>
-            entry.Contains("internal-server-error", StringComparison.Ordinal)
-            && entry.Contains(nameof(ApplicationException), StringComparison.Ordinal)), "unexpected server errors are logged structurally");
+        var html = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "application/xhtml+xml, TEXT/HTML;q=0.9"));
+        AssertHtmlInternalServerError(html);
+        Expect(html.Body.Contains(WebUtility.HtmlEncode(fault), StringComparison.Ordinal), "HTML carries the encoded fault");
+        Expect(html.Body.Contains(faultId, StringComparison.Ordinal), "HTML and JSON identify the same fault");
+        Expect(html.Body.Contains(WebUtility.HtmlEncode(version), StringComparison.Ordinal), "HTML carries the mod build");
+        Expect(html.Body.Contains("/res/images/boom.png", StringComparison.Ordinal), "HTML names the page");
+
+        var navigation = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "application/json"), ("Sec-Fetch-Mode", "navigate"));
+        AssertHtmlInternalServerError(navigation);
+        var encodedPage = await GetAsync(baseUri, "/res/images/%3Cboom%3E.png?token=private-query", ("Accept", "text/html"));
+        AssertHtmlInternalServerError(encodedPage);
+        Expect(encodedPage.Body.Contains("/res/images/&lt;boom&gt;.png", StringComparison.Ordinal)
+            && !encodedPage.Body.Contains("<boom>", StringComparison.Ordinal), "HTML encodes the page path");
+        Expect(logs.Count(entry => entry.Contains("code=internal-server-error ", StringComparison.Ordinal)) == 1,
+            "the same fault logs once within the throttle window");
+
+        var other = await GetAsync(baseUri, "/res/images/other-boom.png", ("Accept", "application/json"));
+        Expect(other.StatusLine.Contains("500 InternalServerError", StringComparison.Ordinal), "a distinct throwing site returns 500");
+        Expect(other.Headers["Content-Type"] == "application/json; charset=utf-8", "explicit JSON requests stay JSON");
+        AssertSafeInternalServerErrorBody(other.Body);
+        using var otherDocument = JsonDocument.Parse(other.Body);
+        var otherRoot = otherDocument.RootElement;
+        Expect(otherRoot.GetProperty("faultId").GetString() != faultId, "different sites have different fault ids");
+        Expect(logs.Count(entry => entry.Contains("code=internal-server-error ", StringComparison.Ordinal)) == 2,
+            "distinct faults both log within the throttle window");
+        Expect(logs.Any(entry => entry.Contains("incident=" + otherRoot.GetProperty("incident").GetString(), StringComparison.Ordinal)),
+            "the second logged failure also matches its wire incident");
+
+        if (Environment.GetEnvironmentVariable("COUCHCOOP_TEST_DUMP_500_DIR") is { Length: > 0 } dumpDirectory)
+        {
+            Directory.CreateDirectory(dumpDirectory);
+            await File.WriteAllTextAsync(Path.Combine(dumpDirectory, "500.json"), response.Body);
+            await File.WriteAllTextAsync(Path.Combine(dumpDirectory, "500.html"), html.Body);
+        }
+    }
+
+    private static void AssertSafeInternalServerErrorBody(string body)
+    {
+        foreach (var forbidden in new[] { "asset test failure", "   at ", ".cs", ":line", "private-query" })
+            Expect(!body.Contains(forbidden, StringComparison.Ordinal), "wire omits " + forbidden);
+    }
+
+    private static void AssertHtmlInternalServerError(HttpProbeResponse response)
+    {
+        Expect(response.StatusLine.Contains("500 InternalServerError", StringComparison.Ordinal), "navigation failures return 500");
+        Expect(response.Headers["Content-Type"] == "text/html; charset=utf-8", "navigation failures use HTML");
+        Expect(response.Headers["Cache-Control"] == "no-store", "navigation error pages are never cached");
+        Expect(response.Body.Contains("Couch Co-op hit an error", StringComparison.Ordinal), "HTML has a readable heading");
+        Expect(System.Text.RegularExpressions.Regex.IsMatch(response.Body, "E-[0-9A-HJKMNP-TV-Z]{6}"), "HTML includes its incident");
+        foreach (var label in new[] { "Incident", "Fault", "Fault id", "Mod version", "Page", "Time UTC" })
+            Expect(response.Body.Contains(label, StringComparison.Ordinal), "HTML includes " + label);
+        Expect(response.Body.Contains("godot.log", StringComparison.Ordinal), "HTML explains where to find the host log");
+        Expect(!response.Body.Contains("<script", StringComparison.OrdinalIgnoreCase), "HTML needs no scripts");
+        AssertSafeInternalServerErrorBody(response.Body);
     }
 
     // A headless seat refuses to EXTRACT (CachedSpirectlAssetHttpAdapter answers `asset-extraction-unavailable`
@@ -6093,14 +6172,6 @@ internal sealed partial class BrowserServerRouteTests
                 contentType,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)));
         }
-    }
-
-    // An asset seam that faults UNEXPECTEDLY (not a structured miss), so the server's top-level
-    // internal-server-error translation can be asserted end to end.
-    private sealed class ThrowingAssetAdapter : ICouchCoopAssetHttpAdapter
-    {
-        public Task<CouchCoopAssetHttpResponse> TryGetAssetAsync(string opaqueKey, CouchCoopResourceFormat format = CouchCoopResourceFormat.Raw, CouchCoopAssetRenderSize renderSize = default, CancellationToken cancellationToken = default)
-            => throw new ApplicationException("asset test failure");
     }
 
     private sealed class CapturingAssetAdapter : ICouchCoopAssetHttpAdapter

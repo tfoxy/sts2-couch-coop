@@ -1712,7 +1712,8 @@ public sealed partial class CouchCoopBrowserServer(
         }
         catch (Exception exception)
         {
-            LogInternalServerError(request, exception);
+            var report = InternalServerErrorReport.Create(request, exception);
+            LogInternalServerError(report, request, exception);
             if (request?.IsWebSocketUpgrade == true)
             {
                 return;
@@ -1720,11 +1721,20 @@ public sealed partial class CouchCoopBrowserServer(
 
             try
             {
-                await HttpResponseWriter.WriteJsonAsync(
-                    stream,
-                    HttpStatusCode.InternalServerError,
-                    CreateInternalServerError(request, exception),
-                    cancellationToken).ConfigureAwait(false);
+                if (request?.Header("Accept")?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true
+                    || string.Equals(request?.Header("Sec-Fetch-Mode"), "navigate", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HttpResponseWriter.WriteHtmlAsync(stream, HttpStatusCode.InternalServerError,
+                        report.ToHtml(), cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await HttpResponseWriter.WriteJsonAsync(
+                        stream,
+                        HttpStatusCode.InternalServerError,
+                        CreateInternalServerError(report),
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (Exception writeException) when (writeException is IOException or SocketException or ObjectDisposedException or OperationCanceledException)
             {
@@ -3454,13 +3464,12 @@ public sealed partial class CouchCoopBrowserServer(
         return valid ? (family, id) : null;
     }
 
-    private void LogInternalServerError(CouchCoopHttpRequest? request, Exception exception)
+    private void LogInternalServerError(InternalServerErrorReport report, CouchCoopHttpRequest? request, Exception exception)
     {
-        // Include the stack: an internal server error is always a defect, and the type+message alone has repeatedly
-        // been too little to locate the throwing call (the Godot-typed refresh-rate read that silently killed every
-        // /ws session in the hosted e2e harness took a debugger to find).
-        _networkDiagnostics.Write("internal-server-error",
+        // Retain the complete exception in the host log; the wire carries only the report's limited fields.
+        _networkDiagnostics.Write("internal-server-error:" + report.FaultId,
             "browser-server diagnostic code=internal-server-error "
+            + $"incident={report.Incident} faultId={report.FaultId} version={report.Version} "
             + $"target={request?.Target ?? "<unread>"} detail={exception.GetType().Name}: {exception.Message}"
             + $"{Environment.NewLine}{exception}");
     }
@@ -3472,12 +3481,17 @@ public sealed partial class CouchCoopBrowserServer(
     private static bool IsAssemblyLoadFailure(Exception exception)
         => exception is FileNotFoundException or FileLoadException or TypeLoadException or BadImageFormatException;
 
-    private static BrowserErrorEnvelope CreateInternalServerError(CouchCoopHttpRequest? request, Exception exception)
+    private static BrowserErrorEnvelope CreateInternalServerError(InternalServerErrorReport report)
         => new(
             "error",
-            "http",
+            report.Incident,
             "internal-server-error",
-            "The browser server encountered an internal error.");
+            $"The game host hit an unexpected error ({report.Incident}). Screenshot this and send it with your report.",
+            report.Incident,
+            report.Fault,
+            report.FaultId,
+            report.Version,
+            report.Route);
 
     // Asset routes carry the resource path readably (/res/images/icon.png) and the route mints the
     // scheme. Rejecting any decoded remainder that embeds its own scheme keeps the route defensive

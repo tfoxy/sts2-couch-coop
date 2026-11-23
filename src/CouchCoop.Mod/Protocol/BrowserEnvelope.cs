@@ -129,7 +129,12 @@ public sealed record BrowserErrorEnvelope(
     string Type,
     string RequestId,
     string Code,
-    string Message);
+    string Message,
+    string? Incident = null,
+    string? Fault = null,
+    string? FaultId = null,
+    string? Version = null,
+    string? Route = null);
 
 // BrowserPongEnvelope + BrowserSettingsRequestEnvelope moved to CouchCoop.MirrorProtocol (namespace
 // CouchCoop.MirrorProtocol.Envelopes) — wire bytes unchanged. See ServerDtos.cs in the shared library.
