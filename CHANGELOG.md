@@ -9,6 +9,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-23
+
+### Added
+
+- Map drawings and other in-game overlays now appear in the new renderer.
+- A host started with --headless can show its own game with the new renderer.
+- New-renderer options for weak devices: still spines, still particles, still shaders, static background.
+- Static background on the new renderer now also covers the character-select screen.
+- Many animations in the new renderer now play smoothly in your browser, even on a slow network
+- The new renderer keeps several frames in flight, so slower networks don't halve it.
+- The host can show its own game with the new renderer while playing in a window, letterboxed to the viewer's screen.
+- New renderer: a Stream pacing option can save host work on the same machine or a local network, and switches back by itself on slower networks.
+- Host errors now show a page with a report you can copy to paste directly in the Workshop discussion.
+
+### Fixed
+
+- A headless host now shuts down promptly and cleanly when it is stopped.
+- A windowed host now saves and exits cleanly when it is stopped, and closing the game while a phone is joined no longer crashes it.
+- Falling Star and other cards with a missing sound no longer mute browser audio.
+- Fix brief particle flashes missing with still particles on the new renderer.
+- Fixed static backgrounds staying live after rejoining a browser seat.
+- The new renderer now follows Widescreen stretch and window resizes, and a shared seat
+- The new renderer now places enlarged event options and reward text where the old one did.
+- Static background in the new renderer no longer reloads the view or turns live again.
+- The new renderer responds a frame sooner, most noticeably on slower networks.
+- The new renderer no longer falls back to the old one when a phone rotates or resizes.
+- The error page now shows where the game's log file is without scrolling.
+
+### Changed
+
+- Scenes in the new renderer can load their textures and shaders sooner
+- The new renderer stutters less when a phone enters a scene with many effects.
+- The new renderer frees the old renderer's graphics memory while it draws.
+- Static shaders also make the stream redraw only what changed, much faster on weak phones.
+
 ## [0.7.0] - 2026-11-16
 
 ### Fixed
@@ -291,7 +326,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.7.1
 [0.7.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.7.0
 [0.6.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.6.0
 [0.5.3]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.5.3
