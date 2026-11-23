@@ -3555,6 +3555,21 @@ internal sealed partial class BrowserServerRouteTests
             && (string.IsNullOrEmpty(home) || !html.Body.Contains(home, StringComparison.Ordinal)),
             "HTML shows the log path with the home folder abbreviated");
 
+        Expect(html.Body.Contains("<html lang=\"en\">", StringComparison.Ordinal)
+            && html.Body.Contains(WebUtility.HtmlEncode(ErrorPageText("eng", "title")), StringComparison.Ordinal),
+            "no Accept-Language serves English");
+        foreach (var (acceptLanguage, catalog, htmlLang) in new[] { ("es-MX,es;q=0.9,en;q=0.8", "esp", "es-419"), ("ja", "jpn", "ja"), ("zh-TW,fr;q=0.5", "fra", "fr") })
+        {
+            var localized = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "text/html"), ("Accept-Language", acceptLanguage));
+            AssertHtmlInternalServerError(localized);
+            Expect(localized.Body.Contains($"<html lang=\"{htmlLang}\">", StringComparison.Ordinal)
+                && localized.Body.Contains(WebUtility.HtmlEncode(ErrorPageText(catalog, "title")), StringComparison.Ordinal)
+                && localized.Body.Contains(WebUtility.HtmlEncode(ErrorPageText(catalog, "copy")), StringComparison.Ordinal),
+                $"Accept-Language {acceptLanguage} serves the {catalog} page");
+            Expect(localized.Body.Contains("Couch Co-op error E-", StringComparison.Ordinal) && localized.Body.Contains("Mod version: ", StringComparison.Ordinal),
+                $"the copied block stays English under {acceptLanguage}");
+        }
+
         var navigation = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "application/json"), ("Sec-Fetch-Mode", "navigate"));
         AssertHtmlInternalServerError(navigation);
         var encodedPage = await GetAsync(baseUri, "/res/images/%3Cboom%3E.png?token=private-query", ("Accept", "text/html"));
@@ -3581,8 +3596,16 @@ internal sealed partial class BrowserServerRouteTests
             Directory.CreateDirectory(dumpDirectory);
             await File.WriteAllTextAsync(Path.Combine(dumpDirectory, "500.json"), response.Body);
             await File.WriteAllTextAsync(Path.Combine(dumpDirectory, "500.html"), html.Body);
+            foreach (var tag in new[] { "zh-CN", "de", "es-419", "es-ES", "fr", "it", "ja", "ko", "pl", "pt-BR", "ru", "th", "tr" })
+            {
+                var page = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "text/html"), ("Accept-Language", tag));
+                await File.WriteAllTextAsync(Path.Combine(dumpDirectory, $"500.{tag}.html"), page.Body);
+            }
         }
     }
+
+    private static string ErrorPageText(string language, string key)
+        => CouchCoop.Mod.Localization.CouchCoopLocalization.CatalogFor(language)["couchcoop_error_page_" + key];
 
     private static void AssertSafeInternalServerErrorBody(string body)
     {
@@ -3595,10 +3618,9 @@ internal sealed partial class BrowserServerRouteTests
         Expect(response.StatusLine.Contains("500 InternalServerError", StringComparison.Ordinal), "navigation failures return 500");
         Expect(response.Headers["Content-Type"] == "text/html; charset=utf-8", "navigation failures use HTML");
         Expect(response.Headers["Cache-Control"] == "no-store", "navigation error pages are never cached");
-        Expect(response.Body.Contains("Couch Co-op hit an error", StringComparison.Ordinal), "HTML has a readable heading");
+        Expect(response.Body.Contains("<h1>", StringComparison.Ordinal), "HTML has a readable heading");
         Expect(System.Text.RegularExpressions.Regex.IsMatch(response.Body, "E-[0-9A-HJKMNP-TV-Z]{6}"), "HTML includes its incident");
-        foreach (var label in new[] { "Incident", "Fault", "Fault id", "Mod version", "Page", "Time UTC" })
-            Expect(response.Body.Contains(label, StringComparison.Ordinal), "HTML includes " + label);
+        Expect(System.Text.RegularExpressions.Regex.Matches(response.Body, "<dt>").Count == 7, "HTML labels all seven details");
         Expect(response.Body.Contains("godot.log", StringComparison.Ordinal), "HTML explains where to find the host log");
         Expect(!System.Text.RegularExpressions.Regex.IsMatch(response.Body, @"<script[^>]*\ssrc=|<link[^>]*\shref=|<img", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
             "HTML loads nothing external");

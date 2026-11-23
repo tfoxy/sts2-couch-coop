@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "Ha cambiado la dirección",
   "couchcoop_https_help_address_body": "Si cambia la dirección IP de este PC, escanea el nuevo QR. No necesitas reinstalar el certificado. Actualiza los marcadores o accesos directos antiguos; los datos guardados del navegador pertenecen a la dirección anterior.",
   "couchcoop_https_help_details_title": "Detalles y restablecimiento",
-  "couchcoop_https_help_reset_body": "Restablece la configuración solo si el certificado ha caducado, está dañado o su clave privada de firma pudo quedar expuesta. Esto cambia la identidad de este PC: cada dispositivo debe quitar el certificado anterior e instalar el archivo nuevo. Un cambio de IP por sí solo no requiere restablecer la configuración."
+  "couchcoop_https_help_reset_body": "Restablece la configuración solo si el certificado ha caducado, está dañado o su clave privada de firma pudo quedar expuesta. Esto cambia la identidad de este PC: cada dispositivo debe quitar el certificado anterior e instalar el archivo nuevo. Un cambio de IP por sí solo no requiere restablecer la configuración.",
+  "couchcoop_error_page_title": "Se ha producido un error en Couch Co-Op",
+  "couchcoop_error_page_intro": "El anfitrión del juego ha tenido un problema inesperado al cargar esta página. Prueba a recargarla. Si sigue ocurriendo, copia los detalles de abajo y publícalos en la discusión del Workshop de Couch Co-Op.",
+  "couchcoop_error_page_incident": "Incidente",
+  "couchcoop_error_page_fault": "Error",
+  "couchcoop_error_page_fault_id": "ID del error",
+  "couchcoop_error_page_mod_version": "Versión del mod",
+  "couchcoop_error_page_game_version": "Versión del juego",
+  "couchcoop_error_page_page": "Página",
+  "couchcoop_error_page_time": "Hora (UTC)",
+  "couchcoop_error_page_unknown": "desconocida",
+  "couchcoop_error_page_log_path": "Si puedes, adjunta también este archivo de registro a tu publicación. Está en el ordenador que ejecuta el juego:",
+  "couchcoop_error_page_log_unknown": "Si puedes, adjunta también el archivo de registro del juego a tu publicación: {file}, en la carpeta {folder} del juego, en el ordenador que ejecuta el juego.",
+  "couchcoop_error_page_copy": "Copiar detalles",
+  "couchcoop_error_page_open_discussion": "Abrir la discusión de Steam",
+  "couchcoop_error_page_copied": "Copiado. Pégalo en tu publicación.",
+  "couchcoop_error_page_copy_manual": "No se ha podido copiar automáticamente. El texto de abajo está seleccionado: mantenlo pulsado y elige Copiar.",
+  "couchcoop_error_page_details_label": "Detalles del error"
 }

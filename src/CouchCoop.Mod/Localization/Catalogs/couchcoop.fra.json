@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "L'adresse a changé",
   "couchcoop_https_help_address_body": "Scannez le nouveau QR code après un changement d'adresse IP de ce PC. Inutile de réinstaller le certificat. Mettez à jour les anciens marque-pages ou raccourcis installés ; les données du navigateur restent liées à l'ancienne adresse.",
   "couchcoop_https_help_details_title": "Détails et réinitialisation",
-  "couchcoop_https_help_reset_body": "Réinitialisez seulement si le certificat a expiré, est endommagé ou si sa clé privée de signature a pu être divulguée. Cela change l'identité de ce PC : chaque appareil doit retirer l'ancien certificat et installer le nouveau fichier. Un changement d'adresse IP seul ne nécessite pas de réinitialisation."
+  "couchcoop_https_help_reset_body": "Réinitialisez seulement si le certificat a expiré, est endommagé ou si sa clé privée de signature a pu être divulguée. Cela change l'identité de ce PC : chaque appareil doit retirer l'ancien certificat et installer le nouveau fichier. Un changement d'adresse IP seul ne nécessite pas de réinitialisation.",
+  "couchcoop_error_page_title": "Couch Co-Op a rencontré une erreur",
+  "couchcoop_error_page_intro": "L’hôte du jeu a rencontré un problème inattendu lors du chargement de cette page. Essayez de la recharger. Si le problème persiste, copiez les détails ci-dessous et publiez-les dans la discussion du Workshop de Couch Co-Op.",
+  "couchcoop_error_page_incident": "Incident",
+  "couchcoop_error_page_fault": "Erreur",
+  "couchcoop_error_page_fault_id": "ID de l’erreur",
+  "couchcoop_error_page_mod_version": "Version du mod",
+  "couchcoop_error_page_game_version": "Version du jeu",
+  "couchcoop_error_page_page": "Page",
+  "couchcoop_error_page_time": "Heure (UTC)",
+  "couchcoop_error_page_unknown": "inconnue",
+  "couchcoop_error_page_log_path": "Si possible, joignez aussi ce fichier journal à votre message. Il se trouve sur l’ordinateur qui exécute le jeu :",
+  "couchcoop_error_page_log_unknown": "Si possible, joignez aussi le fichier journal du jeu à votre message : {file}, dans le dossier {folder} du jeu, sur l’ordinateur qui exécute le jeu.",
+  "couchcoop_error_page_copy": "Copier les détails",
+  "couchcoop_error_page_open_discussion": "Ouvrir la discussion Steam",
+  "couchcoop_error_page_copied": "Copié. Collez le texte dans votre message.",
+  "couchcoop_error_page_copy_manual": "La copie automatique a échoué. Le texte ci-dessous est sélectionné : appuyez longuement dessus et choisissez Copier.",
+  "couchcoop_error_page_details_label": "Détails de l’erreur"
 }

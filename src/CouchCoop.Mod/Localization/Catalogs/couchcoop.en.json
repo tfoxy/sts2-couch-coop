@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "The address changed",
   "couchcoop_https_help_address_body": "Scan the new QR code after this PC's IP address changes. You do not need to reinstall the certificate. Update old bookmarks or installed shortcuts; saved browser data belongs to the old address.",
   "couchcoop_https_help_details_title": "Certificate details and reset",
-  "couchcoop_https_help_reset_body": "Reset only if the certificate has expired, is damaged, or its private signing key may have been exposed. Resetting changes this PC's identity: every device must remove the old certificate and install the new setup file. A changed IP address alone does not need a reset."
+  "couchcoop_https_help_reset_body": "Reset only if the certificate has expired, is damaged, or its private signing key may have been exposed. Resetting changes this PC's identity: every device must remove the old certificate and install the new setup file. A changed IP address alone does not need a reset.",
+  "couchcoop_error_page_title": "Couch Co-Op hit an error",
+  "couchcoop_error_page_intro": "The game host ran into an unexpected problem loading this page. Try reloading. If it keeps happening, copy the details below and post them in the Couch Co-Op Workshop discussion.",
+  "couchcoop_error_page_incident": "Incident",
+  "couchcoop_error_page_fault": "Fault",
+  "couchcoop_error_page_fault_id": "Fault id",
+  "couchcoop_error_page_mod_version": "Mod version",
+  "couchcoop_error_page_game_version": "Game version",
+  "couchcoop_error_page_page": "Page",
+  "couchcoop_error_page_time": "Time (UTC)",
+  "couchcoop_error_page_unknown": "unknown",
+  "couchcoop_error_page_log_path": "If possible, also upload this log file with your post. It is on the computer running the game:",
+  "couchcoop_error_page_log_unknown": "If possible, also upload the game's log file with your post: {file} in the game's {folder} folder, on the computer running the game.",
+  "couchcoop_error_page_copy": "Copy details",
+  "couchcoop_error_page_open_discussion": "Open the Steam discussion",
+  "couchcoop_error_page_copied": "Copied. Paste it into your post.",
+  "couchcoop_error_page_copy_manual": "Couldn't copy automatically. The text below is selected: long-press it and choose Copy.",
+  "couchcoop_error_page_details_label": "Error details"
 }

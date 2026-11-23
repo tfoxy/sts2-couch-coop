@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "O endereço mudou",
   "couchcoop_https_help_address_body": "Leia o novo QR code quando o endereço IP deste PC mudar. Não é preciso reinstalar o certificado. Atualize os favoritos ou atalhos instalados antigos; os dados salvos no navegador pertencem ao endereço anterior.",
   "couchcoop_https_help_details_title": "Detalhes e redefinição",
-  "couchcoop_https_help_reset_body": "Redefina apenas se o certificado expirou, está danificado ou sua chave privada de assinatura pode ter sido exposta. Isso muda a identidade deste PC: cada dispositivo precisa remover o certificado antigo e instalar o novo arquivo. Uma mudança de IP, por si só, não exige redefinição."
+  "couchcoop_https_help_reset_body": "Redefina apenas se o certificado expirou, está danificado ou sua chave privada de assinatura pode ter sido exposta. Isso muda a identidade deste PC: cada dispositivo precisa remover o certificado antigo e instalar o novo arquivo. Uma mudança de IP, por si só, não exige redefinição.",
+  "couchcoop_error_page_title": "Ocorreu um erro no Couch Co-Op",
+  "couchcoop_error_page_intro": "O anfitrião do jogo encontrou um problema inesperado ao carregar esta página. Tente recarregá-la. Se o problema continuar, copie os detalhes abaixo e poste na discussão do Couch Co-Op na Oficina Steam.",
+  "couchcoop_error_page_incident": "Ocorrência",
+  "couchcoop_error_page_fault": "Erro",
+  "couchcoop_error_page_fault_id": "ID do erro",
+  "couchcoop_error_page_mod_version": "Versão do mod",
+  "couchcoop_error_page_game_version": "Versão do jogo",
+  "couchcoop_error_page_page": "Página",
+  "couchcoop_error_page_time": "Hora (UTC)",
+  "couchcoop_error_page_unknown": "desconhecida",
+  "couchcoop_error_page_log_path": "Se possível, anexe também este arquivo de log à sua postagem. Ele está no computador que está executando o jogo:",
+  "couchcoop_error_page_log_unknown": "Se possível, anexe também o arquivo de log do jogo à sua postagem: {file}, na pasta {folder} do jogo, no computador que está executando o jogo.",
+  "couchcoop_error_page_copy": "Copiar detalhes",
+  "couchcoop_error_page_open_discussion": "Abrir a discussão da Steam",
+  "couchcoop_error_page_copied": "Copiado. Cole o texto na sua postagem.",
+  "couchcoop_error_page_copy_manual": "Não foi possível copiar automaticamente. O texto abaixo está selecionado: toque nele e segure, depois escolha Copiar.",
+  "couchcoop_error_page_details_label": "Detalhes do erro"
 }

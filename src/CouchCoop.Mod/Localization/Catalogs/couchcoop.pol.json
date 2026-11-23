@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "Adres się zmienił",
   "couchcoop_https_help_address_body": "Po zmianie adresu IP tego komputera zeskanuj nowy QR. Nie musisz ponownie instalować certyfikatu. Zaktualizuj stare zakładki lub zainstalowane skróty; zapisane dane przeglądarki należą do poprzedniego adresu.",
   "couchcoop_https_help_details_title": "Szczegóły i resetowanie",
-  "couchcoop_https_help_reset_body": "Resetuj tylko wtedy, gdy certyfikat wygasł, jest uszkodzony lub jego prywatny klucz podpisujący mógł zostać ujawniony. Reset zmienia tożsamość komputera: każde urządzenie musi usunąć stary certyfikat i zainstalować nowy plik. Sama zmiana IP nie wymaga resetowania."
+  "couchcoop_https_help_reset_body": "Resetuj tylko wtedy, gdy certyfikat wygasł, jest uszkodzony lub jego prywatny klucz podpisujący mógł zostać ujawniony. Reset zmienia tożsamość komputera: każde urządzenie musi usunąć stary certyfikat i zainstalować nowy plik. Sama zmiana IP nie wymaga resetowania.",
+  "couchcoop_error_page_title": "W Couch Co-Op wystąpił błąd",
+  "couchcoop_error_page_intro": "Host gry napotkał nieoczekiwany problem podczas wczytywania tej strony. Spróbuj ją odświeżyć. Jeśli problem się powtarza, skopiuj poniższe szczegóły i zamieść je w dyskusji Couch Co-Op w Warsztacie Steam.",
+  "couchcoop_error_page_incident": "Zdarzenie",
+  "couchcoop_error_page_fault": "Błąd",
+  "couchcoop_error_page_fault_id": "ID błędu",
+  "couchcoop_error_page_mod_version": "Wersja moda",
+  "couchcoop_error_page_game_version": "Wersja gry",
+  "couchcoop_error_page_page": "Strona",
+  "couchcoop_error_page_time": "Czas (UTC)",
+  "couchcoop_error_page_unknown": "nieznana",
+  "couchcoop_error_page_log_path": "Jeśli to możliwe, dołącz do wpisu również ten plik dziennika. Znajduje się on na komputerze, na którym działa gra:",
+  "couchcoop_error_page_log_unknown": "Jeśli to możliwe, dołącz do wpisu również plik dziennika gry: {file} w folderze {folder} gry, na komputerze, na którym działa gra.",
+  "couchcoop_error_page_copy": "Kopiuj szczegóły",
+  "couchcoop_error_page_open_discussion": "Otwórz dyskusję na Steamie",
+  "couchcoop_error_page_copied": "Skopiowano. Wklej tekst do swojego wpisu.",
+  "couchcoop_error_page_copy_manual": "Nie udało się skopiować automatycznie. Poniższy tekst jest zaznaczony: przytrzymaj go i wybierz Kopiuj.",
+  "couchcoop_error_page_details_label": "Szczegóły błędu"
 }

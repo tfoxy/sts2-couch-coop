@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using CouchCoop.Mod.Connections;
+using CouchCoop.Mod.Localization;
 
 namespace CouchCoop.Mod.Server;
 
@@ -116,6 +117,9 @@ internal sealed record InternalServerErrorReport(
         return path;
     }
 
+    // Script-safe JSON for a string literal inside <script>: the default encoder escapes <, >, & and quotes.
+    private static readonly System.Text.Json.JsonSerializerOptions JsonForScript = new();
+
     /// <summary>The plain-text block the page's Copy button puts on the clipboard, ready to paste into a post.</summary>
     public string ToText()
     {
@@ -132,18 +136,28 @@ internal sealed record InternalServerErrorReport(
     // The page is served over plain http on the LAN, where browsers withhold navigator.clipboard (it needs a secure
     // context). So Copy tries it, falls back to execCommand on the textarea, and if both refuse it reveals the
     // selected textarea for a manual long-press copy. Inline script only: the page loads nothing external.
-    public string ToHtml()
+    //
+    // `language` is a native catalog code (BrowserLocale.CatalogLanguage of the phone's Accept-Language). Only the
+    // page's own sentences and labels are translated; the copied block (ToText) stays English for the maintainer.
+    public string ToHtml(string language = "eng")
     {
+        var catalog = CouchCoopLocalization.CatalogFor(language);
+        var english = CouchCoopLocalization.CatalogFor(CouchCoopLocalization.EnglishLanguage);
+        string T(string key) => WebUtility.HtmlEncode(catalog.TryGetValue("couchcoop_error_page_" + key, out var value)
+            ? value : english.GetValueOrDefault("couchcoop_error_page_" + key, key));
+        string Js(string key) => System.Text.Json.JsonSerializer.Serialize(
+            catalog.TryGetValue("couchcoop_error_page_" + key, out var value) ? value : english.GetValueOrDefault("couchcoop_error_page_" + key, key),
+            JsonForScript);
         var logBlock = LogPath is null
-            ? "<p class=\"log\">If possible, also upload the game's log file with your post: <code>godot.log</code> in the game's <code>logs</code> folder, on the computer running the game.</p>"
-            : $"<p class=\"log\">If possible, also upload this log file with your post. It is on the computer running the game:</p><p class=\"path\"><code>{WebUtility.HtmlEncode(LogPath)}</code></p>";
+            ? "<p class=\"log\">" + T("log_unknown").Replace("{file}", "<code>godot.log</code>").Replace("{folder}", "<code>logs</code>") + "</p>"
+            : $"<p class=\"log\">{T("log_path")}</p><p class=\"path\"><code>{WebUtility.HtmlEncode(LogPath)}</code></p>";
         return $$"""
         <!doctype html>
-        <html lang="en">
+        <html lang="{{BrowserLocale.HtmlLanguage(CouchCoopLocalization.SelectCatalogLanguage(language))}}">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Couch Co-op hit an error</title>
+          <title>{{T("title")}}</title>
           <style>
             :root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #f4f5f7; color: #20232b;
                     --line: #b8bdc9; --accent: #2f5fd0; --accent-ink: #fff; }
@@ -176,24 +190,24 @@ internal sealed record InternalServerErrorReport(
         </head>
         <body>
           <main>
-            <h1>Couch Co-op hit an error</h1>
-            <p>The game host ran into an unexpected problem loading this page. Try reloading. If it keeps happening, copy the details below and post them in the Couch Co-op Workshop discussion.</p>
+            <h1>{{T("title")}}</h1>
+            <p>{{T("intro")}}</p>
             <dl>
-              <dt>Incident</dt><dd>{{WebUtility.HtmlEncode(Incident)}}</dd>
-              <dt>Fault</dt><dd>{{WebUtility.HtmlEncode(Fault)}}</dd>
-              <dt>Fault id</dt><dd>{{WebUtility.HtmlEncode(FaultId)}}</dd>
-              <dt>Mod version</dt><dd>{{WebUtility.HtmlEncode(Version)}}</dd>
-              <dt>Game version</dt><dd>{{WebUtility.HtmlEncode(GameVersion ?? "unknown")}}</dd>
-              <dt>Page</dt><dd>{{WebUtility.HtmlEncode(Route)}}</dd>
-              <dt>Time UTC</dt><dd>{{WebUtility.HtmlEncode(Utc)}}</dd>
+              <dt>{{T("incident")}}</dt><dd>{{WebUtility.HtmlEncode(Incident)}}</dd>
+              <dt>{{T("fault")}}</dt><dd>{{WebUtility.HtmlEncode(Fault)}}</dd>
+              <dt>{{T("fault_id")}}</dt><dd>{{WebUtility.HtmlEncode(FaultId)}}</dd>
+              <dt>{{T("mod_version")}}</dt><dd>{{WebUtility.HtmlEncode(Version)}}</dd>
+              <dt>{{T("game_version")}}</dt><dd>{{(GameVersion is null ? T("unknown") : WebUtility.HtmlEncode(GameVersion))}}</dd>
+              <dt>{{T("page")}}</dt><dd>{{WebUtility.HtmlEncode(Route)}}</dd>
+              <dt>{{T("time")}}</dt><dd>{{WebUtility.HtmlEncode(Utc)}}</dd>
             </dl>
             {{logBlock}}
             <div class="actions">
-              <button type="button" id="copy">Copy details</button>
-              <a href="{{ReportProblemUrl}}" target="_blank" rel="noopener noreferrer">Open the Steam discussion</a>
+              <button type="button" id="copy">{{T("copy")}}</button>
+              <a href="{{ReportProblemUrl}}" target="_blank" rel="noopener noreferrer">{{T("open_discussion")}}</a>
             </div>
             <p id="status" role="status" aria-live="polite"></p>
-            <textarea id="report" readonly hidden aria-label="Error details">{{WebUtility.HtmlEncode(ToText())}}</textarea>
+            <textarea id="report" readonly hidden aria-label="{{T("details_label")}}">{{WebUtility.HtmlEncode(ToText())}}</textarea>
           </main>
           <script>
             (function () {
@@ -204,7 +218,7 @@ internal sealed record InternalServerErrorReport(
                 report.style.height = report.scrollHeight + 2 + "px";
                 report.focus();
                 report.setSelectionRange(0, report.value.length);
-                status.textContent = "Couldn't copy automatically. The text below is selected: long-press it and choose Copy.";
+                status.textContent = {{Js("copy_manual")}};
               }
               function legacy() {
                 report.hidden = false;
@@ -212,13 +226,13 @@ internal sealed record InternalServerErrorReport(
                 report.setSelectionRange(0, report.value.length);
                 var copied = false;
                 try { copied = document.execCommand("copy"); } catch (e) { copied = false; }
-                if (copied) { report.hidden = true; status.textContent = "Copied. Paste it into your post."; }
+                if (copied) { report.hidden = true; status.textContent = {{Js("copied")}}; }
                 else { manual(); }
               }
               document.getElementById("copy").addEventListener("click", function () {
                 if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
                   navigator.clipboard.writeText(report.value).then(function () {
-                    status.textContent = "Copied. Paste it into your post.";
+                    status.textContent = {{Js("copied")}};
                   }, legacy);
                 } else {
                   legacy();

@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "アドレスが変わった場合",
   "couchcoop_https_help_address_body": "このPCのIPアドレスが変わったら、新しいQRコードを読み取ってください。証明書の再インストールは不要です。古いブックマークやインストール済みのショートカットを更新してください。ブラウザーの保存データは古いアドレスに紐づいたままです。",
   "couchcoop_https_help_details_title": "証明書の詳細とリセット",
-  "couchcoop_https_help_reset_body": "証明書の期限切れ、破損、または署名用秘密鍵が漏えいした可能性がある場合にのみリセットしてください。PCの証明書上の識別情報が変わるため、すべての端末で古い証明書を削除し、新しい設定ファイルをインストールする必要があります。IPアドレスの変更だけではリセットは不要です。"
+  "couchcoop_https_help_reset_body": "証明書の期限切れ、破損、または署名用秘密鍵が漏えいした可能性がある場合にのみリセットしてください。PCの証明書上の識別情報が変わるため、すべての端末で古い証明書を削除し、新しい設定ファイルをインストールする必要があります。IPアドレスの変更だけではリセットは不要です。",
+  "couchcoop_error_page_title": "Couch Co-Op でエラーが発生しました",
+  "couchcoop_error_page_intro": "このページの読み込み中に、ゲームのホストで予期しない問題が発生しました。ページを再読み込みしてください。繰り返し発生する場合は、下の詳細をコピーして、Couch Co-Op のワークショップのディスカッションに投稿してください。",
+  "couchcoop_error_page_incident": "発生番号",
+  "couchcoop_error_page_fault": "エラー",
+  "couchcoop_error_page_fault_id": "エラーID",
+  "couchcoop_error_page_mod_version": "MODのバージョン",
+  "couchcoop_error_page_game_version": "ゲームのバージョン",
+  "couchcoop_error_page_page": "ページ",
+  "couchcoop_error_page_time": "時刻 (UTC)",
+  "couchcoop_error_page_unknown": "不明",
+  "couchcoop_error_page_log_path": "可能であれば、投稿時にこのログファイルも添付してください。ゲームを実行しているPCにあります：",
+  "couchcoop_error_page_log_unknown": "可能であれば、投稿時にゲームのログファイルも添付してください。ゲームを実行しているPCの、ゲームの {folder} フォルダー内にある {file} です。",
+  "couchcoop_error_page_copy": "詳細をコピー",
+  "couchcoop_error_page_open_discussion": "Steam のディスカッションを開く",
+  "couchcoop_error_page_copied": "コピーしました。投稿に貼り付けてください。",
+  "couchcoop_error_page_copy_manual": "自動コピーできませんでした。下のテキストは選択されています。長押しして「コピー」を選んでください。",
+  "couchcoop_error_page_details_label": "エラーの詳細"
 }

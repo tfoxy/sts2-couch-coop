@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "Adres değişti",
   "couchcoop_https_help_address_body": "Bu bilgisayarın IP adresi değiştiğinde yeni QR kodunu tarayın. Sertifikayı yeniden yüklemeniz gerekmez. Eski yer imlerini veya yüklü kısayolları güncelleyin; tarayıcıda kayıtlı veriler eski adrese aittir.",
   "couchcoop_https_help_details_title": "Sertifika bilgileri ve sıfırlama",
-  "couchcoop_https_help_reset_body": "Yalnızca sertifikanın süresi dolduysa, hasarlıysa veya özel imzalama anahtarı açığa çıkmış olabilirse sıfırlayın. Bu, bilgisayarın kimliğini değiştirir: her cihaz eski sertifikayı kaldırıp yeni dosyayı yüklemelidir. Sadece IP adresinin değişmesi sıfırlama gerektirmez."
+  "couchcoop_https_help_reset_body": "Yalnızca sertifikanın süresi dolduysa, hasarlıysa veya özel imzalama anahtarı açığa çıkmış olabilirse sıfırlayın. Bu, bilgisayarın kimliğini değiştirir: her cihaz eski sertifikayı kaldırıp yeni dosyayı yüklemelidir. Sadece IP adresinin değişmesi sıfırlama gerektirmez.",
+  "couchcoop_error_page_title": "Couch Co-Op bir hatayla karşılaştı",
+  "couchcoop_error_page_intro": "Ev sahibinin oyunu bu sayfayı yüklerken beklenmeyen bir sorunla karşılaştı. Sayfayı yeniden yüklemeyi dene. Sorun sürerse aşağıdaki ayrıntıları kopyala ve Couch Co-Op’un Steam Atölyesi tartışmasına gönder.",
+  "couchcoop_error_page_incident": "Olay",
+  "couchcoop_error_page_fault": "Hata",
+  "couchcoop_error_page_fault_id": "Hata kimliği",
+  "couchcoop_error_page_mod_version": "Mod sürümü",
+  "couchcoop_error_page_game_version": "Oyun sürümü",
+  "couchcoop_error_page_page": "Sayfa",
+  "couchcoop_error_page_time": "Saat (UTC)",
+  "couchcoop_error_page_unknown": "bilinmiyor",
+  "couchcoop_error_page_log_path": "Mümkünse gönderine bu günlük dosyasını da ekle. Dosya, oyunun çalıştığı bilgisayarda bulunuyor:",
+  "couchcoop_error_page_log_unknown": "Mümkünse gönderine oyunun günlük dosyasını da ekle: oyunun çalıştığı bilgisayarda, oyunun {folder} klasöründeki {file} dosyası.",
+  "couchcoop_error_page_copy": "Ayrıntıları kopyala",
+  "couchcoop_error_page_open_discussion": "Steam tartışmasını aç",
+  "couchcoop_error_page_copied": "Kopyalandı. Metni gönderine yapıştır.",
+  "couchcoop_error_page_copy_manual": "Otomatik olarak kopyalanamadı. Aşağıdaki metin seçili: metne uzun bas ve Kopyala’yı seç.",
+  "couchcoop_error_page_details_label": "Hata ayrıntıları"
 }

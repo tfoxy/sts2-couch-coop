@@ -24,7 +24,9 @@ internal static class InternalServerErrorReportTests
         LogPathHidesTheHomeFolder();
         CopyTextCarriesEveryField();
         ReportLinkMatchesWorkshopDiscussions();
-        Console.WriteLine("internal server error reports: ok (13 cases)");
+        BrowserLocaleFollowsTheFrontendRules();
+        PageUsesTheRequestedCatalog();
+        Console.WriteLine("internal server error reports: ok (15 cases)");
     }
 
     private static async Task AsyncFrameIsReadableAsync()
@@ -211,6 +213,44 @@ internal static class InternalServerErrorReportTests
             File.ReadAllText(Path.Combine(dir!.FullName, "workshop", "discussions", "discussions.json")));
         Expect(json.RootElement.GetProperty("posts").GetProperty("reporting-a-problem").GetString()
             == InternalServerErrorReport.ReportProblemUrl, "the error page links the live reporting-a-problem discussion");
+    }
+
+    private static void BrowserLocaleFollowsTheFrontendRules()
+    {
+        foreach (var (header, expected) in new (string?, string)[]
+        {
+            (null, "eng"), ("", "eng"), ("*", "eng"), ("garbage;;,", "eng"), ("en-GB", "eng"),
+            ("es", "spa"), ("es-ES", "spa"), ("es-MX", "esp"), ("es-419", "esp"), ("es-US", "esp"),
+            ("es-CO,en;q=0.5", "esp"), ("pt", "ptb"), ("pt-BR", "ptb"), ("pt-PT", "eng"),
+            ("zh-CN", "zhs"), ("zh-Hans-CN", "eng"), ("zh-TW", "eng"), ("zh-TW,fr;q=0.8", "fra"), ("zh_cn", "zhs"),
+            ("de-AT", "deu"), ("ja-JP", "jpn"), ("ko", "kor"), ("pl", "pol"), ("ru-RU", "rus"), ("th", "tha"), ("tr-TR", "tur"),
+            ("fr;q=0.5,it;q=0.9", "ita"), ("de;q=0,fr", "fra"), ("fr;q=0.8,de;q=0.8", "fra"),
+        })
+            Expect(BrowserLocale.CatalogLanguage(header) == expected, $"Accept-Language '{header}' picks {expected}");
+        Expect(BrowserLocale.HtmlLanguage("esp") == "es-419" && BrowserLocale.HtmlLanguage("spa") == "es-ES"
+            && BrowserLocale.HtmlLanguage("zhs") == "zh-Hans" && BrowserLocale.HtmlLanguage("eng") == "en", "catalog codes map to BCP-47");
+        foreach (var language in CouchCoop.Mod.Localization.CouchCoopLocalization.SupportedLanguages)
+            Expect(BrowserLocale.HtmlLanguage(language) is { Length: > 0 } tag
+                && (language == "eng" || tag != "en"), $"{language} has its own html lang");
+    }
+
+    private static void PageUsesTheRequestedCatalog()
+    {
+        var report = new InternalServerErrorReport("E-ABC123", "NullReferenceException in VisitIdTag.Inject", "0badc0de",
+            "1.0.0+abc", "/", "2026-11-23T16:24:49Z", null, null);
+        foreach (var language in CouchCoop.Mod.Localization.CouchCoopLocalization.SupportedLanguages)
+        {
+            var catalog = CouchCoop.Mod.Localization.CouchCoopLocalization.CatalogFor(language);
+            var html = report.ToHtml(language);
+            foreach (var key in new[] { "title", "intro", "incident", "fault", "fault_id", "mod_version", "game_version", "page", "time", "unknown", "copy", "open_discussion", "details_label" })
+                Expect(html.Contains(WebUtility.HtmlEncode(catalog["couchcoop_error_page_" + key]), StringComparison.Ordinal), $"{language} page shows {key}");
+            Expect(html.Contains("<code>godot.log</code>", StringComparison.Ordinal) && html.Contains("<code>logs</code>", StringComparison.Ordinal)
+                && !html.Contains("{file}", StringComparison.Ordinal) && !html.Contains("{folder}", StringComparison.Ordinal), $"{language} fills the log placeholders");
+            Expect(html.Contains(System.Text.Json.JsonSerializer.Serialize(catalog["couchcoop_error_page_copied"]), StringComparison.Ordinal)
+                && html.Contains(System.Text.Json.JsonSerializer.Serialize(catalog["couchcoop_error_page_copy_manual"]), StringComparison.Ordinal),
+                $"{language} script carries its status messages");
+            Expect(html.Contains(WebUtility.HtmlEncode(report.ToText()), StringComparison.Ordinal), $"{language} copy block stays English");
+        }
     }
 
     private static void Expect(bool condition, string message)

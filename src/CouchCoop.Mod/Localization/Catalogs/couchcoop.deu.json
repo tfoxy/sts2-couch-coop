@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "Die Adresse hat sich geändert",
   "couchcoop_https_help_address_body": "Scanne nach einer Änderung der IP-Adresse dieses PCs den neuen QR-Code. Du musst das Zertifikat nicht neu installieren. Aktualisiere alte Lesezeichen oder installierte Verknüpfungen; gespeicherte Browserdaten gehören zur alten Adresse.",
   "couchcoop_https_help_details_title": "Zertifikatsdetails und Zurücksetzen",
-  "couchcoop_https_help_reset_body": "Setze die Einrichtung nur zurück, wenn das Zertifikat abgelaufen oder beschädigt ist oder sein privater Signaturschlüssel offengelegt worden sein könnte. Dadurch ändert sich die Identität dieses PCs: Jedes Gerät muss das alte Zertifikat entfernen und die neue Datei installieren. Eine geänderte IP-Adresse allein erfordert kein Zurücksetzen."
+  "couchcoop_https_help_reset_body": "Setze die Einrichtung nur zurück, wenn das Zertifikat abgelaufen oder beschädigt ist oder sein privater Signaturschlüssel offengelegt worden sein könnte. Dadurch ändert sich die Identität dieses PCs: Jedes Gerät muss das alte Zertifikat entfernen und die neue Datei installieren. Eine geänderte IP-Adresse allein erfordert kein Zurücksetzen.",
+  "couchcoop_error_page_title": "Bei Couch Co-Op ist ein Fehler aufgetreten",
+  "couchcoop_error_page_intro": "Beim Laden dieser Seite ist beim Spielhost ein unerwartetes Problem aufgetreten. Lade die Seite erneut. Wenn das Problem weiter auftritt, kopiere die Details unten und poste sie in der Workshop-Diskussion von Couch Co-Op.",
+  "couchcoop_error_page_incident": "Vorfall",
+  "couchcoop_error_page_fault": "Fehler",
+  "couchcoop_error_page_fault_id": "Fehler-ID",
+  "couchcoop_error_page_mod_version": "Mod-Version",
+  "couchcoop_error_page_game_version": "Spielversion",
+  "couchcoop_error_page_page": "Seite",
+  "couchcoop_error_page_time": "Zeit (UTC)",
+  "couchcoop_error_page_unknown": "unbekannt",
+  "couchcoop_error_page_log_path": "Lade nach Möglichkeit auch diese Logdatei mit deinem Beitrag hoch. Sie befindet sich auf dem Computer, auf dem das Spiel läuft:",
+  "couchcoop_error_page_log_unknown": "Lade nach Möglichkeit auch die Logdatei des Spiels mit deinem Beitrag hoch: {file} im Ordner {folder} des Spiels auf dem Computer, auf dem das Spiel läuft.",
+  "couchcoop_error_page_copy": "Details kopieren",
+  "couchcoop_error_page_open_discussion": "Steam-Diskussion öffnen",
+  "couchcoop_error_page_copied": "Kopiert. Füge den Text in deinen Beitrag ein.",
+  "couchcoop_error_page_copy_manual": "Der Text konnte nicht automatisch kopiert werden. Der Text unten ist ausgewählt: Halte ihn gedrückt und wähle Kopieren.",
+  "couchcoop_error_page_details_label": "Fehlerdetails"
 }

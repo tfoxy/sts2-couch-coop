@@ -1721,11 +1721,12 @@ public sealed partial class CouchCoopBrowserServer(
 
             try
             {
-                if (request?.Header("Accept")?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true
-                    || string.Equals(request?.Header("Sec-Fetch-Mode"), "navigate", StringComparison.OrdinalIgnoreCase))
+                if ((request?.Header("Accept")?.Contains("text/html", StringComparison.OrdinalIgnoreCase) == true
+                        || string.Equals(request?.Header("Sec-Fetch-Mode"), "navigate", StringComparison.OrdinalIgnoreCase))
+                    && TryRenderErrorPage(report, request) is { } page)
                 {
-                    await HttpResponseWriter.WriteHtmlAsync(stream, HttpStatusCode.InternalServerError,
-                        report.ToHtml(), cancellationToken).ConfigureAwait(false);
+                    await HttpResponseWriter.WriteHtmlAsync(stream, HttpStatusCode.InternalServerError, page,
+                        cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
@@ -3480,6 +3481,23 @@ public sealed partial class CouchCoopBrowserServer(
     // the session envelope for weeks). Excluded here so they fall through to the internal-server-error arm.
     private static bool IsAssemblyLoadFailure(Exception exception)
         => exception is FileNotFoundException or FileLoadException or TypeLoadException or BadImageFormatException;
+
+    // The error page is the last thing a failing request can say, so rendering it must not become a second failure:
+    // if the localized page cannot be built, the caller answers the JSON envelope, which carries the same report.
+    private string? TryRenderErrorPage(InternalServerErrorReport report, CouchCoopHttpRequest? request)
+    {
+        try
+        {
+            return report.ToHtml(BrowserLocale.CatalogLanguage(request?.Header("Accept-Language")));
+        }
+        catch (Exception exception)
+        {
+            _networkDiagnostics.Write("internal-server-error-page-failed",
+                "browser-server diagnostic code=internal-server-error-page-failed "
+                + $"incident={report.Incident} detail={exception.GetType().Name}: {exception.Message}");
+            return null;
+        }
+    }
 
     private static BrowserErrorEnvelope CreateInternalServerError(InternalServerErrorReport report)
         => new(

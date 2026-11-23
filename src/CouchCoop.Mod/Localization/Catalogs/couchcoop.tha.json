@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "ที่อยู่เปลี่ยนไป",
   "couchcoop_https_help_address_body": "เมื่อที่อยู่ IP ของพีซีนี้เปลี่ยน ให้สแกนคิวอาร์โค้ดใหม่ ไม่ต้องติดตั้งใบรับรองอีกครั้ง อัปเดตบุ๊กมาร์กหรือทางลัดเก่า ข้อมูลที่เบราว์เซอร์บันทึกไว้ยังผูกกับที่อยู่เดิม",
   "couchcoop_https_help_details_title": "รายละเอียดใบรับรองและรีเซ็ต",
-  "couchcoop_https_help_reset_body": "รีเซ็ตเฉพาะเมื่อใบรับรองหมดอายุ เสียหาย หรือกุญแจส่วนตัวที่ใช้ลงนามอาจรั่วไหล การรีเซ็ตจะเปลี่ยนตัวตนของพีซี ทุกอุปกรณ์ต้องลบใบรับรองเก่าและติดตั้งไฟล์ใหม่ การเปลี่ยน IP เพียงอย่างเดียวไม่ต้องรีเซ็ต"
+  "couchcoop_https_help_reset_body": "รีเซ็ตเฉพาะเมื่อใบรับรองหมดอายุ เสียหาย หรือกุญแจส่วนตัวที่ใช้ลงนามอาจรั่วไหล การรีเซ็ตจะเปลี่ยนตัวตนของพีซี ทุกอุปกรณ์ต้องลบใบรับรองเก่าและติดตั้งไฟล์ใหม่ การเปลี่ยน IP เพียงอย่างเดียวไม่ต้องรีเซ็ต",
+  "couchcoop_error_page_title": "Couch Co-Op เกิดข้อผิดพลาด",
+  "couchcoop_error_page_intro": "โฮสต์เกมพบปัญหาที่ไม่คาดคิดขณะโหลดหน้านี้ ลองโหลดหน้าใหม่ หากยังเกิดปัญหา ให้คัดลอกรายละเอียดด้านล่างแล้วโพสต์ในกระดานสนทนาของ Couch Co-Op ในเวิร์กชอป Steam",
+  "couchcoop_error_page_incident": "เหตุการณ์",
+  "couchcoop_error_page_fault": "ข้อผิดพลาด",
+  "couchcoop_error_page_fault_id": "รหัสข้อผิดพลาด",
+  "couchcoop_error_page_mod_version": "เวอร์ชันม็อด",
+  "couchcoop_error_page_game_version": "เวอร์ชันเกม",
+  "couchcoop_error_page_page": "หน้า",
+  "couchcoop_error_page_time": "เวลา (UTC)",
+  "couchcoop_error_page_unknown": "ไม่ทราบ",
+  "couchcoop_error_page_log_path": "หากทำได้ ให้แนบไฟล์บันทึกนี้ไปกับโพสต์ด้วย ไฟล์อยู่ในคอมพิวเตอร์ที่กำลังรันเกม:",
+  "couchcoop_error_page_log_unknown": "หากทำได้ ให้แนบไฟล์บันทึกของเกมไปกับโพสต์ด้วย โดยไฟล์ {file} อยู่ในโฟลเดอร์ {folder} ของเกม บนคอมพิวเตอร์ที่กำลังรันเกม",
+  "couchcoop_error_page_copy": "คัดลอกรายละเอียด",
+  "couchcoop_error_page_open_discussion": "เปิดกระดานสนทนาบน Steam",
+  "couchcoop_error_page_copied": "คัดลอกแล้ว วางข้อความลงในโพสต์ได้เลย",
+  "couchcoop_error_page_copy_manual": "คัดลอกอัตโนมัติไม่สำเร็จ ข้อความด้านล่างถูกเลือกไว้แล้ว ให้แตะข้อความค้างไว้แล้วเลือก คัดลอก",
+  "couchcoop_error_page_details_label": "รายละเอียดข้อผิดพลาด"
 }

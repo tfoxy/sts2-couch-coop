@@ -274,5 +274,22 @@
   "couchcoop_https_help_address_title": "地址变了",
   "couchcoop_https_help_address_body": "这台电脑的 IP 地址变化后，请扫描新的二维码。无需重新安装证书。请更新旧书签或已安装的快捷方式；浏览器保存的数据仍属于旧地址。",
   "couchcoop_https_help_details_title": "证书详情与重置",
-  "couchcoop_https_help_reset_body": "仅在证书过期、损坏，或签名私钥可能泄露时重置。重置会改变这台电脑的证书身份：每台设备都必须移除旧证书并安装新的设置文件。仅仅改变 IP 地址不需要重置。"
+  "couchcoop_https_help_reset_body": "仅在证书过期、损坏，或签名私钥可能泄露时重置。重置会改变这台电脑的证书身份：每台设备都必须移除旧证书并安装新的设置文件。仅仅改变 IP 地址不需要重置。",
+  "couchcoop_error_page_title": "Couch Co-Op 遇到了错误",
+  "couchcoop_error_page_intro": "游戏主机在加载此页面时遇到了意外问题。请尝试重新加载。如果问题持续出现，请复制下方详情并发布到 Couch Co-Op 的创意工坊讨论帖中。",
+  "couchcoop_error_page_incident": "事件",
+  "couchcoop_error_page_fault": "错误",
+  "couchcoop_error_page_fault_id": "错误 ID",
+  "couchcoop_error_page_mod_version": "模组版本",
+  "couchcoop_error_page_game_version": "游戏版本",
+  "couchcoop_error_page_page": "页面",
+  "couchcoop_error_page_time": "时间 (UTC)",
+  "couchcoop_error_page_unknown": "未知",
+  "couchcoop_error_page_log_path": "如果方便，请在留言时一并上传此日志文件。文件位于运行游戏的电脑上：",
+  "couchcoop_error_page_log_unknown": "如果方便，请在留言时一并上传游戏的日志文件：运行游戏的电脑上，游戏的 {folder} 文件夹中的 {file}。",
+  "couchcoop_error_page_copy": "复制详情",
+  "couchcoop_error_page_open_discussion": "打开 Steam 讨论帖",
+  "couchcoop_error_page_copied": "已复制。请将其粘贴到留言中。",
+  "couchcoop_error_page_copy_manual": "无法自动复制。下方文字已选中：请长按并选择“复制”。",
+  "couchcoop_error_page_details_label": "错误详情"
 }
