@@ -123,6 +123,8 @@ const handCovered = ref(false);
 // `data-stream-carrier`, so QA reads the carrier from the DOM instead of from CDP network events. Null while not
 // streaming.
 const carrier = ref<RenderStreamStats["carrier"]>(null);
+const pacing = ref<RenderStreamStats["pacing"]>(null);
+const pacingFallback = ref(false);
 let client: RenderStreamClient | null = null;
 // INP2: the pointer channel, created/disposed alongside the client (the canvas is re-keyed per client generation, so a
 // fresh client gets a fresh capture on the fresh canvas), and recreated on a new access generation like the pair
@@ -241,9 +243,17 @@ function commitConfirm(): void {
   streamInput?.commitConfirm();
 }
 
+function syncPacingStats(): void {
+  const stats = client?.stats();
+  pacing.value = stats?.pacing ?? null;
+  pacingFallback.value = stats?.pacingFallback ?? false;
+  mirrorSettings.streamPacingFallback = pacingFallback.value;
+}
+
 function onStatus(status: RenderStreamStatus): void {
   emit("status", status);
   carrier.value = status.kind === "streaming" ? client?.stats().carrier ?? null : null;
+  syncPacingStats();
   switch (status.kind) {
     case "connecting":
       phase.value = "connecting";
@@ -361,9 +371,7 @@ function mountClient(): void {
       endpoint: { ...props.endpoint, protocol },
       ...(mirrorSettings.streamClientTweens ? { clientTweens: true } : {}),
       extensions: built.extensions,
-      // /18's window is sized by the seat from the round trip; 8 is its ceiling, so frames keep flowing while
-      // acks travel back over a slower link.
-      creditWindow: protocol >= 18 ? 8 : 2,
+      pacing: mirrorSettings.streamPacing,
       staticShaders: mirrorSettings.streamShaderMode === "static",
       // Damage-limited redraw is exact; it pays on a weak GPU once shader time is pinned, so it follows
       // the static-shaders setting.
@@ -466,6 +474,9 @@ function disposeClient(): void {
   confirmController.value = null;
   mountedExtensionsKey = null;
   carrier.value = null;
+  pacing.value = null;
+  pacingFallback.value = false;
+  mirrorSettings.streamPacingFallback = false;
   const current = client;
   client = null;
   if (current) {
@@ -511,6 +522,10 @@ function remountIfStale(): void {
 }
 
 watch(extensionsKey, remountIfStale);
+watch(() => mirrorSettings.streamPacing, (preset) => {
+  client?.setPacing?.(preset);
+  syncPacingStats();
+});
 watch(() => mirrorSettings.streamShaderMode, (mode) => {
   client?.setStaticShaders?.(mode === "static");
   client?.setDamageRedraw?.(mode === "static");
@@ -635,6 +650,8 @@ defineExpose({
     data-testid="render-stream-stage"
     :data-stream-phase="phase"
     :data-stream-carrier="carrier ?? undefined"
+    :data-stream-pacing="pacing ?? undefined"
+    :data-stream-pacing-fallback="pacingFallback"
   >
     <div class="render-stream-box" :style="boxStyle">
       <canvas

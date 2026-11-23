@@ -195,6 +195,9 @@ export type RenderStreamWireVersion = 16 | 17 | 18 | 19;
 export type RenderStreamCarrierChoice = "auto" | "websocket" | "webtransport";
 export const DEFAULT_RENDER_STREAM_PROTOCOL: RenderStreamWireVersion = 16;
 
+export const STREAM_PACING_MODES = ["fidelity", "balanced"] as const;
+export type StreamPacing = typeof STREAM_PACING_MODES[number];
+
 export const STREAM_SHADER_MODES = ["dynamic", "static"] as const;
 export type StreamShaderMode = typeof STREAM_SHADER_MODES[number];
 
@@ -238,6 +241,9 @@ export interface MirrorSettings {
   // Stream-only opt-ins; never inherit the old renderer's lite defaults.
   // Spine freeze is seat truth (never persisted); shaders, particles and background are viewer preferences.
   streamFreezeSpines: boolean;
+  streamPacing: StreamPacing;
+  /** Whether balanced fell back for the current connection; never saved. */
+  streamPacingFallback: boolean;
   streamShaderMode: StreamShaderMode;
   streamParticleMode: StreamParticleMode;
   streamStaticBg: boolean;
@@ -430,6 +436,7 @@ export type PersistedSettingKey =
   | "quality"
   | "shaderMode"
   | "particleMode"
+  | "streamPacing"
   | "streamShaderMode"
   | "streamParticleMode"
   | "streamStaticBg"
@@ -461,6 +468,7 @@ export const PERSISTED_SETTING_KEYS: readonly PersistedSettingKey[] = [
   "quality",
   "shaderMode",
   "particleMode",
+  "streamPacing",
   "streamShaderMode",
   "streamParticleMode",
   "streamStaticBg",
@@ -515,6 +523,7 @@ export const NEVER_PERSISTED_SETTING_KEYS = [
   "freezeSpines",
   "streamFreezeSpines",
   "streamDecorFrozen",
+  "streamPacingFallback",
   "freezeDecor",
   // textEffects — the GAME's setting, not this viewer's. Same reasoning as the freezes: a saved copy would speak
   // for a preference that has since moved, and there is no panel control here to correct it with.
@@ -590,6 +599,7 @@ const STORED_VALIDATORS: { [K in PersistedSettingKey]: (raw: unknown) => MirrorS
   quality: qualityChoiceValue,
   shaderMode: effectModeValue,
   particleMode: effectModeValue,
+  streamPacing: (raw) => raw === "fidelity" || raw === "balanced" ? raw : undefined,
   streamShaderMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
   streamParticleMode: (raw) => raw === "dynamic" || raw === "static" ? raw : undefined,
   streamStaticBg: boolValue,
@@ -975,6 +985,8 @@ export function createMirrorSettings(
       ? "off"
       : (effectModeOverride(search, "particles") ?? saved.particleMode ?? seededParticleMode(quality)),
     streamFreezeSpines: false,
+    streamPacing: STORED_VALIDATORS.streamPacing(params.get("pacing")) ?? saved.streamPacing ?? "fidelity",
+    streamPacingFallback: false,
     streamShaderMode: saved.streamShaderMode ?? "dynamic",
     streamParticleMode: saved.streamParticleMode ?? "dynamic",
     streamStaticBg: saved.streamStaticBg ?? false,

@@ -34,6 +34,7 @@ const VIEWER: Partial<MirrorSettings> = {
   raiseHeldCard: true, unfocusOnRelease: true, tapToFocus: true, confirmTap: true, raiseHandCards: true,
   uiScaling: true, backstopOcclusion: true, reproRecorder: true, tweenReplay: true, freezeParticles: true,
   freezeSpines: true, freezeDecor: true, audio: true, safeAreaPaddingEnabled: true, refreshRate: 40,
+  streamPacing: "fidelity", streamPacingFallback: false,
   streamFreezeSpines: false, streamShaderMode: "dynamic", streamParticleMode: "dynamic", streamStaticBg: false,
   latencyOverlay: true
 };
@@ -87,6 +88,53 @@ afterEach(() => {
 });
 
 describe("SettingsPanel — Use new renderer (Beta)", () => {
+  it("shows pacing only while the stream is active and persists a selection", async () => {
+    available();
+    mountPanel();
+    expect(wrapper!.find('[data-testid="mirror-stream-pacing"]').exists()).toBe(false);
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    const select = wrapper!.get('[data-testid="mirror-stream-pacing"]');
+    expect(el<HTMLSelectElement>("mirror-stream-pacing").value).toBe("fidelity");
+    expect(select.findAll("option").map((option) => option.text())).toEqual(["Fidelity", "Balanced"]);
+    await select.setValue("balanced");
+    expect(mirrorSettings.streamPacing).toBe("balanced");
+    expect(JSON.parse(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY) ?? "{}")).toEqual({
+      renderer: "stream", streamPacing: "balanced"
+    });
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(wrapper!.find('[data-testid="mirror-stream-pacing"]').exists()).toBe(false);
+  });
+
+  it("shows the pacing fallback note only for an active stream that fell back", async () => {
+    available();
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    const note = () => wrapper!.find('[data-testid="mirror-stream-pacing-fallback"]');
+    expect(note().exists()).toBe(false);
+    mirrorSettings.streamPacingFallback = true;
+    await nextTick();
+    expect(note().text()).toBe("Switched back to Fidelity for this connection.");
+    expect(localStorage.getItem(MIRROR_SETTINGS_STORAGE_KEY)).not.toContain("streamPacingFallback");
+    mirrorSettings.streamPacingFallback = false;
+    await nextTick();
+    expect(note().exists()).toBe(false);
+    mirrorSettings.streamPacingFallback = true;
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(false);
+    expect(note().exists()).toBe(false);
+  });
+
+  it("explains balanced pacing in its help tip", async () => {
+    available();
+    mountPanel();
+    await wrapper!.get('[data-testid="mirror-renderer"]').setValue(true);
+    const row = wrapper!.get('[data-testid="mirror-stream-pacing"]').element.closest(".settings-item")!;
+    const button = row.querySelector("button")!;
+    button.click();
+    await nextTick();
+    expect(row.textContent).toContain("same machine or a local network");
+    expect(row.textContent).toContain("On slower networks it switches back to Fidelity by itself.");
+  });
+
   it("routes decor and tween rows to saved stream wishes", async () => {
     available();
     Object.assign(mirrorSettings, { streamClientDecor: true, streamClientTweens: true, freezeDecor: true, tweenReplay: true });

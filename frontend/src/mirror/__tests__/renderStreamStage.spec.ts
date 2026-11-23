@@ -52,15 +52,18 @@ interface Fake extends RenderStreamClient {
   connects: number;
   disposed: boolean;
   carrier: RenderStreamStats["carrier"];
+  pacing: RenderStreamStats["pacing"];
+  pacingFallback: boolean;
   emit(status: RenderStreamStatus): void;
 }
 
 let clients: Fake[] = [];
 function createClient(options: RenderStreamClientOptions): RenderStreamClient {
   const fake: Fake = {
-    options, connects: 0, disposed: false, carrier: null,
+    options, connects: 0, disposed: false, carrier: null, pacing: options.pacing, pacingFallback: false,
     connect() { fake.connects += 1; },
     setEndpoint: vi.fn(),
+    setPacing: vi.fn(),
     setStaticShaders: vi.fn(),
     setDamageRedraw: vi.fn(),
     setStaticParticles: vi.fn(),
@@ -69,7 +72,7 @@ function createClient(options: RenderStreamClientOptions): RenderStreamClient {
     presentationToCss: vi.fn((r) => r),
     toGame: vi.fn(() => null),
     clientToGame: vi.fn(() => null),
-    stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0, carrier: fake.carrier }),
+    stats: () => ({ applied: 0, appliesPerSec: 0, creditRttMsP50: null, heapBytes: 0, carrier: fake.carrier, pacing: fake.pacing, pacingFallback: fake.pacingFallback }),
     recording: () => null,
     dispose() { fake.disposed = true; },
     emit(status) { options.onStatus?.(status); }
@@ -96,6 +99,8 @@ beforeEach(() => {
   // The stage runs the extension modules on the viewer's saved choices; keep this suite's default mount a pure
   // client (every module off), so the "empty extension list" claim stays the baseline.
   mirrorSettings.streamStaticBg = false;
+  mirrorSettings.streamPacing = "fidelity";
+  mirrorSettings.streamPacingFallback = false;
   mirrorSettings.streamShaderMode = "dynamic";
   mirrorSettings.streamParticleMode = "dynamic";
   mirrorSettings.streamClientTweens = false;
@@ -117,6 +122,107 @@ const mountStage = (props: Record<string, unknown> = {}) =>
 const status = () => wrapper!.find('[data-testid="render-stream-status"]');
 
 describe("RenderStreamStage", () => {
+  describe("pacing", () => {
+    it("creates with balanced and changes pacing without replacing the client", async () => {
+      mirrorSettings.streamPacing = "balanced";
+      mountStage();
+      const client = clients[0];
+      expect(client.options.pacing).toBe("balanced");
+      expect(client.options.creditWindow).toBeUndefined();
+      expect(client.options.creditStage).toBeUndefined();
+      mirrorSettings.streamPacing = "fidelity";
+      await nextTick();
+      expect(client.setPacing).toHaveBeenCalledExactlyOnceWith("fidelity");
+      expect(clients).toHaveLength(1);
+      expect(client.disposed).toBe(false);
+    });
+
+    it("accepts a client double without setPacing", async () => {
+      mountStage();
+      delete clients[0].setPacing;
+      mirrorSettings.streamPacing = "balanced";
+      await nextTick();
+      expect(clients).toHaveLength(1);
+      expect(clients[0].disposed).toBe(false);
+    });
+
+    it("clears fallback when a pacing change updates stats without a status", async () => {
+      mirrorSettings.streamPacing = "balanced";
+      mountStage();
+      const client = clients[0];
+      const frame = () => wrapper!.get('[data-testid="render-stream-stage"]');
+      client.pacingFallback = true;
+      client.emit({ kind: "streaming", firstFrame: true });
+      await nextTick();
+      expect(frame().attributes("data-stream-pacing")).toBe("balanced");
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("true");
+      expect(mirrorSettings.streamPacingFallback).toBe(true);
+
+      client.setPacing = vi.fn((preset) => {
+        client.pacing = preset;
+        client.pacingFallback = false;
+      });
+      mirrorSettings.streamPacing = "fidelity";
+      await nextTick();
+      expect(client.setPacing).toHaveBeenCalledExactlyOnceWith("fidelity");
+      expect(frame().attributes("data-stream-pacing")).toBe("fidelity");
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("false");
+      expect(mirrorSettings.streamPacingFallback).toBe(false);
+      expect(clients).toHaveLength(1);
+      expect(client.disposed).toBe(false);
+    });
+
+    it("keeps fallback while a connection retries with sticky pacing stats", async () => {
+      mirrorSettings.streamPacing = "balanced";
+      mountStage();
+      const client = clients[0];
+      const frame = () => wrapper!.get('[data-testid="render-stream-stage"]');
+      client.carrier = "websocket";
+      client.pacingFallback = true;
+      client.emit({ kind: "streaming", firstFrame: true });
+      await nextTick();
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("true");
+      expect(mirrorSettings.streamPacingFallback).toBe(true);
+
+      client.emit({ kind: "connecting" });
+      await nextTick();
+      expect(frame().attributes("data-stream-carrier")).toBeUndefined();
+      expect(frame().attributes("data-stream-pacing")).toBe("balanced");
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("true");
+      expect(mirrorSettings.streamPacingFallback).toBe(true);
+    });
+
+    it("adopts fallback on streaming statuses and clears it on disposal", async () => {
+      vi.useFakeTimers();
+      mirrorSettings.streamPacing = "balanced";
+      mountStage({ hiddenDisposeMs: 100 });
+      const frame = () => wrapper!.get('[data-testid="render-stream-stage"]');
+      const client = clients[0];
+      client.emit({ kind: "streaming", firstFrame: true });
+      await nextTick();
+      expect(frame().attributes("data-stream-pacing")).toBe("balanced");
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("false");
+      client.pacingFallback = true;
+      // A fallback reconnect emits streaming again without a connecting status.
+      client.emit({ kind: "streaming", firstFrame: false });
+      await nextTick();
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("true");
+      expect(mirrorSettings.streamPacingFallback).toBe(true);
+      expect(mirrorSettings.streamPacing).toBe("balanced");
+      client.emit({ kind: "streaming", firstFrame: true });
+      await nextTick();
+      expect(mirrorSettings.streamPacingFallback).toBe(true);
+      setVisibility("hidden");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(client.disposed).toBe(true);
+      expect(frame().attributes("data-stream-pacing")).toBeUndefined();
+      expect(frame().attributes("data-stream-pacing-fallback")).toBe("false");
+      expect(mirrorSettings.streamPacingFallback).toBe(false);
+      client.emit({ kind: "streaming", firstFrame: true });
+      expect(mirrorSettings.streamPacingFallback).toBe(false);
+    });
+  });
+
   describe("client tweens", () => {
     const tweenEndpoint = { ...endpoint, protocol: 17 as const };
 
@@ -127,19 +233,23 @@ describe("RenderStreamStage", () => {
     });
 
     it.each([[18, false], [18, true], [19, false], [19, true]] as const)(
-      "uses a /%s seat with credit window 8 (client tweens %s)", (protocol, tweens) => {
+      "uses fidelity pacing for a /%s seat (client tweens %s)", (protocol, tweens) => {
         mirrorSettings.streamClientTweens = tweens;
         const offered = { ...endpoint, protocol };
         mountStage({ endpoint: offered });
-        expect(clients[0].options).toMatchObject({ endpoint: offered, creditWindow: 8 });
+        expect(clients[0].options).toMatchObject({ endpoint: offered, pacing: "fidelity" });
+        expect(clients[0].options.creditWindow).toBeUndefined();
+        expect(clients[0].options.creditStage).toBeUndefined();
         if (tweens) expect(clients[0].options.clientTweens).toBe(true);
         else expect(clients[0].options).not.toHaveProperty("clientTweens");
       }
     );
 
-    it.each([endpoint, tweenEndpoint])("keeps window 2 below /18 (seat /$protocol)", (offered) => {
+    it.each([endpoint, tweenEndpoint])("uses fidelity pacing below /18 (seat /$protocol)", (offered) => {
       mountStage({ endpoint: offered });
-      expect(clients[0].options.creditWindow).toBe(2);
+      expect(clients[0].options.pacing).toBe("fidelity");
+      expect(clients[0].options.creditWindow).toBeUndefined();
+      expect(clients[0].options.creditStage).toBeUndefined();
     });
 
     it.each([endpoint, tweenEndpoint])("keeps /16 and omits the option when off (seat /$protocol)", (offered) => {

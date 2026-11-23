@@ -13,6 +13,7 @@ import { IMPLEMENTED_RUST_TEXT_METHODS } from "@/mirror/renderer/stage/textMetho
 import {
   EFFECT_MODES,
   STREAM_PARTICLE_MODES,
+  STREAM_PACING_MODES,
   STREAM_SHADER_MODES,
   TEXT_METHODS,
   effectivePanelSetting,
@@ -27,6 +28,7 @@ import {
   type MirrorSettings,
   type PersistedSettingKey,
   type QualityChoice,
+  type StreamPacing,
   type StreamForcedKey
 } from "@/mirror/mirrorSettings";
 import {
@@ -229,6 +231,13 @@ function qualityLabel(choice: QualityChoice): string {
 
 // The render rows the Rust canvas (and the new renderer) force: the effective value is shown, a write is refused.
 const renderBlocked = computed(() => canvasActive.value || streamActive.value);
+const streamPacing = computed<StreamPacing>({
+  get: () => settings.streamPacing,
+  set: (value) => {
+    settings.streamPacing = value;
+    persistMirrorSetting("streamPacing", value);
+  }
+});
 const shaderMode = computed<EffectMode>({
   get: () => effectivePanelSetting(settings, "shaderMode"),
   set: (value) => {
@@ -398,6 +407,7 @@ type HelpId =
   | "uiScaling"
   | "backstop"
   | "repro"
+  | "streamPacing"
   | "refreshRate"
   | "tweenReplay"
   | "freezeParticles"
@@ -420,6 +430,7 @@ const HELP_KEYS: Record<HelpId, import("@/i18n").MessageKey> = {
   safeAreaPadding: "settings.help.safeAreaPadding",
   tapFocus: "settings.help.tapFocus", confirmTap: "settings.help.confirmTap", raiseHand: "settings.help.raiseHand",
   uiScaling: "settings.help.uiScaling", backstop: "settings.help.backstop", repro: "settings.help.repro",
+  streamPacing: "settings.help.streamPacing",
   refreshRate: "settings.help.refreshRate", tweenReplay: "settings.help.tweenReplay",
   freezeParticles: "settings.help.freezeParticles", freezeSpines: "settings.help.freezeSpines",
   freezeDecor: "settings.help.freezeDecor", networkRtt: "settings.help.networkRtt",
@@ -672,6 +683,20 @@ onBeforeUnmount(() => setHelpListeners(false));
 
       <div class="settings-group">
         <p class="settings-group-label">{{ t('settings.streamThisPlayer') }}</p>
+        <div v-if="streamActive" class="settings-item">
+          <label class="settings-row settings-row-select">
+            <span>{{ t('settings.streamPacing') }}</span>
+            <select v-model="streamPacing" data-testid="mirror-stream-pacing">
+              <option v-for="mode in STREAM_PACING_MODES" :key="mode" :value="mode">
+                {{ t(mode === 'fidelity' ? 'settings.streamPacingFidelity' : 'settings.streamPacingBalanced') }}
+              </option>
+            </select>
+          </label>
+          <SettingsHelpTip v-bind="help('streamPacing', t('settings.streamPacing'))" />
+        </div>
+        <p v-if="streamActive && settings.streamPacingFallback" class="settings-group-note" data-testid="mirror-stream-pacing-fallback">
+          {{ t('settings.streamPacingFallback') }}
+        </p>
         <div class="settings-item settings-item-top">
           <label class="settings-row settings-row-slider">
             <span>{{ t('settings.refreshRate') }}</span>

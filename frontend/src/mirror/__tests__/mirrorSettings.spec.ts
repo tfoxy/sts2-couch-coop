@@ -24,6 +24,7 @@ import {
   REFRESH_RATE_MIN,
   SERVER_SETTING_KEYS,
   STREAM_SHADER_MODES,
+  STREAM_PACING_MODES,
   serverSettingsPayload,
   staticBgWireValue,
   TEXT_METHODS,
@@ -575,6 +576,55 @@ describe("createMirrorSettings — the repro recorder (and the build that exclud
   it("still honours `?repro=on` in an excluded build — the support escape hatch", () => {
     expect(excluded("?repro=on", fakeStorage({ reproRecorder: false })).reproRecorder).toBe(true);
     expect(excluded("?repro=off", fakeStorage({ reproRecorder: true })).reproRecorder).toBe(false);
+  });
+});
+
+describe("stream pacing preference", () => {
+  it("defaults to fidelity with no connection fallback", () => {
+    expect(STREAM_PACING_MODES).toEqual(["fidelity", "balanced"]);
+    expect(build()).toMatchObject({ streamPacing: "fidelity", streamPacingFallback: false });
+  });
+
+  it.each(STREAM_PACING_MODES)("persists and reloads %s", (mode) => {
+    const storage = fakeStorage();
+    expect(PERSISTED_SETTING_KEYS).toContain("streamPacing");
+    persistMirrorSetting("streamPacing", mode, storage);
+    expect(readStoredMirrorSettings(storage)).toEqual({ streamPacing: mode });
+    expect(build(quality(), "", storage).streamPacing).toBe(mode);
+  });
+
+  it.each(["auto", "invalid", true, 1, null])("drops invalid stored pacing %s", (streamPacing) => {
+    const storage = fakeStorage({ streamPacing });
+    expect(readStoredMirrorSettings(storage)).toEqual({});
+    expect(build(quality(), "", storage).streamPacing).toBe("fidelity");
+  });
+
+  it.each(STREAM_PACING_MODES)("seeds ?pacing=%s for the session without writing storage", (mode) => {
+    const saved = mode === "balanced" ? "fidelity" : "balanced";
+    const storage = fakeStorage({ streamPacing: saved });
+    expect(build(quality(), `?pacing=${mode}`, storage).streamPacing).toBe(mode);
+    expect(readStoredMirrorSettings(storage)).toEqual({ streamPacing: saved });
+    expect(build(quality(), "", storage).streamPacing).toBe(saved);
+    expect(build(quality(), "?pacing=invalid", storage).streamPacing).toBe(saved);
+  });
+
+  it("keeps fallback session-only and both pacing fields off the host payload", () => {
+    const storage = fakeStorage({ streamPacingFallback: true });
+    const settings = build(quality(), "", storage);
+    expect(settings.streamPacingFallback).toBe(false);
+    expect(readStoredMirrorSettings(storage)).toEqual({});
+    expect(NEVER_PERSISTED_SETTING_KEYS).toContain("streamPacingFallback");
+    for (const renderer of ["mirror", "stream"] as const) {
+      settings.runtimeRenderer = renderer;
+      const before = serverSettingsPayload(settings);
+      settings.streamPacing = "balanced";
+      settings.streamPacingFallback = true;
+      expect(serverSettingsPayload(settings)).toEqual(before);
+      for (const key of ["streamPacing", "streamPacingFallback"]) {
+        expect(before).not.toHaveProperty(key);
+        expect(SERVER_SETTING_KEYS as readonly string[]).not.toContain(key);
+      }
+    }
   });
 });
 
