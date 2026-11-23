@@ -3486,12 +3486,14 @@ public sealed partial class CouchCoopBrowserServer(
             "error",
             report.Incident,
             "internal-server-error",
-            $"The game host hit an unexpected error ({report.Incident}). Screenshot this and send it with your report.",
+            $"The game host hit an unexpected error ({report.Incident}). Copy these details into your bug report.",
             report.Incident,
             report.Fault,
             report.FaultId,
             report.Version,
-            report.Route);
+            report.Route,
+            report.GameVersion,
+            report.LogPath);
 
     // Asset routes carry the resource path readably (/res/images/icon.png) and the route mints the
     // scheme. Rejecting any decoded remainder that embeds its own scheme keeps the route defensive

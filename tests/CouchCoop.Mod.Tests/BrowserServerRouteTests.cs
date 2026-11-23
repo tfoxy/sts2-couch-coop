@@ -3483,6 +3483,24 @@ internal sealed partial class BrowserServerRouteTests
 
     private static async Task AssertInternalServerErrorsAreStructuredAsync(string staticRoot)
     {
+        var (previousLogPath, previousGameVersion) = (ConnectionRegistry.HostLogPath, ConnectionRegistry.HostGameVersion);
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        ConnectionRegistry.HostLogPath = Path.Combine(home, "couch-test-user-dir", "logs", "godot.log");
+        ConnectionRegistry.HostGameVersion = "v0.test.1";
+        try
+        {
+            await AssertInternalServerErrorResponsesAsync(staticRoot, home);
+        }
+        finally
+        {
+            (ConnectionRegistry.HostLogPath, ConnectionRegistry.HostGameVersion) = (previousLogPath, previousGameVersion);
+        }
+    }
+
+    private static async Task AssertInternalServerErrorResponsesAsync(string staticRoot, string home)
+    {
+        var expectedLogPath = InternalServerErrorReport.DisplayLogPath(ConnectionRegistry.HostLogPath, OperatingSystem.IsWindows(),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), home)!;
         using var cacheRoot = new TempResourceCacheRoot();
         var logs = new List<string>();
         var runtime = new RecordingSpirectlRuntime();
@@ -3509,7 +3527,11 @@ internal sealed partial class BrowserServerRouteTests
         var version = root.GetProperty("version").GetString()!;
         Expect(System.Text.RegularExpressions.Regex.IsMatch(incident, "^E-[0-9A-HJKMNP-TV-Z]{6}$"), "incident uses Crockford base32");
         Expect(root.GetProperty("requestId").GetString() == incident, "request id is the incident");
-        Expect(root.GetProperty("message").GetString() == $"The game host hit an unexpected error ({incident}). Screenshot this and send it with your report.", "message identifies the incident and next step");
+        Expect(root.GetProperty("message").GetString() == $"The game host hit an unexpected error ({incident}). Copy these details into your bug report.", "message identifies the incident and next step");
+        Expect(root.GetProperty("gameVersion").GetString() == "v0.test.1", "JSON carries the game version");
+        Expect(root.GetProperty("logPath").GetString() == expectedLogPath
+            && (string.IsNullOrEmpty(home) || !response.Body.Contains(home.Replace("\\", "\\\\"), StringComparison.Ordinal)),
+            "JSON carries the log path with the home folder abbreviated");
         Expect(fault.StartsWith("ApplicationException in ", StringComparison.Ordinal), "fault exposes the exception type and mod frame");
         Expect(System.Text.RegularExpressions.Regex.IsMatch(faultId, "^[0-9a-f]{8}$"), "fault id is short lowercase hex");
         Expect(!string.IsNullOrWhiteSpace(version), "version identifies the mod build");
@@ -3526,6 +3548,10 @@ internal sealed partial class BrowserServerRouteTests
         Expect(html.Body.Contains(faultId, StringComparison.Ordinal), "HTML and JSON identify the same fault");
         Expect(html.Body.Contains(WebUtility.HtmlEncode(version), StringComparison.Ordinal), "HTML carries the mod build");
         Expect(html.Body.Contains("/res/images/boom.png", StringComparison.Ordinal), "HTML names the page");
+        Expect(html.Body.Contains("v0.test.1", StringComparison.Ordinal), "HTML carries the game version");
+        Expect(html.Body.Contains(WebUtility.HtmlEncode(expectedLogPath), StringComparison.Ordinal)
+            && (string.IsNullOrEmpty(home) || !html.Body.Contains(home, StringComparison.Ordinal)),
+            "HTML shows the real log path without the home folder");
 
         var navigation = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "application/json"), ("Sec-Fetch-Mode", "navigate"));
         AssertHtmlInternalServerError(navigation);
@@ -3572,7 +3598,11 @@ internal sealed partial class BrowserServerRouteTests
         foreach (var label in new[] { "Incident", "Fault", "Fault id", "Mod version", "Page", "Time UTC" })
             Expect(response.Body.Contains(label, StringComparison.Ordinal), "HTML includes " + label);
         Expect(response.Body.Contains("godot.log", StringComparison.Ordinal), "HTML explains where to find the host log");
-        Expect(!response.Body.Contains("<script", StringComparison.OrdinalIgnoreCase), "HTML needs no scripts");
+        Expect(!System.Text.RegularExpressions.Regex.IsMatch(response.Body, @"<script[^>]*\ssrc=|<link[^>]*\shref=|<img", System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+            "HTML loads nothing external");
+        Expect(response.Body.Contains("id=\"copy\"", StringComparison.Ordinal), "HTML offers a copy button");
+        Expect(response.Body.Contains($"href=\"{InternalServerErrorReport.ReportProblemUrl}\"", StringComparison.Ordinal),
+            "HTML links the Workshop reporting discussion");
         AssertSafeInternalServerErrorBody(response.Body);
     }
 

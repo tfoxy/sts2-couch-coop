@@ -21,7 +21,10 @@ internal static class InternalServerErrorReportTests
         FaultIdTracksThrowSite();
         OtherEnvelopesKeepTheirBytes();
         HtmlEncodesEveryField();
-        Console.WriteLine("internal server error reports: ok (10 cases)");
+        LogPathHidesTheHomeFolder();
+        CopyTextCarriesEveryField();
+        ReportLinkMatchesWorkshopDiscussions();
+        Console.WriteLine("internal server error reports: ok (13 cases)");
     }
 
     private static async Task AsyncFrameIsReadableAsync()
@@ -151,11 +154,62 @@ internal static class InternalServerErrorReportTests
 
     private static void HtmlEncodesEveryField()
     {
-        var values = new[] { "<incident>&\"'", "<fault>&\"'", "<id>&\"'", "<version>&\"'", "<route>&\"'", "<utc>&\"'" };
-        var html = new InternalServerErrorReport(values[0], values[1], values[2], values[3], values[4], values[5]).ToHtml();
+        var values = new[] { "<incident>&\"'", "<fault>&\"'", "<id>&\"'", "<version>&\"'", "<route>&\"'", "<utc>&\"'", "<game>&\"'", "<log>&\"'" };
+        var html = new InternalServerErrorReport(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7]).ToHtml();
         foreach (var value in values)
             Expect(html.Contains(WebUtility.HtmlEncode(value), StringComparison.Ordinal)
                 && !html.Contains(value, StringComparison.Ordinal), "HTML encodes every diagnostic field");
+    }
+
+    private static void LogPathHidesTheHomeFolder()
+    {
+        const string appData = @"C:\Users\Tomas\AppData\Roaming";
+        const string profile = @"C:\Users\Tomas";
+        Expect(InternalServerErrorReport.DisplayLogPath("C:/Users/Tomas/AppData/Roaming/SlayTheSpire2/logs/godot.log", true, appData, profile)
+            == @"%APPDATA%\SlayTheSpire2\logs\godot.log", "Windows: Godot's forward-slash path under AppData uses %APPDATA% and backslashes");
+        Expect(InternalServerErrorReport.DisplayLogPath(@"c:\users\tomas\couch-coop\headless-slots\slot-2\SlayTheSpire2\logs\godot.log", true, appData, profile)
+            == @"%USERPROFILE%\couch-coop\headless-slots\slot-2\SlayTheSpire2\logs\godot.log", "Windows: a seat log under the profile uses %USERPROFILE%, case-insensitively");
+        Expect(InternalServerErrorReport.DisplayLogPath("D:/Games/SlayTheSpire2/logs/godot.log", true, appData, profile)
+            == @"D:\Games\SlayTheSpire2\logs\godot.log", "Windows: a path outside the profile is shown as-is");
+        Expect(InternalServerErrorReport.DisplayLogPath("/home/tomas/.local/share/SlayTheSpire2/logs/godot.log", false, null, "/home/tomas/")
+            == "~/.local/share/SlayTheSpire2/logs/godot.log", "Linux: the home folder becomes ~");
+        Expect(InternalServerErrorReport.DisplayLogPath("/Users/tomas/Library/Application Support/SlayTheSpire2/logs/godot.log", false, null, "/Users/tomas")
+            == "~/Library/Application Support/SlayTheSpire2/logs/godot.log", "macOS: the home folder becomes ~");
+        Expect(InternalServerErrorReport.DisplayLogPath("/home/tomasx/godot.log", false, null, "/home/tomas")
+            == "/home/tomasx/godot.log", "only a whole home-folder segment is replaced");
+        Expect(InternalServerErrorReport.DisplayLogPath(null, false, null, "/home/tomas") is null
+            && InternalServerErrorReport.DisplayLogPath(" ", true, appData, profile) is null, "no resolved log path shows none");
+    }
+
+    private static void CopyTextCarriesEveryField()
+    {
+        var report = new InternalServerErrorReport("E-ABC123", "NullReferenceException in VisitIdTag.Inject", "0badc0de",
+            "1.0.0+abc", "/", "2026-11-23T16:24:49Z", "v0.103.2", @"%APPDATA%\SlayTheSpire2\logs\godot.log");
+        Expect(report.ToText() == string.Join('\n',
+            "Couch Co-op error E-ABC123",
+            "Fault: NullReferenceException in VisitIdTag.Inject (0badc0de)",
+            "Mod version: 1.0.0+abc",
+            "Game version: v0.103.2",
+            "Page: /",
+            "Time: 2026-11-23T16:24:49Z",
+            @"Log file: %APPDATA%\SlayTheSpire2\logs\godot.log"), "copy text lists every field, one per line");
+        var html = report.ToHtml();
+        Expect(html.Contains(WebUtility.HtmlEncode(report.ToText()), StringComparison.Ordinal), "the page's copy source is the copy text");
+        var bare = report with { GameVersion = null, LogPath = null };
+        Expect(bare.ToText().Contains("Game version: unknown", StringComparison.Ordinal)
+            && !bare.ToText().Contains("Log file", StringComparison.Ordinal), "missing facts degrade to unknown / omitted");
+        Expect(bare.ToHtml().Contains("godot.log", StringComparison.Ordinal), "without a resolved path the page still names godot.log");
+    }
+
+    private static void ReportLinkMatchesWorkshopDiscussions()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "CouchCoop.sln"))) dir = dir.Parent;
+        Expect(dir is not null, "repo root (CouchCoop.sln) is reachable from the test binary");
+        using var json = System.Text.Json.JsonDocument.Parse(
+            File.ReadAllText(Path.Combine(dir!.FullName, "workshop", "discussions", "discussions.json")));
+        Expect(json.RootElement.GetProperty("posts").GetProperty("reporting-a-problem").GetString()
+            == InternalServerErrorReport.ReportProblemUrl, "the error page links the live reporting-a-problem discussion");
     }
 
     private static void Expect(bool condition, string message)
