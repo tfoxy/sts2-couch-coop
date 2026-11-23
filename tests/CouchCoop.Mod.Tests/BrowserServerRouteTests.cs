@@ -3489,7 +3489,7 @@ internal sealed partial class BrowserServerRouteTests
         ConnectionRegistry.HostGameVersion = "v0.test.1";
         try
         {
-            await AssertInternalServerErrorResponsesAsync(staticRoot, home);
+            await AssertInternalServerErrorResponsesAsync(staticRoot);
         }
         finally
         {
@@ -3497,8 +3497,9 @@ internal sealed partial class BrowserServerRouteTests
         }
     }
 
-    private static async Task AssertInternalServerErrorResponsesAsync(string staticRoot, string home)
+    private static async Task AssertInternalServerErrorResponsesAsync(string staticRoot)
     {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var expectedLogPath = InternalServerErrorReport.DisplayLogPath(ConnectionRegistry.HostLogPath, OperatingSystem.IsWindows(),
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), home)!;
         using var cacheRoot = new TempResourceCacheRoot();
@@ -3550,8 +3551,9 @@ internal sealed partial class BrowserServerRouteTests
         Expect(html.Body.Contains("/res/images/boom.png", StringComparison.Ordinal), "HTML names the page");
         Expect(html.Body.Contains("v0.test.1", StringComparison.Ordinal), "HTML carries the game version");
         Expect(html.Body.Contains(WebUtility.HtmlEncode(expectedLogPath), StringComparison.Ordinal)
+            && expectedLogPath.Contains("couch-test-user-dir", StringComparison.Ordinal)
             && (string.IsNullOrEmpty(home) || !html.Body.Contains(home, StringComparison.Ordinal)),
-            "HTML shows the real log path without the home folder");
+            "HTML shows the log path with the home folder abbreviated");
 
         var navigation = await GetAsync(baseUri, "/res/images/boom.png", ("Accept", "application/json"), ("Sec-Fetch-Mode", "navigate"));
         AssertHtmlInternalServerError(navigation);

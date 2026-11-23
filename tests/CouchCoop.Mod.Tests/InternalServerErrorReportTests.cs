@@ -191,13 +191,14 @@ internal static class InternalServerErrorReportTests
             "Mod version: 1.0.0+abc",
             "Game version: v0.103.2",
             "Page: /",
-            "Time: 2026-11-23T16:24:49Z",
-            @"Log file: %APPDATA%\SlayTheSpire2\logs\godot.log"), "copy text lists every field, one per line");
+            "Time: 2026-11-23T16:24:49Z"), "copy text lists every field, one per line, without the log path");
         var html = report.ToHtml();
         Expect(html.Contains(WebUtility.HtmlEncode(report.ToText()), StringComparison.Ordinal), "the page's copy source is the copy text");
+        Expect(html.Contains(WebUtility.HtmlEncode(report.LogPath!), StringComparison.Ordinal)
+            && html.Contains("also upload this log file", StringComparison.Ordinal), "the page shows the real log path and asks for it");
         var bare = report with { GameVersion = null, LogPath = null };
         Expect(bare.ToText().Contains("Game version: unknown", StringComparison.Ordinal)
-            && !bare.ToText().Contains("Log file", StringComparison.Ordinal), "missing facts degrade to unknown / omitted");
+            && !bare.ToText().Contains("godot.log", StringComparison.Ordinal), "missing facts degrade to unknown; the copy text never names the log");
         Expect(bare.ToHtml().Contains("godot.log", StringComparison.Ordinal), "without a resolved path the page still names godot.log");
     }
 

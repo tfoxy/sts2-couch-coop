@@ -87,9 +87,10 @@ internal sealed record InternalServerErrorReport(
     }
 
     /// <summary>
-    /// This process's <c>godot.log</c> as the page shows it: the real path with the home folder written as
-    /// <c>%APPDATA%</c>/<c>%USERPROFILE%</c> (Windows) or <c>~</c>, so the page — readable by anyone on the
-    /// LAN — never carries the computer's account name, and the text still pastes into Explorer or Finder.
+    /// This process's <c>godot.log</c> (a seat's server resolves its own) as the page shows it: the real path with
+    /// the home folder written as <c>%APPDATA%</c>/<c>%USERPROFILE%</c> (Windows) or <c>~</c>, so the page —
+    /// readable by anyone on the LAN — never carries the computer's account name, and the text still pastes into
+    /// Explorer or Finder.
     /// </summary>
     internal static string? DisplayLogPath(string? path, bool windows, string? appData, string? home)
     {
@@ -125,7 +126,6 @@ internal sealed record InternalServerErrorReport(
             .Append("Game version: ").Append(GameVersion ?? "unknown").Append('\n')
             .Append("Page: ").Append(Route).Append('\n')
             .Append("Time: ").Append(Utc);
-        if (LogPath is not null) text.Append('\n').Append("Log file: ").Append(LogPath);
         return text.ToString();
     }
 
@@ -135,8 +135,8 @@ internal sealed record InternalServerErrorReport(
     public string ToHtml()
     {
         var logBlock = LogPath is null
-            ? "<p>If you can, also attach <code>godot.log</code> from the game's <code>logs</code> folder on the computer running the game.</p>"
-            : $"<p>If you can, also attach this file from the computer running the game:</p><p class=\"path\"><code>{WebUtility.HtmlEncode(LogPath)}</code></p>";
+            ? "<p class=\"log\">If possible, also upload the game's log file with your post: <code>godot.log</code> in the game's <code>logs</code> folder, on the computer running the game.</p>"
+            : $"<p class=\"log\">If possible, also upload this log file with your post. It is on the computer running the game:</p><p class=\"path\"><code>{WebUtility.HtmlEncode(LogPath)}</code></p>";
         return $$"""
         <!doctype html>
         <html lang="en">
@@ -148,23 +148,26 @@ internal sealed record InternalServerErrorReport(
             :root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #f4f5f7; color: #20232b;
                     --line: #b8bdc9; --accent: #2f5fd0; --accent-ink: #fff; }
             * { box-sizing: border-box; }
-            body { margin: 0; padding: 2rem 1rem; }
+            body { margin: 0; padding: 1.25rem 1rem 2rem; }
             main { max-width: 42rem; margin: 0 auto; }
-            h1 { font-size: 1.7rem; line-height: 1.2; }
-            p { line-height: 1.6; }
-            dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .6rem 1rem;
-                 padding: 1rem; border: 1px solid var(--line); border-radius: .5rem;
-                 font-family: ui-monospace, monospace; font-size: .875rem; line-height: 1.5; }
+            h1 { font-size: 1.5rem; line-height: 1.2; margin: 0 0 .5rem; }
+            p { line-height: 1.5; margin: .6rem 0; }
+            dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .35rem .9rem;
+                 padding: .8rem; margin: .8rem 0; border: 1px solid var(--line); border-radius: .5rem;
+                 font-family: ui-monospace, monospace; font-size: .8rem; line-height: 1.45; }
             dt { font-weight: bold; }
             dd { margin: 0; overflow-wrap: anywhere; }
-            .actions { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1.25rem 0 .5rem; }
-            .actions button, .actions a { font: inherit; font-weight: 600; padding: .7rem 1.1rem; border-radius: .5rem;
+            .actions { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1rem 0 .4rem; }
+            .actions button, .actions a { font: inherit; font-weight: 600; padding: .65rem 1rem; border-radius: .5rem;
                  border: 1px solid var(--accent); text-decoration: none; cursor: pointer; text-align: center; flex: 1 1 12rem; }
             .actions button { background: var(--accent); color: var(--accent-ink); }
             .actions a { background: transparent; color: var(--accent); }
             #status { min-height: 1.6em; margin: 0; font-size: .9rem; }
             textarea { width: 100%; min-height: 9rem; font: .8rem/1.5 ui-monospace, monospace; padding: .6rem;
                  border: 1px solid var(--line); border-radius: .5rem; background: transparent; color: inherit; }
+            .log { margin-bottom: .4rem; }
+            .path { margin-top: 0; padding: .6rem .8rem; border: 1px solid var(--line); border-radius: .5rem;
+                 user-select: all; -webkit-user-select: all; }
             .path code { overflow-wrap: anywhere; font-size: .875rem; }
             @media (prefers-color-scheme: dark) {
               :root { background: #17191f; color: #edf0f5; --line: #565d6b; --accent: #8fb0ff; --accent-ink: #10131a; }
@@ -184,13 +187,13 @@ internal sealed record InternalServerErrorReport(
               <dt>Page</dt><dd>{{WebUtility.HtmlEncode(Route)}}</dd>
               <dt>Time UTC</dt><dd>{{WebUtility.HtmlEncode(Utc)}}</dd>
             </dl>
+            {{logBlock}}
             <div class="actions">
               <button type="button" id="copy">Copy details</button>
               <a href="{{ReportProblemUrl}}" target="_blank" rel="noopener noreferrer">Open the Steam discussion</a>
             </div>
             <p id="status" role="status" aria-live="polite"></p>
             <textarea id="report" readonly hidden aria-label="Error details">{{WebUtility.HtmlEncode(ToText())}}</textarea>
-            {{logBlock}}
           </main>
           <script>
             (function () {
