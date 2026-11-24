@@ -79,3 +79,6 @@ mp_names.json
 
 # Codex-orchestration run artefacts and scratch (runs_dir default).
 .local/
+
+# Downloadable Godot client pack staging and exports.
+/client-pack/build/

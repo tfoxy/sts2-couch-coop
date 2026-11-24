@@ -1,0 +1,8 @@
+config_version=5
+
+[application]
+config/name="Couch Seat Pack"
+run/main_scene="res://couch/entry.tscn"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
