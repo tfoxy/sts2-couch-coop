@@ -4,10 +4,9 @@ const ControlClient = preload("res://couch/control_client.gd")
 const ReceiverView = preload("res://couch/view.gd")
 
 var control: Node
-var _fit: SubViewportContainer
-var _viewport: SubViewport
 var _view: Node
 var _descriptor: Dictionary = {}
+var _overlay: CanvasLayer
 var _status: Label
 var _last_input: Label
 
@@ -15,21 +14,18 @@ var _last_input: Label
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fit = SubViewportContainer.new()
-	_fit.stretch = false
-	add_child(_fit)
-	_viewport = SubViewport.new()
-	_viewport.disable_3d = true
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_fit.add_child(_viewport)
+	# Stay above the stream's canvases while sharing its content coordinate system.
+	_overlay = CanvasLayer.new()
+	_overlay.layer = 1024
+	add_child(_overlay)
 	_status = Label.new()
 	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_status.position = Vector2(8, 8)
-	add_child(_status)
+	_overlay.add_child(_status)
 	_last_input = Label.new()
 	_last_input.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_last_input.position = Vector2(8, 30)
-	add_child(_last_input)
+	_overlay.add_child(_last_input)
 	control = ControlClient.new()
 	control.origin = _config("COUCH_HOST_ORIGIN", "http://127.0.0.1:13337")
 	control.player_name = _config("COUCH_PLAYER_NAME", "Native client")
@@ -38,7 +34,6 @@ func _ready() -> void:
 	control.input_result.connect(func(text: String) -> void: _last_input.text = "Input: " + text)
 	control.descriptor_received.connect(_connect_descriptor)
 	add_child(control)
-	resized.connect(_fit_view)
 	_receiver_defaults()
 	control.start()
 
@@ -70,30 +65,24 @@ func _connect_descriptor(descriptor: Dictionary) -> void:
 		return
 	_descriptor = descriptor.duplicate(true)
 	if _view != null:
-		_viewport.remove_child(_view)
+		remove_child(_view)
 		_view.queue_free()
 	_view = _make_view()
+	_view.fit_presentation = true
 	var client: RefCounted = _view.live_client()
 	client.origin = control.origin
 	client.tapped.connect(control.tapped)
-	_view.first_frame.connect(control.first_frame)
+	_view.first_frame.connect(_receiver_first_frame)
 	var result: Error = client.connect_descriptor(descriptor)
 	if result != OK:
 		_status.text = "Stream descriptor refused"
 		_view.free()
 		_view = null
 		return
-	var presentation: Array = descriptor.get("presentation", [640, 360])
-	_viewport.size = Vector2i(int(presentation[0]), int(presentation[1]))
-	_fit_view()
-	_viewport.add_child(_view)
+	add_child(_view)
 
 
-func _fit_view() -> void:
-	if _viewport.size.x <= 0 or _viewport.size.y <= 0:
-		return
-	# Keep the receiver at presentation size and fit it uniformly inside the shell window.
-	var scale_factor: float = minf(size.x / _viewport.size.x, size.y / _viewport.size.y)
-	_fit.size = Vector2(_viewport.size)
-	_fit.scale = Vector2.ONE * scale_factor
-	_fit.position = (size - Vector2(_viewport.size) * scale_factor) / 2.0
+func _receiver_first_frame() -> void:
+	# CanvasLayer ignores the global canvas transform that the receiver adopts for host content.
+	_overlay.transform = get_viewport().global_canvas_transform
+	control.first_frame()

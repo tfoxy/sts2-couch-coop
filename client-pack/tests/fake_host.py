@@ -196,6 +196,10 @@ class ControlContract(unittest.TestCase):
         text = self.run_scenario("flow", log_name="receiver-defaults")
         self.assertIn("[offline] receiver-config: received-max-bytes=0 memory-budget-bytes=134217728", text)
 
+    def test_receiver_mounts_directly_in_window(self):
+        text = self.run_scenario("flow", log_name="direct-window")
+        self.assertIn("[offline] direct-window receiver and content-space overlay", text)
+
     def test_receiver_config_argument_overrides(self):
         text = self.run_scenario("flow", args=["--rs-env=RS_RECEIVER_RECEIVED_MAX_BYTES=4096",
                                               "--rs-env=RS_RECEIVER_MEMORY_BUDGET_BYTES=67108864"],

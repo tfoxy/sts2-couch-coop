@@ -22,6 +22,14 @@ class FakeLive extends RefCounted:
 class FakeView extends Node:
 	signal first_frame
 	var client := FakeLive.new()
+	var fit_presentation := false
+
+	func _ready() -> void:
+		assert(fit_presentation)
+		assert(get_viewport() == get_window())
+		# Simulate the receiver adopting a host canvas with three presentation pixels per unit.
+		get_window().content_scale_size = Vector2i(1920, 1080)
+		get_window().global_canvas_transform = Transform2D(Vector2(3, 0), Vector2(0, 3), Vector2.ZERO)
 
 	func live_client() -> RefCounted:
 		return client
@@ -46,12 +54,16 @@ class TestEntry extends "res://couch/entry.gd":
 	func _presentation(_epoch: int, _ready: bool) -> void:
 		if _view == null:
 			return
-		assert(_viewport.size == Vector2i(1920, 1080))
-		assert(is_equal_approx(_fit.scale.x, _fit.scale.y))
-		assert(_fit.size == Vector2(1920, 1080))
+		assert(_view.get_parent() == self)
+		assert(get_tree().root.find_children("*", "SubViewport", true, false).is_empty())
+		assert(get_tree().root.find_children("*", "SubViewportContainer", true, false).is_empty())
 		# Before the fake receiver's first frame, there must be no presentation receipt.
 		_view.first_frame.emit()
 		_view.first_frame.emit()
+		for label: Label in [_status, _last_input]:
+			assert(label.get_canvas_transform() == get_viewport().global_canvas_transform)
+			assert(label.mouse_filter == Control.MOUSE_FILTER_IGNORE)
+		print("[offline] direct-window receiver and content-space overlay")
 		_view.client.tapped.emit(Vector2(100, 200), 99, Vector2(812, 640))
 
 

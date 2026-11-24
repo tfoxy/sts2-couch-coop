@@ -26,7 +26,8 @@ file listing are also saved under `build/`.
 
 `test.sh` rebuilds, runs fake-host/headless-Godot tests, then runs the frontend parity test.
 The fake host checks both WebSocket URLs, join and renderer messages, the first-frame receipt,
-readiness/access/epoch gates, input results, opt-in diagnostics, receiver configuration defaults
+readiness/access/epoch gates, input results, direct window mounting without a SubViewport,
+the overlay's content coordinates, opt-in diagnostics, receiver configuration defaults
 and overrides, and credential-free logs. It captures four raw input
 strings at epochs 42 and 43. The parity test drives the actual frontend `createStreamInput` and
 `connectMirrorClient` implementations and compares both parsed fields and the exact JSON strings.
@@ -72,8 +73,14 @@ Pack configuration uses environment variables first, then `--rs-env=NAME=VALUE` 
 `COUCH_PACK_DIAGNOSTICS=1` enables per-message type/size and input-result logs (default off).
 The control socket uses `watch=0` for sessions and join coordination without a scene feed; the
 seat socket retains `watch=1` for renderer admission and input. Both keep the host's required selectors.
-GSW's `RS_RECEIVER_*` options remain available. The receiver runs at the descriptor's presentation
-size inside a uniformly scaled, letterboxed viewport, preserving presentation-pixel tap mapping.
+GSW's `RS_RECEIVER_*` options remain available. The pack requires a receiver with `fit_presentation`
+support. It enables that option before mounting one receiver directly under the pack root, drawing
+into the shell window without an intermediate viewport or texture presenter. The receiver fits the
+host content to the window with centered black bars and updates the fit on resize. Taps stay in full
+host presentation pixels; releases in bars emit nothing. The status and input-result labels share
+the receiver's content coordinates on a CanvasLayer above the stream. At the first submitted frame,
+the pack copies the receiver's adopted canvas transform to that layer so the text scales with the
+content and does not intercept taps. Window content scaling handles subsequent resizes.
 Tokens stay in the descriptor/receiver transport and are redacted from receiver log messages.
 
 The pack defaults `RS_RECEIVER_RECEIVED_MAX_BYTES=0` to disable received-wire evidence writes,
