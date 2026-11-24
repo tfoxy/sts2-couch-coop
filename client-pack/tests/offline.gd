@@ -12,6 +12,9 @@ class FakeLive extends RefCounted:
 		assert(value["url"] == "/render-stream")
 		assert(value["resourceBase"] == "/resources")
 		assert(value["presentation"] == [1920.0, 1080.0])
+		print("[offline] receiver-config: received-max-bytes=%s memory-budget-bytes=%s" % [
+			RsConfig.get_env("RS_RECEIVER_RECEIVED_MAX_BYTES"),
+			RsConfig.get_env("RS_RECEIVER_MEMORY_BUDGET_BYTES")])
 		descriptor = value
 		return OK
 

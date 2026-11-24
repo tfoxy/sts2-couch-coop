@@ -148,7 +148,8 @@ class ControlContract(unittest.TestCase):
         server = await asyncio.start_server(connected, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
         env = {key: value for key, value in os.environ.items()
-               if key not in ["DISPLAY", "WAYLAND_DISPLAY", "COUCH_PACK_DIAGNOSTICS"]}
+               if key not in ["DISPLAY", "WAYLAND_DISPLAY", "COUCH_PACK_DIAGNOSTICS",
+                              "RS_RECEIVER_RECEIVED_MAX_BYTES", "RS_RECEIVER_MEMORY_BUDGET_BYTES"]}
         env.update(COUCH_HOST_ORIGIN=f"http://127.0.0.1:{port}", COUCH_PLAYER_NAME=" Offline player ")
         env.update(env_overrides)
         process = await asyncio.create_subprocess_exec(EDITOR, "--headless", "--path", PROJECT, "--script",
@@ -190,6 +191,24 @@ class ControlContract(unittest.TestCase):
         text = self.run_scenario("flow")
         self.assertNotIn(" recv type=", text)
         self.assertNotIn("[couch-pack] input-result:", text)
+
+    def test_receiver_config_defaults(self):
+        text = self.run_scenario("flow", log_name="receiver-defaults")
+        self.assertIn("[offline] receiver-config: received-max-bytes=0 memory-budget-bytes=134217728", text)
+
+    def test_receiver_config_argument_overrides(self):
+        text = self.run_scenario("flow", args=["--rs-env=RS_RECEIVER_RECEIVED_MAX_BYTES=4096",
+                                              "--rs-env=RS_RECEIVER_MEMORY_BUDGET_BYTES=67108864"],
+                                 log_name="receiver-args")
+        self.assertIn("[offline] receiver-config: received-max-bytes=4096 memory-budget-bytes=67108864", text)
+
+    def test_receiver_config_environment_overrides_arguments(self):
+        text = self.run_scenario("flow", {"RS_RECEIVER_RECEIVED_MAX_BYTES": "1048576",
+                                          "RS_RECEIVER_MEMORY_BUDGET_BYTES": "268435456"},
+                                 args=["--rs-env=RS_RECEIVER_RECEIVED_MAX_BYTES=4096",
+                                       "--rs-env=RS_RECEIVER_MEMORY_BUDGET_BYTES=67108864"],
+                                 log_name="receiver-env")
+        self.assertIn("[offline] receiver-config: received-max-bytes=1048576 memory-budget-bytes=268435456", text)
 
     def test_diagnostics_environment_opt_in(self):
         text = self.run_scenario("flow", {"COUCH_PACK_DIAGNOSTICS": "1"}, log_name="diagnostics-env")

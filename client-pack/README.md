@@ -26,7 +26,8 @@ file listing are also saved under `build/`.
 
 `test.sh` rebuilds, runs fake-host/headless-Godot tests, then runs the frontend parity test.
 The fake host checks both WebSocket URLs, join and renderer messages, the first-frame receipt,
-readiness/access/epoch gates, input results and credential-free logs. It captures four raw input
+readiness/access/epoch gates, input results, opt-in diagnostics, receiver configuration defaults
+and overrides, and credential-free logs. It captures four raw input
 strings at epochs 42 and 43. The parity test drives the actual frontend `createStreamInput` and
 `connectMirrorClient` implementations and compares both parsed fields and the exact JSON strings.
 To rerun parity against the latest capture:
@@ -74,3 +75,10 @@ seat socket retains `watch=1` for renderer admission and input. Both keep the ho
 GSW's `RS_RECEIVER_*` options remain available. The receiver runs at the descriptor's presentation
 size inside a uniformly scaled, letterboxed viewport, preserving presentation-pixel tap mapping.
 Tokens stay in the descriptor/receiver transport and are redacted from receiver log messages.
+
+The pack defaults `RS_RECEIVER_RECEIVED_MAX_BYTES=0` to disable received-wire evidence writes,
+and `RS_RECEIVER_MEMORY_BUDGET_BYTES=134217728` (128 MiB) to budget cached resource payloads in
+memory. This is a cache budget, not a cap on total process memory. Both defaults can be overridden
+by environment variables or `--rs-env=NAME=VALUE` arguments; environment variables take precedence.
+For example, `--rs-env=RS_RECEIVER_RECEIVED_MAX_BYTES=1048576` enables up to 1 MiB of wire evidence,
+and `--rs-env=RS_RECEIVER_MEMORY_BUDGET_BYTES=268435456` raises the payload budget to 256 MiB.

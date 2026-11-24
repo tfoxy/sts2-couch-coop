@@ -50,7 +50,8 @@ func _config(key: String, fallback: String) -> String:
 func _receiver_defaults() -> void:
 	var defaults := {"RS_RECEIVER_OUT": ProjectSettings.globalize_path("user://couch/applied.json"),
 		"RS_RECEIVER_CACHE_DIR": ProjectSettings.globalize_path("user://couch/cache"),
-		"RS_RECEIVER_CACHE_MODE": "warm", "RS_RECEIVER_LOG": "summary"}
+		"RS_RECEIVER_CACHE_MODE": "warm", "RS_RECEIVER_LOG": "summary",
+		"RS_RECEIVER_RECEIVED_MAX_BYTES": "0", "RS_RECEIVER_MEMORY_BUDGET_BYTES": "134217728"}
 	for key: String in defaults:
 		if RsConfig.get_env(key) == "":
 			RsConfig._args[key] = defaults[key]
