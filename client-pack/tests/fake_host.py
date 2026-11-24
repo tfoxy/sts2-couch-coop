@@ -14,7 +14,7 @@ EDITOR, PROJECT, OUTPUT = sys.argv[1:]
 TOKEN = "abcdef0123456789" * 4
 # The real host emits Convert.ToHexString (upper case); the pack must accept it.
 SEAT = "0123456789ABCDEF" * 2
-SELECTORS = dict(watch=["1"], staticBg=["0"], cardFlight=["1"], handTween=["1"], trailDrive=["0"])
+SELECTORS = dict(staticBg=["0"], cardFlight=["1"], handTween=["1"], trailDrive=["0"])
 
 
 async def send(writer, message):
@@ -51,10 +51,10 @@ def session(epoch, ready=True, access=True, descriptor=False):
 
 
 class ControlContract(unittest.TestCase):
-    def run_scenario(self, scenario):
-        return asyncio.run(self.scenario(scenario))
+    def run_scenario(self, scenario, env_overrides=None, args=(), log_name=None):
+        return asyncio.run(self.scenario(scenario, env_overrides or {}, args, log_name or scenario))
 
-    async def scenario(self, scenario):
+    async def scenario(self, scenario, env_overrides, args, log_name):
         messages, raw_inputs, writers, tasks = [], [], [], []
         errors = []
         control_writer = None
@@ -72,6 +72,8 @@ class ControlContract(unittest.TestCase):
                 for key, value in SELECTORS.items():
                     self.assertEqual(query.pop(key), value)
                 seat = query.pop("seat", None)
+                # The real host requires every selector even on coordination-only sockets.
+                self.assertEqual(query.pop("watch"), ["1"] if seat else ["0"])
                 if seat:
                     self.assertEqual(seat, [SEAT])
                     self.assertRegex(query.pop("rendererPage")[0], r"^[0-9a-f]{32}$")
@@ -82,6 +84,7 @@ class ControlContract(unittest.TestCase):
                 accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
                 writer.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n")
                 await writer.drain()
+                # A non-watching control socket receives sessions, never scene-deltas.
                 await send(writer, dict(type="session"))
                 message, _ = await receive(reader)
                 messages.append(message)
@@ -144,23 +147,25 @@ class ControlContract(unittest.TestCase):
 
         server = await asyncio.start_server(connected, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
-        env = {key: value for key, value in os.environ.items() if key not in ["DISPLAY", "WAYLAND_DISPLAY"]}
+        env = {key: value for key, value in os.environ.items()
+               if key not in ["DISPLAY", "WAYLAND_DISPLAY", "COUCH_PACK_DIAGNOSTICS"]}
         env.update(COUCH_HOST_ORIGIN=f"http://127.0.0.1:{port}", COUCH_PLAYER_NAME=" Offline player ")
+        env.update(env_overrides)
         process = await asyncio.create_subprocess_exec(EDITOR, "--headless", "--path", PROJECT, "--script",
-                                                       "res://tests/offline.gd", env=env,
+                                                       "res://tests/offline.gd", "--", *args, env=env,
                                                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:
             log, _ = await asyncio.wait_for(process.communicate(), 20)
             text = log.decode()
             self.assertNotIn(TOKEN, text, "credential leaked in Godot logs")
-            (Path(OUTPUT) / f"offline-{scenario}.log").write_text(text)
+            (Path(OUTPUT) / f"offline-{log_name}.log").write_text(text)
             if errors:
                 raise errors[0]
             self.assertEqual(process.returncode, 0, text)
             self.assertNotIn("SCRIPT ERROR", text, text)
             self.assertNotIn("ERROR:", text, text)
             if scenario == "flow":
-                self.assertIn("input-result: access-denied", text)
+                self.assertIn("[offline] input-result: access-denied", text)
                 self.assertEqual([m["type"] for m in messages], ["join", "renderer", "client-frame-presented"] + ["input"] * 4)
                 (Path(OUTPUT) / "inputs.json").write_text(json.dumps(raw_inputs, indent=2) + "\n")
             else:
@@ -179,9 +184,23 @@ class ControlContract(unittest.TestCase):
             await server.wait_closed()
         if errors:
             raise errors[0]
+        return text
 
     def test_control_sequence_and_epoch_gates(self):
-        self.run_scenario("flow")
+        text = self.run_scenario("flow")
+        self.assertNotIn(" recv type=", text)
+        self.assertNotIn("[couch-pack] input-result:", text)
+
+    def test_diagnostics_environment_opt_in(self):
+        text = self.run_scenario("flow", {"COUCH_PACK_DIAGNOSTICS": "1"}, log_name="diagnostics-env")
+        self.assertIn("[couch-pack] control recv type=session bytes=", text)
+        self.assertIn("[couch-pack] seat recv type=input-result bytes=", text)
+        self.assertIn("[couch-pack] input-result: access-denied", text)
+
+    def test_diagnostics_argument_opt_in(self):
+        text = self.run_scenario("flow", args=["--rs-env=COUCH_PACK_DIAGNOSTICS=1"], log_name="diagnostics-arg")
+        self.assertIn("[couch-pack] control recv type=session bytes=", text)
+        self.assertIn("[couch-pack] seat recv type=input-result bytes=", text)
 
     def test_join_rejection(self):
         self.run_scenario("rejection")

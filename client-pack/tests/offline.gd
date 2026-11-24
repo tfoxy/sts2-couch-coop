@@ -31,7 +31,10 @@ class TestEntry extends "res://couch/entry.gd":
 	func _ready() -> void:
 		super._ready()
 		control.presentation_changed.connect(_presentation)
-		control.input_result.connect(func(_text: String) -> void: get_tree().quit())
+		control.input_result.connect(func(text: String) -> void:
+			assert(_last_input.text == "Input: " + text)
+			print("[offline] input-result: " + text)
+			get_tree().quit())
 		control.status_changed.connect(func(text: String) -> void:
 			if text == "Join rejected" or text == "Invalid seat route":
 				print("[offline] " + text)

@@ -4,13 +4,13 @@ extends Node
 signal status_changed(text: String)
 
 # Godot's WebSocketPeer closes with 1009 on any message over its inbound buffer (64 KiB by default). The host's
-# watch stream (a scene-delta over 1 MB) and post-join session envelopes outgrow that; a browser has no limit.
+# seat watch stream and post-join session envelopes outgrow that; a browser has no limit.
 const HOST_MESSAGE_BUFFER := 4 * 1024 * 1024
 signal input_result(text: String)
 signal presentation_changed(epoch: int, ready: bool)
 signal descriptor_received(descriptor: Dictionary)
 
-const SELECTORS := "watch=1&staticBg=0&cardFlight=1&handTween=1&trailDrive=0"
+const SELECTORS := "staticBg=0&cardFlight=1&handTween=1&trailDrive=0"
 
 var origin := "http://127.0.0.1:13337"
 var player_name := "Native client"
@@ -28,9 +28,11 @@ var _frame_seen := false
 var _input_sequence := 0
 var _allowed := false
 var _failed := false
+var _diagnostics := false
 
 
 func start() -> void:
+	_diagnostics = RsConfig.get_env("COUCH_PACK_DIAGNOSTICS") == "1"
 	origin = origin.trim_suffix("/")
 	var check := RegEx.new()
 	check.compile("^https?://(\\[[0-9a-fA-F:]+\\]|[a-zA-Z0-9.-]+)(:[0-9]+)?$")
@@ -40,7 +42,7 @@ func start() -> void:
 	_page_id = Crypto.new().generate_random_bytes(16).hex_encode()
 	_control = WebSocketPeer.new()
 	_control.inbound_buffer_size = HOST_MESSAGE_BUFFER
-	if _control.connect_to_url(_ws_origin() + "/ws?" + SELECTORS) != OK:
+	if _control.connect_to_url(_ws_origin() + "/ws?watch=0&" + SELECTORS) != OK:
 		_fail("Control connection failed")
 	else:
 		status_changed.emit("Connecting")
@@ -67,10 +69,11 @@ func _pump(peer: WebSocketPeer, seat: bool) -> void:
 		if not peer.was_string_packet():
 			continue
 		var message: Variant = JSON.parse_string(packet.get_string_from_utf8())
-		# Type and size only; bodies can carry credentials.
-		print("[couch-pack] %s recv type=%s bytes=%d" % [
-			"seat" if seat else "control",
-			str((message as Dictionary).get("type", "?")) if message is Dictionary else "non-json", packet.size()])
+		if _diagnostics:
+			# Type and size only; bodies can carry credentials.
+			print("[couch-pack] %s recv type=%s bytes=%d" % [
+				"seat" if seat else "control",
+				str((message as Dictionary).get("type", "?")) if message is Dictionary else "non-json", packet.size()])
 		if message is Dictionary:
 			_receive(message, seat)
 
@@ -82,7 +85,8 @@ func _receive(message: Dictionary, seat: bool) -> void:
 		if message.get("code") == "access-denied":
 			result = "access-denied"
 		input_result.emit(result)
-		print("[couch-pack] input-result: " + result)
+		if _diagnostics:
+			print("[couch-pack] input-result: " + result)
 		return
 	if message.get("type") != "session":
 		return
@@ -105,7 +109,7 @@ func _receive(message: Dictionary, seat: bool) -> void:
 				return
 			_seat = WebSocketPeer.new()
 			_seat.inbound_buffer_size = HOST_MESSAGE_BUFFER
-			if _seat.connect_to_url(_ws_origin() + route + "&" + SELECTORS + "&rendererPage=" + _page_id) != OK:
+			if _seat.connect_to_url(_ws_origin() + route + "&watch=1&" + SELECTORS + "&rendererPage=" + _page_id) != OK:
 				_fail("Seat connection failed")
 		elif not _join_sent:
 			_join_sent = true

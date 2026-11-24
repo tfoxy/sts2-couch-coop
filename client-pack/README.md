@@ -24,7 +24,7 @@ GSW. It exports `client-pack/build/manifest.json` and `client-pack/build/<sha256
 that the pack contains no native binaries or test scripts. Receiver source hashes and the pack
 file listing are also saved under `build/`.
 
-`test.sh` rebuilds, runs three fake-host/headless-Godot tests, then runs the frontend parity test.
+`test.sh` rebuilds, runs fake-host/headless-Godot tests, then runs the frontend parity test.
 The fake host checks both WebSocket URLs, join and renderer messages, the first-frame receipt,
 readiness/access/epoch gates, input results and credential-free logs. It captures four raw input
 strings at epochs 42 and 43. The parity test drives the actual frontend `createStreamInput` and
@@ -68,6 +68,9 @@ and `adb reverse` are run by hand, outside these scripts. For the Android shell,
 
 Pack configuration uses environment variables first, then `--rs-env=NAME=VALUE` arguments:
 `COUCH_HOST_ORIGIN` defaults to `http://127.0.0.1:13337`, and `COUCH_PLAYER_NAME` to `Native client`.
+`COUCH_PACK_DIAGNOSTICS=1` enables per-message type/size and input-result logs (default off).
+The control socket uses `watch=0` for sessions and join coordination without a scene feed; the
+seat socket retains `watch=1` for renderer admission and input. Both keep the host's required selectors.
 GSW's `RS_RECEIVER_*` options remain available. The receiver runs at the descriptor's presentation
 size inside a uniformly scaled, letterboxed viewport, preserving presentation-pixel tap mapping.
 Tokens stay in the descriptor/receiver transport and are redacted from receiver log messages.
