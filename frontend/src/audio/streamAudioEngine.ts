@@ -4,7 +4,12 @@ import workletUrl from "@godot-scene-web/render-stream-client/audio/runtime/mixe
 import { hostWebSocketCtor } from "@/tunnel/hostTunnel";
 import { createTunnelRenderStreamTransport } from "@/tunnel/renderStreamTransport";
 import { browserAudioEnv, createAudioUnlock, type AudioUnlockEnv } from "./audioUnlock";
+import { AudioDiagRing } from "./audioDiagRing";
 import type { AudioEngineHandle } from "./mainEngine";
+
+declare global { interface Window {
+  __couchCoopStreamAudioDiag?: () => Record<string, unknown>;
+} }
 
 export interface StreamAudioEndpoint {
   url: string;
@@ -16,6 +21,7 @@ export interface StreamAudioEndpoint {
 interface StreamAudioOptions {
   endpoint: StreamAudioEndpoint;
   demandUrl: string;
+  audioDiag?: boolean;
   onUnavailable?: () => void;
   audioEnv?: AudioUnlockEnv;
   WebSocketCtor?: typeof WebSocket;
@@ -69,11 +75,22 @@ export function createStreamAudioEngine(options: StreamAudioOptions): AudioEngin
           const endpoint = options.endpoint;
           const tunnel = globalThis.__couchCoopTunnel;
           const fetcher = options.fetcher ?? tunnel?.fetch ?? fetch;
+          // Replace the global getter on each track open, including after seat changes or stops.
+          const ring = options.audioDiag ? new AudioDiagRing(true) : null;
+          if (ring && typeof window !== "undefined") window.__couchCoopStreamAudioDiag = () => ({
+            events: ring.events.slice(), firstSeq: ring.firstSeq, lastSeq: ring.lastSeq, lostEvents: ring.lostEvents
+          });
+          const onStage: OpenAudioTrackOptions["onStage"] = ring ? row => {
+            if (disposed || generation !== epoch) return;
+            // GSW session/path already align handledMs to the page's performance.now() clock.
+            ring.push(row.type, row.handledMs, { ...row });
+          } : undefined;
           const audio: OpenAudioTrackOptions = {
             url: endpoint.url, credential: endpoint.token, context: context as AudioContext,
             ...(endpoint.webTransport ? { webTransport: { ...endpoint.webTransport, features: 2 } } : {}),
             ...(tunnel ? { transport: createTunnelRenderStreamTransport(tunnel) } : {}),
             workerUrl, workletUrl,
+            ...(onStage ? { onStage } : {}),
             fetchAsset: async (hash, policy) => {
               if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("Invalid audio asset hash");
               const response = await fetcher(`${endpoint.resourceBase}/resources/sha256/${hash}`, {

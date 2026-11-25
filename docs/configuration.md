@@ -487,6 +487,7 @@ default. The host grants a separate audio credential to viewers of the stream re
 `COUCHCOOP_AUDIO=off` takes precedence. Mirror viewers keep the existing audio lane. On the stream renderer,
 the same Audio toggle opens GSW’s audio track with its separate credential and retains the existing gesture
 and hidden-tab handling.
+With `?audioDiag=1`, `window.__couchCoopStreamAudioDiag()` returns bounded stage events and sequence counters; each track open replaces the ring.
 The stream viewer keeps a control-only `/ws?seat=<route-id>&lane=stream-audio` connection while audio
 is enabled. The host opens `/internal/audio-link` through that seat's authenticated private pipe;
 this route refuses browser origins and non-loopback clients. Only rendered PCM reaches the viewer.

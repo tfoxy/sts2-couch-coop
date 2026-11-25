@@ -1710,6 +1710,7 @@ watch([() => mirrorSettings.audio, joined, audioRoute, () => JSON.stringify(stre
     const demand = new URL(seatUrl);
     demand.searchParams.set("lane", "stream-audio");
     audioEngine = createStreamAudioEngine({ endpoint: stream, demandUrl: demand.href,
+      audioDiag: reproParams?.get("audioDiag") === "1",
       onUnavailable: () => { audioUnavailable.value = true; } });
   } else audioEngine = createAudioEngine({
     seatUrl, renderUrl: buildAudioRenderWebSocketUrl(), indexUrl: audioTakeIndexUrl(),

@@ -4,7 +4,7 @@ import { createStreamAudioEngine } from "../streamAudioEngine";
 import type { AudioContextLike } from "../audioUnlock";
 import { FakeContext, FakeSocket } from "./fakes";
 
-function rig() {
+function rig(audioDiag = false) {
   const context = new FakeContext();
   const sockets: FakeSocket[] = [];
   const Ctor = class extends FakeSocket { constructor(url: string) { super(url); sockets.push(this); } } as unknown as typeof WebSocket;
@@ -18,13 +18,65 @@ function rig() {
     endpoint: { url: "ws://host/render-stream/R/ws", resourceBase: "http://host/render-stream/R",
       token: "a".repeat(64), viewToken: "b".repeat(64) },
     demandUrl: "ws://host/ws?seat=R&lane=stream-audio", WebSocketCtor: Ctor, audioEnv, openTrack,
-    fetcher: fetcher as unknown as typeof fetch, onUnavailable
+    fetcher: fetcher as unknown as typeof fetch, onUnavailable, audioDiag
   });
   return { engine, context, sockets, openTrack, close, fetcher, onUnavailable, audioEnv, createContext };
 }
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); delete window.__couchCoopStreamAudioDiag; });
 
 describe("GSW stream audio lifecycle", () => {
+  it("captures page-aligned stage rows in the legacy diagnostic snapshot shape when enabled", async () => {
+    const r = rig(true);
+    await r.engine.unlock(); r.engine.start();
+    r.sockets[0].emit("message", '{"kind":"ready"}');
+    const { onStage } = r.openTrack.mock.calls[0][0];
+    expect(onStage).toEqual(expect.any(Function));
+    const empty = window.__couchCoopStreamAudioDiag!();
+    expect(empty).toEqual({ events: [], firstSeq: 1, lastSeq: 0, lostEvents: 0 });
+    const stage = { type: "lane-output", handledMs: 123.5, t: 1, s: 2, made_us: 3, due_us: 4,
+      sent_us: 5, contextTime: 6, voice: 7, lane: 8, stream: 9, block: 10 };
+    onStage!(stage);
+    onStage!({ type: "sample-start", handledMs: 124 });
+    expect(window.__couchCoopStreamAudioDiag!()).toEqual({
+      events: [{ seq: 1, performanceMs: 123.5, ...stage },
+        { seq: 2, type: "sample-start", performanceMs: 124, handledMs: 124 }],
+      firstSeq: 1, lastSeq: 2, lostEvents: 0
+    });
+    expect(empty.events).toEqual([]);
+    r.engine.dispose();
+  });
+
+  it("omits onStage and the diagnostic global when disabled", async () => {
+    const r = rig();
+    await r.engine.unlock(); r.engine.start();
+    r.sockets[0].emit("message", '{"kind":"ready"}');
+    expect(r.openTrack.mock.calls[0][0]).not.toHaveProperty("onStage");
+    expect(window.__couchCoopStreamAudioDiag).toBeUndefined();
+    r.engine.dispose();
+  });
+
+  it("replaces the global ring on track opens across stops, seat changes and engine recreation", async () => {
+    const r = rig(true);
+    for (const stop of [r.engine.stop, () => r.engine.setSeatUrl("ws://other-seat"), r.engine.dispose]) {
+      await r.engine.unlock(); r.engine.start();
+      r.sockets.at(-1)!.emit("message", '{"kind":"ready"}');
+      const onStage = r.openTrack.mock.calls.at(-1)![0].onStage!;
+      const snapshot = window.__couchCoopStreamAudioDiag!;
+      expect(snapshot()).toEqual({ events: [], firstSeq: 1, lastSeq: 0, lostEvents: 0 });
+      onStage({ type: "cue", handledMs: 42 });
+      stop();
+      onStage({ type: "stale", handledMs: 43 });
+      expect(snapshot().lastSeq).toBe(1);
+    }
+    const oldSnapshot = window.__couchCoopStreamAudioDiag;
+    const replacement = rig(true);
+    await replacement.engine.unlock(); replacement.engine.start();
+    replacement.sockets[0].emit("message", '{"kind":"ready"}');
+    expect(window.__couchCoopStreamAudioDiag).not.toBe(oldSnapshot);
+    expect(window.__couchCoopStreamAudioDiag!()).toEqual({ events: [], firstSeq: 1, lastSeq: 0, lostEvents: 0 });
+    replacement.engine.dispose();
+  });
+
   it("waits for gesture and the host link before opening the separately credentialed track", async () => {
     const r = rig();
     r.engine.start();

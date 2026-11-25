@@ -2911,6 +2911,17 @@ describe("MirrorApp — stream audio toggle", () => {
   const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
     token: "c".repeat(64), protocol: 19, audio: { token: "d".repeat(64) } };
 
+  it.each([["?audioDiag=1", true], ["?audioDiag=0", false], ["", false]])(
+    "passes the diagnostic flag from %s to the GSW engine", async (query, enabled) => {
+      window.history.replaceState(null, "", `/${query}`);
+      streamAvailable(); mirrorSettings.renderer = "stream";
+      await joinSeat({ renderStream: descriptor, rendererState: { state: "armed" } }, { headlessMirrorPath: "/ws?seat=14000" });
+      mirrorSettings.audio = true;
+      await settle();
+      expect(audio.engines.at(-1)).toMatchObject({ kind: "gsw", options: { audioDiag: enabled } });
+    }
+  );
+
   it("uses GSW on stream seats, disposes on toggle-off, and keeps legacy audio on renderer fallback", async () => {
     streamAvailable();
     mirrorSettings.renderer = "stream";
