@@ -104,9 +104,10 @@ internal static class StreamingSeatLaunch
     /// serves WebSocket only.</param>
     /// <param name="AbiTable">A Godot ABI table the capture derives its calibration from, set only when no record matches
     /// the host executable (<see cref="RenderCaptureAvailability"/>); <paramref name="Calibration"/> is then empty.</param>
+    /// <param name="AudioAbiTable">The staged audio-driver ABI table, passed only to audio-granted seats.</param>
     internal sealed record Config(
         string Extension, string Calibration, int MaxPresentationWidth = DefaultMaxPresentationWidth, string? NetModule = null,
-        string? AbiTable = null)
+        string? AbiTable = null, string? AudioAbiTable = null)
     {
         /// <summary>The calibration as the operator log names it: the record, or the table a derivation starts from.</summary>
         internal string CalibrationDescription => AbiTable is null ? Calibration : "derived abiTable=" + AbiTable;
@@ -370,6 +371,7 @@ internal static class StreamingSeatLaunch
             environment[Audio.Seat.GrcAudioCue.EnvironmentVariable] = "gsw";
             // Couch currently uses no input track. Compose grants here rather than inheriting host experiments.
             environment["GRC_LIVE_TRACKS"] = "audio";
+            if (config.AudioAbiTable is { } audioTable) environment["GRC_AUDIO_ABI_TABLE"] = audioTable;
         }
         // A record, or (no record matching the executable) the ABI table the capture derives one from. The capture
         // takes the table only while GRC_CALIBRATION is unset, and inherited GRC_* variables are cleared (ClearInherited).

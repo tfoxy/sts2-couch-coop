@@ -65,6 +65,7 @@ internal static class RenderCaptureAvailability
             var libraryPath = Path.IsPathFullyQualified(library) ? library : Path.Combine(directory, library);
             if (!fileExists(libraryPath)) return new(null, $"the capture library does not exist: '{libraryPath}'", Reason: UnavailableReason.LibraryMissing);
 
+            var audioTable = FindAbiTable(directory, "-audio-driver", listFiles, fileExists);
             string calibrationPath;
             if (!string.IsNullOrWhiteSpace(calibration))
             {
@@ -103,12 +104,12 @@ internal static class RenderCaptureAvailability
                 {
                     // Same fallback as Linux: never for an operator's record, and the capture refuses on its own when
                     // the engine does not match the table.
-                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, listFiles, fileExists) : null;
+                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, "-rendering-server", listFiles, fileExists) : null;
                     if (table is not null)
                     {
                         var derivedNet = Path.Combine(directory, "render_stream_net.dll");
                         return new(new StreamingSeatLaunch.Config(request.Path, "", NetModule: fileExists(derivedNet) ? derivedNet : null,
-                            AbiTable: table), null);
+                            AbiTable: table, AudioAbiTable: audioTable), null);
                     }
                     return new(null, $"no capture calibration matches the host executable ({identity.Value})",
                         Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
@@ -140,12 +141,12 @@ internal static class RenderCaptureAvailability
                 {
                     // An operator's record never falls back; otherwise an unrecorded executable may still stream through
                     // the capture's live derivation, which refuses on its own if the engine does not match the table.
-                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, listFiles, fileExists) : null;
+                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, "-rendering-server", listFiles, fileExists) : null;
                     if (table is not null)
                     {
                         var derivedNet = Path.Combine(directory, "librender_stream_net.so");
                         return new(new StreamingSeatLaunch.Config(request.Path, "", NetModule: fileExists(derivedNet) ? derivedNet : null,
-                            AbiTable: table), null);
+                            AbiTable: table, AudioAbiTable: audioTable), null);
                     }
                     return new(null, $"no capture calibration matches the host executable (build_id={buildId})",
                         Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
@@ -183,12 +184,12 @@ internal static class RenderCaptureAvailability
                 }
                 if (matching is null)
                 {
-                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, listFiles, fileExists) : null;
+                    var table = string.IsNullOrWhiteSpace(calibration) ? FindAbiTable(directory, "-rendering-server", listFiles, fileExists) : null;
                     if (table is not null)
                     {
                         var derivedNet = Path.Combine(directory, "librender_stream_net.dylib");
                         return new(new StreamingSeatLaunch.Config(request.Path, "", NetModule: fileExists(derivedNet) ? derivedNet : null,
-                            AbiTable: table), null);
+                            AbiTable: table, AudioAbiTable: audioTable), null);
                     }
                     return new(null, $"no capture calibration matches the host executable (uuid={identity.Value.Uuid}, platform=macos-{arch})",
                         Reason: string.IsNullOrWhiteSpace(calibration) ? UnavailableReason.NoMatchingRecord : UnavailableReason.OperatorRecordMismatch);
@@ -201,7 +202,8 @@ internal static class RenderCaptureAvailability
             }
             if (!fileExists(calibrationPath)) return new(null, $"the capture's calibration record does not exist: '{calibrationPath}'", Reason: UnavailableReason.CalibrationMissing);
             var net = Path.Combine(directory, os switch { "windows" => "render_stream_net.dll", "macos" => "librender_stream_net.dylib", _ => "librender_stream_net.so" });
-            return new(new StreamingSeatLaunch.Config(request.Path, calibrationPath, NetModule: fileExists(net) ? net : null), null);
+            return new(new StreamingSeatLaunch.Config(request.Path, calibrationPath, NetModule: fileExists(net) ? net : null,
+                AudioAbiTable: audioTable), null);
         }
         catch (Exception exception)
         {
@@ -209,10 +211,12 @@ internal static class RenderCaptureAvailability
         }
     }
 
-    /// <summary>The staged Godot ABI table (<c>abi-table.*</c>, extensionless), the ordinal first when several are staged.</summary>
-    private static string? FindAbiTable(string directory, Func<string, IEnumerable<string>> listFiles, Func<string, bool> fileExists)
+    /// <summary>The ordinal first staged Godot ABI table for the requested suffix (extensionless).</summary>
+    private static string? FindAbiTable(string directory, string suffix,
+        Func<string, IEnumerable<string>> listFiles, Func<string, bool> fileExists)
         => listFiles(directory)
-            .Where(path => Path.GetFileName(path).StartsWith("abi-table.", StringComparison.Ordinal) && fileExists(path))
+            .Where(path => Path.GetFileName(path).StartsWith("abi-table.", StringComparison.Ordinal)
+                && Path.GetFileName(path).EndsWith(suffix, StringComparison.Ordinal) && fileExists(path))
             .OrderBy(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault();
 
     /// <summary>The same library selected from the capture descriptor for availability and audio binding.</summary>

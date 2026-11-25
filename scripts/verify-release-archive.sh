@@ -73,9 +73,9 @@ is_allowed_payload_file() {
       [[ "$path" =~ ^render-capture/(linux|windows|macos)/calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}$ ]]
       return
       ;;
-    # Godot ABI tables for the capture's derived-calibration fallback, extensionless like the records.
+    # Godot rendering and audio ABI tables, extensionless like the records.
     render-capture/linux/abi-table.*|render-capture/windows/abi-table.*|render-capture/macos/abi-table.*)
-      [[ "$path" =~ ^render-capture/(linux|windows|macos)/abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-rendering-server$ ]]
+      [[ "$path" =~ ^render-capture/(linux|windows|macos)/abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-(rendering-server|audio-driver)$ ]]
       return
       ;;
     licenses/render-capture/windows/llvm-mingw-LICENSE.txt|licenses/render-capture/windows/mingw-w64-runtime-COPYING.txt|licenses/render-capture/windows/rust-std-MIT.txt) return 0 ;;

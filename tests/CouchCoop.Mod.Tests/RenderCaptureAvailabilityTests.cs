@@ -125,11 +125,20 @@ internal static class RenderCaptureAvailabilityTests
         Check(Resolve().Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord, "record missing build-id is skipped");
         // Derived calibration: an unrecorded executable streams through a staged Godot ABI table.
         files["/capture/abi-table.godot-4.5.1-rendering-server"] = "{}";
+        files["/capture/abi-table.godot-4.5.1-audio-driver"] = "{}";
         var derived = Resolve("abcdef");
-        Check(derived.Config is { Calibration: "", AbiTable: "/capture/abi-table.godot-4.5.1-rendering-server" },
+        Check(derived.Config is { Calibration: "", AbiTable: "/capture/abi-table.godot-4.5.1-rendering-server",
+            AudioAbiTable: "/capture/abi-table.godot-4.5.1-audio-driver" },
             "unknown build-id derives from the staged ABI table: " + derived.Refusal);
         Check(derived.Config?.CalibrationDescription == "derived abiTable=/capture/abi-table.godot-4.5.1-rendering-server",
             "derived calibration is named in the operator log");
+        var audio = StreamingSeatLaunch.Environment(derived.Config!, 13366, "/evidence", ["http://localhost:13337"],
+            streamAudio: true);
+        Check(audio["GRC_ABI_TABLE"] == "/capture/abi-table.godot-4.5.1-rendering-server"
+            && audio.GetValueOrDefault("GRC_AUDIO_ABI_TABLE") == "/capture/abi-table.godot-4.5.1-audio-driver",
+            "video and audio receive their own staged ABI table");
+        var silent = StreamingSeatLaunch.Environment(derived.Config!, 13366, "/evidence", ["http://localhost:13337"]);
+        Check(!silent.ContainsKey("GRC_AUDIO_ABI_TABLE"), "no audio grant means no audio ABI table");
         Check(Resolve(record: "/capture/calibration.stable").Reason == RenderCaptureAvailability.UnavailableReason.OperatorRecordMismatch,
             "an operator record never falls back to derivation");
         Check(Resolve(null).Reason == RenderCaptureAvailability.UnavailableReason.IdentityUnreadable,
@@ -138,13 +147,26 @@ internal static class RenderCaptureAvailabilityTests
         Check(Resolve("abcdef").Config?.AbiTable == "/capture/abi-table.godot-4.5.0-rendering-server",
             "several tables pick the ordinal first");
         files["/capture/calibration.matching"] = RecordFor("abcdef");
-        Check(Resolve("abcdef").Config is { AbiTable: null, Calibration: "/capture/calibration.matching" },
-            "a matching record always wins over derivation");
+        var matching = Resolve("abcdef");
+        Check(matching.Config is { AbiTable: null, Calibration: "/capture/calibration.matching",
+            AudioAbiTable: "/capture/abi-table.godot-4.5.1-audio-driver" },
+            "a matching record wins over video derivation and still resolves audio");
+        var recordedAudio = StreamingSeatLaunch.Environment(matching.Config!, 13366, "/evidence", ["http://localhost:13337"],
+            streamAudio: true);
+        Check(recordedAudio["GRC_CALIBRATION"] == "/capture/calibration.matching"
+            && recordedAudio["GRC_AUDIO_ABI_TABLE"] == "/capture/abi-table.godot-4.5.1-audio-driver",
+            "audio ABI table is independent of video calibration");
+        files.Remove("/capture/abi-table.godot-4.5.1-audio-driver");
+        var withoutAudio = Resolve("abcdef");
+        Check(withoutAudio.Config is { AudioAbiTable: null }, "missing audio table does not disable streaming");
+        Check(!StreamingSeatLaunch.Environment(withoutAudio.Config!, 13366, "/evidence", ["http://localhost:13337"],
+            streamAudio: true).ContainsKey("GRC_AUDIO_ABI_TABLE"), "missing audio table leaves the capture to refuse audio");
+        files["/capture/abi-table.godot-4.5.1-audio-driver"] = "{}";
         files.Remove("/capture/calibration.matching");
         files.Remove("/capture/abi-table.godot-4.5.0-rendering-server");
         files.Remove("/capture/abi-table.godot-4.5.1-rendering-server");
         Check(Resolve("abcdef").Reason == RenderCaptureAvailability.UnavailableReason.NoMatchingRecord,
-            "no staged table keeps the typed refusal");
+            "an audio table alone cannot derive video calibration");
     }
 
     private static void ElfNotes()

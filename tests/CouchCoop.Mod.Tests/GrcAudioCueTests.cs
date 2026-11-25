@@ -60,14 +60,23 @@ internal static class GrcAudioCueTests
             "seat composes the audio grant from its own track usage");
         Check(on.Count == off.Count + 2 && off.All(pair => on[pair.Key] == pair.Value),
             "the opt-in adds only the flag and track grant");
+        Check(!on.ContainsKey("GRC_AUDIO_ABI_TABLE"), "missing audio table stays unset with the audio grant");
+        var staged = config with { AudioAbiTable = "/capture/abi-table.godot-4.5.1-audio-driver" };
+        var stagedOn = StreamingSeatLaunch.Environment(staged, 13366, "/evidence", ["http://localhost:13337"], streamAudio: true);
+        Check(stagedOn["GRC_AUDIO_ABI_TABLE"] == staged.AudioAbiTable, "audio grant receives the staged audio table");
+        Check(!StreamingSeatLaunch.Environment(staged, 13366, "/evidence", ["http://localhost:13337"])
+            .ContainsKey("GRC_AUDIO_ABI_TABLE"), "staged table is omitted without the audio grant");
         var inherited = new ProcessStartInfo("true");
         inherited.Environment[GrcAudioCue.EnvironmentVariable] = "gsw";
         inherited.Environment["GRC_LIVE_TRACKS"] = "input,audio";
+        inherited.Environment["GRC_AUDIO_ABI_TABLE"] = "/host/audio-abi";
         StreamingSeatLaunch.ClearInherited(inherited);
         Check(!inherited.Environment.ContainsKey(GrcAudioCue.EnvironmentVariable)
-            && !inherited.Environment.ContainsKey("GRC_LIVE_TRACKS"), "non-stream seats cannot inherit the grant");
-        var host = StreamingSeatLaunch.HostEnvironment(config, "/evidence", ["http://localhost:13337"]);
-        Check(!host.ContainsKey(GrcAudioCue.EnvironmentVariable) && !host.ContainsKey("GRC_LIVE_TRACKS"),
+            && !inherited.Environment.ContainsKey("GRC_LIVE_TRACKS")
+            && !inherited.Environment.ContainsKey("GRC_AUDIO_ABI_TABLE"), "non-stream seats cannot inherit the grant or table");
+        var host = StreamingSeatLaunch.HostEnvironment(staged, "/evidence", ["http://localhost:13337"]);
+        Check(!host.ContainsKey(GrcAudioCue.EnvironmentVariable) && !host.ContainsKey("GRC_LIVE_TRACKS")
+            && !host.ContainsKey("GRC_AUDIO_ABI_TABLE"),
             "the host view gets no audio grant");
         var path = RenderCaptureAvailability.LibraryPath("/capture/render_stream_capture.gdextension", "linux", "x86_64",
             _ => "[libraries]\nlinux.x86_64 = \"librender_stream_capture.so\"", out var invalid);

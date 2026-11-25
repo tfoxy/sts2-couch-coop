@@ -99,8 +99,8 @@ render_capture_stage_linux_records() {
 }
 
 # Godot ABI tables, staged extensionless like the records (STS2 scans every *.json as a manifest). The
-# seat hands one to the capture only when no record matches the host executable; with none staged, an
-# unknown executable stays unsupported.
+# seat uses the rendering-server table when no record matches the host executable, and the audio-driver
+# table for audio-granted seats. With no rendering table, an unknown executable stays unsupported.
 render_capture_stage_abi_tables() {
   local gsw_root="$1" out="$2" table
   rm -f "$out"/abi-table.*
