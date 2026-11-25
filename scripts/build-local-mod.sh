@@ -215,6 +215,10 @@ dotnet build "$repo_root/src/CouchCoop.Mod.HotReload/CouchCoop.Mod.HotReload.csp
 # stderr: this script's own last stdout line is the JSON `sts2 game deploy` reads.
 # COUCHCOOP_SKIP_RENDER_STREAM=1 skips it.
 "$repo_root/scripts/build-render-stream.sh" --payload "$output_dir" >&2
+if [[ "${COUCHCOOP_STREAM_AUDIO:-}" == gsw && "${COUCHCOOP_SKIP_RENDER_STREAM:-}" != 1 ]]; then
+  "$repo_root/scripts/build-render-capture.sh" --fmod-only >&2
+  cp "$repo_root/.sts2/render-capture/linux/libgrc_fmod.so" "$output_dir/render-capture/linux/"
+fi
 COUCHCOOP_FRONTEND_OUT_DIR="$output_dir/frontend" npm --prefix "$repo_root/frontend" run build
 
 # Last, because it stamps what was actually published: a dev manifest version that cannot lose the

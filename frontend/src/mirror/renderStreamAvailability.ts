@@ -181,11 +181,24 @@ export function sessionRenderStreamEndpoint(raw: unknown, base = hostBase()): Re
     const url = hostRouteUrl(value.url, base);
     if (url.protocol === "http:") url.protocol = "ws:";
     if (url.protocol === "https:") url.protocol = "wss:";
-    return validateEndpoint({ ...value, url: url.href,
+    const { audio: _audio, ...endpoint } = value;
+    return validateEndpoint({ ...endpoint, url: url.href,
       resourceBase: value.resourceBase === "" ? base : hostRouteUrl(value.resourceBase, base).href.replace(/\/$/, "") });
   } catch {
     return null;
   }
+}
+
+/** Separate track credential; never pass product audio metadata to GSW's strict view descriptor parser. */
+export function sessionStreamAudioEndpoint(renderer: string, raw: unknown, base = hostBase()):
+  import("@/audio/streamAudioEngine").StreamAudioEndpoint | null {
+  if (renderer !== "stream" || raw === null || typeof raw !== "object") return null;
+  const audio = (raw as { audio?: { token?: unknown } }).audio;
+  if (!audio || typeof audio.token !== "string" || !/^[0-9a-f]{64}$/.test(audio.token)) return null;
+  const endpoint = sessionRenderStreamEndpoint(raw, base);
+  if (!endpoint || audio.token === endpoint.token) return null;
+  return { url: endpoint.url, resourceBase: endpoint.resourceBase, viewToken: endpoint.token,
+    token: audio.token, ...(endpoint.webTransport ? { webTransport: endpoint.webTransport } : {}) };
 }
 
 let webgl2Memo: boolean | null = null;

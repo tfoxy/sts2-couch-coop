@@ -109,6 +109,16 @@ internal static class StreamingSeatRole
                 CouchCoopLog.Warn(outcome.Message!);
                 return;
             case CaptureOutcomeKind.Loaded:
+                try
+                {
+                    Audio.Seat.GrcAudioCue.Load(Environment.GetEnvironmentVariable(RenderCaptureExtensionLoader.EnvironmentVariable)!);
+                }
+                catch (Exception exception)
+                {
+                    CouchCoopLog.Stderr($"streaming seat audio binding refused: {exception.GetType().Name}: {exception.Message}");
+                    HeadlessForceExit.Now();
+                    return;
+                }
                 RenderStreamSelf.MarkLoaded();
                 CouchCoopLog.Info(outcome.Message!);
                 return;

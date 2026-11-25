@@ -33,6 +33,7 @@
       "@godot-scene-web/canvas-effects/webgpu": ["../../godot-scene-web/packages/canvas-effects/src/webgpu.ts"],
       "@render-stream-test/loop": ["../../godot-scene-web/packages/render-stream-client/src/loop.ts"],
       "@render-stream-test/fakes": ["../../godot-scene-web/packages/render-stream-client/test/fakes.ts"],
+      "@godot-scene-web/render-stream-client/audio": ["../../godot-scene-web/packages/render-stream-client/src/audio.ts"],
       "@godot-scene-web/render-stream-client": ["../../godot-scene-web/packages/render-stream-client/src/index.ts"],
       "@godot-scene-web/input": ["../../godot-scene-web/packages/input/src/index.ts"],
       "@godot-scene-web/input/keyboard": ["../../godot-scene-web/packages/input/src/keyboard.ts"],

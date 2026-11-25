@@ -278,6 +278,8 @@ export interface BrowserRenderStreamDescriptor {
   /** The seat's `GRC_STREAM_VERSION`. */
   protocol: 16 | 17 | 18 | 19;
   presentation?: [number, number];
+  /** Independent audio capability, present only for opted-in streaming seats. */
+  audio?: { token: string };
   /** The hub's WebTransport carrier (CAR7; the client's `carrier: "auto"` prefers it on a secure-context page). */
   webTransport?: BrowserRenderStreamWebTransport;
 }

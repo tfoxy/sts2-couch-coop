@@ -4,6 +4,7 @@ using CouchCoop.MirrorProtocol.Tests;
 // process exits non-zero; a clean run prints a machine-readable success line last.
 AffineTests.Run();
 AudioWireTests.Run();
+SoundKeyCueTests.Run();
 WireDefaultsTests.Run();
 RoundTripFixtureTests.Run();
 StaticFieldsTests.Run();

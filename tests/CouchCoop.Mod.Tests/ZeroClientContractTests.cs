@@ -45,6 +45,8 @@ internal static class ZeroClientContractTests
 
     public static async Task RunAsync()
     {
+        GrcAudioCueTests.NoDemandDoesNoWork();
+        GrcAudioHostTests.NoDemandDoesNoWork();
         Expect(!CouchCoop.Mod.CouchCoopMod.HostExiting, "zero-client tests start before process exit");
         var oldSecure = Environment.GetEnvironmentVariable("COUCHCOOP_SECURE_ORIGIN");
         var oldMdns = Environment.GetEnvironmentVariable("COUCHCOOP_MDNS_RESPONDER");
@@ -349,6 +351,8 @@ internal static class ZeroClientContractTests
             [ZeroClientEntries.MainThreadDispatch] = (_ => new RogueMainThreadWaker(), "ZeroClientContractTests.Wake"),
             [ZeroClientEntries.HostFactsRead] = (_ => new RogueHostFactsReader(), "ZeroClientContractTests.Read"),
             [ZeroClientEntries.RosterSubscribe] = (_ => new RogueRosterSubscriber(), "ZeroClientContractTests.SubscribeRoster"),
+            [ZeroClientEntries.GrcAudioModuleLoad] = (_ => new RogueGrcModule(), "ZeroClientContractTests.LoadGrcAudio"),
+            [ZeroClientEntries.GrcAudioObserve] = (_ => new RogueGrcObserve(), "ZeroClientContractTests.ObserveGrcAudio"),
             [ZeroClientEntries.AudioTakeRendererStart] = (_ => new RogueAudioTakeRenderer(), "ZeroClientContractTests.StartAudioTake"),
             [ZeroClientEntries.AudioStreamRendererStart] = (_ => new RogueAudioStreamRenderer(), "ZeroClientContractTests.StartAudioStream"),
             [ZeroClientEntries.AudioLaneSubscribe] = (_ => new RogueAudioSubscriber(), "ZeroClientContractTests.SubscribeAudio"),
@@ -522,6 +526,19 @@ internal static class ZeroClientContractTests
         private static IDisposable SubscribeRoster() => CouchCoopRosterObserver.Subscribe(_ => { });
 
         public void Dispose() => _subscription.Dispose();
+    }
+
+    private static void LoadGrcAudio() => ZeroClientGuard.Enter(ZeroClientEntries.GrcAudioModuleLoad);
+    private static void ObserveGrcAudio() => ZeroClientGuard.Enter(ZeroClientEntries.GrcAudioObserve);
+    private sealed class RogueGrcModule : IDisposable
+    {
+        internal RogueGrcModule() => LoadGrcAudio();
+        public void Dispose() { }
+    }
+    private sealed class RogueGrcObserve : IDisposable
+    {
+        internal RogueGrcObserve() => ObserveGrcAudio();
+        public void Dispose() { }
     }
 
     private sealed class RogueAudioTakeRenderer : IDisposable

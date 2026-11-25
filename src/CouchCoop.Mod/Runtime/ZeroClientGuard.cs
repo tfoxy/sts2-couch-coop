@@ -95,6 +95,9 @@ public static class ZeroClientEntries
     public static readonly ZeroClientEntry AudioStreamRendererStart = ZeroClientEntry.Register("audio.stream-renderer.start");
     public static readonly ZeroClientEntry AudioLaneSubscribe = ZeroClientEntry.Register("audio.lane.subscribe");
 
+    public static readonly ZeroClientEntry GrcAudioModuleLoad = ZeroClientEntry.Register("audio.gsw-module.load");
+    public static readonly ZeroClientEntry GrcAudioObserve = ZeroClientEntry.Register("audio.gsw-observe");
+
     public static IReadOnlyList<ZeroClientEntry> All => ZeroClientEntry.AllRegistered;
 }
 

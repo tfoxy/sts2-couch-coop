@@ -482,6 +482,19 @@ listener on loopback. Explicit direct capture endpoints remain available for QA.
 To enable that direct QA mode, set `COUCHCOOP_RENDER_STREAM_DIRECT=1` before launching the host; normal viewing
 does not require it.
 
+`COUCHCOOP_STREAM_AUDIO=gsw` opts streaming seats into the experimental GSW audio track; it is off by
+default. The host grants a separate audio credential to viewers of the stream renderer.
+`COUCHCOOP_AUDIO=off` takes precedence. Mirror viewers keep the existing audio lane. On the stream renderer,
+the same Audio toggle opens GSW’s audio track with its separate credential and retains the existing gesture
+and hidden-tab handling.
+The stream viewer keeps a control-only `/ws?seat=<route-id>&lane=stream-audio` connection while audio
+is enabled. The host opens `/internal/audio-link` through that seat's authenticated private pipe;
+this route refuses browser origins and non-loopback clients. Only rendered PCM reaches the viewer.
+The host module binds the game's already-loaded FMOD libraries and reads banks directly from the PCK;
+no FMOD library or bank is sent to a browser. `scripts/build-render-capture.sh --fmod-only` builds the
+optional module into the capture output directory without building or deploying the frontend.
+Local builds with the flag enabled also stage the module beside the capture.
+
 Windowed and headless hosts offer the new renderer when the packaged `render-capture/` or the operator's
 `COUCHCOOP_RENDER_CAPTURE_EXTENSION` configuration resolves. Open the browser page, choose the host's view,
 and tick "Use new renderer (Beta)"; no extra opt-in flag is needed.

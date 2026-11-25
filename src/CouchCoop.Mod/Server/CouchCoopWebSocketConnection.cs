@@ -2210,16 +2210,20 @@ public sealed class CouchCoopWebSocketConnection
         if (_rendererPageReason is { } pageReason)
             return envelope with { RendererState = RendererState("failed", pageReason, swap.MirrorRestoreComplete) };
         var relay = swap as IHotRenderStreamRelayHost;
+        var descriptor = swap.WantsRenderStream(RendererPageId)
+            ? _isHeadlessClient && Environment.GetEnvironmentVariable(StreamingSeatDescriptor.DirectEnvironmentVariable) == "1"
+                ? StreamingSeatDescriptor.Build(status.Snapshot, _requestOrigin,
+                    Environment.GetEnvironmentVariable, StreamingSeatDescriptor.CertificateCovers)
+                : relay is { SupportsRenderStreamRelay: true } && _rendererProtocol2
+                    ? StreamingSeatDescriptor.BuildRelayed(status.Snapshot, relay.RenderStreamSeatRoute)
+                    : null
+            : null;
+        if (_isHeadlessClient && descriptor is not null
+            && Audio.Seat.GrcAudioCue.CredentialFor(status.Snapshot?.Token) is { } audioToken)
+            descriptor = descriptor with { Audio = new(audioToken) };
         return envelope with
         {
-            RenderStream = swap.WantsRenderStream(RendererPageId)
-                ? _isHeadlessClient && Environment.GetEnvironmentVariable(StreamingSeatDescriptor.DirectEnvironmentVariable) == "1"
-                    ? StreamingSeatDescriptor.Build(status.Snapshot, _requestOrigin,
-                        Environment.GetEnvironmentVariable, StreamingSeatDescriptor.CertificateCovers)
-                    : relay is { SupportsRenderStreamRelay: true } && _rendererProtocol2
-                        ? StreamingSeatDescriptor.BuildRelayed(status.Snapshot, relay.RenderStreamSeatRoute)
-                        : null
-                : null,
+            RenderStream = descriptor,
             RendererState = RendererState(status.State, status.Reason, swap.MirrorRestoreComplete),
         };
     }

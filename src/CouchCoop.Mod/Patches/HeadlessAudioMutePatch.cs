@@ -274,33 +274,33 @@ internal static class HeadlessAudioMutePatch
     // Typed prefixes check the volatile subscriber count before touching arguments or allocating.
     private static bool SkipOneShotWithParams(string path, Dictionary<string, float> parameters, float volume)
     {
-        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Sfx(path, parameters, volume);
+        if (SeatAudioReporter.HasDemand) SeatAudioReporter.Sfx(path, parameters, volume);
         return false;
     }
     private static bool SkipOneShot(string path, float volume)
     {
-        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Sfx(path, null, volume);
+        if (SeatAudioReporter.HasDemand) SeatAudioReporter.Sfx(path, null, volume);
         return false;
     }
     private static bool SkipLoopStart(string path, bool usesLoopParam)
     {
-        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Loop(path, "start");
+        if (SeatAudioReporter.HasDemand) SeatAudioReporter.Loop(path, "start");
         return false;
     }
     private static bool SkipLoopStop(string path)
     {
-        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Loop(path, "stop");
+        if (SeatAudioReporter.HasDemand) SeatAudioReporter.Loop(path, "stop");
         return false;
     }
     private static bool SkipAllLoops()
     {
-        if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.Loop("*", "stop-all");
+        if (SeatAudioReporter.HasDemand) SeatAudioReporter.Loop("*", "stop-all");
         return false;
     }
-    private static bool SkipMasterVolume(float volume) { if (SeatAudioFeed.HasSubscribers && !SeatAudioReportPatch.InBackgroundMute) SeatAudioFeed.SetMaster(volume); return false; }
-    private static bool SkipSfxVolume(float volume) { if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.SetSfx(volume); return false; }
-    private static bool SkipBgmVolume(float volume) { if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.SetBgm(volume); return false; }
-    private static bool SkipAmbienceVolume(float volume) { if (SeatAudioFeed.HasSubscribers) SeatAudioFeed.SetAmbience(volume); return false; }
+    private static bool SkipMasterVolume(float volume) { if (SeatAudioReporter.ReportsVolumes && !SeatAudioReportPatch.InBackgroundMute) SeatAudioReporter.Volume(volume, 0); return false; }
+    private static bool SkipSfxVolume(float volume) { if (SeatAudioReporter.ReportsVolumes) SeatAudioReporter.Volume(volume, 2); return false; }
+    private static bool SkipBgmVolume(float volume) { if (SeatAudioReporter.ReportsVolumes) SeatAudioReporter.Volume(volume, 1); return false; }
+    private static bool SkipAmbienceVolume(float volume) { if (SeatAudioReporter.ReportsVolumes) SeatAudioReporter.Volume(volume, 3); return false; }
 
     // Harmony prefix: returning false skips the original body (and its FMOD-proxy forwarding call).
     private static bool SkipOriginal() => false;

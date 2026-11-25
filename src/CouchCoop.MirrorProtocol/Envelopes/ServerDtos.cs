@@ -282,7 +282,11 @@ public sealed record BrowserRenderStreamDto(
     string? Token,
     int Protocol,
     IReadOnlyList<int>? Presentation = null,
-    BrowserRenderStreamWebTransportDto? WebTransport = null);
+    BrowserRenderStreamWebTransportDto? WebTransport = null,
+    BrowserRenderStreamAudioDto? Audio = null);
+
+// Audio uses the descriptor's endpoint but its own track credential, never the view token.
+public sealed record BrowserRenderStreamAudioDto(string Token);
 
 // The descriptor's `webTransport` member describes the hub's WebTransport carrier.
 // `certificateHashes` pins its self-signed certificate (SHA-256 of the DER, lowercase hex), as

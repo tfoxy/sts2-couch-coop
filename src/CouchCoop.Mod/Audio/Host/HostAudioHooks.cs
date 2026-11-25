@@ -26,6 +26,15 @@ internal static class HostAudioHooks
     internal static void SetSubscriber(Action<HostAudioOp>? subscriber)
         => Interlocked.Exchange(ref _subscriber, subscriber);
 
+    internal static IDisposable SubscribeGrc(Action<HostMusicSnapshot> snapshot, Action<HostAudioOp> subscriber)
+        => MusicState.Subscribe(snapshot, subscriber);
+
+    internal static void Publish(HostAudioOp operation)
+    {
+        MusicState.Apply(operation);
+        Volatile.Read(ref _subscriber)?.Invoke(operation);
+    }
+
     internal static void Apply()
     {
         if (CouchCoopMod.IsHeadlessClient ||
@@ -140,8 +149,7 @@ internal static class HostAudioHooks
                 + ticks % Stopwatch.Frequency * 1_000_000L / Stopwatch.Frequency;
             foreach (var operation in ProxyOpTable.Translate(music, name, args, timeUs))
             {
-                MusicState.Apply(operation);
-                Volatile.Read(ref _subscriber)?.Invoke(operation);
+                Publish(operation);
             }
         }
         catch (Exception error)

@@ -14,6 +14,17 @@ const fake = vi.hoisted(() => ({
   // The stage chunk's import (renderStreamStageLoader.ts): the real one unless a spec swaps it.
   stageImport: null as null | (() => Promise<unknown>)
 }));
+const audio = vi.hoisted(() => {
+  const engines: Array<{ kind: string; options: Record<string, unknown>; handle: import("@/audio/audioEngine").AudioEngineHandle }> = [];
+  const create = (kind: string, options: Record<string, unknown>) => {
+    const handle = { unlock: vi.fn(async () => true), start: vi.fn(), stop: vi.fn(), dispose: vi.fn(), setSeatUrl: vi.fn() };
+    engines.push({ kind, options, handle });
+    return handle;
+  };
+  return { engines, create };
+});
+vi.mock("@/audio/audioEngine", () => ({ createAudioEngine: (options: Record<string, unknown>) => audio.create("legacy", options) }));
+vi.mock("@/audio/streamAudioEngine", () => ({ createStreamAudioEngine: (options: Record<string, unknown>) => audio.create("gsw", options) }));
 const realStageImport = () => import("@/mirror/RenderStreamStage.vue");
 vi.mock("@/mirror/renderStreamStageLoader", () => ({
   importRenderStreamStage: () => (fake.stageImport ?? realStageImport)()
@@ -158,6 +169,8 @@ beforeEach(() => {
   globalThis.localStorage?.clear();
   MockWebSocket.instances = [];
   fake.clients.length = 0;
+  audio.engines.length = 0;
+  mirrorSettings.audio = false;
   fake.stageImport = null;
   fake.clientFactory = null;
   realWebSocket = globalThis.WebSocket;
@@ -170,6 +183,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete globalThis.__couchCoopHostBase;
+  mirrorSettings.audio = false;
   app?.unmount();
   app = null;
   Object.assign(mirrorSettings, { renderer: "mirror", runtimeRenderer: "mirror", renderStreamUrl: null,
@@ -2889,5 +2903,60 @@ describe("MirrorApp — the stage chunk fails to load", () => {
     expect(mirrorSettings.runtimeRenderer).toBe("stream");
     expect(stageMounted()).toBe(true);
     expect(fake.clients).toHaveLength(1);
+  });
+});
+
+
+describe("MirrorApp — stream audio toggle", () => {
+  const descriptor = { url: "ws://127.0.0.1:13366/render-stream", resourceBase: "http://127.0.0.1:13366",
+    token: "c".repeat(64), protocol: 19, audio: { token: "d".repeat(64) } };
+
+  it("uses GSW on stream seats, disposes on toggle-off, and keeps legacy audio on renderer fallback", async () => {
+    streamAvailable();
+    mirrorSettings.renderer = "stream";
+    await joinSeat({ renderStream: descriptor, rendererState: { state: "armed" } }, { headlessMirrorPath: "/ws?seat=14000" });
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    expect(audio.engines).toHaveLength(0);
+    mirrorSettings.audio = true;
+    await settle();
+    expect(audio.engines.at(-1)).toMatchObject({ kind: "gsw", options: {
+      endpoint: { token: descriptor.audio.token, viewToken: descriptor.token }, demandUrl: expect.stringContaining("lane=stream-audio")
+    } });
+    const stream = audio.engines.at(-1)!;
+    document.dispatchEvent(new Event("pointerdown"));
+    await settle();
+    expect(stream.handle.unlock).toHaveBeenCalledTimes(1);
+    expect(stream.handle.start).toHaveBeenCalledTimes(1);
+    mirrorSettings.audio = false;
+    await settle();
+    expect(stream.handle.dispose).toHaveBeenCalledTimes(1);
+    mirrorSettings.audio = true;
+    await settle();
+    const replacement = audio.engines.at(-1)!;
+    expect(replacement.kind).toBe("gsw");
+    expect(replacement).not.toBe(stream);
+    mirrorSettings.renderer = "mirror";
+    await settle();
+    expect(replacement.handle.dispose).toHaveBeenCalledTimes(1);
+    expect(audio.engines.at(-1)).toMatchObject({ kind: "legacy", options: {
+      seatUrl: expect.stringContaining("lane=audio"), renderUrl: expect.stringContaining("/audio")
+    } });
+  });
+
+  it("uses the legacy engine when a stream seat has no audio grant", async () => {
+    streamAvailable(); mirrorSettings.renderer = "stream";
+    await joinSeat({ renderStream: { ...descriptor, audio: undefined }, rendererState: { state: "armed" } }, { headlessMirrorPath: "/ws?seat=14000" });
+    expect(mirrorSettings.runtimeRenderer).toBe("stream");
+    mirrorSettings.audio = true;
+    await settle();
+    expect(audio.engines.at(-1)?.kind).toBe("legacy");
+  });
+
+  it("keeps mirror audio on a seat that advertises a GSW grant", async () => {
+    await joinSeat({ renderStream: descriptor, rendererState: { state: "armed" } }, { headlessMirrorPath: "/ws?seat=14000" });
+    expect(mirrorSettings.runtimeRenderer).toBe("mirror");
+    mirrorSettings.audio = true;
+    await settle();
+    expect(audio.engines.at(-1)?.kind).toBe("legacy");
   });
 });

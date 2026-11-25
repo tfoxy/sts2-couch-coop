@@ -231,6 +231,8 @@ if (args is ["audio", ..])
     StreamLaneSubscriptionTests.Run();
     await AudioHostServiceTests.RunAsync();
     await SeatAudioFeedTests.RunAsync();
+    await GrcAudioCueTests.RunAsync();
+    await GrcAudioHostTests.RunAsync();
     await SeatAudioLaneConnectionTests.RunAsync();
     Console.WriteLine("audio: ok");
     return;

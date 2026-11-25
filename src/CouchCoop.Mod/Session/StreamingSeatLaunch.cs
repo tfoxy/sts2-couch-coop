@@ -315,7 +315,7 @@ internal static class StreamingSeatLaunch
     /// </param>
     internal static IReadOnlyDictionary<string, string> Environment(
         Config config, int hubPort, string evidenceDirectory, IReadOnlyList<string> allowedOrigins,
-        LanLaunch? lan = null, int hostBrowserPort = 0)
+        LanLaunch? lan = null, int hostBrowserPort = 0, bool streamAudio = false)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(allowedOrigins);
@@ -365,6 +365,12 @@ internal static class StreamingSeatLaunch
             // Custom metadata is category-granted; the client requests only the CouchCoop tip owner keys.
             ["GRC_ITEM_META"] = "scene,path,script,groups,instance_id,mouse_filter,meta",
         };
+        if (streamAudio)
+        {
+            environment[Audio.Seat.GrcAudioCue.EnvironmentVariable] = "gsw";
+            // Couch currently uses no input track. Compose grants here rather than inheriting host experiments.
+            environment["GRC_LIVE_TRACKS"] = "audio";
+        }
         // A record, or (no record matching the executable) the ABI table the capture derives one from. The capture
         // takes the table only while GRC_CALIBRATION is unset, and inherited GRC_* variables are cleared (ClearInherited).
         if (config.AbiTable is null) environment["GRC_CALIBRATION"] = config.Calibration;
@@ -431,7 +437,7 @@ internal static class StreamingSeatLaunch
             if (key.StartsWith("GRC_", StringComparison.Ordinal)
                 || key is RenderCaptureExtensionLoader.EnvironmentVariable or CalibrationEnvironmentVariable
                     or ExtraOriginsEnvironmentVariable or MaxPresentationWidthEnvironmentVariable
-                    or Server.CouchCoopSeatStillSource.HostOriginEnvironmentVariable)
+                    or Server.CouchCoopSeatStillSource.HostOriginEnvironmentVariable or Audio.Seat.GrcAudioCue.EnvironmentVariable)
             {
                 psi.Environment.Remove(key);
             }

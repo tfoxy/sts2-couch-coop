@@ -27,6 +27,7 @@ import {
   resolveRuntimeRenderer,
   retryRenderStream,
   sessionRenderStreamEndpoint,
+  sessionStreamAudioEndpoint,
   coreBuildCause,
   endpointCarrierUsable,
   lanCarrierUsable,
@@ -702,4 +703,27 @@ it("keeps tunnel prefixes on host-relative stream descriptors and resources", ()
   expect(endpoint?.resourceBase).toBe(`${base}/render-stream/host`);
   expect(sessionRenderStreamEndpoint({ url: "/render-stream/host/ws", resourceBase: "", token: null, protocol: 16 }, base)?.resourceBase)
     .toBe(base);
+});
+
+
+describe("session stream audio grant", () => {
+  const raw = { url: "/render-stream/R/ws", resourceBase: "/render-stream/R", protocol: 19,
+    token: "a".repeat(64), audio: { token: "b".repeat(64) } };
+  it("keeps the view descriptor valid and carries a separate audio credential", () => {
+    expect(sessionRenderStreamEndpoint(raw, "http://host")).toMatchObject({ protocol: 19, token: raw.token });
+    expect(sessionStreamAudioEndpoint("stream", raw, "http://host")).toEqual({
+      url: "ws://host/render-stream/R/ws", resourceBase: "http://host/render-stream/R",
+      viewToken: raw.token, token: raw.audio.token
+    });
+  });
+  it("uses legacy audio for mirror viewers and seats without the opt-in grant", () => {
+    expect(sessionStreamAudioEndpoint("mirror", raw)).toBeNull();
+    expect(sessionStreamAudioEndpoint("stream", { ...raw, audio: undefined })).toBeNull();
+    expect(sessionStreamAudioEndpoint("stream", null)).toBeNull();
+  });
+  it("refuses invalid or shared credentials and invalid view descriptors", () => {
+    expect(sessionStreamAudioEndpoint("stream", { ...raw, audio: { token: raw.token } })).toBeNull();
+    expect(sessionStreamAudioEndpoint("stream", { ...raw, audio: { token: "short" } })).toBeNull();
+    expect(sessionStreamAudioEndpoint("stream", { ...raw, protocol: 99 })).toBeNull();
+  });
 });

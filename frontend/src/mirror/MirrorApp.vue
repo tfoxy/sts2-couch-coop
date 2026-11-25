@@ -18,6 +18,7 @@ import LatencyOverlay from "@/mirror/LatencyOverlay.vue";
 import ReproBadge from "@/mirror/ReproBadge.vue";
 import SettingsPanel from "@/mirror/SettingsPanel.vue";
 import { createAudioEngine, type AudioEngineHandle } from "@/audio/audioEngine";
+import { createStreamAudioEngine } from "@/audio/streamAudioEngine";
 import MirrorConfirmButton from "@/mirror/MirrorConfirmButton.vue";
 import MirrorHandRaiseButton from "@/mirror/MirrorHandRaiseButton.vue";
 import MirrorView from "@/mirror/MirrorView.vue";
@@ -29,6 +30,7 @@ import {
   renderStreamAvailability,
   renderStreamContext,
   sessionRenderStreamEndpoint,
+  sessionStreamAudioEndpoint,
   stopRenderStream,
   syncRuntimeRenderer
 } from "@/mirror/renderStreamAvailability";
@@ -271,6 +273,7 @@ const joined = ref(false);
 const audioUnavailable = ref(false);
 const audioRoute = ref<string | number | null>(null);
 let audioEngine: AudioEngineHandle | null = null;
+let audioEngineIdentity: string | null = null;
 let audioGestureListener: (() => void) | null = null;
 let audioUnlockingEngine: AudioEngineHandle | null = null;
 let audioVisibilityGeneration = 0;
@@ -1678,6 +1681,7 @@ function openSeatView(target: string | number): void {
 
 function stopAudioEngine(): void {
   audioEngine?.dispose(); audioEngine = null;
+  audioEngineIdentity = null;
   audioUnlockingEngine = null;
   if (audioGestureListener) document.removeEventListener("pointerdown", audioGestureListener, true);
   audioGestureListener = null;
@@ -1690,13 +1694,24 @@ function armAudioGesture(): void {
   document.addEventListener("pointerdown", unlockFromGesture, true);
 }
 
-watch([() => mirrorSettings.audio, joined, audioRoute], ([enabled, isJoined, target]) => {
+const streamAudioEndpoint = computed(() => sessionStreamAudioEndpoint(
+  mirrorSettings.runtimeRenderer, rendererSession.value?.renderStream));
+watch([() => mirrorSettings.audio, joined, audioRoute, () => JSON.stringify(streamAudioEndpoint.value)], ([enabled, isJoined, target]) => {
   audioUnavailable.value = false;
   if (!enabled || !isJoined || target === null || directView.value || typeof document === "undefined") { stopAudioEngine(); return; }
   if (typeof target !== "string") { stopAudioEngine(); audioUnavailable.value = true; return; }
   const seatUrl = buildAudioSeatWebSocketUrl(target);
-  if (audioEngine) { audioEngine.setSeatUrl(seatUrl); return; }
-  audioEngine = createAudioEngine({
+  const stream = streamAudioEndpoint.value;
+  const identity = stream ? JSON.stringify([target, stream]) : "legacy";
+  if (audioEngine && audioEngineIdentity === identity) { if (!stream) audioEngine.setSeatUrl(seatUrl); return; }
+  stopAudioEngine();
+  audioEngineIdentity = identity;
+  if (stream) {
+    const demand = new URL(seatUrl);
+    demand.searchParams.set("lane", "stream-audio");
+    audioEngine = createStreamAudioEngine({ endpoint: stream, demandUrl: demand.href,
+      onUnavailable: () => { audioUnavailable.value = true; } });
+  } else audioEngine = createAudioEngine({
     seatUrl, renderUrl: buildAudioRenderWebSocketUrl(), indexUrl: audioTakeIndexUrl(),
     onUnavailable: () => { audioUnavailable.value = true; }
   });

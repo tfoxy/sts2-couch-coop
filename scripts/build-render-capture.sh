@@ -7,13 +7,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/scripts/lib/render-capture-stamp.sh"
 target=linux
 from=""
+fmod_only=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --fmod-only) fmod_only=1; shift ;;
     --target|--from)
       [[ $# -ge 2 && -n "$2" ]] || { echo "$1 requires a value" >&2; exit 2; }
       if [[ "$1" == --target ]]; then target="$2"; else from="$2"; fi
       shift 2 ;;
-    *) echo 'usage: scripts/build-render-capture.sh [--target linux|windows|macos] [--from <macos bundle>]' >&2; exit 2 ;;
+    *) echo 'usage: scripts/build-render-capture.sh [--target linux|windows|macos] [--from <macos bundle>] [--fmod-only]' >&2; exit 2 ;;
   esac
 done
 if [[ "$target" != linux && "$target" != windows && "$target" != macos ]] || [[ -n "$from" && "$target" != macos ]]; then
@@ -33,6 +35,35 @@ net_build="$gsw_root/experiments/render-stream/scripts/build-rs-net.sh"
 out_root="${COUCHCOOP_RENDER_CAPTURE_OUT:-$repo_root/.sts2/render-capture}"
 out="$out_root/$target"
 calibration_src="$(render_capture_calibration_source "$repo_root" || true)"
+# The FMOD module has its own build tree and never links to an FMOD SDK.
+build_fmod() {
+  local cmake_bin="${CMAKE:-$(command -v cmake || true)}" fmod_build="$out_root/fmod-$target"
+  [[ -x "$cmake_bin" ]] || cmake_bin=/snap/bin/cmake
+  local args=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
+  if [[ "$target" == windows ]]; then
+    source "$gsw_root/experiments/render-stream/scripts/lib/llvm-mingw.sh"
+    llvm_mingw_ensure
+    args+=(-DCMAKE_TOOLCHAIN_FILE="$capture_src/cmake/llvm-mingw-x86_64.cmake" -DGRC_LLVM_MINGW_ROOT="$LLVM_MINGW_ROOT" -DBUILD_TESTING=OFF)
+  elif [[ "$target" == macos ]]; then
+    if [[ -n "$from" ]]; then
+      [[ -s "$from/libgrc_fmod.dylib" ]] || { echo 'render capture: macos bundle is missing libgrc_fmod.dylib' >&2; return 1; }
+      mkdir -p "$out"
+      cp "$from/libgrc_fmod.dylib" "$out/"
+      return
+    fi
+    args+=('-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64' -DBUILD_TESTING=OFF)
+  fi
+  "$cmake_bin" -S "$gsw_root/experiments/render-stream/fmod" -B "$fmod_build" "${args[@]}"
+  "$cmake_bin" --build "$fmod_build" -j"${COUCHCOOP_BUILD_JOBS:-2}"
+  mkdir -p "$out"
+  case "$target" in
+    windows) cp "$fmod_build/grc_fmod.dll" "$out/" ;;
+    macos) cp "$fmod_build/libgrc_fmod.dylib" "$out/" ;;
+    linux) cp "$fmod_build/libgrc_fmod.so" "$out/" ;;
+  esac
+}
+if [[ "$fmod_only" == 1 || "${COUCHCOOP_STREAM_AUDIO:-}" == gsw ]]; then build_fmod; fi
+if [[ "$fmod_only" == 1 ]]; then exit 0; fi
 if [[ "$target" == macos ]]; then
   if [[ -z "$from" ]]; then
     bash "$gsw_root/experiments/render-stream/scripts/build-capture.sh" --target macos

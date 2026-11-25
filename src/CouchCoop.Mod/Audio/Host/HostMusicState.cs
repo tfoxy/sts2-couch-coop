@@ -54,6 +54,23 @@ internal sealed class HostMusicState
     private readonly Dictionary<string, string> _globals = new(StringComparer.Ordinal);
     private readonly HashSet<string> _banks = new(StringComparer.Ordinal);
 
+    private Action<HostAudioOp>? _subscriber;
+
+    internal IDisposable Subscribe(Action<HostMusicSnapshot> snapshot, Action<HostAudioOp> subscriber)
+    {
+        lock (_gate)
+        {
+            snapshot(Snapshot());
+            _subscriber = subscriber;
+        }
+        return new Subscription(this);
+    }
+
+    private sealed class Subscription(HostMusicState owner) : IDisposable
+    {
+        public void Dispose() { lock (owner._gate) owner._subscriber = null; }
+    }
+
     internal void Apply(in HostAudioOp op)
     {
         lock (_gate)
@@ -84,6 +101,7 @@ internal sealed class HostMusicState
                     _banks.Remove(op.Name);
                     break;
             }
+            _subscriber?.Invoke(op);
         }
     }
 

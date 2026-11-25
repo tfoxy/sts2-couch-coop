@@ -151,13 +151,26 @@ internal sealed class GodotRenderStreamCapture : IRenderStreamCapture, IRenderSt
             subscription.Add("armed", Callable.From<Variant>(info =>
             {
                 var values = info.AsGodotDictionary();
+                Audio.Seat.GrcAudioCue.Armed(values["token"].AsString());
                 signals.Armed(new RenderStreamSnapshot(
                     values["listen"].AsString(), values["token"].AsString(), values["wt_cert_hash"].AsString(),
                     values["root_size"].AsString(), values["stream_version"].AsInt32()));
             }));
-            subscription.Add("disarmed", Callable.From<Variant>(_ => signals.Disarmed()));
-            subscription.Add("arm_failed", Callable.From<string>(signals.ArmFailed));
-            subscription.Add("stream_ended", Callable.From<string>(signals.StreamEnded));
+            subscription.Add("disarmed", Callable.From<Variant>(_ =>
+            {
+                Audio.Seat.GrcAudioCue.Disarmed();
+                signals.Disarmed();
+            }));
+            subscription.Add("arm_failed", Callable.From<string>(reason =>
+            {
+                Audio.Seat.GrcAudioCue.Disarmed();
+                signals.ArmFailed(reason);
+            }));
+            subscription.Add("stream_ended", Callable.From<string>(reason =>
+            {
+                Audio.Seat.GrcAudioCue.Disarmed();
+                signals.StreamEnded(reason);
+            }));
             subscription.Add("client_connected", Callable.From<long, Variant>((connection, _) => signals.ClientConnected(connection)));
             subscription.Add("client_left", Callable.From<long, string>(signals.ClientLeft));
             return subscription;

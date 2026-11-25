@@ -1774,6 +1774,17 @@ public sealed partial class CouchCoopBrowserServer(
                 "seat-route-expired", "This player's game view is no longer available.", cancellationToken).ConfigureAwait(false);
             return;
         }
+        if (request.QueryValues.GetValueOrDefault("lane") == "stream-audio")
+        {
+            if (!Audio.Host.GrcStreamAudio.Requested)
+            {
+                await HttpResponseWriter.WriteJsonErrorAsync(browser, HttpStatusCode.NotFound,
+                    "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            await GrcAudioLinkConnection.AcceptViewerAsync(browser, request, routeId, pipeName, token, cancellationToken).ConfigureAwait(false);
+            return;
+        }
         try
         {
             await SeatBrowserPipe.RelayAsync(pipeName, token, browser, rawHeader,
@@ -1828,6 +1839,16 @@ public sealed partial class CouchCoopBrowserServer(
                     ["Access-Control-Max-Age"] = "600",
                 },
                 cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (request.Path == "/internal/audio-link")
+        {
+            if (!GrcAudioLinkConnection.Authorized(request, remoteAddress, _isHeadlessClient,
+                    Environment.GetEnvironmentVariable(SeatBrowserPipe.TokenEnvironmentVariable)) || !request.IsWebSocketUpgrade)
+                await HttpResponseWriter.WriteJsonErrorAsync(stream, HttpStatusCode.NotFound,
+                    "not-found", "Route was not found.", cancellationToken).ConfigureAwait(false);
+            else await GrcAudioLinkConnection.AcceptSeatAsync(stream, request, cancellationToken).ConfigureAwait(false);
             return;
         }
 

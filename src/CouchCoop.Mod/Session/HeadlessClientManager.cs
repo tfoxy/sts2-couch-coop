@@ -2392,6 +2392,9 @@ public sealed partial class HeadlessClientManager : IDisposable
                 File.Delete(Path.Combine(evidence, StreamingSeatLaunch.TokenFileName));
                 // And its WebTransport certificate hash: a stale one would pin a certificate this seat never serves.
                 File.Delete(Path.Combine(evidence, StreamingSeatLaunch.CertificateHashFileName));
+                if (Audio.Seat.GrcAudioCue.Requested(Environment.GetEnvironmentVariable(Audio.Seat.GrcAudioCue.EnvironmentVariable),
+                        Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO")))
+                    File.Delete(Path.Combine(evidence, Audio.Seat.GrcAudioCue.TokenFileName));
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
@@ -2412,7 +2415,9 @@ public sealed partial class HeadlessClientManager : IDisposable
         var lanTls = "none";
         if (Environment.GetEnvironmentVariable(Protocol.StreamingSeatDescriptor.DirectEnvironmentVariable) == "1")
             (lan, lanTls) = PrepareStreamingSeatLanLocked(evidence, hostPort, ref origins);
-        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, lan, hostPort));
+        StreamingSeatLaunch.Apply(psi, StreamingSeatLaunch.Environment(_streamingConfig!, hubPort, evidence, origins, lan, hostPort,
+            Audio.Seat.GrcAudioCue.Requested(Environment.GetEnvironmentVariable(Audio.Seat.GrcAudioCue.EnvironmentVariable),
+                Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO"))));
         CouchCoopLog.Stderr($"streaming seat launching slot={slot} hub={(lan is null ? "127.0.0.1" : "0.0.0.0")}:{hubPort.ToString(CultureInfo.InvariantCulture)} "
             + $"tls={lanTls} "
             + $"mode=standby root_size={StreamingSeatLaunch.RootSize(StreamingSeatLaunch.PresentationBaseWidth)} "

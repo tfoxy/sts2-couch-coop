@@ -215,6 +215,34 @@ internal static class RenderCaptureAvailability
             .Where(path => Path.GetFileName(path).StartsWith("abi-table.", StringComparison.Ordinal) && fileExists(path))
             .OrderBy(Path.GetFileName, StringComparer.Ordinal).FirstOrDefault();
 
+    /// <summary>The same library selected from the capture descriptor for availability and audio binding.</summary>
+    internal static string? LibraryPath(string extension, string os, string arch,
+        Func<string, string> readFile, out bool invalid)
+    {
+        invalid = false;
+        var key = os + "." + arch;
+        string? library = null;
+        var inLibraries = false;
+        foreach (var raw in readFile(extension).Split('\n'))
+        {
+            var line = raw.Split(';', 2)[0].Trim();
+            if (line.StartsWith('[')) { inLibraries = line == "[libraries]"; continue; }
+            if (!inLibraries) continue;
+            var equals = line.IndexOf('=');
+            if (equals < 0 || line[..equals].Trim() != key) continue;
+            var value = line[(equals + 1)..].Trim();
+            if (library is not null || value.Length < 2 || value[0] != '"' || value[^1] != '"')
+            {
+                invalid = true;
+                return null;
+            }
+            library = value[1..^1];
+        }
+        if (string.IsNullOrWhiteSpace(library)) return null;
+        return Path.GetFullPath(Path.IsPathFullyQualified(library)
+            ? library : Path.Combine(Path.GetDirectoryName(extension)!, library));
+    }
+
     /// <summary>Reads GNU build-id from ELF64 x86_64 program notes, including stripped executables.</summary>
     internal static string? ReadElfBuildId(Stream stream)
     {

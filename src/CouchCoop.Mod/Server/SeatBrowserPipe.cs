@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Net;
+using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -177,6 +178,41 @@ internal sealed class SeatBrowserPipe : IAsyncDisposable
                 CouchCoopLog.Stderr($"seat browser pipe connection failed: {error.GetType().Name}: {error.Message}");
             }
         }
+    }
+
+    internal static async Task<WebSocket> ConnectAudioLinkAsync(string name, string token, CancellationToken cancellationToken)
+    {
+        var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        try
+        {
+            await pipe.ConnectAsync(2000, cancellationToken).ConfigureAwait(false);
+            var prelude = JsonSerializer.SerializeToUtf8Bytes(new Prelude(token, IPAddress.Loopback.ToString(), false));
+            var size = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(size, prelude.Length);
+            await pipe.WriteAsync(size, cancellationToken).ConfigureAwait(false);
+            await pipe.WriteAsync(prelude, cancellationToken).ConfigureAwait(false);
+            var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
+            var request = Encoding.ASCII.GetBytes("GET /internal/audio-link HTTP/1.1\r\nHost: localhost\r\n"
+                + "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n"
+                + $"Sec-WebSocket-Key: {key}\r\nX-CouchCoop-Pipe-Token: {token}\r\n\r\n");
+            await pipe.WriteAsync(request, cancellationToken).ConfigureAwait(false);
+            using var header = new MemoryStream();
+            var next = new byte[1];
+            while (header.Length < 4096)
+            {
+                await pipe.ReadExactlyAsync(next, cancellationToken).ConfigureAwait(false);
+                header.WriteByte(next[0]);
+                if (header.Length >= 4 && header.GetBuffer().AsSpan((int)header.Length - 4, 4).SequenceEqual("\r\n\r\n"u8)) break;
+            }
+            var response = Encoding.ASCII.GetString(header.ToArray());
+            var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+            if (!response.StartsWith("HTTP/1.1 101 ", StringComparison.Ordinal)
+                || !response.Split("\r\n").Any(line => line.Equals("Sec-WebSocket-Accept: " + accept, StringComparison.OrdinalIgnoreCase)))
+                throw new IOException("Seat refused audio link upgrade");
+            return WebSocket.CreateFromStream(pipe, false, null, TimeSpan.FromSeconds(30));
+        }
+        catch { pipe.Dispose(); throw; }
     }
 
     internal static async Task RelayRenderAsync(string name, string token, Stream browser,
