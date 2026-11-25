@@ -7,16 +7,21 @@ namespace CouchCoop.Mod.Session;
 /// <summary>Event-driven decorative suspension for a unanimously opted-in render capture.</summary>
 public static class CouchCoopStreamDecorFreeze
 {
-    private static readonly FrozenNodeStates<Node.ProcessModeEnum> Modes = new();
-    private static readonly FrozenNodeStates<bool> Processes = new();
-    private static readonly Dictionary<ulong, (Node Node, Action Exit)> Tracked = [];
-    private static readonly HashSet<Callable> DeferredFrames = [];
+    // EngineAvailable guards method bodies; engine-typed statics must initialize only behind that guard.
+    private static class EngineState
+    {
+        internal static readonly FrozenNodeStates<Node.ProcessModeEnum> Modes = new();
+        internal static readonly FrozenNodeStates<bool> Processes = new();
+        internal static readonly Dictionary<ulong, (Node Node, Action Exit)> Tracked = [];
+        internal static readonly HashSet<Callable> DeferredFrames = [];
+        internal static SceneTree? Tree;
+    }
+
     private static volatile bool _armed;
     private static volatile bool _desired;
     private static volatile bool _tweensDesired;
     private static volatile bool _active;
     private static volatile bool _tweensActive;
-    private static SceneTree? _tree;
     private static int _generation;
 
     public static bool Active => _active;
@@ -49,12 +54,16 @@ public static class CouchCoopStreamDecorFreeze
 
     private static void Reconcile()
     {
-        if (!CouchCoopMod.EngineAvailable) return;
+        if (CouchCoopMod.EngineAvailable) ReconcileWithEngine();
+    }
+
+    private static void ReconcileWithEngine()
+    {
         GameDeferred.Post(() =>
         {
             if (!ShouldFreeze(_armed, _desired)) Deactivate();
             if (Engine.GetMainLoop() is not SceneTree tree) return;
-            _tree = tree;
+            EngineState.Tree = tree;
             // All reads and the initial walk wait one frame, including calls from capture signals.
             NextFrame(() =>
             {
@@ -73,16 +82,16 @@ public static class CouchCoopStreamDecorFreeze
 
     private static void NextFrame(Action action)
     {
-        if (_tree is null) return;
+        if (EngineState.Tree is null) return;
         var generation = _generation;
         Callable callback = default;
         callback = Callable.From(() =>
         {
-            DeferredFrames.Remove(callback);
+            EngineState.DeferredFrames.Remove(callback);
             if (generation == _generation) action();
         });
-        DeferredFrames.Add(callback);
-        GameDeferred.Register(() => _tree.Connect(SceneTree.SignalName.ProcessFrame, callback, (uint)GodotObject.ConnectFlags.OneShot));
+        EngineState.DeferredFrames.Add(callback);
+        GameDeferred.Register(() => EngineState.Tree.Connect(SceneTree.SignalName.ProcessFrame, callback, (uint)GodotObject.ConnectFlags.OneShot));
     }
 
     private static void OnNodeAdded(Node node) => NextFrame(() =>
@@ -100,19 +109,19 @@ public static class CouchCoopStreamDecorFreeze
         if (policy is not null)
         {
             var id = node.GetInstanceId();
-            if (!Tracked.ContainsKey(id))
+            if (!EngineState.Tracked.ContainsKey(id))
             {
                 Action exit = () => NextFrame(() => Restore(id));
-                Tracked.Add(id, (node, exit));
+                EngineState.Tracked.Add(id, (node, exit));
                 node.TreeExiting += exit;
                 if (policy == DecorFreeze.ProcessOnly)
                 {
-                    Processes.Remember(id, node.IsProcessing());
+                    EngineState.Processes.Remember(id, node.IsProcessing());
                     node.SetProcess(false);
                 }
                 else
                 {
-                    Modes.Remember(id, node.ProcessMode);
+                    EngineState.Modes.Remember(id, node.ProcessMode);
                     node.ProcessMode = Node.ProcessModeEnum.Disabled;
                 }
             }
@@ -122,27 +131,27 @@ public static class CouchCoopStreamDecorFreeze
 
     private static void Restore(ulong id)
     {
-        if (!Tracked.Remove(id, out var tracked)) return;
+        if (!EngineState.Tracked.Remove(id, out var tracked)) return;
         var valid = GodotObject.IsInstanceValid(tracked.Node);
-        if (Processes.TryRemove(id, out var process) && valid) tracked.Node.SetProcess(process);
-        if (Modes.TryRemove(id, out var mode) && valid) tracked.Node.ProcessMode = mode;
+        if (EngineState.Processes.TryRemove(id, out var process) && valid) tracked.Node.SetProcess(process);
+        if (EngineState.Modes.TryRemove(id, out var mode) && valid) tracked.Node.ProcessMode = mode;
         if (valid) tracked.Node.TreeExiting -= tracked.Exit;
     }
 
     private static void Deactivate()
     {
         var changed = _active || _tweensActive;
-        if (_tree is { } tree && GodotObject.IsInstanceValid(tree))
+        if (EngineState.Tree is { } tree && GodotObject.IsInstanceValid(tree))
         {
             tree.NodeAdded -= OnNodeAdded;
-            foreach (var callback in DeferredFrames) tree.Disconnect(SceneTree.SignalName.ProcessFrame, callback);
+            foreach (var callback in EngineState.DeferredFrames) tree.Disconnect(SceneTree.SignalName.ProcessFrame, callback);
         }
-        DeferredFrames.Clear();
+        EngineState.DeferredFrames.Clear();
         _generation++;
-        foreach (var id in Tracked.Keys.ToArray()) Restore(id);
+        foreach (var id in EngineState.Tracked.Keys.ToArray()) Restore(id);
         _active = false;
         _tweensActive = false;
-        _tree = null;
+        EngineState.Tree = null;
         if (changed) Changed?.Invoke();
     }
 }

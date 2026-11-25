@@ -46,6 +46,15 @@ namespace CouchCoop.Mod.Session;
 /// </remarks>
 public static class RootWindowEmbeddingGuard
 {
+    // EngineAvailable guards method bodies; engine-typed statics must initialize only behind that guard.
+    private static class EngineState
+    {
+        internal static Window? Root;
+        internal static Callable? RootInputForwarder;
+        internal static Godot.Timer? BackstopTimer;
+        internal static Callable? ReconcileBackstopDemand;
+    }
+
     internal const string BackstopTimerName = "CouchCoopRootWindowEmbeddingGuard";
     internal const int BreakerMaxRepairs = 5;
     internal const long BreakerWindowMs = 60_000;
@@ -66,10 +75,6 @@ public static class RootWindowEmbeddingGuard
     private static bool _started;
     private static bool _repairing;
     private static bool _gaveUpLogged;
-    private static Window? _root;
-    private static Callable? _rootInputForwarder;
-    private static Godot.Timer? _backstopTimer;
-    private static Callable? _reconcileBackstopDemand;
 
     internal static bool HasBrowserDemand => Volatile.Read(ref _hasBrowserDemand);
 
@@ -79,7 +84,7 @@ public static class RootWindowEmbeddingGuard
 
     private static void PublishBrowserDemand(int count, long generation)
     {
-        Callable? reconcile;
+        Action? reconcile;
         lock (Gate)
         {
             if (generation <= _browserDemandGeneration) return;
@@ -87,9 +92,15 @@ public static class RootWindowEmbeddingGuard
             var demanded = count > 0;
             if (_hasBrowserDemand == demanded) return;
             Volatile.Write(ref _hasBrowserDemand, demanded);
-            reconcile = _reconcileBackstopDemand;
+            reconcile = CouchCoopMod.EngineAvailable ? GetBackstopDemandReconcile() : null;
         }
-        if (reconcile is { } callback)
+        reconcile?.Invoke();
+    }
+
+    private static Action? GetBackstopDemandReconcile()
+    {
+        if (EngineState.ReconcileBackstopDemand is not { } callback) return null;
+        return () =>
         {
             // Share the input FIFO: an already-scheduled dispatcher drain can consume newly arrived input
             // before a separate Godot deferred call. InvokeAsync enqueues before registration returns, so
@@ -99,7 +110,7 @@ public static class RootWindowEmbeddingGuard
                 callback.Call();
                 return Task.FromResult(true);
             });
-        }
+        };
     }
 
     /// <summary>
@@ -245,14 +256,14 @@ public static class RootWindowEmbeddingGuard
 
     private static void Attach(Window root, bool addTimerDeferred)
     {
-        if (_root is not null || !GodotObject.IsInstanceValid(root))
+        if (EngineState.Root is not null || !GodotObject.IsInstanceValid(root))
         {
             return;
         }
 
-        _root = root;
+        EngineState.Root = root;
         root.ChildEnteredTree += OnRootChildEnteredTree;
-        lock (Gate) _reconcileBackstopDemand = Callable.From(ReconcileBackstopDemand);
+        lock (Gate) EngineState.ReconcileBackstopDemand = Callable.From(ReconcileBackstopDemand);
 
         // The mod has no Godot source generator, so no _Process override would ever run; a Timer's signal does.
         var timer = new Godot.Timer
@@ -263,7 +274,7 @@ public static class RootWindowEmbeddingGuard
             Autostart = false,
             ProcessMode = Node.ProcessModeEnum.Always,
         };
-        _backstopTimer = timer;
+        EngineState.BackstopTimer = timer;
         timer.Timeout += OnBackstop;
         if (addTimerDeferred)
         {
@@ -285,7 +296,7 @@ public static class RootWindowEmbeddingGuard
 
     private static void ReconcileBackstopDemand()
     {
-        if (_backstopTimer is not { } timer || !GodotObject.IsInstanceValid(timer) || !timer.IsInsideTree()) return;
+        if (EngineState.BackstopTimer is not { } timer || !GodotObject.IsInstanceValid(timer) || !timer.IsInsideTree()) return;
         if (CouchCoopMod.IsHeadlessClient || HasBrowserDemand)
         {
             // Repair on activation; the first browser must not wait for the one-second backstop.
@@ -300,7 +311,7 @@ public static class RootWindowEmbeddingGuard
 
     private static void OnRootChildEnteredTree(Node node)
     {
-        if (node is Window window && _root is { } root && !root.GuiEmbedSubwindows)
+        if (node is Window window && EngineState.Root is { } root && !root.GuiEmbedSubwindows)
         {
             Repair(root, window, reason: "window added");
         }
@@ -309,7 +320,7 @@ public static class RootWindowEmbeddingGuard
     private static void OnBackstop()
     {
         if (!CouchCoopMod.IsHeadlessClient && !HasBrowserDemand) return;
-        if (_root is { } root && GodotObject.IsInstanceValid(root) && !root.GuiEmbedSubwindows)
+        if (EngineState.Root is { } root && GodotObject.IsInstanceValid(root) && !root.GuiEmbedSubwindows)
         {
             Repair(root, trigger: null, reason: "backstop");
         }
@@ -475,8 +486,8 @@ public static class RootWindowEmbeddingGuard
     // Headless only. Hiding the window that took the slot does not give it back, so point it at the root again.
     private static void RestoreRootInput()
     {
-        _rootInputForwarder ??= Callable.From<InputEvent>(ForwardToRoot);
-        DisplayServer.WindowSetInputEventCallback(_rootInputForwarder.Value, (int)DisplayServer.MainWindowId);
+        EngineState.RootInputForwarder ??= Callable.From<InputEvent>(ForwardToRoot);
+        DisplayServer.WindowSetInputEventCallback(EngineState.RootInputForwarder.Value, (int)DisplayServer.MainWindowId);
         CouchCoopLog.Info("root window embedding guard: input callback given back to the root window");
     }
 
@@ -484,7 +495,7 @@ public static class RootWindowEmbeddingGuard
     // then push the event into the root viewport.
     private static void ForwardToRoot(InputEvent inputEvent)
     {
-        if (_root is not { } root || !GodotObject.IsInstanceValid(root) || !root.IsInsideTree())
+        if (EngineState.Root is not { } root || !GodotObject.IsInstanceValid(root) || !root.IsInsideTree())
         {
             return;
         }

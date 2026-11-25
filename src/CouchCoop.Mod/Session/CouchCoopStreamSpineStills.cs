@@ -8,16 +8,21 @@ namespace CouchCoop.Mod.Session;
 /// <summary>Event-driven spine freeze for an armed capture, independent of the mirror's suspender.</summary>
 internal static class CouchCoopStreamSpineStills
 {
-    private static readonly FrozenNodeStates<Node.ProcessModeEnum> Frozen = new();
+    // EngineAvailable guards method bodies; engine-typed statics must initialize only behind that guard.
+    private static class EngineState
+    {
+        internal static readonly FrozenNodeStates<Node.ProcessModeEnum> Frozen = new();
+        internal static readonly StreamSpineDeadlines Deadlines = new(ScheduleDeadline, QueuePose);
+        internal static SceneTree? Tree;
+    }
+
     private static readonly HashSet<ulong> Pending = [];
     private static readonly HashSet<ulong> PoseFailures = [];
     private static readonly Dictionary<ulong, StreamSpinePoseFrame> Frames = [];
     private static readonly Dictionary<ulong, float> PlaybackScales = [];
-    private static readonly StreamSpineDeadlines Deadlines = new(ScheduleDeadline, QueuePose);
     private static ulong? _selectingAnimation;
     private static volatile bool _armed;
     private static volatile bool _active;
-    private static SceneTree? _tree;
     private static int _generation;
 
     internal static bool IsActive => _active;
@@ -47,6 +52,11 @@ internal static class CouchCoopStreamSpineStills
     internal static void SetArmed(bool armed)
     {
         _armed = armed;
+        if (CouchCoopMod.EngineAvailable) UpdateArmedWithEngine(armed);
+    }
+
+    private static void UpdateArmedWithEngine(bool armed)
+    {
         if (armed)
         {
             if (!CouchCoopHeadlessVisualSuspender.StreamFreezeSpines) return;
@@ -59,6 +69,11 @@ internal static class CouchCoopStreamSpineStills
     }
 
     internal static void Reconcile()
+    {
+        if (CouchCoopMod.EngineAvailable) ReconcileWithEngine();
+    }
+
+    private static void ReconcileWithEngine()
     {
         if (!_armed && !_active) return;
         if (OS.GetThreadCallerId() == OS.GetMainThreadId()) ReconcileOnMainThread();
@@ -77,17 +92,17 @@ internal static class CouchCoopStreamSpineStills
             Sts2SpineAnimationSchedules.PlaybackScaleChanged -= OnPlaybackScaleChanged;
             Pending.Clear();
             PoseFailures.Clear();
-            Deadlines.Clear();
+            EngineState.Deadlines.Clear();
             PlaybackScales.Clear();
             foreach (var id in Frames.Keys.ToArray()) FinishPose(id);
-            if (_tree is { } tree && GodotObject.IsInstanceValid(tree)) tree.NodeAdded -= OnNodeAdded;
-            _tree = null;
-            CouchCoopHeadlessVisualSuspender.Unfreeze(Frozen);
+            if (EngineState.Tree is { } tree && GodotObject.IsInstanceValid(tree)) tree.NodeAdded -= OnNodeAdded;
+            EngineState.Tree = null;
+            CouchCoopHeadlessVisualSuspender.Unfreeze(EngineState.Frozen);
             return;
         }
 
         if (Engine.GetMainLoop() is not SceneTree sceneTree) return;
-        _tree = sceneTree;
+        EngineState.Tree = sceneTree;
         _active = true;
         // A frozen skeleton cannot deliver animation events owed by a death sequence. Keep the same cap as
         // the mirror freeze, even while the rest of that suspender is disabled for capture.
@@ -103,7 +118,7 @@ internal static class CouchCoopStreamSpineStills
         var generation = _generation;
         // Defer every node read out of the signal by one frame. New skeletons are caught by tree notifications,
         // without extending the mirror suspender's existing periodic scans to capture mode.
-        GameDeferred.Register(() => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
+        GameDeferred.Register(() => EngineState.Tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
         {
             if (!_active || generation != _generation || !GodotObject.IsInstanceValid(node) || !node.IsInsideTree()) return;
             for (Node? ancestor = node; ancestor is not null; ancestor = ancestor.GetParent())
@@ -118,7 +133,7 @@ internal static class CouchCoopStreamSpineStills
     {
         // Selecting a recorded return also passes through the direct-animation hook. It is already being posed.
         if (_selectingAnimation == schedule.InstanceId) return;
-        Deadlines.Cancel(schedule.InstanceId);
+        EngineState.Deadlines.Cancel(schedule.InstanceId);
         QueuePose(schedule.InstanceId);
     }
 
@@ -127,7 +142,7 @@ internal static class CouchCoopStreamSpineStills
         // Only bookkeeping in the hook: a game pause/resume during the pose frame owns the restored scale.
         if (Frames.TryGetValue(id, out var frame)) frame.RestoreTimeScale = scale;
         if (PlaybackScales.TryGetValue(id, out var prior) && prior == scale) return;
-        Deadlines.Cancel(id);
+        EngineState.Deadlines.Cancel(id);
         PlaybackScales[id] = scale;
         QueuePose(id);
     }
@@ -144,7 +159,7 @@ internal static class CouchCoopStreamSpineStills
     {
         if (!_active || !Pending.Add(id)) return;
         var generation = _generation;
-        GameDeferred.Register(() => _tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
+        GameDeferred.Register(() => EngineState.Tree?.Connect(SceneTree.SignalName.ProcessFrame, Callable.From(() =>
         {
             if (!_active || generation != _generation) return;
             Pending.Remove(id);
@@ -163,12 +178,12 @@ internal static class CouchCoopStreamSpineStills
         try
         {
             StreamSpineFreezeAdmission.TryPose(() => PreparePose(node, id),
-                () => CouchCoopHeadlessVisualSuspender.FreezeAllSpine(node, Frozen));
+                () => CouchCoopHeadlessVisualSuspender.FreezeAllSpine(node, EngineState.Frozen));
         }
         catch (Exception exception)
         {
             FinishPose(id);
-            Deadlines.Cancel(id);
+            EngineState.Deadlines.Cancel(id);
             LogPoseFailure(id, $"{exception.GetType().Name}: {exception.Message}");
         }
     }
@@ -203,7 +218,7 @@ internal static class CouchCoopStreamSpineStills
         // Its transform/mesh signals stay enabled; only the synthetic jump suppresses SFX/VFX events.
         var subtree = new StreamSpinePoseSubtree<Node>(node, parent => parent.GetChildren(),
             child => CouchCoopHeadlessVisualSuspender.IsSpineFreezeExempt(child.GetType().Name, child.Name.ToString()),
-            child => child == node || Frozen.Contains(child.GetInstanceId()),
+            child => child == node || EngineState.Frozen.Contains(child.GetInstanceId()),
             (child, processing) =>
             {
                 if (GodotObject.IsInstanceValid(child))
@@ -241,7 +256,7 @@ internal static class CouchCoopStreamSpineStills
                 // Remove crossfade weights so this animation supplies the sampled pose.
                 current.SetMixDuration(0);
                 current.SetTrackTime(sample);
-            }, () => { state.Update(0); state.Apply(skeleton); }, finish => GameDeferred.Register(() => _tree!.Connect(
+            }, () => { state.Update(0); state.Apply(skeleton); }, finish => GameDeferred.Register(() => EngineState.Tree!.Connect(
                 SceneTree.SignalName.ProcessFrame, Callable.From(() =>
             {
                 if (Frames.GetValueOrDefault(id) == frame) Frames.Remove(id);
@@ -252,7 +267,7 @@ internal static class CouchCoopStreamSpineStills
                 }
             }), (uint)GodotObject.ConnectFlags.OneShot)));
             if (Sts2SpineAnimationSchedules.ReadRecorded(id) is { } latest)
-                Deadlines.Refresh(latest, Time.GetTicksMsec(), paused);
+                EngineState.Deadlines.Refresh(latest, Time.GetTicksMsec(), paused);
         };
     }
 
@@ -282,7 +297,7 @@ internal static class CouchCoopStreamSpineStills
     {
         // This is a deadline derived from the SetNextState hook's schedule, not a poll. The maintainer approved
         // this specific one-shot exception; the timeout queues a pose and all game reads wait until next frame.
-        return GameDeferred.Delay(_tree!, delaySeconds, callback);
+        return GameDeferred.Delay(EngineState.Tree!, delaySeconds, callback);
     }
 
 

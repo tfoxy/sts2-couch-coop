@@ -8,8 +8,12 @@ namespace CouchCoop.Mod.Session;
 /// <summary>Forwards raw schedules while this seat is armed and any stream page requests them.</summary>
 public sealed class CouchCoopStreamTweenAnnouncer
 {
-    private static readonly CouchCoopStreamTweenAnnouncer Shared = new(
-        EmbeddableTweenScheduleHub.Shared.Subscribe, new GodotRenderStreamCapture(), CouchCoopLog.Info);
+    // EngineAvailable guards method bodies; capture initialization must stay behind that guard.
+    private static class EngineState
+    {
+        internal static readonly CouchCoopStreamTweenAnnouncer Shared = new(
+            EmbeddableTweenScheduleHub.Shared.Subscribe, new GodotRenderStreamCapture(), CouchCoopLog.Info);
+    }
     private readonly Func<Action<TweenSchedule>, Action<TweenEnd>, IDisposable> _subscribe;
     private readonly IRenderStreamTweenCapture _capture;
     private readonly Action<string> _log;
@@ -28,14 +32,17 @@ public sealed class CouchCoopStreamTweenAnnouncer
         IRenderStreamTweenCapture capture, Action<string> log, Func<ulong, ulong?>? resolveMaterial = null)
         => (_subscribe, _capture, _log, _resolveMaterial) = (subscribe, capture, log, resolveMaterial ?? ResolveMaterial);
 
-    internal static void SetArmed(bool armed) => Shared.UpdateArmed(armed);
+    internal static void SetArmed(bool armed)
+    {
+        if (CouchCoopMod.EngineAvailable) EngineState.Shared.UpdateArmed(armed);
+    }
 
     public static void SetDesired(bool desired)
     {
         if (_pageDesired == desired) return;
         _pageDesired = desired;
         if (CouchCoopMod.EngineAvailable)
-            GameDeferred.Post(() => Shared.UpdateDesired(_pageDesired));
+            GameDeferred.Post(() => EngineState.Shared.UpdateDesired(_pageDesired));
     }
 
     internal void UpdateArmed(bool armed)

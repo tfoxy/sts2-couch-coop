@@ -34,6 +34,7 @@ checks=(
   "validate-csharp-scaffold|scripts/validate-csharp-scaffold.sh --json"
   "validate-frontend-static|scripts/validate-frontend-static.sh --json"
   "validate-hosted-server|scripts/validate-hosted-server.sh --json"
+  "game-free-hosted-server|bash scripts/lib/check-game-free-hosted-server.sh"
   "validate-mirror-protocol|scripts/validate-mirror-protocol.sh --json"
   "hot-reload-dev-loop|scripts/probe-hot-reload-dev-loop.sh --json"
   "validate-no-sts2-cli-runtime|scripts/validate-no-sts2-cli-runtime.sh --json"

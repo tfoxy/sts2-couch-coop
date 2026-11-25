@@ -118,8 +118,8 @@ public sealed class CouchCoopStaticBackgroundTracker
         _onPublishedChanged = onPublishedChanged;
         _log = log ?? CouchCoopLog.Stderr;
         _warmVariant = warmVariant;
-        _stillSource = new CouchCoopSeatStillSource(renderStill ?? (_ => Task.FromResult(
-            CouchCoopStaticBackgroundResult.Failure(new CouchCoopAssetHttpError("unavailable", "No still provider.")))));
+        _stillSource = new(() => new CouchCoopSeatStillSource(renderStill ?? (_ => Task.FromResult(
+            CouchCoopStaticBackgroundResult.Failure(new CouchCoopAssetHttpError("unavailable", "No still provider."))))));
         _scheduler = new CouchCoopStaticBackgroundProbeScheduler(
             ScheduleProbeOnMainThread,
             ArmFollowUpTimerOnMainThread,
@@ -146,8 +146,9 @@ public sealed class CouchCoopStaticBackgroundTracker
     private volatile bool _characterSelectProbeDesired;
     private readonly CharacterSelectProbeSubscription _characterSelectSubscription;
     private ulong _characterSelectScreenInstanceId;
-    private readonly StreamBackgroundHideSet _streamBackgroundHide = new();
-    private readonly CouchCoopSeatStillSource _stillSource;
+    // Allocate saved engine modes only in the engine-guarded probe, never during server construction.
+    private StreamBackgroundHideSet? _streamBackgroundHide;
+    private readonly Lazy<CouchCoopSeatStillSource> _stillSource;
     private readonly StreamStillLifetime _stillLifetime = new();
     private ulong _stillNodeId;
     private ulong _stillViewportId;
@@ -514,7 +515,7 @@ public sealed class CouchCoopStaticBackgroundTracker
                     && IsOccludedPredecessor(item.ZIndex, item.ZAsRelative, item.TopLevel))
                 .Select(node => node.GetInstanceId()).ToArray()
             : [];
-        _streamBackgroundHide.Apply(desired, bgRoot is CanvasItem ? bgRoot.GetInstanceId() : 0,
+        (_streamBackgroundHide ??= new()).Apply(desired, bgRoot is CanvasItem ? bgRoot.GetInstanceId() : 0,
             predecessors,
             id => GodotObject.InstanceFromId(id) is CanvasItem item ? (item.Visible, item.ProcessMode) : null,
             (id, visible, processMode) =>
@@ -560,11 +561,11 @@ public sealed class CouchCoopStaticBackgroundTracker
         // Detach the old texture before the source retires it. Loading and failure keep the same dark node.
         if (GodotObject.InstanceFromId(_stillNodeId) is Node2D node)
             node.GetNode<Sprite2D>("Still").Texture = null;
-        _stillSource.Retire();
+        _stillSource.Value.Retire();
         if (_stillSelection.Source is not { } path) return;
         var generation = _stillLifetime.Generation;
         var requestGeneration = _stillSelection.Generation;
-        _stillSource.Request(state, path, texture =>
+        _stillSource.Value.Request(state, path, texture =>
         {
             if (!_stillLifetime.IsCurrent(generation)
                 || !_stillSelection.IsCurrent(requestGeneration, Published?.Id, Volatile.Read(ref _streamStillSource))
@@ -612,7 +613,7 @@ public sealed class CouchCoopStaticBackgroundTracker
         _stillNodeId = _stillViewportId = 0;
         _stillSelection.Retire();
         _stillState = null;
-        _stillSource.Retire();
+        _stillSource.Value.Retire();
         _log($"stream-bg retired id={_stillLifetime.Descriptor} reason={reason}");
     }
 
