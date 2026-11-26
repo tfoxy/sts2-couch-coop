@@ -9,6 +9,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-26
+
+### Fixed
+
+- CouchCoop runs on game v0.114.0. If a later game update breaks one part of the mod, such as the host button's hotkey, only that part switches off and the rest keeps working.
+- Animated characters and monsters no longer go missing from the new renderer when the host plays in a window.
+- Opening the new renderer on the host no longer freezes the game for half a second.
+
+### Changed
+
+- CouchCoop now needs game v0.111.0 or newer, on the normal game or the public beta. The separate build for v0.107 is gone, since the normal game has moved past it.
+
 ## [0.7.1] - 2026-11-23
 
 ### Added
@@ -326,7 +338,8 @@ First public release. Turn the phones, tablets and laptops on your network into 
 a local Slay the Spire 2 co-op session — no app to install on the other devices, and no `sts2` CLI
 needed to run the mod.
 
-[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/tfoxy/sts2-couch-coop/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.7.2
 [0.7.1]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.7.1
 [0.7.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.7.0
 [0.6.0]: https://github.com/tfoxy/sts2-couch-coop/releases/tag/v0.6.0
