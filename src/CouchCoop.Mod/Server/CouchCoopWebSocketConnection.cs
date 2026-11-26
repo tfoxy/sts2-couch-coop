@@ -137,6 +137,7 @@ public sealed class CouchCoopWebSocketConnection
     private readonly IHotRendererSwapHost? _rendererSwapHost;
     private string? _rendererPageReason;
     private bool _rendererProtocol2;
+    private volatile bool _hostRenderStreamRequested;
     private string? _presentationPageId;
     private long _legacyPresentationEpoch;
     private long _fullPresentationEpoch = -1;
@@ -189,7 +190,7 @@ public sealed class CouchCoopWebSocketConnection
     private bool AllowsWork(long generation, long watchEpoch)
         => watchEpoch == Interlocked.Read(ref _watchEpoch) && AllowsAccess(generation);
     private bool AllowsSceneWork(long generation, long watchEpoch)
-        => AllowsWork(generation, watchEpoch) && !MirrorRestorePending
+        => AllowsWork(generation, watchEpoch) && !MirrorRestorePending && !SuppressHostMirrorScene
             && (!HasSelfRenderStream || _isHeadlessClient || _streamPresentationEpoch == Presentation.Epoch);
     private long ScenePresentationEpoch(long generation)
         => _isHeadlessClient ? generation : HasSelfRenderStream ? _streamPresentationEpoch : 0;
@@ -287,6 +288,11 @@ public sealed class CouchCoopWebSocketConnection
     public bool IsRenderStreamPage => !_closing && IsSelfRenderStreamPage
         && _rendererSwapHost?.WantsRenderStream(RendererPageId) == true
         && (PresentationHost is not { } host || host.IsPresentationPageOwner(RendererPageId, _id.ToString("N")));
+
+    // Capture supplies stream-page geometry and input targets. Keep watch/access demand, but not the
+    // node mirror producer; the server's gated-viewer roster subscription keeps sessions current.
+    private bool SuppressHostMirrorScene => !_isHeadlessClient && HasSelfRenderStream
+        && (_hostRenderStreamRequested || IsRenderStreamPage);
 
     private static bool ParseRequiredBoolean(string? raw, string name) => raw switch
     {
@@ -1133,6 +1139,13 @@ public sealed class CouchCoopWebSocketConnection
                             continue;
                         }
                         var aspect = document.RootElement.TryGetProperty("aspect", out var value) ? BrowserAspect.Read(value) : null;
+                        if (!_isHeadlessClient && HasSelfRenderStream)
+                        {
+                            _hostRenderStreamRequested = wantsStream;
+                            // Stop the mirror subscription before capture attach can schedule another full walk.
+                            if (wantsStream)
+                                await SetSceneStreamingAsync(false, AccessState.Generation, Interlocked.Read(ref _watchEpoch)).ConfigureAwait(false);
+                        }
                         if (_rendererSwapHost is not null) RequestPageRenderer(wantsStream, aspect);
                         else
                         {
@@ -1148,6 +1161,15 @@ public sealed class CouchCoopWebSocketConnection
                     // A watch request supplies demand, never authorization. Malformed/absent `on` means off.
                     var on = document.RootElement.TryGetProperty("on", out var onElement)
                         && onElement.ValueKind == JsonValueKind.True;
+                    // Stream intent can precede the renderer request, so the first watch need not start a
+                    // node mirror that this page will never draw. It does not arm capture or grant access.
+                    if (on && !_isHeadlessClient && HasSelfRenderStream
+                        && document.RootElement.TryGetProperty("renderer", out var watchRenderer)
+                        && watchRenderer.ValueKind == JsonValueKind.String && watchRenderer.GetString() == "stream"
+                        && document.RootElement.TryGetProperty("rendererProtocol", out var watchProtocol)
+                        && watchProtocol.ValueKind == JsonValueKind.Number
+                        && watchProtocol.TryGetInt32(out var watchVersion) && watchVersion == 2)
+                        _hostRenderStreamRequested = true;
                     SetWatchRequested(on);
                     if (on && AccessState.Allowed && !_isHeadlessClient && ConnectionRegistry.Shared.AttemptId(session.Id) is null)
                     {
@@ -1421,6 +1443,7 @@ public sealed class CouchCoopWebSocketConnection
     {
         if (!stream)
         {
+            _hostRenderStreamRequested = false;
             _wantsStreamStaticParticles = false;
             _wantsStreamClientDecor = true;
             _wantsStreamClientTweens = true;
@@ -1510,7 +1533,7 @@ public sealed class CouchCoopWebSocketConnection
             SyncPresentationPage();
             var watchEpoch = Interlocked.Read(ref _watchEpoch);
             // Even a revoke/reopen that completed before this worker ran invalidates the old retained scene.
-            if (MirrorRestorePending || !state.Allowed || _streamAccessGeneration != state.Generation || _streamWatchEpoch != watchEpoch
+            if (MirrorRestorePending || SuppressHostMirrorScene || !state.Allowed || _streamAccessGeneration != state.Generation || _streamWatchEpoch != watchEpoch
                 || HasSelfRenderStream && _streamPresentationEpoch != Presentation.Epoch || !_watchRequested)
                 await SetSceneStreamingAsync(false, state.Generation, watchEpoch).ConfigureAwait(false);
             // Publish restoration before a resumed observer can send its first full scene. A policy grant also
@@ -1520,7 +1543,7 @@ public sealed class CouchCoopWebSocketConnection
             if (rendererChanged || _mirrorRestoreBlocked || (granted && state.Allowed && _watchRequested))
                 await ResendSessionAsync(null, CancellationToken.None).ConfigureAwait(false);
             if (!rendererChanged) await SendBytesAsync([], CancellationToken.None, accessUpdate: true).ConfigureAwait(false);
-            if (_watchRequested && AllowsAccess(state.Generation))
+            if (_watchRequested && !SuppressHostMirrorScene && AllowsAccess(state.Generation))
                 await SetSceneStreamingAsync(true, state.Generation, watchEpoch).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -1899,6 +1922,7 @@ public sealed class CouchCoopWebSocketConnection
 
         lock (_sceneLock)
         {
+            if (SuppressHostMirrorScene) return;
             if (MirrorRestorePending)
             {
                 _mirrorRestoreBlocked = true;

@@ -664,6 +664,125 @@ describe("MirrorApp — pairing with the host's streaming seat", () => {
       coreLoadFailed: false });
   }
 
+  it.each(["stream", "direct stream", "mirror", "no host capture", "no webgl2", "missing core",
+    "core failed", "stopped", "unusable carrier", "qa override"])(
+    "announces local host stream intent before the first watched session (%s)", async (mode) => {
+      canStream();
+      mirrorSettings.renderer = mode === "mirror" ? "mirror" : "stream";
+      if (mode === "no webgl2") renderStreamContext.webgl2 = false;
+      if (mode === "missing core") renderStreamContext.coreProblem = "missing";
+      if (mode === "core failed") renderStreamContext.coreLoadFailed = true;
+      if (mode === "stopped") renderStreamContext.stopped = "host-error";
+      if (mode === "unusable carrier") Object.assign(renderStreamContext, {
+        pageLoopback: false, page: { https: true, secureContext: true, webTransport: false }
+      });
+      if (mode === "qa override") mirrorSettings.renderStreamUrl = descriptor.url;
+      app = mount(MirrorApp);
+      await settle();
+      const host = latest();
+      expect(host.url).toContain("watch=0");
+      expect(host.ofType("watch")).toEqual([]);
+      // Real watch=0 sessions withhold rendererState even on a capture-capable host.
+      const view = sessionMessage({
+        screen: { kind: "run", type: "Run", title: "Run",
+          mirrorMode: mode === "direct stream" ? "mp-run" : "singleplayer-run" },
+        players: [], directView: mode === "direct stream",
+        renderStreamLan: undefined, renderStreamUnavailableReason: "no-capture"
+      });
+      expect(view).not.toHaveProperty("rendererState");
+      host.emit(view);
+      await settle();
+      const hinted = ["stream", "direct stream", "no host capture"].includes(mode);
+      const watch = hinted ? { type: "watch", on: true, renderer: "stream", rendererProtocol: 2 }
+        : { type: "watch", on: true };
+      expect(host.ofType("watch")).toEqual(mode === "qa override" ? [] : [watch]);
+      host.emit({ ...view, directView: true,
+        rendererState: mode === "no host capture" ? undefined : { state: "mirror" } });
+      await settle();
+      expect(host.ofType("renderer").at(-1)?.renderer ?? "mirror").toBe(
+        mode === "stream" || mode === "direct stream" ? "stream" : "mirror");
+      expect(host.ofType("watch").filter(message => message.on)).toEqual([watch]);
+    }
+  );
+
+  it.each(["failed capture", "webgl2", "core", "carrier"])(
+    "withdraws a hinted first watch when the admitted stream is unusable (%s)", async (missing) => {
+      canStream();
+      mirrorSettings.renderer = "stream";
+      app = mount(MirrorApp, { global: { stubs: { MirrorView: true } } });
+      await settle();
+      const host = latest();
+      const view = sessionMessage({
+        screen: { kind: "run", type: "Run", title: "Run", mirrorMode: "singleplayer-run" }, players: [],
+        renderStreamLan: undefined, renderStreamUnavailableReason: "no-capture"
+      });
+      host.emit(view);
+      await settle();
+      expect(host.ofType("watch")).toEqual([
+        { type: "watch", on: true, renderer: "stream", rendererProtocol: 2 }
+      ]);
+      expect(host.ofType("renderer")).toEqual([]);
+      if (missing === "webgl2") renderStreamContext.webgl2 = false;
+      if (missing === "core") renderStreamContext.coreLoadFailed = true;
+      if (missing === "carrier") Object.assign(renderStreamContext, {
+        pageLoopback: false, page: { https: true, secureContext: true, webTransport: false }
+      });
+      host.emit({ ...view, directView: true, rendererState: missing === "failed capture"
+        ? { state: "failed", reason: "no-capture" } : { state: "mirror" } });
+      await settle();
+      expect(host.ofType("renderer").map(message => message.renderer)).toEqual(
+        missing === "failed capture" ? ["stream", "mirror"] : ["mirror"]);
+      expect(mirrorSettings).toMatchObject({ renderer: "stream", runtimeRenderer: "mirror" });
+      host.emit({ ...view, rendererState: { state: "mirror" } });
+      await settle();
+      host.emit({ type: "scene-delta", full: true, screenType: "run",
+        upserts: [{ id: "root", name: "Root", nodeType: "Control", visible: true }],
+        removedIds: [], orderedIds: ["root"] });
+      await settle();
+      expect(app.findComponent(MirrorView).exists()).toBe(true);
+      expect(host.ofType("watch")).toHaveLength(1);
+    }
+  );
+
+  it.each(["status only", "stripped before choice", "stripped after choice"].flatMap(order =>
+    (order === "stripped before choice" ? ["mirror choice", "unchanged stream"]
+      : ["mirror choice", "stream failure", "unchanged stream"]).map(choice => ({ order, choice }))))(
+    "reconciles renderer demand after access regrant ($order, $choice)", async ({ order, choice }) => {
+      canStream();
+      mirrorSettings.renderer = "stream";
+      app = mount(MirrorApp, { global: { stubs: { MirrorView: true } } });
+      await settle();
+      const host = latest();
+      const view = sessionMessage({ directView: true, rendererState: { state: "mirror" } });
+      host.emit(view);
+      await settle();
+      host.emit({ ...view, rendererState: { state: "armed" }, renderStream: descriptor });
+      await settle();
+      fail({ kind: "streaming", firstFrame: true });
+      await settle();
+      expect(host.ofType("renderer").map(message => message.renderer)).toEqual(["stream"]);
+      host.sent.length = 0;
+      const denied = { allowed: false, reason: "host-view-disabled", generation: 1 };
+      const stripped = { ...view, rendererState: undefined, hostAccess: denied };
+      host.emit({ type: "host-access", hostAccess: denied });
+      await settle();
+      if (order === "stripped before choice") { host.emit(stripped); await settle(); }
+      if (choice === "mirror choice") mirrorSettings.renderer = "mirror";
+      if (choice === "stream failure") fail({ kind: "failed", reason: "host-error", detail: "bye" });
+      await settle();
+      if (order === "stripped after choice") { host.emit(stripped); await settle(); }
+      expect(host.ofType("renderer")).toEqual([]);
+      host.emit({ type: "host-access", hostAccess: { allowed: true, reason: "allowed", generation: 2 } });
+      await settle();
+      // A stripped session cannot advertise capture again until the full grant session follows.
+      host.emit({ ...view, hostAccess: { allowed: true, reason: "allowed", generation: 2 },
+        rendererState: { state: "armed" }, renderStream: descriptor });
+      await settle();
+      expect(host.ofType("renderer").map(message => message.renderer)).toEqual(
+        choice === "unchanged stream" ? [] : ["mirror"]);
+    }
+  );
+
   async function joinStreamingSeat(): Promise<MockWebSocket> {
     canStream();
     mirrorSettings.renderer = "stream";

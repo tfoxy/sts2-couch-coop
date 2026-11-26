@@ -313,13 +313,15 @@ export function currentSeatRendererRequest(settings: MirrorSettings = mirrorSett
   return currentSeatRendererRequestFor(settings.renderer, settings);
 }
 
-/** Check an explicit renderer request against this page's capabilities, independently of its saved choice. */
+/** Check a renderer against this page's capabilities. Host watch intent speculates about self-capture before
+ * admission advertises it; the server ignores that hint when it has no self-capture. */
 export function currentSeatRendererRequestFor(renderer: MirrorSettings["renderer"],
-  settings: Pick<MirrorSettings, "renderStreamUrl" | "streamClientTweens">): "stream" | undefined {
+  settings: Pick<MirrorSettings, "renderStreamUrl" | "streamClientTweens">,
+  hostWatchIntent = false): "stream" | undefined {
   return seatRendererRequest({
     renderer,
-    directView: renderStreamContext.directView,
-    hostSelfStream: renderStreamContext.hostSelfStream,
+    directView: hostWatchIntent || renderStreamContext.directView,
+    hostSelfStream: hostWatchIntent || renderStreamContext.hostSelfStream,
     hostUnavailableReason: renderStreamContext.hostUnavailableReason,
     coreProblem: renderStreamContext.coreProblem === undefined ? renderStreamCoreConfig().problem : renderStreamContext.coreProblem,
     coreLoadFailed: renderStreamContext.coreLoadFailed,

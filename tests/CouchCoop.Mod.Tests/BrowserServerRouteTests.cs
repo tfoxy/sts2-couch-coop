@@ -766,9 +766,16 @@ if (args is ["stream-card-reward", ..])
     return;
 }
 
+if (args is ["host-render-scene-demand", ..])
+{
+    await BrowserServerRouteTests.RunHostRenderSceneDemandAsync();
+    return;
+}
+
 if (args is ["renderer-swap", ..])
 {
     RenderStreamSwapTests.Run();
+    await BrowserServerRouteTests.RunHostRenderSceneDemandAsync();
     await BrowserServerRouteTests.RunPresentationFencesAsync();
     await BrowserServerRouteTests.RunPresentationTeardownAsync();
     await BrowserServerRouteTests.RunGameplayActionFencesAsync();
@@ -1386,6 +1393,7 @@ WalkSkipUnanimityTests.Run();
 var tests = new BrowserServerRouteTests();
 await BrowserServerRouteTests.RunCouchPlayJoinRoutesAsync();
 await BrowserServerRouteTests.RunHostAccessRoutesAsync();
+await BrowserServerRouteTests.RunHostRenderSceneDemandAsync();
 await tests.RunAsync();
 await SeatBrowserPipeTests.RunAsync();
 HostExitWaitTests.Run();
@@ -6516,6 +6524,8 @@ internal sealed partial class BrowserServerRouteTests
         // viewer sits on the join picker — so the tests assert on this, not merely on the absence of frames.
         public bool SceneSubscriptionActive
             => Volatile.Read(ref _sceneSubscribeCount) > Volatile.Read(ref _sceneDisposeCount);
+
+        public int SceneSubscribeCount => Volatile.Read(ref _sceneSubscribeCount);
 
         public IDisposable SubscribeRuntimeSceneDelta(
             RuntimeSceneSubscriptionRequest request,

@@ -1205,7 +1205,8 @@ function requestSeatRenderer(client: MirrorClient, renderer: "stream" | "mirror"
   if (renderer === "stream" && (renderStreamContext.stopped !== null
     || currentSeatRendererRequestFor("stream", mirrorSettings) !== "stream")) return;
   const previous = rendererRequests.get(client);
-  if (!client.hostAccess.allowed && (renderer === "stream" || previous?.renderer !== "stream")) return;
+  // Denied choices are not delivered: keep the previous request so a grant retries the current choice.
+  if (!client.hostAccess.allowed) return;
   const retry = renderStreamContext.retryRequest;
   if (previous?.renderer === renderer && (renderer === "mirror" || previous.retry === retry)) return;
   // A ready shared seat may still be awaiting this page's opt-in. Only a descriptor acknowledged on this
@@ -1401,7 +1402,13 @@ function onRenderStreamFailed(reason: string, attempt = stageAttempt.value): voi
 
 // Watch intent is independent of whether a compatible scene can be admitted yet. Apply it to replacement
 // connections too: a fresh seat socket can start watching even when the previous socket's intent was false.
-watch([wantsHostStream, joinSession], ([on]) => activeClient.sendWatch(on), { immediate: true });
+// Renderer state is withheld before watch admission. Speculate from local capabilities; unsupported hosts
+// ignore the hint, and the admitted session reconciles it with an explicit renderer request.
+watch([wantsHostStream, joinSession], ([on]) => activeClient.sendWatch(on,
+  activeClient === hostClient && mirrorSettings.renderer === "stream"
+    && hostSession.value?.rendererState?.state !== "failed"
+    && renderStreamContext.stopped === null && currentSeatRendererRequestFor("stream", mirrorSettings, true) === "stream"
+    ? "stream" : undefined), { immediate: true });
 // The pre-game LIFECYCLE state (rules + copy in @/mirror/loadingState): "Connecting…" / "Reconnecting…" /
 // "Joining…" / "Loading…", or null when the screen is steady. Non-null also means the picker shows a spinner,
 // lets the placeholder outrank a (by then stale) screen title, and hides the steady-state APK hint.

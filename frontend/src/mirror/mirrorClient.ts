@@ -249,7 +249,8 @@ export interface MirrorClient {
   // not pull — or render — a multiplayer host's game in the background). ON: the host replies with a fresh FULL
   // keyframe. The INITIAL value rides the connect URL (`?watch=0`) because only that can suppress the host's
   // connect-time keyframe. Idempotent; a change made before the socket opens is flushed on open.
-  sendWatch(on: boolean): void;
+  // A usable host capture announces stream intent so watch-on does not start its unused node mirror.
+  sendWatch(on: boolean, renderer?: "stream"): void;
   // Ask this seat to switch renderer. `aspect` sets the stream's width when starting it; no-op when not open.
   sendRenderer(renderer: "stream" | "mirror", aspect?: number): void;
   // Whether this client currently wants the scene stream (the gate's live value).
@@ -738,7 +739,10 @@ export function connectMirrorClient(options: {
     }
   }
 
-  function sendWatch(on: boolean): void {
+  let watchRenderer: "stream" | undefined;
+
+  function sendWatch(on: boolean, renderer?: "stream"): void {
+    watchRenderer = on ? renderer : undefined;
     if (on !== watching) {
       awaitingFullScene = true;
       client.sceneGeneration = null;
@@ -758,7 +762,8 @@ export function connectMirrorClient(options: {
     }
     hostWatching = watching;
     try {
-      socket.send(JSON.stringify({ type: "watch", on: watching }));
+      socket.send(JSON.stringify({ type: "watch", on: watching,
+        ...(watching && watchRenderer === "stream" ? { renderer: "stream", rendererProtocol: 2 } : {}) }));
     } catch {
       // Racing close — drop it; a reconnect re-establishes the gate through the connect URL.
       hostWatching = !watching;

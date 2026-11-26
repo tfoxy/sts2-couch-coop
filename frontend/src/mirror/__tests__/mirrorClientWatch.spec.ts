@@ -289,6 +289,32 @@ describe("stream gate", () => {
     expect(socket.sentOfType("scene-ack")).toHaveLength(0);
   });
 
+  it("carries stream intent on the first watch and keeps watch-off bytes unchanged", async () => {
+    const { client, socket } = connect(false);
+    await Promise.resolve();
+    client.sendWatch(true, "stream");
+    client.sendWatch(true, "stream");
+    client.sendWatch(false);
+    expect(socket.sentOfType("watch")).toEqual([
+      { type: "watch", on: true, renderer: "stream", rendererProtocol: 2 },
+      { type: "watch", on: false }
+    ]);
+    client.close();
+  });
+
+  it("retains stream intent until a connecting socket can flush the watch", async () => {
+    const { client, socket } = connect(false);
+    socket.readyState = 0;
+    client.sendWatch(true, "stream");
+    expect(socket.sentOfType("watch")).toEqual([]);
+    socket.readyState = MockWebSocket.OPEN;
+    await Promise.resolve();
+    expect(socket.sentOfType("watch")).toEqual([
+      { type: "watch", on: true, renderer: "stream", rendererProtocol: 2 }
+    ]);
+    client.close();
+  });
+
   it("flips the gate both ways with exactly one control message per real change", async () => {
     const { client, socket } = connect(false);
     await Promise.resolve();
