@@ -25,6 +25,11 @@ lane_assemblies=()
 while IFS= read -r assembly; do lane_assemblies+=("$assembly"); done < <(release_lane_assembly_names)
 known_lanes=()
 while IFS= read -r lane; do known_lanes+=("$lane"); done < <(release_lane_known_names)
+[[ "${known_lanes[*]}" == "public-beta beta-v113" ]] || fail "release must carry only the current lanes"
+[[ "$RELEASE_LANE_DEFAULT" == public-beta ]] || fail "public-beta must serve the normal game"
+[[ "$(release_lane_steam_branch public-beta)" == public ]] || fail "public-beta must cover Steam stable"
+[[ "$(release_payload_min_game_version "${known_lanes[@]}")" == v0.111.0 ]] \
+  || fail "release must require game v0.111.0 or newer"
 [[ "$(release_lane_game_api beta-v113)" == v113 ]] || fail "beta-v113 must compile the v113 API"
 [[ "$(release_lane_game_build beta-v113)" == v0.113.0 ]] || fail "beta-v113 must target game v0.113.0"
 [[ "$(release_lane_game_floor beta-v113)" == v0.113.0 ]] || fail "beta-v113 must start at v0.113.0"
@@ -51,7 +56,7 @@ for lane in "${known_lanes[@]}"; do
 done
 # The merged floor is the LOWEST lane floor, never the newest: too high and the one payload refuses
 # to load on the older branch whose lane it also carries.
-[[ "$(release_payload_min_game_version "${known_lanes[@]}")" == "$(release_lane_game_floor stable)" ]] \
+[[ "$(release_payload_min_game_version "${known_lanes[@]}")" == "$(release_lane_game_floor public-beta)" ]] \
   || fail "the merged floor is not the lowest lane floor"
 [[ "$(release_payload_min_game_version public-beta)" == "$(release_lane_game_floor public-beta)" ]] \
   || fail "a single-lane payload does not declare that lane's own floor"
@@ -293,7 +298,7 @@ expect_reject_saying missing-net-manifest 'release payload is missing: licenses/
 for assembly in "${lane_assemblies[@]}"; do
   label="root-$assembly"
   case_dir="$(clone_payload "$label")"
-  cp "$case_dir/lanes/$(release_lane_dir_name stable)/$assembly" "$case_dir/$assembly"
+  cp "$case_dir/lanes/$(release_lane_dir_name public-beta)/$assembly" "$case_dir/$assembly"
   expect_reject_saying "$label" 'lane assembly at its root' \
     "$verifier" --payload "$case_dir" --version 1.2.3 "${all_lane_args[@]}"
 done
@@ -321,25 +326,25 @@ expect_reject_saying incomplete-lane 'is missing: CouchCoop.Spirectl.dll' \
 for stray in CouchCoop.Mod.deps.json CouchCoop.Mod.runtimeconfig.json lane.json notes.txt; do
   label="lane-stray-$(printf '%s' "$stray" | tr '.' '-')"
   case_dir="$(clone_payload "$label")"
-  printf 'fixture\n' > "$case_dir/lanes/$(release_lane_dir_name stable)/$stray"
+  printf 'fixture\n' > "$case_dir/lanes/$(release_lane_dir_name public-beta)/$stray"
   expect_reject "$label" "$verifier" --payload "$case_dir" --version 1.2.3 "${all_lane_args[@]}"
 done
 
 nested_lane="$(clone_payload nested-lane)"
-mkdir -p "$nested_lane/lanes/$(release_lane_dir_name stable)/nested"
-printf 'fixture\n' > "$nested_lane/lanes/$(release_lane_dir_name stable)/nested/CouchCoop.Mod.dll"
+mkdir -p "$nested_lane/lanes/$(release_lane_dir_name public-beta)/nested"
+printf 'fixture\n' > "$nested_lane/lanes/$(release_lane_dir_name public-beta)/nested/CouchCoop.Mod.dll"
 expect_reject_saying nested-lane 'not allowlisted' \
   "$verifier" --payload "$nested_lane" --version 1.2.3 "${all_lane_args[@]}"
 
 # A deliberate single-lane build (COUCHCOOP_RELEASE_STS2_LANE) is valid; publishing one is not, and
 # --complete is where the two part company.
 single_lane="$fixture_root/single-lane/couchcoop"
-make_valid_payload "$single_lane" stable
-"$verifier" --payload "$single_lane" --version 1.2.3 --lane stable >/dev/null
+make_valid_payload "$single_lane" public-beta
+"$verifier" --payload "$single_lane" --version 1.2.3 --lane public-beta >/dev/null
 expect_reject_saying single-lane-complete 'not complete' \
-  "$verifier" --payload "$single_lane" --version 1.2.3 --lane stable --complete
-expect_reject_saying single-lane-missing-lane 'does not carry the requested lane: public-beta' \
-  "$verifier" --payload "$single_lane" --version 1.2.3 --lane public-beta
+  "$verifier" --payload "$single_lane" --version 1.2.3 --lane public-beta --complete
+expect_reject_saying single-lane-missing-lane 'does not carry the requested lane: beta-v113' \
+  "$verifier" --payload "$single_lane" --version 1.2.3 --lane beta-v113
 # A single-lane payload declares ITS lane's floor, not the release-wide one.
 beta_only="$fixture_root/beta-only/couchcoop"
 make_valid_payload "$beta_only" public-beta
@@ -355,12 +360,14 @@ make_valid_payload "$v113_only" beta-v113
 expect_reject_saying v113-only-complete 'not complete' \
   "$verifier" --payload "$v113_only" --version 1.2.3 --lane beta-v113 --complete
 
-old_lanes="$fixture_root/old-lanes/couchcoop"
-make_valid_payload "$old_lanes" stable public-beta
-expect_reject_saying old-lanes-complete 'not complete' \
-  "$verifier" --payload "$old_lanes" --version 1.2.3 --lane stable --lane public-beta --complete
-expect_reject_saying old-lanes-missing-v113 'does not carry the requested lane: beta-v113' \
-  "$verifier" --payload "$old_lanes" --version 1.2.3 --lane beta-v113
+# Regression: an archive retaining the retired lane is no longer a reviewed release payload.
+retired_lane="$(clone_payload retired-lane)"
+mkdir -p "$retired_lane/lanes/0.107.1"
+for assembly in "${lane_assemblies[@]}"; do
+  printf 'retired fixture\n' > "$retired_lane/lanes/0.107.1/$assembly"
+done
+expect_reject_saying retired-lane 'not a reviewed lane' \
+  "$verifier" --payload "$retired_lane" --version 1.2.3 "${all_lane_args[@]}" --complete
 
 expect_reject_saying unusable-requested-lane 'unusable lane name' \
   "$verifier" --payload "$valid" --version 1.2.3 --lane 'Not A Lane'
@@ -419,30 +426,30 @@ done
 # payload still carrying it must fail rather than be read as "the lane it happens to name".
 v1_build_info="$(clone_payload v1-build-info)"
 jq '.schemaVersion = "couchcoop-release-build-info/v1"
-    | .dependencies.sts2References = {lane: "stable", id: "FuYnAloft.Sts2.References", version: "0.0.0-fixture"}' \
+    | .dependencies.sts2References = {lane: "public-beta", id: "FuYnAloft.Sts2.References", version: "0.0.0-fixture"}' \
   "$valid/build-info.txt" > "$v1_build_info/build-info.txt"
 expect_reject_saying v1-build-info 'build-info.txt is invalid' \
   "$verifier" --payload "$v1_build_info" --version 1.2.3 "${all_lane_args[@]}"
 
 missing_lane_record="$(clone_payload missing-lane-record)"
-write_build_info "$missing_lane_record" 1.2.3 stable
+write_build_info "$missing_lane_record" 1.2.3 public-beta
 expect_reject_saying missing-lane-record 'do not match the shipped lanes' \
   "$verifier" --payload "$missing_lane_record" --version 1.2.3 "${all_lane_args[@]}"
 
 unreviewed_lane="$(clone_payload unreviewed-lane)"
-jq '.dependencies.sts2References |= (. + {experimental: (.stable)})' "$valid/build-info.txt" \
+jq '.dependencies.sts2References |= (. + {experimental: (."public-beta")})' "$valid/build-info.txt" \
   > "$unreviewed_lane/build-info.txt"
 expect_reject_saying unreviewed-lane 'unreviewed lane: experimental' \
   "$verifier" --payload "$unreviewed_lane" --version 1.2.3 "${all_lane_args[@]}"
 
 wrong_lane_directory="$(clone_payload wrong-lane-directory)"
-jq '.dependencies.sts2References.stable.laneDirectory = "0.99.9"' "$valid/build-info.txt" \
+jq '.dependencies.sts2References["public-beta"].laneDirectory = "0.99.9"' "$valid/build-info.txt" \
   > "$wrong_lane_directory/build-info.txt"
 expect_reject_saying wrong-lane-directory 'somewhere other than lanes/' \
   "$verifier" --payload "$wrong_lane_directory" --version 1.2.3 "${all_lane_args[@]}"
 
 wrong_lane_floor="$(clone_payload wrong-lane-floor)"
-jq '.dependencies.sts2References.stable.minGameVersion = "v0.99.9"' "$valid/build-info.txt" \
+jq '.dependencies.sts2References["public-beta"].minGameVersion = "v0.99.9"' "$valid/build-info.txt" \
   > "$wrong_lane_floor/build-info.txt"
 expect_reject_saying wrong-lane-floor 'not the reviewed' \
   "$verifier" --payload "$wrong_lane_floor" --version 1.2.3 "${all_lane_args[@]}"
@@ -468,14 +475,14 @@ expect_reject_saying no-floor "min_game_version is 'unset'" \
   "$verifier" --payload "$no_floor" --version 1.2.3 "${all_lane_args[@]}"
 
 malformed_floor="$(clone_payload malformed-floor)"
-jq '.min_game_version = "0.107"' "$valid/couchcoop.json" > "$malformed_floor/couchcoop.json"
+jq '.min_game_version = "0.111"' "$valid/couchcoop.json" > "$malformed_floor/couchcoop.json"
 expect_reject_saying malformed-floor 'does not parse as' \
   "$verifier" --payload "$malformed_floor" --version 1.2.3 "${all_lane_args[@]}"
 
 newest_floor="$(clone_payload newest-floor)"
-jq --arg floor "$(release_lane_game_floor public-beta)" '.min_game_version = $floor' \
+jq --arg floor "$(release_lane_game_floor beta-v113)" '.min_game_version = $floor' \
   "$valid/couchcoop.json" > "$newest_floor/couchcoop.json"
-expect_reject_saying newest-floor "require '$(release_lane_game_floor stable)'" \
+expect_reject_saying newest-floor "require '$(release_lane_game_floor public-beta)'" \
   "$verifier" --payload "$newest_floor" --version 1.2.3 "${all_lane_args[@]}"
 
 # ------------------------------------------------------------------------------------------------
@@ -496,7 +503,7 @@ expect_reject_saying archive-wrong-version "build-info.txt version is '1.2.3'" \
 
 single_lane_archive="$fixture_root/single-lane.zip"
 (cd "$fixture_root/single-lane" && zip -X -q -r "$single_lane_archive" couchcoop)
-"$verifier" --archive "$single_lane_archive" --lane stable --version 1.2.3 >/dev/null
+"$verifier" --archive "$single_lane_archive" --lane public-beta --version 1.2.3 >/dev/null
 expect_reject_saying archive-incomplete 'not complete' \
   "$verifier" --archive "$single_lane_archive" --complete
 

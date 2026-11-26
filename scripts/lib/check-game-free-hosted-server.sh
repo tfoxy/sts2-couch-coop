@@ -8,10 +8,10 @@ trap 'rm -rf "$sdk_root"' EXIT
 cd "$repo_root"
 
 # Pin the lane for both builds so an installed game's release_info.json cannot select another API.
-dotnet build eng/Sts2.ReferenceSdk/stable/Sts2.ReferenceSdk.stable.csproj \
-  -c Release -o "$sdk_root/stable" -p:RestoreLockedMode=true \
-  -p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false
+dotnet build eng/Sts2.ReferenceSdk/public-beta/Sts2.ReferenceSdk.public-beta.csproj \
+  -c Release -o "$sdk_root/public-beta" -p:RestoreLockedMode=true \
+  -p:Sts2GameApi=v111 -p:CouchCoopBuildToLocalMods=false
 DOTNET_ROLL_FORWARD="${DOTNET_ROLL_FORWARD:-Major}" \
   dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
-  -p:Sts2AssembliesDir="$sdk_root/stable" -p:Sts2GameApi=v107 \
+  -p:Sts2AssembliesDir="$sdk_root/public-beta" -p:Sts2GameApi=v111 \
   -p:CouchCoopBuildToLocalMods=false -- --mode iphone-burst-self-test

@@ -1,11 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    Reference lane `public-beta`: the game's `public-beta` Steam branch, game build v0.111.0.
+    Reference lane `public-beta`: Steam stable uses this v0.111.0 reference pin and floor.
 
     `-beta` in the package version is NuGet PRERELEASE, not the Steam branch - every published
-    FuYnAloft.Sts2.References version carries it, including the stable lane's 0.107.0-beta. What
-    makes this the beta lane is the version number (0.111.0 pairs with game v0.111.0), not the
-    suffix.
+    FuYnAloft.Sts2.References version carries it. The version number pairs this lane with game
+    v0.111.0; the suffix does not.
 
     Lane pairing and the update procedure: ../README.md.
   -->
@@ -44,13 +43,10 @@
       Reviewed compile inputs out of the pinned package's lib/net9.0. GodotSharp.dll comes from the
       GodotSharp package and is added by the shared target.
 
-      Measured Sep 12 2026: 0.111.0-beta ships exactly the same eight assemblies as 0.107.0-beta, so
-      the two lanes' allowlists are identical today. They are still written out per lane, because a
-      lane's allowlist is a review of one package version, not a shared default.
+      Each lane's allowlist reviews one package version rather than inheriting a shared default.
 
-      One asymmetry to know about: the beta game install ships Sentry.Godot.dll beside Sentry.dll
-      (v0.107.1 does not), and this package's sts2.dll carries a reference to it - but the package
-      does not ship it, so no lane can stage it. Nothing CouchCoop compiles needs a type from it
+      The game install ships Sentry.Godot.dll beside Sentry.dll, and this package's sts2.dll carries
+      a reference to it - but the package does not ship it, so no lane can stage it. Nothing CouchCoop compiles needs a type from it
       today. If that changes, the reference leg of scripts/compare-sts2-reference-builds.sh fails
       with CS0012 while the game leg passes, and the fix is a package that ships the assembly - not
       a local copy out of a game install.

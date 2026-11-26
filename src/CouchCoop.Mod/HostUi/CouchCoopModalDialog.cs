@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using CouchCoop.Mod.Session;
 using Godot;
 using MegaCrit.Sts2.Core.ControllerInput;
@@ -242,7 +243,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         // straight through the dialog. WHERE it lands depends on the input the host is actually using —
         // see CouchCoopModalFocusParking for both halves of that rule.
         ApplyFocusTarget(CouchCoopModalFocusParking.OnOpen(IsUsingController()));
-        BindCancel();
+        TryHotkeys("bind", BindCancel);
     }
 
     public void Close()
@@ -270,7 +271,7 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         Visible = false;
         ReleaseHostOnlyModal();
-        UnbindCancel();
+        TryHotkeys("unbind", UnbindCancel);
 
         if (_restoreFocus is { } previous && GodotObject.IsInstanceValid(previous))
         {
@@ -639,7 +640,7 @@ internal abstract partial class CouchCoopModalDialog : Control
     private void OnTreeExiting()
     {
         UnwireInputMode();
-        UnbindCancel();
+        TryHotkeys("unbind", UnbindCancel);
     }
 
     private void UnwireInputMode()
@@ -700,6 +701,15 @@ internal abstract partial class CouchCoopModalDialog : Control
 
     // ---- cancel binding ---------------------------------------------------------------------------
 
+    private void TryHotkeys(string operation, Action binding)
+    {
+        try { binding(); }
+        catch (Exception exception)
+        {
+            CouchCoopLog.Stderr($"modal cancel {operation} failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
     // Escape / controller B, and the pause action with it. The hotkey manager keeps ONE list per action
     // and dispatches to the LAST-pushed binding, so pushing on open is what makes cancel close the dialog
     // instead of reaching the lobby's back button; removing on close hands it straight back. Instance is
@@ -709,6 +719,7 @@ internal abstract partial class CouchCoopModalDialog : Control
     // pauseAndBack is taken as well, matching the game's own modal screens (NInspectCardScreen and
     // NInspectRelicScreen both bind cancel AND pauseAndBack to their Close). Before this, Start on a pad
     // did nothing at all while a modal was up.
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void BindCancel()
     {
         if (_cancelBound)
@@ -718,25 +729,23 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         try
         {
-            var manager = NHotkeyManager.Instance;
-            if (manager is null)
-            {
-                return;
-            }
-
-            manager.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
-            manager.PushHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
-            manager.PushHotkeyPressedBinding(MegaInput.select, _selectAction);
-            BindKeyboardAction(manager, _tabKey, Key.Tab, _tabAction);
-            BindKeyboardAction(manager, _pageUpKey, Key.Pageup, _pageUpAction);
-            BindKeyboardAction(manager, _pageDownKey, Key.Pagedown, _pageDownAction);
             _cancelBound = true;
+            var hotkeys = CouchCoopGameHotkeys.Shared;
+            if (!hotkeys.TryPush(MegaInput.cancel, this, _closeAction)
+                || !hotkeys.TryPush(MegaInput.pauseAndBack, this, _closeAction)
+                || !hotkeys.TryPush(MegaInput.select, this, _selectAction)
+                || !BindKeyboardAction(_tabKey, Key.Tab, _tabAction)
+                || !BindKeyboardAction(_pageUpKey, Key.Pageup, _pageUpAction)
+                || !BindKeyboardAction(_pageDownKey, Key.Pagedown, _pageDownAction))
+            {
+                TryHotkeys("unbind", UnbindCancel);
+            }
         }
         catch (Exception exception)
         {
             // Roll back partial registration so the next heartbeat can retry cleanly.
             _cancelBound = true;
-            UnbindCancel();
+            TryHotkeys("unbind", UnbindCancel);
             CouchCoopLog.Stderr($"modal cancel bind failed name={Name} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
@@ -759,8 +768,8 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         // Idempotent, and a retry: a bind that could not take at open time (no hotkey manager yet) would
         // otherwise leave this modal with no cancel at all for as long as it is up.
-        BindCancel();
-        ReassertCancelBinding();
+        TryHotkeys("bind", BindCancel);
+        TryHotkeys("reassert", ReassertCancelBinding);
         // The predicate is "focus is somewhere in this dialog", not "the dismiss button has focus": with a
         // walkable chain the second would drag a player off a host row four times a second.
         ApplyFocusTarget(CouchCoopModalFocusParking.OnHeartbeat(IsUsingController(), CurrentFocus()));
@@ -785,6 +794,7 @@ internal abstract partial class CouchCoopModalDialog : Control
     /// when we are already last, which is the normal case, and it runs only while a modal is visible.
     /// </para>
     /// </remarks>
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void ReassertCancelBinding()
     {
         if (!_cancelBound || !Visible)
@@ -794,21 +804,16 @@ internal abstract partial class CouchCoopModalDialog : Control
 
         try
         {
-            var manager = NHotkeyManager.Instance;
-            if (manager is null)
-            {
-                return;
-            }
-
-            manager.RemoveHotkeyPressedBinding(MegaInput.cancel, _closeAction);
-            manager.PushHotkeyPressedBinding(MegaInput.cancel, _closeAction);
-            manager.RemoveHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
-            manager.PushHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
-            manager.RemoveHotkeyPressedBinding(MegaInput.select, _selectAction);
-            manager.PushHotkeyPressedBinding(MegaInput.select, _selectAction);
-            ReassertKeyboardAction(manager, _tabKey, _tabAction);
-            ReassertKeyboardAction(manager, _pageUpKey, _pageUpAction);
-            ReassertKeyboardAction(manager, _pageDownKey, _pageDownAction);
+            var hotkeys = CouchCoopGameHotkeys.Shared;
+            hotkeys.TryRemove(MegaInput.cancel, this, _closeAction);
+            hotkeys.TryPush(MegaInput.cancel, this, _closeAction);
+            hotkeys.TryRemove(MegaInput.pauseAndBack, this, _closeAction);
+            hotkeys.TryPush(MegaInput.pauseAndBack, this, _closeAction);
+            hotkeys.TryRemove(MegaInput.select, this, _selectAction);
+            hotkeys.TryPush(MegaInput.select, this, _selectAction);
+            ReassertKeyboardAction(_tabKey, _tabAction);
+            ReassertKeyboardAction(_pageUpKey, _pageUpAction);
+            ReassertKeyboardAction(_pageDownKey, _pageDownAction);
         }
         catch (Exception exception)
         {
@@ -816,6 +821,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnbindCancel()
     {
         if (!_cancelBound)
@@ -826,13 +832,13 @@ internal abstract partial class CouchCoopModalDialog : Control
         _cancelBound = false;
         try
         {
-            var manager = NHotkeyManager.Instance;
-            manager?.RemoveHotkeyPressedBinding(MegaInput.cancel, _closeAction);
-            manager?.RemoveHotkeyPressedBinding(MegaInput.pauseAndBack, _closeAction);
-            manager?.RemoveHotkeyPressedBinding(MegaInput.select, _selectAction);
-            UnbindKeyboardAction(manager, _tabKey, _tabAction);
-            UnbindKeyboardAction(manager, _pageUpKey, _pageUpAction);
-            UnbindKeyboardAction(manager, _pageDownKey, _pageDownAction);
+            var hotkeys = CouchCoopGameHotkeys.Shared;
+            hotkeys.TryRemove(MegaInput.cancel, this, _closeAction);
+            hotkeys.TryRemove(MegaInput.pauseAndBack, this, _closeAction);
+            hotkeys.TryRemove(MegaInput.select, this, _selectAction);
+            UnbindKeyboardAction(_tabKey, _tabAction);
+            UnbindKeyboardAction(_pageUpKey, _pageUpAction);
+            UnbindKeyboardAction(_pageDownKey, _pageDownAction);
         }
         catch (Exception exception)
         {
@@ -868,7 +874,7 @@ internal abstract partial class CouchCoopModalDialog : Control
         }
     }
 
-    private void BindKeyboardAction(NHotkeyManager manager, StringName action, Key key, Action callback)
+    private bool BindKeyboardAction(StringName action, Key key, Action callback)
     {
         if (!InputMap.HasAction(action))
         {
@@ -876,18 +882,18 @@ internal abstract partial class CouchCoopModalDialog : Control
             InputMap.ActionAddEvent(action, new InputEventKey { Keycode = key });
             _ownedInputActions.Add(action);
         }
-        manager.PushHotkeyPressedBinding(action, callback);
+        return CouchCoopGameHotkeys.Shared.TryPush(action, this, callback);
     }
 
-    private static void ReassertKeyboardAction(NHotkeyManager manager, StringName action, Action callback)
+    private void ReassertKeyboardAction(StringName action, Action callback)
     {
-        manager.RemoveHotkeyPressedBinding(action, callback);
-        manager.PushHotkeyPressedBinding(action, callback);
+        CouchCoopGameHotkeys.Shared.TryRemove(action, this, callback);
+        CouchCoopGameHotkeys.Shared.TryPush(action, this, callback);
     }
 
-    private void UnbindKeyboardAction(NHotkeyManager? manager, StringName action, Action callback)
+    private void UnbindKeyboardAction(StringName action, Action callback)
     {
-        manager?.RemoveHotkeyPressedBinding(action, callback);
+        CouchCoopGameHotkeys.Shared.TryRemove(action, this, callback);
         // Only what this dialog created. An action registered by the game (or another mod) under the same
         // name is theirs to erase, not ours.
         if (_ownedInputActions.Remove(action) && InputMap.HasAction(action)) InputMap.EraseAction(action);

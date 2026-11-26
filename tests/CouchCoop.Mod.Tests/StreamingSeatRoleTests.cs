@@ -159,22 +159,22 @@ internal static class StreamingSeatRoleTests
         var cloudGuard = init.IndexOf("HeadlessSeatCloudIsolationGuard.EnforceOrExit();", StringComparison.Ordinal);
         var capture = init.IndexOf("RenderStreamSelf.StartCaptureOrExit(IsHeadlessClient, IsHeadlessDisplay());",
             StringComparison.Ordinal);
-        var join = init.IndexOf("CommandLineOverridePatch.Apply();", StringComparison.Ordinal);
+        var join = init.IndexOf("CommandLineOverridePatch.Apply()", StringComparison.Ordinal);
         Assert(cloudGuard >= 0 && capture > cloudGuard && join > capture,
             "the capture starts below the seat's cloud guard and above the override that lets a seat join");
 
-        AssertGated(init, "HeadlessTextureImageEvictor.Install();", "StreamingSeatRole.InstallsTextureEvictor(");
-        AssertGated(init, "CouchCoopHeadlessVisualSuspender.Install();", "StreamingSeatRole.InstallsVisualSuspender(");
-        Assert(init.Contains("RenderStreamSelf.StartHelpers(HeadlessViewportConfigurator.WindowedHostPresentation);",
+        AssertGated(init, "HeadlessTextureImageEvictor.Install()", "StreamingSeatRole.InstallsTextureEvictor(");
+        AssertGated(init, "CouchCoopHeadlessVisualSuspender.Install()", "StreamingSeatRole.InstallsVisualSuspender(");
+        Assert(init.Contains("RenderStreamSelf.StartHelpers(HeadlessViewportConfigurator.WindowedHostPresentation)",
                 StringComparison.Ordinal), "mod init delegates observer lifetime to the capture role");
         Assert(!init.Contains("RenderStreamItemTagger.Install();", StringComparison.Ordinal),
             "mod init does not install windowed capture observers directly");
-        AssertGated(init, "StreamDesignPlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");
-        AssertGated(init, "StreamMapDrawingToolsPatch.Apply();", "if (RenderStreamSelf.Enabled)");
-        AssertGated(init, "StreamHandPlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");
-        AssertGated(init, "StreamCardRewardPlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");
-        AssertGated(init, "StreamCreaturePlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");
-        AssertGated(init, "StreamEnergyPlacementPatch.Apply();", "if (RenderStreamSelf.Enabled)");
+        AssertGated(init, "StreamDesignPlacementPatch.Apply()", "if (RenderStreamSelf.Enabled)");
+        AssertGated(init, "StreamMapDrawingToolsPatch.Apply()", "if (RenderStreamSelf.Enabled)");
+        AssertGated(init, "StreamHandPlacementPatch.Apply()", "if (RenderStreamSelf.Enabled)");
+        AssertGated(init, "StreamCardRewardPlacementPatch.Apply()", "if (RenderStreamSelf.Enabled)");
+        AssertGated(init, "StreamCreaturePlacementPatch.Apply()", "if (RenderStreamSelf.Enabled)");
+        AssertGated(init, "StreamEnergyPlacementPatch.Apply()", "if (RenderStreamSelf.Enabled)");
 
         var launcher = File.ReadAllText(
             Path.Combine(root, "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));
@@ -182,14 +182,14 @@ internal static class StreamingSeatRoleTests
             "the seat launcher drops an inherited role");
     }
 
-    // Every install call in mod init sits right under its role gate (within a few lines), so no install escapes it.
+    // Every install call in mod init sits right under its role gate (within five lines), so no install escapes it.
     private static void AssertGated(string source, string install, string gate)
     {
         var index = source.IndexOf(install, StringComparison.Ordinal);
         Assert(index >= 0, $"mod init still calls {install}");
         while (index >= 0)
         {
-            var window = source[Math.Max(0, index - 200)..index];
+            var window = string.Join('\n', source[..index].Split('\n').TakeLast(5));
             Assert(window.Contains(gate, StringComparison.Ordinal), $"{install} is gated by {gate}");
             index = source.IndexOf(install, index + install.Length, StringComparison.Ordinal);
         }

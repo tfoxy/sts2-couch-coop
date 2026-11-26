@@ -571,6 +571,7 @@ if (args is [ZeroClientContractTests.Verb, ..])
 
 if (args is ["lifecycle", ..])
 {
+    CouchCoopFeatureCompatibilityTests.Run();
     BrowserLifecycleDiagnosticsTests.Run();
     Console.WriteLine("lifecycle: ok");
     return;
@@ -707,6 +708,8 @@ if (args is ["lanes", ..])
 // HeadlessAudioMuteTargetsTests).
 if (args is ["host-ui", ..])
 {
+    CouchCoopGameHotkeysTests.Run();
+    CouchCoopHostPanelSetupTests.Run();
     HostOnlyInputGuardTests.Run();
     QrHostOptionsTests.Run();
     QrSelectionModelTests.Run();
@@ -959,6 +962,7 @@ if (args is ["beta-targets", ..])
     // lobby-screen mount points — in the same order the full sequence takes them.
     Leg(nameof(RenderStreamHoverTipOwnerTests), RenderStreamHoverTipOwnerTests.Run);
     Leg(nameof(NetTransportPatchTargetsTests), NetTransportPatchTargetsTests.Run);
+    Leg("CouchCoopGameHotkeysTests.HotkeyShape", CouchCoopGameHotkeysTests.TargetsResolve);
     Leg("HostTransportCapacityTests.HostCallTargets", HostTransportCapacityTests.HostCallTargetsResolve);
     Leg("SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes", SavedRunLoadLobbyIdentityTests.PeerCleanupRoutes);
     Leg(nameof(HeadlessAudioMuteTargetsTests), HeadlessAudioMuteTargetsTests.Run);
@@ -987,8 +991,7 @@ if (args is ["beta-targets", ..])
     // …and the five methods that assign a lobby to a lobby screen: the wake for a lobby assignment, and the only
     // typed way to learn whether the saved-run lobby is a host lobby.
     Leg("CouchCoopGameFactsTests.AssignmentTargets", CouchCoopGameFactsTests.TargetsResolve);
-    // …and the one game member CouchCoop reads by name (a granted exception on the v111 lane) or calls directly (the
-    // v107 lane): the start-run lobby's player cap.
+    // …and the start-run lobby's player cap, read by name on the supported lanes.
     Leg("LobbyCapReadTests.LobbyCapMember", LobbyCapReadTests.LobbyCapMemberResolves);
     // …and the seven methods the roster observer is told by: the join and leave callbacks of both lobby screens, both
     // lobby constructors (which also name the host's net service) and the run's clean-up.
@@ -1013,6 +1016,7 @@ Environment.SetEnvironmentVariable(
     Path.Combine(Path.GetTempPath(), "couchcoop-mod-tests-" + Guid.NewGuid().ToString("N")));
 
 HotReloadInteropTests.Run();
+CouchCoopFeatureCompatibilityTests.Run();
 SpirectlEmbeddedAssemblyBoundaryTests.Run();
 // The one-owner guard for the `[couchcoop]` log prefix. FIRST among the pure suites on purpose: it is
 // the check most likely to be defeated by where it sits — everything from HeadlessAudioMuteTargetsTests down
@@ -1035,6 +1039,9 @@ HostPatchHealthTests.Run();
 // filesystem, no Godot types, and everything from HeadlessAudioMuteTargetsTests down was unreachable while
 // that stretch aborted.
 CacheRootPurgeTests.Run();
+CouchCoopGameHotkeysTests.Run();
+CouchCoopGameHotkeysTests.TargetsResolve();
+CouchCoopHostPanelSetupTests.Run();
 // Steam Deck: the shared gate that decides whether a gui_input event activates a CouchCoop button, which now
 // answers to the controller's select action as well as to the mouse. Placed up here deliberately — it is pure
 // C# with no Godot types at all, and everything from HeadlessAudioMuteTargetsTests below was unreachable

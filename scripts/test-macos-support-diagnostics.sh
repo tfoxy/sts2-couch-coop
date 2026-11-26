@@ -10,10 +10,10 @@ trap 'rm -rf "$fixture"' EXIT
 app="$fixture/Slay The Spire 2.app"
 mod="$app/Contents/MacOS/mods/couchcoop"
 log="$fixture/godot.log"
-mkdir -p "$app/Contents/Resources" "$mod/lanes/0.107.1" "$mod/lanes/0.111.0" "$mod/lanes/0.113.0"
+mkdir -p "$app/Contents/Resources" "$mod/lanes/0.111.0" "$mod/lanes/0.113.0"
 printf '{"version":"v0.111.0"}\n' > "$app/Contents/Resources/release_info.json"
 for file in couchcoop.json couchcoop.dll; do printf fixture > "$mod/$file"; done
-for lane in 0.107.1 0.111.0 0.113.0; do
+for lane in 0.111.0 0.113.0; do
   printf fixture > "$mod/lanes/$lane/CouchCoop.Mod.dll"
   printf fixture > "$mod/lanes/$lane/CouchCoop.Spirectl.dll"
 done

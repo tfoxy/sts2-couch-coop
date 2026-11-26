@@ -15,6 +15,17 @@ namespace CouchCoop.Mod;
 public static class CouchCoopMod
 {
     private static readonly object Gate = new();
+    private static readonly CouchCoopFeatureCompatibility Compatibility = new(message =>
+    {
+        CouchCoopLog.Stderr(message);
+        if (message.StartsWith("feature-disabled ", StringComparison.Ordinal)) CouchCoopLog.Warn(message);
+        else CouchCoopLog.Info(message);
+    });
+
+    internal static bool TryFeature(string name, Action feature) => Compatibility.TryFeature(name, feature);
+    internal static void DisableFeature(string name, Exception exception) => Compatibility.DisableFeature(name, exception);
+    internal static void DisableFeature(string name, string reason) => Compatibility.DisableFeature(name, reason);
+
     private static CouchCoopRuntimeHost? _runtime;
     internal static void CancelInjectedInput() => _runtime?.CancelInjectedInput();
     private static CouchCoopHostUiServices? _hostUi;
@@ -147,9 +158,9 @@ public static class CouchCoopMod
             // Browser input needs the root window to keep embedding its subwindows, and a mod that opens its own OS
             // window (BaseLib's log window) turns that off: every browser tap then does nothing, and on a seat every
             // key too. Host and seats alike, and early, before any mod can open a window. Idempotent.
-            RootWindowEmbeddingGuard.Install();
+            TryFeature("RootWindowEmbeddingGuard", () => RootWindowEmbeddingGuard.Install());
 
-            CouchCoopLocalization.Initialize();
+            TryFeature("localization", () => CouchCoopLocalization.Initialize());
 
             // Resolve (and, when the game build or a cache generation has moved, purge) the on-disk cache before
             // ANYTHING can read or write it. Everything those caches hold is derived from the game's content, so
@@ -183,8 +194,11 @@ public static class CouchCoopMod
             // public-beta branch repacked the card atlas from three pages to two, and a client asking for the
             // page that no longer exists costs the host a failed main-thread ResourceLoader.Load per new client.
             // Safe to leave unknown — the client keeps its own compiled-in list — so this never blocks Init.
-            Server.CouchCoopAtlasManifest.LogSink = Session.CouchCoopLog.Info;
-            Server.CouchCoopAtlasManifest.Warm();
+            TryFeature("atlas-manifest", () =>
+            {
+                Server.CouchCoopAtlasManifest.LogSink = Session.CouchCoopLog.Info;
+                Server.CouchCoopAtlasManifest.Warm();
+            });
 
             // Crash-proof self-reaper: if the host dies without killing us (e.g. it segfaults), terminate this
             // orphaned headless instead of lingering invisibly. Idempotent + no-op when not host-spawned.
@@ -198,10 +212,11 @@ public static class CouchCoopMod
             {
                 // Windowless mirrors need 16:9; windowed captures reassert only while streaming.
                 if (IsHeadlessClient || IsHeadlessDisplay() || HeadlessViewportConfigurator.WindowedHostPresentation)
-                    HeadlessViewportConfigurator.Configure();
-                if (!IsHeadlessClient) InitializeQrHostPanel();
-                if (!IsHeadlessClient) RetryPauseMenuMountPatch();
-                RetryRosterSignalPatch();
+                    TryFeature("viewport", () => HeadlessViewportConfigurator.Configure());
+                if (!IsHeadlessClient) TryFeature("qr-host-panel", InitializeQrHostPanel);
+                if (!IsHeadlessClient) TryFeature("PauseMenuMountPatch", RetryPauseMenuMountPatch);
+                TryFeature("RosterSignalPatch", RetryRosterSignalPatch);
+                ReportCompatibility();
                 return _runtime;
             }
 
@@ -235,90 +250,90 @@ public static class CouchCoopMod
                 exitTree.Root.CloseRequested += OnHostWindowCloseRequested;
             if (RenderStreamSelf.Enabled && !IsHeadlessClient && !IsHeadlessDisplay())
             {
-                HostQuitPatch.Apply(null);
+                TryFeature("HostQuitPatch", () => HostQuitPatch.Apply(null));
                 // Keep a window close in the quit hook until capture disarm completes.
                 if (Godot.Engine.GetMainLoop() is Godot.SceneTree tree) tree.AutoAcceptQuit = false;
             }
-            if (RenderStreamSelf.Enabled) StreamDesignPlacementPatch.Apply();
-            if (RenderStreamSelf.Enabled) StreamMapDrawingToolsPatch.Apply();
-            if (RenderStreamSelf.Enabled) StreamHandPlacementPatch.Apply();
-            if (RenderStreamSelf.Enabled) StreamCardRewardPlacementPatch.Apply();
-            if (RenderStreamSelf.Enabled) StreamCreaturePlacementPatch.Apply();
-            if (RenderStreamSelf.Enabled) StreamEnergyPlacementPatch.Apply();
+            if (RenderStreamSelf.Enabled) TryFeature("StreamDesignPlacementPatch", () => StreamDesignPlacementPatch.Apply());
+            if (RenderStreamSelf.Enabled) TryFeature("StreamMapDrawingToolsPatch", () => StreamMapDrawingToolsPatch.Apply());
+            if (RenderStreamSelf.Enabled) TryFeature("StreamHandPlacementPatch", () => StreamHandPlacementPatch.Apply());
+            if (RenderStreamSelf.Enabled) TryFeature("StreamCardRewardPlacementPatch", () => StreamCardRewardPlacementPatch.Apply());
+            if (RenderStreamSelf.Enabled) TryFeature("StreamCreaturePlacementPatch", () => StreamCreaturePlacementPatch.Apply());
+            if (RenderStreamSelf.Enabled) TryFeature("StreamEnergyPlacementPatch", () => StreamEnergyPlacementPatch.Apply());
             // Feed the game an env-gated override table through CommandLineHelper. EMPTY on a host (it hosts
             // normally, Steam included — the old FastmpPatch forced ENet on everyone and made a real Steam
             // session impossible); on a headless couch seat it re-materializes "fastmp=join" + "clientId=<netId>"
             // from the environment so the seat needs NO game CLI args of its own.
-            CommandLineOverridePatch.Apply();
+            TryFeature("CommandLineOverridePatch", () => CommandLineOverridePatch.Apply());
             // Track what transport the live host is actually running (host netId; whether an ENet listener exists
             // for couch seats to join) so the seat launcher and the browser server stop ASSUMING ENet. Bookkeeping
             // only at this stage — it changes no hosting behavior.
-            CouchCoopHostTransportPatch.Apply();
+            TryFeature("CouchCoopHostTransportPatch", () => CouchCoopHostTransportPatch.Apply());
             // A Steam-created save records its host by SteamID64. If Steam is offline, preserve that identity on
             // the ENet fallback so the loaded lobby matches its existing host seat; ordinary and ENet-created
             // saves stay on their native paths.
-            if (!IsHeadlessClient) SavedRunHostIdentityPatch.Apply();
+            if (!IsHeadlessClient) TryFeature("SavedRunHostIdentityPatch", () => SavedRunHostIdentityPatch.Apply());
             // A seat joining a STEAM-hosted session must know the host answers to a SteamID64, not the hardcoded
             // ENetClient.HostNetId of 1 — otherwise NetClientGameService.SendMessage throws on every 200ms
             // heartbeat echo. No-op on an ENet-hosted session (COUCHCOOP_HOST_NETID is 1).
-            if (IsHeadlessClient) HostNetIdPatch.Apply();
+            if (IsHeadlessClient) TryFeature("HostNetIdPatch", () => HostNetIdPatch.Apply());
             // Escape hatch (no in-game join UI exists): COUCHCOOP_JOIN_HOST=ip[:port] redirects the ONE place
             // every ENet join is constructed. Inert unless the env var is set, so an ordinary player is unaffected.
-            JoinHostOverridePatch.Apply();
+            TryFeature("JoinHostOverridePatch", () => JoinHostOverridePatch.Apply());
             // Tell the QR panel controller when a lobby screen is readied, so it does not have to go
             // looking: it used to walk the WHOLE scene tree four times a second for the life of the process,
             // which is the largest thing this mod did on a machine nobody was using it from. Host-only — a
             // headless seat renders no panels — and mounted here, with the other patches, because it must be
             // installed before the first lobby screen runs its _Ready.
-            if (!IsHeadlessClient) LobbyScreenMountPatch.Apply();
+            if (!IsHeadlessClient) TryFeature("LobbyScreenMountPatch", () => LobbyScreenMountPatch.Apply());
             // …and the hooks on the methods that assign a lobby to those screens. They tell the panel about a
             // lobby assignment the screen event would not announce, and record the role of the saved-run screen's
             // lobby, which the game exposes no other typed way to read. Host-only, for the same reason.
-            if (!IsHeadlessClient) LobbyAssignmentPatch.Apply();
+            if (!IsHeadlessClient) TryFeature("LobbyAssignmentPatch", () => LobbyAssignmentPatch.Apply());
             // …and the hooks that tell the roster observer when the game changes who is in a lobby or a run: the two
             // lobby screens' join and leave callbacks, the two lobby constructors (which also name the net service
             // the host's peer events arrive on) and the run's clean-up. Every hook only records and wakes; nothing
             // runs unless a viewer parked on the join picker is listening. Unlike the panel hooks these are not
             // host-only: a seat's own browser server runs the same observer. A miss costs a stale picker, not co-op.
-            RosterSignalPatch.Apply();
+            TryFeature("RosterSignalPatch", () => RosterSignalPatch.Apply());
             // …and the same for the pause menu, which is where a device that already joined and then LOST its
             // browser gets the join URL back — the lobby button is gone once the run embarks. Host-only for the
             // same reason as the line above: a headless seat renders this for nobody. Its absence costs a
             // convenience, not co-op, so it reports `costsCoop: false`.
             if (!IsHeadlessClient)
             {
-                PauseMenuMountPatch.Apply();
-                HostBrowserAccessMonitor.Prepare();
+                TryFeature("PauseMenuMountPatch", () => PauseMenuMountPatch.Apply());
+                TryFeature("host-browser-access", () => HostBrowserAccessMonitor.Prepare());
             }
             // Patch ENetClient.Update() to skip while _isConnected == false, preventing the
             // NetServiceUpdateLoop from draining and discarding the handshake-ack before
             // SendAndWaitForNetIdAck can consume it (fixes headless join timeout).
-            ENetHandshakePatch.Apply();
+            TryFeature("ENetHandshakePatch", () => ENetHandshakePatch.Apply());
             // Headless clients do not render to a local speaker. STS2 audio is FMOD (a native GDExtension), which Godot's
             // --headless does NOT silence, so mute it at the source. Host-only patch. This severs every game→FMOD
             // forward but does NOT stop FMOD's always-on native mixer/DSP thread — HeadlessFmodShutdown does that.
-            if (IsHeadlessClient) HeadlessAudioMutePatch.Apply();
+            if (IsHeadlessClient) TryFeature("HeadlessAudioMutePatch", () => HeadlessAudioMutePatch.Apply());
             else if (Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") != "off")
-                Audio.Host.HostAudioHooks.Apply();
+                TryFeature("host-audio", () => Audio.Host.HostAudioHooks.Apply());
             if (IsHeadlessClient && Environment.GetEnvironmentVariable("COUCHCOOP_AUDIO") != "off")
-                SeatAudioReportPatch.Apply();
+                TryFeature("SeatAudioReportPatch", () => SeatAudioReportPatch.Apply());
             // The other half of the seat's pad isolation. The InputMap strip at the top of Init closes the engine
             // joypad route; Steam Input never consults the InputMap, so a host pad Steam reports still reached every
             // seat — and on Windows, where a seat has no engine joypad driver, it was the only route. Seat-only. Mod
             // init can land after the game has already taken a Steam controller (a Workshop query can hold mod
             // loading); the prefix then drops it at the next refresh, about a second later and still during the
             // seat's load, and releases anything it left held. Its loss degrades, never refuses.
-            if (IsHeadlessClient) SeatSteamControllerIsolationPatch.Apply();
+            if (IsHeadlessClient) TryFeature("SeatSteamControllerIsolationPatch", () => SeatSteamControllerIsolationPatch.Apply());
             // A headless instance that permanently loses its ENet connection (host process died, or dropped it
             // mid-run) has no human to dismiss STS2's network-error / "report a bug" modal and no retry of its
             // own — it used to sit behind that dialog forever, holding its seat's slot. Suppress the popup and
             // exit cleanly instead, so the host sees the process go, reports the seat offline with the "reload
             // the saved run" guidance, and a rejoin spawns a fresh instance. Host-only patch by construction.
-            if (IsHeadlessClient) HeadlessDisconnectExitPatch.Apply();
+            if (IsHeadlessClient) TryFeature("HeadlessDisconnectExitPatch", () => HeadlessDisconnectExitPatch.Apply());
             // Reclaim the frame-independent FMOD mixer/DSP thread by tearing the FMOD system down once it's up:
             // first disables the FmodManager autoload's per-frame FmodServer.update() (else shutdown SIGSEGVs), then
             // calls FmodServer.shutdown().
-            if (IsHeadlessClient) HeadlessFmodShutdown.Install();
+            if (IsHeadlessClient) TryFeature("HeadlessFmodShutdown", () => HeadlessFmodShutdown.Install());
             // Opt-in CPU attribution logger (COUCHCOOP_HEADLESS_PROFILE=1): logs the per-frame process/physics/
             // render split to the per-slot godot.log so we can see where the headless CPU goes. No-op otherwise.
             // Also installs on a plain `--headless` instance, which is where the memory levers are A/B'd — its
@@ -334,7 +349,7 @@ public static class CouchCoopMod
             // Performance monitors and process-CPU sampling are display-server agnostic.
             if (IsHeadlessClient || Environment.GetEnvironmentVariable("COUCHCOOP_HEADLESS_PROFILE") == "1")
             {
-                CouchCoopHeadlessCpuProfiler.Install();
+                TryFeature("CouchCoopHeadlessCpuProfiler", () => CouchCoopHeadlessCpuProfiler.Install());
             }
             // MEMORY saver for a headless CLIENT:
             // Godot's dummy renderer keeps a full CPU copy of every texture's pixels forever (a real renderer
@@ -345,7 +360,7 @@ public static class CouchCoopMod
             // seat: the capture owns texture release and reload for each arm.
             if (StreamingSeatRole.InstallsTextureEvictor(StreamingSeatRole.IsStreamingSeat, IsHeadlessClient))
             {
-                HeadlessTextureImageEvictor.Install();
+                TryFeature("HeadlessTextureImageEvictor", () => HeadlessTextureImageEvictor.Install());
             }
             // CPU saver for any WINDOWLESS instance:
             // freezes decorative per-frame animators (intent bob / energy-orb spin, whose transform churn otherwise
@@ -358,17 +373,17 @@ public static class CouchCoopMod
             if (StreamingSeatRole.InstallsVisualSuspender(
                     StreamingSeatRole.IsStreamingSeat, IsHeadlessClient || IsHeadlessDisplay()))
             {
-                CouchCoopHeadlessVisualSuspender.Install();
+                TryFeature("CouchCoopHeadlessVisualSuspender", () => CouchCoopHeadlessVisualSuspender.Install());
             }
             // Windowed hosts install node observers only when capture attaches.
-            RenderStreamSelf.StartHelpers(HeadlessViewportConfigurator.WindowedHostPresentation);
+            TryFeature("render-stream-helpers", () => RenderStreamSelf.StartHelpers(HeadlessViewportConfigurator.WindowedHostPresentation));
             // Deadlock backstop for the same freeze, WINDOWLESS ONLY (positive COUCHCOOP_HEADLESS_DEATH_DELAY_CAP
             // overrides the safe default):
             // A dying creature waits on every death delayer attached to it and nothing bounds that wait; the one
             // delayer in the game reports finished off a SPINE animation event — which a spine-frozen headless
             // instance never raises, so that boss death would hang forever. Caps the wait at 10s, returning
             // normally. A windowed instance runs its spine and must keep the game's exact pacing.
-            if (IsHeadlessClient || IsHeadlessDisplay()) HeadlessDeathDelayCapPatch.Apply();
+            if (IsHeadlessClient || IsHeadlessDisplay()) TryFeature("HeadlessDeathDelayCapPatch", () => HeadlessDeathDelayCapPatch.Apply());
 
             // CouchCoop's scene wire is parent-relative. The mirror composes transforms down its element tree, so a
             // container move ships one local update rather than rewriting every descendant.
@@ -380,7 +395,8 @@ public static class CouchCoopMod
             // Let the host transport size its ENet listener from the LIVE lobby cap instead of the maxClients it
             // is handed — see CouchCoopHostTransport.MaxLobbyPlayersProbe for why that argument cannot be trusted
             // once a multiplayer limit mod is installed. Safe to set on a seat too (it never hosts).
-            Session.CouchCoopHostTransport.MaxLobbyPlayersProbe = Session.CouchCoopHostTransport.ReadLobbyCapAtHostStart;
+            TryFeature("host-transport-cap", () =>
+                Session.CouchCoopHostTransport.MaxLobbyPlayersProbe = Session.CouchCoopHostTransport.ReadLobbyCapAtHostStart);
             // Seat-only: keep this instance's player names in step with the host's durable roster
             // (mp_names.json), which the game itself reads only once at startup — otherwise everyone who joined
             // AFTER this seat booted renders as a raw netId. See HeadlessClientNameSync for why it owns its own
@@ -389,18 +405,31 @@ public static class CouchCoopMod
             if (IsHeadlessClient) Session.HeadlessConnectionReporter.Initialize(
                 _runtime,
                 reason => HeadlessDisconnectExitPatch.RequestExit(reason));
-            StartHostUiServices(_runtime);
-            StartSpinePrerenderIfRequested(_runtime);
-            StartGeoclipPrerenderIfRequested(_runtime);
-            StartStaticBackgroundPrerenderIfRequested(_runtime);
+            TryFeature("host-ui-services", () => StartHostUiServices(_runtime));
+            TryFeature("spine-prerender", () => StartSpinePrerenderIfRequested(_runtime));
+            TryFeature("geoclip-prerender", () => StartGeoclipPrerenderIfRequested(_runtime));
+            TryFeature("background-prerender", () => StartStaticBackgroundPrerenderIfRequested(_runtime));
             // Windowless mirrors need 16:9; windowed captures reassert only while streaming.
             if (IsHeadlessClient || IsHeadlessDisplay() || HeadlessViewportConfigurator.WindowedHostPresentation)
-                HeadlessViewportConfigurator.Configure();
-            if (!IsHeadlessClient) InitializeQrHostPanel();
-            if (!IsHeadlessClient) RetryPauseMenuMountPatch();
-            RetryRosterSignalPatch();
+                TryFeature("viewport", () => HeadlessViewportConfigurator.Configure());
+            if (!IsHeadlessClient) TryFeature("qr-host-panel", InitializeQrHostPanel);
+            if (!IsHeadlessClient) TryFeature("PauseMenuMountPatch", RetryPauseMenuMountPatch);
+            TryFeature("RosterSignalPatch", RetryRosterSignalPatch);
+            ReportCompatibility();
             return _runtime;
         }
+    }
+
+    private static void ReportCompatibility()
+    {
+        string? game = null;
+        try { game = _runtime?.Capabilities.GameVersion; }
+        catch (Exception) { }
+        var directory = Path.GetDirectoryName(typeof(CouchCoopMod).Assembly.Location);
+        var payload = Path.GetFileName(Path.GetDirectoryName(directory)) == "lanes"
+            ? Path.GetFileName(directory) : "flat";
+        Compatibility.ReportSummary(game, payload ?? "flat",
+            AppContext.GetData(CouchCoopFeatureCompatibility.UntestedGameVersionKey) is true);
     }
 
     /// <summary>
@@ -908,7 +937,7 @@ public static class CouchCoopMod
                 if ((_hostUi.HotServerHost as IHotServerHost)?.HeadlessManager is HeadlessClientManager manager)
                 {
                     // Latch quit before native session teardown; window/tree signals finish the bounded wait.
-                    HostQuitPatch.Apply(manager);
+                    TryFeature("HostQuitPatch", () => HostQuitPatch.Apply(manager));
                     GameMainThread.Invoke(() =>
                     {
                         if (Godot.Engine.GetMainLoop() is Godot.SceneTree tree)
@@ -925,6 +954,7 @@ public static class CouchCoopMod
         }
         catch (Exception exception)
         {
+            DisableFeature("host-ui-services", exception);
             CouchCoopLog.Stderr($"host-ui diagnostic code={CouchCoopHostUiServices.HostUiStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
             // B7: the outer twin of B3. StartAsync catches the socket-shaped failures itself; anything that
             // escapes to here (a bad static root, a construction fault) leaves the host with no browser
@@ -1106,6 +1136,7 @@ public static class CouchCoopMod
         }
         catch (Exception exception)
         {
+            DisableFeature("qr-host-panel", exception);
             CouchCoopLog.Stderr($"host-ui diagnostic code={CouchCoopHostUiServices.HostUiOverlayStartupFailedCode} detail={exception.GetType().Name}: {exception.Message}");
         }
     }
@@ -1130,6 +1161,7 @@ public static class CouchCoopMod
         }
         catch (Exception exception)
         {
+            DisableFeature("RosterSignalPatch", exception);
             CouchCoopLog.Stderr(
                 $"roster signal patch retry failed: {exception.GetType().Name}: {exception.Message}");
         }
@@ -1139,11 +1171,12 @@ public static class CouchCoopMod
     {
         try
         {
-            PauseMenuMountPatch.Apply();
-            HostBrowserAccessMonitor.Prepare();
+            TryFeature("PauseMenuMountPatch", () => PauseMenuMountPatch.Apply());
+            TryFeature("host-browser-access", () => HostBrowserAccessMonitor.Prepare());
         }
         catch (Exception exception)
         {
+            DisableFeature("PauseMenuMountPatch", exception);
             CouchCoopLog.Stderr(
                 $"pause menu mount retry failed: {exception.GetType().Name}: {exception.Message}");
         }

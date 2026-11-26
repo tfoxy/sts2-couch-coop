@@ -84,7 +84,7 @@ internal static class HostNetIdPatch
         (typeof(NetQualityTracker), "HandleHeartbeatRequestMessage",
             [typeof(MegaCrit.Sts2.Core.Multiplayer.Messages.HeartbeatRequestMessage), typeof(ulong)]),
 #if STS2_API_V111_OR_LATER
-        // Layer 3. The peer-version handshake does not exist on v0.107.1, so neither does this target.
+        // Layer 3. Bind the peer-version handshake on supported API lanes.
         (typeof(HandshakeManager), "HandshakeMessageReceived",
             [typeof(ulong), typeof(MegaCrit.Sts2.Core.Multiplayer.Serialization.PacketReader)]),
 #endif
@@ -112,9 +112,8 @@ internal static class HostNetIdPatch
     /// real host id to rewrite it to. Anything else is somebody we have no claim about, so it passes through
     /// untouched and the game keeps its stock behaviour for it.</para>
     ///
-    /// <para>Deliberately NOT compiled out on the v107 lane even though only the v111 patch calls it: it is
-    /// arithmetic over two <c>ulong</c>s with no game types in it, so keeping it lane-independent lets the gate
-    /// test cover it on every build rather than only the one where it happens to be wired up.</para>
+    /// <para>Arithmetic over two <c>ulong</c>s with no game types, so the decision stays testable on
+    /// every supported lane.</para>
     /// </summary>
     internal static ulong CoerceHandshakeSenderId(ulong senderId, ulong hostNetId)
     {

@@ -5,8 +5,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release-portable.sh"
 #
 # A lane selects a reviewed game build and its pinned STS2 reference package
 # (eng/Sts2.ReferenceSdk/<lane>/). Multiple lanes can cover builds from the same Steam branch.
-# The `-beta` suffix on a NuGet package version is PRERELEASE and says nothing about the branch: `0.107.0-beta`
-# is the STABLE lane's pin. Never read a lane off a package version suffix.
+# The `-beta` suffix on a NuGet package version is PRERELEASE and says nothing about the branch.
+# The public-beta lane now serves Steam stable; never read a lane off a package version suffix.
 #
 # ONE RELEASE IS ONE ARCHIVE, carrying every lane. It used to be one archive per lane published as
 # one branch-linked Workshop revision each, and the Steam client defeats that: branch-linked
@@ -20,7 +20,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release-portable.sh"
 # The lane listed first by release_lane_discover, and the one a consumer means by "the normal
 # download". It no longer selects an archive name — there is only one archive — but it still orders
 # the lane list and names the Steam branch a reader should assume.
-RELEASE_LANE_DEFAULT="stable"
+RELEASE_LANE_DEFAULT="public-beta"
 
 # Lane names appear inside anchored regexes and filenames, so keep them boring.
 release_lane_is_valid_name() {
@@ -32,7 +32,7 @@ release_lane_is_valid_name() {
 # lane means adding it here AND to every reviewed table below AND to eng/Sts2.ReferenceSdk/ — which
 # scripts/test-verify-release-archive.sh asserts, so a half-added lane fails loudly.
 release_lane_known_names() {
-  printf '%s\n' stable public-beta beta-v113
+  printf '%s\n' public-beta beta-v113
 }
 
 # The assemblies that differ between lanes, and so ship once per lane under `lanes/<floor>/` instead
@@ -49,13 +49,12 @@ release_lane_assembly_names() {
 # A release build compiles against the pinned reference SDK, which is a bare assemblies directory
 # with no release_info.json — so the bridge's own lane detection cannot fire and MUST be told. It
 # also cannot be derived: the reference sts2.dll carries no game-version string, and the package
-# version does not track the game's (`0.107.0-beta` pairs with game v0.107.1). Hence one reviewed
+# version need not track the game's patch version. Hence one reviewed
 # row here. The authoritative version-to-lane table stays in ../spirectl/bridge-mod/Sts2GameApi.props
 # and rejects an unknown lane, so a wrong value fails the build loudly rather than mis-compiling.
 release_lane_game_api() {
   local lane="$1" value
   case "$lane" in
-    stable) value="v107" ;;
     public-beta) value="v111" ;;
     beta-v113) value="v113" ;;
     *)
@@ -79,7 +78,6 @@ release_lane_game_api() {
 release_lane_game_build() {
   local lane="$1" value
   case "$lane" in
-    stable) value="v0.107.1" ;;
     public-beta) value="v0.111.0" ;;
     beta-v113) value="v0.113.0" ;;
     *)
@@ -107,8 +105,8 @@ release_lane_game_build() {
 # gate on the way out — a caller can never receive a malformed value from here.
 #
 # The MERGED payload declares the LOWEST of these floors (release_payload_min_game_version), because
-# the manifest gate runs before any lane is chosen: a manifest floor of v0.111.0 would make the one
-# payload refuse to load on the stable branch it also carries.
+# the manifest gate runs before any lane is chosen: a higher floor would make the one payload
+# refuse to load on the stable branch it also carries.
 #
 # The asymmetry, which is not fixable here: being a minimum, the manifest floor makes the payload
 # refuse an older game loudly, but nothing stops it loading on a newer one. There is no
@@ -117,11 +115,6 @@ release_lane_game_build() {
 release_lane_game_floor() {
   local lane="$1" value
   case "$lane" in
-    # Game v0.107.1 — the build eng/Sts2.ReferenceSdk/stable pins its references from. This used to
-    # be empty ("the stable payload must load on every supported public build"), which a merged
-    # payload cannot express: an unordered lane cannot be picked. v0.107.1 is the oldest build this
-    # repo has ever built references for, so nothing that used to load loses the mod here.
-    stable) value="v0.107.1" ;;
     # Game v0.111.0 — the build eng/Sts2.ReferenceSdk/public-beta pins its references from.
     public-beta) value="v0.111.0" ;;
     beta-v113) value="v0.113.0" ;;
@@ -194,7 +187,7 @@ release_join_with_and() {
 # TWO FACTS, AND THEY ARE NOT THE SAME NUMBER, which is the whole reason this is one function. The
 # payload REQUIRES the lowest floor and refuses below it; it is BUILT FOR each lane's game build and
 # runs on newer ones by picking the highest lane at or below what is running. Collapsing them --
-# "requires v0.107.1 and v0.111.0" -- tells half the readers the mod will not run for them. The
+# "requires v0.111.0 and v0.113.0" -- tells half the readers the mod will not run for them. The
 # GitHub release body states the same two facts in Markdown from the same lane table, and
 # test-release-body.sh / test-upload-workshop-release.sh pin both against these functions so the two
 # surfaces cannot drift apart.
@@ -221,7 +214,7 @@ release_compatibility_summary() {
   printf 'Works with Slay the Spire 2 %s and newer, on %s.\n' \
     "$(release_payload_min_game_version "$@")" "$(release_join_with_and "${where[@]}")"
   if [[ ${#builds[@]} -eq 1 ]]; then
-    # A one-lane payload is a local or DEV build, and "a build for each of those (v0.107.1)" reads as
+    # A one-lane payload is a local or DEV build, and "a build for each of those (v0.111.0)" reads as
     # though something is missing. It is also the shape a reader most needs stated plainly.
     printf 'This download carries one build, made for %s.\n' "${builds[0]}"
   else
@@ -351,8 +344,7 @@ release_archive_name() {
 release_lane_steam_branch() {
   local lane="$1" value
   case "$lane" in
-    stable) value="public" ;;
-    public-beta) value="public-beta" ;;
+    public-beta) value="public" ;;
     beta-v113) value="public-beta" ;;
     *)
       echo "release-lanes: lane '$lane' has no reviewed Steam branch; add one to scripts/lib/release-lanes.sh" >&2

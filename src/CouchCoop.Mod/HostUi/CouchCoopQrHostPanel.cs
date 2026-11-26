@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using CouchCoop.Mod.Session;
 using Godot;
 using CouchCoop.Mod.Localization;
@@ -188,15 +189,37 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
 
         _installed = true;
+        CouchCoopHostPanelSetup.Install(InstallButton, ApplyButtonLayout,
+            InstallHint, InstallDialog, InstallAlert, BindHotkey);
+    }
+
+    private void InstallButton()
+    {
         Connect(Node.SignalName.TreeExiting, Callable.From(UnregisterHostOnly));
         _hostOnlyButton = HostOnlyInputGuard.Register(_button);
-        _hostOnlyHotkey = HostOnlyInputGuard.RegisterHotkey(this, _hotkeyAction);
         _button.Install();
+    }
+
+    // Keep optional game calls out of the caller's JIT compilation so its guard can catch a missing member.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InstallHint()
+    {
         _hint.Install();
+        if (_compactLobby) _hint.ApplyCompactLayout();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InstallDialog()
+    {
         _dialog.Install();
+        _dialog.RefreshLocalization(_snapshot);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InstallAlert()
+    {
         _alert.Install();
-        BindHotkey();
-        ApplyLayout();
+        _alert.RefreshLocalization();
     }
 
     public override void _Ready() => Install();
@@ -211,6 +234,21 @@ internal sealed partial class CouchCoopQrHostPanel : Control
 
     /// <summary>Re-reads the hot-reloadable layout. Called on install and on an explicit refresh only.</summary>
     public void ApplyLayout()
+    {
+        ApplyButtonLayout();
+        CouchCoopHostPanelSetup.TryOptional("hint-layout", ApplyHintLayout);
+        CouchCoopHostPanelSetup.TryOptional("dialog-layout", _dialog.ApplyLayout);
+        CouchCoopHostPanelSetup.TryOptional("alert-layout", _alert.ApplyLayout);
+        RefreshLocalization(force: true);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ApplyHintLayout()
+    {
+        if (_compactLobby) _hint.ApplyCompactLayout();
+    }
+
+    private void ApplyButtonLayout()
     {
         _layout = HostLobbyQrOverlayLayoutProvider.Current();
         if (_compactLobby) _layout = _layout.ForCompactLobby();
@@ -228,7 +266,6 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         if (_compactLobby)
         {
             _button.ApplyCompactLayout(_layout.ButtonSize);
-            _hint.ApplyCompactLayout();
             _connectionNotice.AnchorLeft = _connectionNotice.AnchorRight = 1;
             _connectionNotice.OffsetLeft = 12;
             _connectionNotice.OffsetRight = 200;
@@ -239,9 +276,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
             _connectionBadge.OffsetBottom = 60;
         }
 
-        _dialog.ApplyLayout();
-        _alert.ApplyLayout();
-        RefreshLocalization(force: true);
+        RefreshButtonLocalization();
     }
 
     /// <summary>
@@ -276,14 +311,22 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
 
         _localeRevision = revision;
+        RefreshButtonLocalization();
+        CouchCoopHostPanelSetup.TryOptional("hint-localization", _hint.RefreshLocalization);
+        CouchCoopHostPanelSetup.TryOptional("dialog-localization", RefreshDialogLocalization);
+        CouchCoopHostPanelSetup.TryOptional("alert-localization", _alert.RefreshLocalization);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RefreshDialogLocalization() => _dialog.RefreshLocalization(_snapshot);
+
+    private void RefreshButtonLocalization()
+    {
         _button.Text = ButtonTextFor(Solo);
         _button.ApplyFontSize(_layout.ButtonFontSize);
-        _hint.RefreshLocalization();
         _connectionNotice.Text = CouchCoopLocalization.Resolve("couchcoop_connection_attention_notice");
         CouchCoopGameUiTheme.ApplyFont(_connectionNotice, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 16);
         CouchCoopGameUiTheme.ApplyFont(_connectionCount, CouchCoopGameUiTheme.KreonBoldGlyphSpaceOne, 24);
-        _dialog.RefreshLocalization(_snapshot);
-        _alert.RefreshLocalization();
     }
 
     private void RefreshConnectionAttention()
@@ -317,6 +360,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
     /// the process — and the panel is rebuilt on every trip through the lobby. Best-effort, like the
     /// modal's Escape: failing to bind must not stop the panel appearing, since the mouse path is intact.
     /// </remarks>
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void BindHotkey()
     {
         if (_hotkeyBound)
@@ -326,6 +370,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
 
         try
         {
+            _hostOnlyHotkey ??= HostOnlyInputGuard.RegisterHotkey(this, _hotkeyAction);
             Connect(Node.SignalName.TreeExiting, Callable.From(UnbindHotkey));
         }
         catch (Exception exception)
@@ -337,8 +382,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
 
         try
         {
-            NHotkeyManager.Instance?.PushHotkeyPressedBinding(_hotkeyAction, _openAction);
-            _hotkeyBound = NHotkeyManager.Instance is not null;
+            _hotkeyBound = CouchCoopGameHotkeys.Shared.TryPush(_hotkeyAction, this, _openAction);
         }
         catch (Exception exception)
         {
@@ -347,6 +391,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         }
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnbindHotkey()
     {
         if (!_hotkeyBound)
@@ -357,7 +402,7 @@ internal sealed partial class CouchCoopQrHostPanel : Control
         _hotkeyBound = false;
         try
         {
-            NHotkeyManager.Instance?.RemoveHotkeyPressedBinding(_hotkeyAction, _openAction);
+            CouchCoopGameHotkeys.Shared.TryRemove(_hotkeyAction, this, _openAction);
         }
         catch (Exception exception)
         {

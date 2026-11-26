@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes.Audio;
@@ -45,21 +46,27 @@ internal static class HostAudioHooks
         {
             if (_installed) return;
             _installed = true;
-            try
-            {
-                var helper = ResolveMarshallingHelper()
-                    ?? throw new MissingMethodException("Godot audio call marshalling helper was not resolved");
-                Patch(AccessTools.Method(typeof(NAudioManager), "_EnterTree"), postfix: nameof(AudioReady));
-                Patch(AccessTools.Method(typeof(NRunMusicController), "_Ready"), postfix: nameof(MusicReady));
-                Patch(helper, prefix: helper.GetParameters().Length == 3
-                    ? nameof(ProxyCall3) : nameof(ProxyCall5));
-                ProbeMarshallingHook();
-            }
-            catch (Exception error)
-            {
-                DisableStream($"hook setup failed ({error.GetType().Name})");
-            }
+            if (!HostAudioHookSetup.Install(CouchCoopMod.TryFeature,
+                    InstallAudioHook, InstallMusicHook, InstallMarshallingHook))
+                DisableStream("no usable audio observation hooks");
         }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void InstallAudioHook()
+        => Patch(AccessTools.Method(typeof(NAudioManager), "_EnterTree"), postfix: nameof(AudioReady));
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void InstallMusicHook()
+        => Patch(AccessTools.Method(typeof(NRunMusicController), "_Ready"), postfix: nameof(MusicReady));
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void InstallMarshallingHook()
+    {
+        var helper = ResolveMarshallingHelper()
+            ?? throw new MissingMethodException("Godot audio call marshalling helper was not resolved");
+        Patch(helper, prefix: helper.GetParameters().Length == 3 ? nameof(ProxyCall3) : nameof(ProxyCall5));
+        ProbeMarshallingHook();
     }
 
     private static void Patch(MethodBase? target, string? prefix = null, string? postfix = null)

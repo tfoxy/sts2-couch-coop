@@ -372,7 +372,7 @@ jobs:
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
-          scripts/verify-sts2-reference-sdk.sh stable public-beta beta-v113
+          scripts/verify-sts2-reference-sdk.sh public-beta beta-v113
           scripts/test-verify-release-archive.sh
           scripts/test-macos-support-diagnostics.sh
           scripts/test-iphone-safari-simulator.sh
@@ -384,12 +384,12 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="$RUNNER_TEMP/couchcoop-reference-sdk"
-          for lane in stable public-beta beta-v113; do
+          for lane in public-beta beta-v113; do
             dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
               -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
           done
           dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
-            -p:Sts2AssembliesDir="$sdk_root/stable" -p:Sts2GameApi=v107 \
+            -p:Sts2AssembliesDir="$sdk_root/public-beta" -p:Sts2GameApi=v111 \
             -p:CouchCoopBuildToLocalMods=false -- \
             --mode iphone-burst-self-test
           dotnet build tests/CouchCoop.HarmonySmoke/CouchCoop.HarmonySmoke.csproj \
@@ -408,7 +408,7 @@ jobs:
           done
           echo "COUCHCOOP_GODOT_FIXTURE=$fixture_stage" >> "$GITHUB_ENV"
 
-      - name: Verify stable and public-beta lobby targets as metadata only
+      - name: Verify public-beta and beta-v113 lobby targets as metadata only
         timeout-minutes: 10
         working-directory: sources/sts2-couch-coop
         run: |
@@ -422,15 +422,15 @@ jobs:
             -p:BaseIntermediateOutputPath="$metadata_obj" \
             -p:BaseOutputPath="$metadata_bin"
           dotnet run --project "$project" -c Release --no-restore \
-            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v107 \
-            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
-            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
-            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/stable/sts2.dll"
-          dotnet run --project "$project" -c Release --no-restore \
             -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v111 \
             -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
             -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
             beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/public-beta/sts2.dll"
+          dotnet run --project "$project" -c Release --no-restore \
+            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v113 \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
+            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/beta-v113/sts2.dll"
 
       - name: Run game-free macOS and Harmony checks
         timeout-minutes: 15
@@ -538,7 +538,7 @@ jobs:
           unzip -q "$archive" -d "$extracted"
           version="$(jq -er '.version' "$extracted/couchcoop/couchcoop.json")"
           scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
-            --lane stable --lane public-beta --lane beta-v113 --complete
+            --lane public-beta --lane beta-v113 --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
           for name in librender_stream_capture.dylib librender_stream_net.dylib; do
             library="$extracted/couchcoop/render-capture/macos/$name"
@@ -558,8 +558,8 @@ jobs:
           mkdir -p "$artifact_dir"
           : >"$artifact_dir/browser-lifecycle.jsonl"
           dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
-            -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/stable" \
-            -p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false -- \
+            -p:Sts2AssembliesDir="$RUNNER_TEMP/couchcoop-reference-sdk/public-beta" \
+            -p:Sts2GameApi=v111 -p:CouchCoopBuildToLocalMods=false -- \
             --static-root "$RUNNER_TEMP/CouchCoop package verification/couchcoop/frontend" \
             --port 23339 --mode iphone-burst --iphone-profile field-repro --artifact-dir "$artifact_dir" \
             >"$harness_out" 2>"$harness_err" &
@@ -716,7 +716,7 @@ jobs:
         timeout-minutes: 15
         working-directory: sources/sts2-couch-coop
         run: |
-          scripts/verify-sts2-reference-sdk.sh stable public-beta beta-v113
+          scripts/verify-sts2-reference-sdk.sh public-beta beta-v113
           scripts/test-verify-release-archive.sh
           scripts/test-macos-support-diagnostics.sh
           scripts/test-iphone-safari-simulator.sh
@@ -728,12 +728,12 @@ jobs:
         run: |
           set -euo pipefail
           sdk_root="$RUNNER_TEMP/couchcoop-reference-sdk"
-          for lane in stable public-beta beta-v113; do
+          for lane in public-beta beta-v113; do
             dotnet build "eng/Sts2.ReferenceSdk/$lane/Sts2.ReferenceSdk.$lane.csproj" \
               -c Release -o "$sdk_root/$lane" -p:RestoreLockedMode=true
           done
           dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
-            -p:Sts2AssembliesDir="$sdk_root/stable" -p:Sts2GameApi=v107 \
+            -p:Sts2AssembliesDir="$sdk_root/public-beta" -p:Sts2GameApi=v111 \
             -p:CouchCoopBuildToLocalMods=false -- \
             --mode iphone-burst-self-test
           dotnet build tests/CouchCoop.HarmonySmoke/CouchCoop.HarmonySmoke.csproj \
@@ -752,7 +752,7 @@ jobs:
           done
           echo "COUCHCOOP_GODOT_FIXTURE=$fixture_stage" >> "$GITHUB_ENV"
 
-      - name: Verify stable and public-beta lobby targets as metadata only
+      - name: Verify public-beta and beta-v113 lobby targets as metadata only
         timeout-minutes: 10
         working-directory: sources/sts2-couch-coop
         run: |
@@ -766,15 +766,15 @@ jobs:
             -p:BaseIntermediateOutputPath="$metadata_obj" \
             -p:BaseOutputPath="$metadata_bin"
           dotnet run --project "$project" -c Release --no-restore \
-            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v107 \
-            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
-            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
-            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/stable/sts2.dll"
-          dotnet run --project "$project" -c Release --no-restore \
             -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v111 \
             -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
             -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
             beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/public-beta/sts2.dll"
+          dotnet run --project "$project" -c Release --no-restore \
+            -p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v113 \
+            -p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml" \
+            -p:BaseIntermediateOutputPath="$metadata_obj" -p:BaseOutputPath="$metadata_bin" -- \
+            beta-targets "$RUNNER_TEMP/couchcoop-reference-sdk/beta-v113/sts2.dll"
 
       - name: Run game-free macOS and Harmony checks
         timeout-minutes: 15
@@ -882,7 +882,7 @@ jobs:
           unzip -q "$archive" -d "$extracted"
           version="$(jq -er '.version' "$extracted/couchcoop/couchcoop.json")"
           scripts/verify-release-archive.sh --payload "$extracted/couchcoop" --version "$version" \
-            --lane stable --lane public-beta --lane beta-v113 --complete
+            --lane public-beta --lane beta-v113 --complete
           dotnet run --project tests/CouchCoop.MacOs.Tests -c Release -- --verify-archive "$archive"
           for name in librender_stream_capture.dylib librender_stream_net.dylib; do
             library="$extracted/couchcoop/render-capture/macos/$name"

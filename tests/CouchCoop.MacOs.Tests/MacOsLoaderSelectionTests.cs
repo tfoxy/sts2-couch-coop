@@ -9,31 +9,31 @@ internal static class MacOsLoaderSelectionTests
         var contents = Path.Combine(app, "Contents");
         var mod = Path.Combine(contents, "MacOS", "mods", "couchcoop");
         Directory.CreateDirectory(Path.Combine(contents, "Resources"));
-        Directory.CreateDirectory(Path.Combine(mod, "lanes", "0.107.1"));
         Directory.CreateDirectory(Path.Combine(mod, "lanes", "0.111.0"));
-        File.WriteAllText(Path.Combine(contents, "Resources", "release_info.json"), "{\"version\":\"v0.111.0\"}");
+        Directory.CreateDirectory(Path.Combine(mod, "lanes", "0.113.0"));
+        File.WriteAllText(Path.Combine(contents, "Resources", "release_info.json"), "{\"version\":\"v0.113.0\"}");
 
         var selected = CouchCoopLaneSelection.Select(mod, VersionAt(mod));
         Assert(selected.Refusal is null, "macOS bundle with Resources/release_info.json selects a lane");
-        Assert(Path.GetFileName(selected.LaneDirectory) == "0.111.0", "beta bundle selects beta lane");
+        Assert(Path.GetFileName(selected.LaneDirectory) == "0.113.0", "beta bundle selects beta lane");
 
-        File.WriteAllText(Path.Combine(contents, "Resources", "release_info.json"), "{\"version\":\"v0.107.1\"}");
+        File.WriteAllText(Path.Combine(contents, "Resources", "release_info.json"), "{\"version\":\"v0.111.1\"}");
         selected = CouchCoopLaneSelection.Select(mod, VersionAt(mod));
-        Assert(Path.GetFileName(selected.LaneDirectory) == "0.107.1", "stable bundle selects stable lane");
+        Assert(Path.GetFileName(selected.LaneDirectory) == "0.111.0", "stable bundle selects stable lane");
 
         File.Delete(Path.Combine(contents, "Resources", "release_info.json"));
-        File.WriteAllText(Path.Combine(contents, "Resources", "Release_Info.json"), "{\"version\":\"v0.111.0\"}");
+        File.WriteAllText(Path.Combine(contents, "Resources", "Release_Info.json"), "{\"version\":\"v0.113.0\"}");
         selected = CouchCoopLaneSelection.Select(mod, VersionAt(mod));
         Assert(selected.Refusal is not null, "wrong-case release_info name does not select a lane");
 
         File.Delete(Path.Combine(contents, "Resources", "Release_Info.json"));
-        File.WriteAllText(Path.Combine(contents, "Resources", "release_info.json"), "{\"version\":\"v0.111.0\"}");
+        File.WriteAllText(Path.Combine(contents, "Resources", "release_info.json"), "{\"version\":\"v0.113.0\"}");
         Directory.Move(Path.Combine(mod, "lanes"), Path.Combine(mod, "LANES"));
         selected = CouchCoopLaneSelection.Select(mod, VersionAt(mod));
         Assert(selected.Refusal is not null, "wrong-case lanes directory refuses instead of becoming a flat payload");
         Directory.Move(Path.Combine(mod, "LANES"), Path.Combine(mod, "lanes"));
 
-        var stableAssembly = Path.Combine(mod, "lanes", "0.107.1", "CouchCoop.Mod.dll");
+        var stableAssembly = Path.Combine(mod, "lanes", "0.111.0", "CouchCoop.Mod.dll");
         File.WriteAllText(stableAssembly, "fixture");
         Assert(CouchCoopLaneSelection.FindAssembly([Path.GetDirectoryName(stableAssembly)!], "CouchCoop.Mod") == stableAssembly,
             "exact-case lane assembly resolves");

@@ -10,8 +10,8 @@ set -euo pipefail
 #   scripts/verify-sts2-reference-sdk.sh <lane>...    only the named lanes
 #
 # Lanes pin reviewed game builds; a Steam branch can have more than one lane. The `-beta` suffix
-# on a package version is NuGet PRERELEASE and says nothing about the branch: `0.107.0-beta` is the
-# STABLE lane's pin. Never read a lane off a package suffix.
+# on a package version is NuGet PRERELEASE and says nothing about the branch. The public-beta
+# lane now serves Steam stable; never read a lane off a package suffix.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/release-lanes.sh
@@ -20,7 +20,7 @@ sdk_root="$repo_root/eng/Sts2.ReferenceSdk"
 shared_targets="$sdk_root/Sts2.ReferenceSdk.targets"
 
 # The reviewed lanes, in review order.
-reviewed_lanes=(stable public-beta beta-v113)
+reviewed_lanes=(public-beta beta-v113)
 
 usage() {
   printf 'usage: scripts/verify-sts2-reference-sdk.sh [%s]...\n' "$(
@@ -34,7 +34,6 @@ usage() {
 # ------------------------------------------------------------------------------------------------
 lane_package_version() {
   case "$1" in
-    stable)      echo '0.107.0-beta' ;;   # NuGet prerelease suffix; this is the STABLE lane
     public-beta) echo '0.111.0-beta' ;;
     beta-v113)   echo '0.113.0-beta' ;;
     *) return 1 ;;
@@ -43,7 +42,7 @@ lane_package_version() {
 
 lane_godot_version() {
   case "$1" in
-    stable|public-beta|beta-v113) echo '4.5.1' ;;
+    public-beta|beta-v113) echo '4.5.1' ;;
     *) return 1 ;;
   esac
 }
@@ -52,19 +51,6 @@ lane_godot_version() {
 # one package version, so a new lane must be listed rather than inheriting another lane's set.
 lane_expected_dlls() {
   case "$1" in
-    stable)
-      printf '%s\n' \
-        0Harmony.dll \
-        CouchCoop.Sts2.ReferenceSdk.dll \
-        GodotSharp.dll \
-        MonoMod.Backports.dll \
-        MonoMod.ILHelpers.dll \
-        Sentry.dll \
-        SmartFormat.dll \
-        SmartFormat.ZString.dll \
-        Steamworks.NET.dll \
-        sts2.dll
-      ;;
     public-beta)
       printf '%s\n' \
         0Harmony.dll \

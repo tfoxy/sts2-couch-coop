@@ -233,9 +233,9 @@ internal sealed partial class BrowserServerRouteTests
             using (var armed = await ReadRendererAsync(beforeReload, "armed")) ExpectDescriptor(armed.RootElement, "hot generation");
             hotSeat.DemandHost!.Released = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var reload = hotSeat.ReloadAsync();
-            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            using (var notice = JsonDocument.Parse(await ReadNextWsMessageOfTypeAsync(
+                       beforeReload, "server-reload", timeoutMs: 10_000)))
             {
-                using var notice = JsonDocument.Parse(await ReadWsMessageAsync(beforeReload, deadline.Token));
                 Expect(notice.RootElement.GetProperty("type").GetString() == "server-reload", "replacement closes the old socket");
             }
             await CloseWebSocketSilentlyAsync(beforeReload);

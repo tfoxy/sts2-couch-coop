@@ -50,13 +50,13 @@ assert_contains "$body" 'A fixture change a player would read.' 'changelog secti
 grep -qF 'An older fixture change' <<<"$body" && fail "body leaked another version's section"
 
 mapfile -t lanes < <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk")
-[[ ${#lanes[@]} -eq 3 ]] || fail "expected three reviewed lanes to test against, got ${#lanes[@]}"
+[[ ${#lanes[@]} -eq 2 ]] || fail "expected two reviewed lanes to test against, got ${#lanes[@]}"
 
-# Both beta builds cover one Steam branch, while retaining distinct build versions in the note.
-summary="$(release_compatibility_summary stable public-beta beta-v113)"
-assert_eq 'Works with Slay the Spire 2 v0.107.1 and newer, on the normal game and its public-beta branch.' \
+# The two lanes cover Steam stable and beta, retaining distinct build versions in the note.
+summary="$(release_compatibility_summary public-beta beta-v113)"
+assert_eq 'Works with Slay the Spire 2 v0.111.0 and newer, on the normal game and its public-beta branch.' \
   "$(head -n 1 <<<"$summary")"
-assert_contains "$summary" 'v0.107.1, v0.111.0 and v0.113.0' 'all reviewed game builds'
+assert_contains "$summary" 'v0.111.0 and v0.113.0' 'all reviewed game builds'
 
 # ONE DOWNLOAD. The body may name exactly one .zip, and it is the unsuffixed archive whose name is a
 # published contract (the README's `gh attestation verify <zip>` block and every existing download
@@ -91,7 +91,7 @@ grep -qiE 'minBranch|maxBranch|branch-linked|one revision per' <<<"$body" \
 #
 # Checked SENTENCE BY SENTENCE, not over the whole body and not line by line: the two versions
 # appear one sentence apart and the line breaks between them are just wrapping. A sentence ends at a
-# period followed by whitespace, which no version string does -- `v0.107.1` is dot-then-digit.
+# period followed by whitespace, which no version string does -- `v0.111.0` is dot-then-digit.
 floor="$(release_payload_min_game_version "${lanes[@]}")"
 assert_contains "$body" "**$floor**" 'the payload floor'
 mapfile -t sentences < <(tr '\n' ' ' <<<"$body" | sed 's/\. /.\n/g')

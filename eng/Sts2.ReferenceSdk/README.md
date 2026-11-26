@@ -19,41 +19,30 @@ content hash and a reviewed assembly allowlist.
 
 | lane | game Steam branch | game build | `FuYnAloft.Sts2.References` | project |
 | --- | --- | --- | --- | --- |
-| `stable` | `public` (the default branch) | v0.107.1 | `0.107.0-beta` | `stable/Sts2.ReferenceSdk.stable.csproj` |
-| `public-beta` | `public-beta` | v0.111.0 | `0.111.0-beta` | `public-beta/Sts2.ReferenceSdk.public-beta.csproj` |
+| `public-beta` | `public` (the default branch) | v0.111.0 | `0.111.0-beta` | `public-beta/Sts2.ReferenceSdk.public-beta.csproj` |
 | `beta-v113` | `public-beta` | v0.113.0 | `0.113.0-beta` | `beta-v113/Sts2.ReferenceSdk.beta-v113.csproj` |
 
-`stable` and `public-beta` retain their original names and pins; `beta-v113` adds a newer build
-from the same beta branch. The payload directories are `lanes/0.107.1/`, `lanes/0.111.0/` and
-`lanes/0.113.0/`; the loader selects the highest floor at or below the running game version.
+`public-beta` now serves the Steam stable branch (v0.111.1), keeping its original name and
+v0.111.0 reference pin and floor. `beta-v113` serves the newer beta build. The payload directories
+are `lanes/0.111.0/` and `lanes/0.113.0/`; the loader selects the highest floor at or below the
+running game version. The merged payload requires v0.111.0 or newer.
 
-> **The `-beta` suffix is NuGet prerelease, not the Steam branch.** Every published version of this
-> package carries it — `0.108.0-beta`, `0.109.0-beta`, `0.110.1-beta`, `0.111.0-beta` — including
-> `0.107.0-beta`, which is the **stable** lane's pin. A version's *number* is what pairs it with a
-> game build; its suffix says nothing about which branch it targets. Never infer a lane from a
-> package suffix, and never name one after it.
+> **The `-beta` suffix is NuGet prerelease, not the Steam branch.** Both pinned versions carry it.
+> A version's number pairs it with a game build; its suffix says nothing about which branch it targets.
 
-The stable lane pairs package `0.107.0` with game build `0.107.1` because no `0.107.1` package is
-published. The comparison gate below is what makes that pairing a fact rather than a hope.
-
-`0.107.0-beta`, `0.111.0-beta` and `0.113.0-beta` ship the same eight assemblies, so
-their allowlists are identical today. That is a finding about these package versions, not a shared
-default — each lane lists its own, and `scripts/verify-sts2-reference-sdk.sh` keeps an expected
-file set per lane. Note the one asymmetry already visible: the beta *game install* ships
-`Sentry.Godot.dll` and the beta `sts2.dll` references it, but the *package* does not ship it, so no
-lane can stage it. Nothing CouchCoop compiles needs a type from it today; if that changes, the
-reference half of the comparison gate fails with `CS0012` while the game half passes, and the fix
-belongs in the package.
+`0.111.0-beta` and `0.113.0-beta` ship the same eight assemblies, so their allowlists are identical
+today. Each lane lists its own, and `scripts/verify-sts2-reference-sdk.sh` keeps an expected file
+set per lane. The game install ships `Sentry.Godot.dll` and its `sts2.dll` references it, but the
+package does not ship it, so no lane can stage it. Nothing CouchCoop compiles needs a type from it
+today; if that changes, the reference half of the comparison gate fails with `CS0012` while the
+game half passes, and the fix belongs in the package.
 
 ## Layout
 
 ```
 Sts2.ReferenceSdk.targets       shared: staging target, missing-input error, common properties
-stable/                         one lane
-  Sts2.ReferenceSdk.stable.csproj     pins + reviewed allowlist + assembly name, nothing else
-  packages.lock.json
 public-beta/
-  Sts2.ReferenceSdk.public-beta.csproj
+  Sts2.ReferenceSdk.public-beta.csproj  pins + reviewed allowlist + assembly name
   packages.lock.json
 beta-v113/
   Sts2.ReferenceSdk.beta-v113.csproj

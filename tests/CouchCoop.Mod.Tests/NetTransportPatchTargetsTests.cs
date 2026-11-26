@@ -180,8 +180,7 @@ internal static class NetTransportPatchTargetsTests
 #endif
     }
 
-    // Layer 3's decision, as arithmetic: no Harmony, no game process, and (deliberately) not #if'd out on v107,
-    // so both game builds run these.
+    // Layer 3's decision, as arithmetic: no Harmony or game process, so every supported lane runs these.
     private static void HandshakeSenderIsCoercedOnlyFromTheTransportPlaceholder()
     {
         const ulong steamHost = 76561198000000123UL;
@@ -206,7 +205,7 @@ internal static class NetTransportPatchTargetsTests
 
     // ENetHandshakePatch resolves BOTH its members by name (a string method spec and a private field) and only
     // LOGS on a miss, so a rename would silently disable it and hand back the intermittent join timeout it was
-    // written to cure. Nothing else in the suite covers either; both resolve on v0.107.1 and v0.111.0 today.
+    // written to cure. Nothing else in the suite covers either; the supported lanes must resolve both.
     private static void EnetHandshakeTargetsResolve()
     {
         var update = AccessTools.Method(ENetHandshakePatch.UpdateTarget);

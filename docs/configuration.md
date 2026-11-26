@@ -170,14 +170,19 @@ in a temp directory and needs no real game install.
 
 ### Building for a branch
 
-**The mod builds, deploys and runs on both supported game builds.** `with-game-branch.sh public-beta
--- <any build>` works: the API lane table in
+**Release lanes cover Steam stable and beta.** The `public-beta` release lane serves Steam stable
+v0.111.1 with a v0.111.0 floor; `beta-v113` keeps its v0.113.0 floor. The v107 release lane is retired,
+and the merged payload requires v0.111.0 or newer. Lane names stay unchanged.
+
+`with-game-branch.sh public-beta -- <any build>` selects a configured install: the API lane table in
 [`../spirectl/bridge-mod/Sts2GameApi.props`](../../spirectl/bridge-mod/Sts2GameApi.props) maps
-`v0.107.1` to lane `v107`, `v0.111.0` to `v111`, and source-only `v0.113.0` to `v113`, the repo root's `Directory.Build.props`
-imports that same table so CouchCoop's own sources are `#if`-split by game build exactly as the
-bridge's are, and the lane is **detected from the install being compiled against**, or passed
-explicitly when there is no install to detect from — never guessed. A game build with no row fails the
-build by name rather than compiling against the wrong declarations.
+`v0.111.0` to lane `v111` and `v0.113.0` or newer (including `v0.114.0`) to `v113`.
+The repo root's `Directory.Build.props` imports that same table so CouchCoop's own sources are
+`#if`-split by game build exactly as the bridge's are, and the lane is
+**detected from the install being compiled against**, or passed
+explicitly when there is no install to detect from. Detection chooses the newest lane whose floor is
+at or below the game version. A build outside the table's tested list warns and attempts that lane;
+an unreadable version or a game below every floor still fails with a setup error.
 
 Two consequences worth knowing before you build for a branch:
 
@@ -193,10 +198,9 @@ Two consequences worth knowing before you build for a branch:
   name, its game API, the game build it is compiled against, its Steam branch, and its **game floor** —
   plus a pinned reference SDK under
   [`eng/Sts2.ReferenceSdk/<lane>/`](../eng/Sts2.ReferenceSdk/README.md) (project +
-  `packages.lock.json`, both tracked). All of them exist for
-  `public-beta` today — `FuYnAloft.Sts2.References 0.111.0-beta`, lane `v111` — so the beta packages
-  like stable does. A lane with no row fails the release by name rather than publishing an
-  undeclared one.
+  `packages.lock.json`, both tracked). The current pins are `FuYnAloft.Sts2.References 0.111.0-beta`
+  for `public-beta` (API `v111`) and `0.113.0-beta` for `beta-v113` (API `v113`). A lane with no row
+  fails the release by name rather than publishing an undeclared one.
 
   The floor is the row that is easy to forget and impossible to omit. One release archive carries every
   lane under `lanes/<floor>/` and the mod picks one at load time, so the floor both **names** a lane's
@@ -205,15 +209,46 @@ Two consequences worth knowing before you build for a branch:
   a single download refuse a game older than anything it supports while still loading on everything
   newer. See [commit-and-release.md](commit-and-release.md) for the packaging and publishing side.
 
-Some game members do not fail a build when they move. A Harmony target resolved by name, or a
-reflective read with a fallback, compiles clean and then degrades silently at runtime — which is why
-`HeadlessAudioMutePatch` now pins its per-act audio-bank target **per lane** and treats a target the
-lane claims but cannot resolve as a refusal that names it, rather than a log line and a half-muted
-seat. When adding a build, expect that class of change to be the expensive one and gate for it
-deliberately: the metadata gate is `dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets`
-(every Harmony patch target resolves) plus `sts2 code verify-references` on the shipped DLLs, and the
-behavioural gate is `tests/scenarios/steam-host-join.sts2.yaml`. Run both: neither one alone is
-enough, because a metadata gate cannot see a protocol step that was *added*.
+### Verifying a new game build
+
+At load time, a release payload also chooses the nearest lane floor at or below the running game.
+A game above the highest shipped floor still loads that lane and logs
+`loader-untested-game-version built=<floor> game=<version>`. A flat development build stamped for an
+older game also loads with that warning; a newer or unparseable build stamp is refused.
+
+Startup guards isolate failures by feature. A changed game member can disable the feature that
+uses it while unrelated features, including the QR host button, can still start. The log names a
+disabled feature with `[couchcoop] feature-disabled name=<feature> reason=<ExceptionType: message>`.
+Optional host-panel setup and host-audio targets are guarded separately. Init ends with one line:
+
+```text
+[couchcoop] compat-summary game=<version> payload=<lane floor|flat> untested=<true|false> disabled=[<feature names>]
+```
+
+`untested` records whether the loader attempted an older payload; it is not a live gameplay test
+result. Check `disabled` and the preceding diagnostics when a feature is missing after an update.
+
+Some game members do not fail a build when they move. Harmony targets and reflective reads need a
+metadata check against the new install, as do compiled calls whose signatures may have changed.
+Rebuild against that install with deployment disabled, then run:
+
+```bash
+export CouchCoopBuildToLocalMods=false
+dotnet run --project tests/CouchCoop.Mod.Tests -- beta-targets
+sts2 --json code verify-references \
+  "src/CouchCoop.Mod.Loader/bin/Debug/net9.0/couchcoop.dll,src/CouchCoop.Mod/bin/Debug/net9.0/CouchCoop.Mod.dll,src/CouchCoop.Mod/bin/Debug/net9.0/CouchCoop.Spirectl.dll" \
+  --assemblies-dir "<new install>/data_sts2_linuxbsd_x86_64" \
+  --control-assemblies-dir "<known-compatible install>/data_sts2_linuxbsd_x86_64"
+```
+
+The configured `game.assembliesDir` must point at the new install before rebuilding. The control
+must resolve the built DLLs' references; a `control-dirty` result means the control inputs need
+correcting. Always pass `--control-assemblies-dir`: it enables detection of reshaped signatures,
+such as an added parameter, that a name-only lookup can miss.
+
+The behavioural gate is `tests/scenarios/steam-host-join.sts2.yaml`. Run it separately in the live-QA
+environment: a metadata check cannot see a protocol step that was *added*, so neither gate alone
+establishes that a seat can join.
 
 ## Browser assets, audio and the cache
 
@@ -269,7 +304,7 @@ version:
 
 ```
 user://couch-coop/cache/
-  <version>/                    one per game version ("v0.107.1", "v0.111.0"), at most two
+  <version>/                    one per game version ("v0.111.1", "v0.113.0"), at most two
     .cache-identity.json        the stamp: game version, content hash, cache versions
     assets/  geoclips/  astc/  pending/
   .trash/                       purged trees, deleted in the background

@@ -22,7 +22,7 @@ namespace CouchCoop.Mod.Loader;
 /// lanes, choosing at runtime, is the shape that survives that refresh.
 /// </para>
 /// <para>
-/// THE DIRECTORY NAMES ARE THE LANE TABLE. <c>lanes/0.107.1/</c>, <c>lanes/0.111.0/</c> — each named by the
+/// THE DIRECTORY NAMES ARE THE LANE TABLE. <c>lanes/0.111.0/</c>, <c>lanes/0.113.0/</c> — each named by the
 /// FLOOR game version it was compiled for, bare <c>M.m.p</c>. There is deliberately no manifest file beside
 /// them: the game scans every <c>*.json</c> under a mod directory, recursively and unbounded, as a candidate
 /// mod manifest, so a second one would register a phantom mod (see <c>godot-log-hygiene</c> in project
@@ -37,9 +37,8 @@ namespace CouchCoop.Mod.Loader;
 /// </para>
 /// <para>
 /// A FLAT PAYLOAD STILL HAS A BUILD IDENTITY, and it is checked. The dev deploy's <c>build-info.txt</c>
-/// names the game build it was compiled against, so a deploy that has been left behind by a game update or
-/// a branch switch is refused here by name rather than crashing later — see
-/// <see cref="DescribeFlatBuildMismatch"/> for why that comparison is exact while a lane's is not.
+/// names the game build it was compiled against. Older builds are attempted with a warning; builds newer
+/// than the game and explicit unparseable stamps are refused by <see cref="DescribeFlatBuildMismatch"/>.
 /// </para>
 /// <para>
 /// Godot-free, Steam-free and dependency-free on purpose, for two reasons. It runs BEFORE any lane assembly
@@ -56,6 +55,9 @@ internal static class CouchCoopLaneSelection
     internal const string LanesDirectoryName = "lanes";
 
     internal const string ReleaseInfoFileName = "release_info.json";
+
+    // Shared with the implementation without loading it before lane selection has completed.
+    internal const string UntestedGameVersionKey = "CouchCoop.UntestedGameVersion";
 
     /// <summary>
     /// The deploy stamp <c>scripts/stamp-local-mod.sh</c> writes beside the assemblies, naming the game
@@ -108,7 +110,18 @@ internal static class CouchCoopLaneSelection
     /// </param>
     /// <param name="DetectedVersion">The raw <c>version</c> string read from the install, if any.</param>
     /// <param name="Refusal">A player-readable reason not to load, or <see langword="null"/>.</param>
-    internal sealed record LaneSelection(string? LaneDirectory, string? DetectedVersion, string? Refusal);
+    /// <param name="Warning">The diagnostic for an attempt on a newer game build, if any.</param>
+    internal sealed record LaneSelection(
+        string? LaneDirectory, string? DetectedVersion, string? Refusal, string? Warning = null);
+
+    internal static void ReportCompatibility(LaneSelection selection, Action<string> warn)
+    {
+        AppContext.SetData(UntestedGameVersionKey, selection.Warning is not null);
+        if (selection.Warning is not null)
+        {
+            warn(selection.Warning);
+        }
+    }
 
     /// <summary>A three-component game version, compared numerically per component.</summary>
     /// <remarks>
@@ -249,13 +262,14 @@ internal static class CouchCoopLaneSelection
                     return new LaneSelection(null, detectedVersion,
                         $"CouchCoop lane directory must be named exactly '{LanesDirectoryName}'. The mod is not loaded.");
                 }
-                // The flat dev layout. Silent by design — this is the path every `build-local-mod.sh`
-                // deploy takes, and it predates lanes entirely — EXCEPT when the deploy stamp beside it
-                // says it was compiled for a different game build than the one running.
-                return new LaneSelection(
-                    null,
-                    detectedVersion,
-                    DescribeFlatBuildMismatch(ReadFlatBuildGameVersion(modDirectory), detectedVersion));
+                var compiledFor = ReadFlatBuildGameVersion(modDirectory);
+                var refusal = DescribeFlatBuildMismatch(compiledFor, detectedVersion);
+                var warning = refusal is null
+                    && TryParseVersion(compiledFor, out var compiled)
+                    && TryParseVersion(detectedVersion, out var game)
+                    && compiled.CompareTo(game) < 0
+                        ? DescribeUntestedGameVersion(compiledFor!, detectedVersion!) : null;
+                return new LaneSelection(null, detectedVersion, refusal, warning);
             }
 
             laneDirectories = Directory.GetDirectories(lanesDirectory);
@@ -302,12 +316,18 @@ internal static class CouchCoopLaneSelection
 
         string? best = null;
         var bestVersion = default(LaneVersion);
+        LaneVersion? newestVersion = null;
         foreach (var directory in laneDirectories)
         {
             // Not a lane — a README folder, a stray copy, anything. Ignored, never fatal.
             if (!TryParseVersion(LeafName(directory), out var laneVersion))
             {
                 continue;
+            }
+
+            if (newestVersion is null || laneVersion.CompareTo(newestVersion.Value) > 0)
+            {
+                newestVersion = laneVersion;
             }
 
             if (laneVersion.CompareTo(running) > 0)
@@ -332,7 +352,9 @@ internal static class CouchCoopLaneSelection
                 + "update the game, or install the release that supports it. The mod is not loaded.");
         }
 
-        return new LaneSelection(best, detectedVersion, null);
+        return new LaneSelection(best, detectedVersion, null,
+            newestVersion is { } newest && running.CompareTo(newest) > 0
+                ? DescribeUntestedGameVersion(newest.ToString(), detectedVersion!) : null);
     }
 
     /// <summary>
@@ -393,39 +415,33 @@ internal static class CouchCoopLaneSelection
     /// Why a flat dev payload must not load into <paramref name="detectedVersion"/>, or
     /// <see langword="null"/> when it may.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// EXACT MATCH, which is the opposite of the nearest-lower-or-equal rule <see cref="Select"/> applies to
-    /// a lane, and the difference is the whole point. A lane directory is named by the FLOOR build it
-    /// supports, so "highest lane at or below the game" is a meaningful answer. A flat payload is not a
-    /// lane: it carries one compile, and the only thing known about it is the single build it was compiled
-    /// against. Under the floor rule a v107-compiled deploy would be ACCEPTED into a v0.111.0 game — the
-    /// exact crash this guard exists to stop, where the v107 sources name a game type the beta removed and
-    /// the bridge's API manifest dies on a type load before it can say why.
-    /// </para>
-    /// <para>
-    /// Strictness costs nothing here because a flat payload only ever comes from
-    /// <c>scripts/build-local-mod.sh</c>, which compiles against the very install it deploys into. If the
-    /// two disagree, the install moved under the deploy and the answer is always the same one line. A
-    /// released payload carries <c>lanes/</c> and never reaches this.
-    /// </para>
-    /// </remarks>
     internal static string? DescribeFlatBuildMismatch(string? compiledFor, string? detectedVersion)
     {
-        if (!TryParseVersion(compiledFor, out var compiled)
-            || !TryParseVersion(detectedVersion, out var running)
-            || compiled.CompareTo(running) == 0)
+        if (compiledFor is null)
+        {
+            return null;
+        }
+
+        if (!TryParseVersion(compiledFor, out var compiled))
+        {
+            return $"CouchCoop build stamp '{compiledFor}' is not a M.m.p version "
+                + $"(game {detectedVersion ?? "<undetected>"}). Re-run scripts/build-local-mod.sh "
+                + $"against this install to replace {BuildInfoFileName}. The mod is not loaded.";
+        }
+
+        if (!TryParseVersion(detectedVersion, out var running) || compiled.CompareTo(running) <= 0)
         {
             return null;
         }
 
         return $"CouchCoop was built for Slay the Spire 2 {compiledFor} but this install is "
-            + $"{detectedVersion}. A local dev deploy is compiled against ONE game build and binds members "
-            + "another build does not have, so loading it here would fail from inside a game callback with "
-            + $"nothing naming CouchCoop. Re-run scripts/build-local-mod.sh against this install (the "
-            + $"build this deploy came from is recorded in {BuildInfoFileName} beside this file). The mod "
-            + "is not loaded.";
+            + $"{detectedVersion}. This payload requires a newer game build. Re-run "
+            + $"scripts/build-local-mod.sh against this install (the build this deploy came from is "
+            + $"recorded in {BuildInfoFileName} beside this file). The mod is not loaded.";
     }
+
+    private static string DescribeUntestedGameVersion(string built, string game)
+        => $"loader-untested-game-version built={built} game={game}";
 
     /// <summary>
     /// The first <c>&lt;directory&gt;/&lt;simpleName&gt;.dll</c> that exists across

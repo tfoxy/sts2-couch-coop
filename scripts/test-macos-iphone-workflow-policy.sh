@@ -221,8 +221,11 @@ sed '0,/fixture_bin="\$fixture_stage\/\.godot\/mono\/temp\/bin\/Debug"/s//fixtur
 expect_reject godot-config "$tmp/godot-config.yml" "both Mac jobs must stage the Debug fixture"
 
 cp "$workflow" "$tmp/metadata.yml"
-sed '0,/-p:Sts2GameApi=v111/s//-p:Sts2GameApi=removed/' "$workflow" > "$tmp/metadata.yml"
+sed '0,/-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v111/s//-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=removed/' "$workflow" > "$tmp/metadata.yml"
 expect_reject metadata "$tmp/metadata.yml" "public-beta metadata guards must use API v111"
+sed '0,/-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v113/s//-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=removed/' \
+  "$workflow" > "$tmp/metadata-v113.yml"
+expect_reject metadata-v113 "$tmp/metadata-v113.yml" "beta-v113 metadata guards must use API v113"
 
 cp "$workflow" "$tmp/intel-simulator.yml"
 printf '\n# %s\n' 'iphone-safari-intel' >> "$tmp/intel-simulator.yml"
@@ -234,9 +237,9 @@ sed "0,/steps\.iphone_safari_contract\.outcome != 'skipped'/s//steps.iphone_safa
 expect_reject skipped-simulator "$tmp/skipped-simulator.yml" "ARM artifacts must not be validated when their producer was skipped"
 
 cp "$workflow" "$tmp/simulator-api-lane.yml"
-sed '0,/-p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false --/s//-p:CouchCoopBuildToLocalMods=false --/' \
+sed '0,/-p:Sts2GameApi=v111 -p:CouchCoopBuildToLocalMods=false --/s//-p:CouchCoopBuildToLocalMods=false --/' \
   "$workflow" > "$tmp/simulator-api-lane.yml"
-expect_reject simulator-api-lane "$tmp/simulator-api-lane.yml" "the ARM Simulator harness must preserve its verified stable API lane"
+expect_reject simulator-api-lane "$tmp/simulator-api-lane.yml" "the ARM Simulator harness must preserve its verified public-beta API lane"
 
 cp "$workflow" "$tmp/field-profile.yml"
 sed '0,/\.ci-artifacts\/iphone-webkit\/field-repro/s//.ci-artifacts\/iphone-webkit\/removed/' \

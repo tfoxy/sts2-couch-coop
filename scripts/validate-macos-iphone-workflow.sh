@@ -232,10 +232,10 @@ require_count "-p:CouchCoopBetaTargetsMode=metadata" 6 \
   "both Mac jobs must restore and run the metadata-only target mode"
 require_count '-p:CouchCoopLocalConfigPath="$RUNNER_TEMP/no-local-game-config.yaml"' 6 \
   "metadata-only target verification must not consult a developer game configuration"
-require_count "-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v107" 2 \
-  "stable metadata guards must use API v107 on both Mac jobs"
 require_count "-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v111" 2 \
   "public-beta metadata guards must use API v111 on both Mac jobs"
+require_count "-p:CouchCoopBetaTargetsMode=metadata -p:Sts2GameApi=v113" 2 \
+  "beta-v113 metadata guards must use API v113 on both Mac jobs"
 require_count "--mode iphone-burst-self-test" 2 \
   "both Mac jobs must verify the frozen iPhone workload manifests and acknowledgement gates"
 require_count "npm --prefix frontend run test:iphone-webkit" 1 \
@@ -245,18 +245,18 @@ if [ ! -f "$webkit_runner" ] \
   || ! grep -Fq 'for (const profile of ["baseline", "field-repro"])' "$webkit_runner"; then
   fail "the WebKit wrapper must run baseline then field-repro"
 fi
-require_fixed "beta-targets \"\$RUNNER_TEMP/couchcoop-reference-sdk/stable/sts2.dll\"" \
-  "stable reference lane metadata guard is missing"
 require_fixed "beta-targets \"\$RUNNER_TEMP/couchcoop-reference-sdk/public-beta/sts2.dll\"" \
   "public-beta reference lane metadata guard is missing"
+require_fixed "beta-targets \"\$RUNNER_TEMP/couchcoop-reference-sdk/beta-v113/sts2.dll\"" \
+  "beta-v113 reference lane metadata guard is missing"
 require_count "name: Run iPhone 13 Simulator Safari survival contract" 1 \
   "the exact iPhone Simulator contract must run only on Apple Silicon"
 require_fixed "id: iphone_safari_contract" \
   "the ARM Simulator producer must expose an outcome for artifact validation"
 require_fixed "steps.iphone_safari_contract.outcome != 'skipped'" \
   "ARM artifacts must not be validated when their producer was skipped"
-require_fixed "-p:Sts2GameApi=v107 -p:CouchCoopBuildToLocalMods=false --" \
-  "the ARM Simulator harness must preserve its verified stable API lane"
+require_fixed "-p:Sts2GameApi=v111 -p:CouchCoopBuildToLocalMods=false --" \
+  "the ARM Simulator harness must preserve its verified public-beta API lane"
 require_fixed "--iphone-profile field-repro" "ARM Simulator must run the field-reproduction profile"
 require_fixed 'harness_err="$artifact_dir/iphone-safari-host.log"' \
   "ARM Simulator must stage the full synthetic host stderr log"

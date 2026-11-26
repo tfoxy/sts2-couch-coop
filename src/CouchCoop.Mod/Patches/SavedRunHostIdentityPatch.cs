@@ -18,7 +18,7 @@ internal static class SavedRunHostIdentityPatch
     private static readonly object Sync = new();
     private static bool _applied;
 
-    internal static IReadOnlyList<(Type Type, string Name, Type[] Args)> Targets { get; } =
+    internal static IReadOnlyList<(Type Type, string Name, Type[] Args)> Targets =>
     [
         (typeof(NMultiplayerSubmenu), "StartHost", [typeof(SerializableRun)]),
     ];
@@ -30,21 +30,17 @@ internal static class SavedRunHostIdentityPatch
             if (_applied) return;
             _applied = true;
 
-            var target = AccessTools.Method(typeof(NMultiplayerSubmenu), "StartHost", [typeof(SerializableRun)]);
-            if (target is null)
-            {
-                CouchCoopLog.Stderr("SavedRunHostIdentityPatch: NMultiplayerSubmenu.StartHost(SerializableRun) not found — saved runs use stock hosting.");
-                return;
-            }
-
             try
             {
+                var target = AccessTools.Method(typeof(NMultiplayerSubmenu), "StartHost", [typeof(SerializableRun)])
+                    ?? throw new MissingMethodException("Saved-run host identity target was not found");
                 new Harmony("com.couchcoop.saved-run-host-identity").Patch(
                     target,
                     prefix: new HarmonyMethod(Local(nameof(PrefixStartHost))));
             }
             catch (Exception exception)
             {
+                CouchCoopMod.DisableFeature(nameof(SavedRunHostIdentityPatch), exception);
                 // Degraded, not lost: a saved Steam run falls back to stock hosting rather than becoming
                 // unjoinable, so this records and logs without adding a row the player cannot act on.
                 CouchCoopPatchDiagnostics.PatchFailed(

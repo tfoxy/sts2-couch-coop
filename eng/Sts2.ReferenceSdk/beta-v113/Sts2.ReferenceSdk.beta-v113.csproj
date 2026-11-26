@@ -3,7 +3,7 @@
     Reference lane `beta-v113`: the game's `public-beta` Steam branch, game build v0.113.0.
 
     `-beta` in the package version is NuGet PRERELEASE, not the Steam branch - every published
-    FuYnAloft.Sts2.References version carries it, including the stable lane's 0.107.0-beta. What
+    FuYnAloft.Sts2.References version carries it. What
     makes this the beta lane is the version number (0.113.0 pairs with game v0.113.0), not the
     suffix.
 

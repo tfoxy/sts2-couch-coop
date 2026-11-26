@@ -52,7 +52,7 @@ public static partial class CouchCoopModEntry
 
             // WHICH LANE. One payload ships an implementation per game build under `lanes/<floor version>/`;
             // this picks the highest one at or below the running game. A flat payload (every dev deploy) has
-            // no `lanes/` directory and takes the pre-lane path unchanged and silently. See
+            // no `lanes/` directory and compares its build stamp instead. See
             // CouchCoopLaneSelection for why the decision cannot simply call spirectl's version ladder.
             detectedVersion = CouchCoopLaneSelection.ResolveGameVersion();
             Checkpoint($"loader-version version={detectedVersion ?? "<undetected>"}");
@@ -68,6 +68,12 @@ public static partial class CouchCoopModEntry
                 CouchCoopLogLine.Error(selection.Refusal);
                 return;
             }
+
+            CouchCoopLaneSelection.ReportCompatibility(selection, warning =>
+            {
+                CouchCoopLogLine.Stderr(warning);
+                CouchCoopLogLine.Warn(warning);
+            });
 
             // The lane FIRST, the mod root second: the lane owns CouchCoop.Mod.dll / CouchCoop.Spirectl.dll,
             // the root owns everything both lanes share.

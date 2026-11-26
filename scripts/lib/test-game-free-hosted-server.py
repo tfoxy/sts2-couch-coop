@@ -50,7 +50,7 @@ if os.environ.get("CHECK_FAIL") == sys.argv[1]:
 
     def assert_scratch_removed(self, build_args):
         output = Path(build_args[build_args.index("-o") + 1])
-        self.assertEqual(output.name, "stable")
+        self.assertEqual(output.name, "public-beta")
         self.assertEqual(output.parent.parent, self.root)
         self.assertFalse(output.parent.exists())
         return output
@@ -63,13 +63,13 @@ if os.environ.get("CHECK_FAIL") == sys.argv[1]:
         build, run = [call[1] for call in calls]
         output = self.assert_scratch_removed(build)
         self.assertEqual(build, [
-            "build", "eng/Sts2.ReferenceSdk/stable/Sts2.ReferenceSdk.stable.csproj",
+            "build", "eng/Sts2.ReferenceSdk/public-beta/Sts2.ReferenceSdk.public-beta.csproj",
             "-c", "Release", "-o", str(output), "-p:RestoreLockedMode=true",
-            "-p:Sts2GameApi=v107", "-p:CouchCoopBuildToLocalMods=false",
+            "-p:Sts2GameApi=v111", "-p:CouchCoopBuildToLocalMods=false",
         ])
         self.assertEqual(run, [
             "run", "--project", "tests/CouchCoop.HostedServerHarness", "-c", "Release",
-            f"-p:Sts2AssembliesDir={output}", "-p:Sts2GameApi=v107",
+            f"-p:Sts2AssembliesDir={output}", "-p:Sts2GameApi=v111",
             "-p:CouchCoopBuildToLocalMods=false", "--", "--mode", "iphone-burst-self-test",
         ])
         self.assertEqual(calls[1][2], "Major")

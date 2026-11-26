@@ -30,6 +30,7 @@ internal static class CouchCoopPatchDiagnostics
     /// </param>
     internal static void PatchFailed(string patch, string detail, bool costsCoop)
     {
+        CouchCoopMod.DisableFeature(patch, detail);
         var message = $"{patch}: {detail}";
         CouchCoopLog.Stderr(message);
         CouchCoopLog.Error(message);

@@ -19,16 +19,16 @@ usage:
   scripts/compare-sts2-reference-builds.sh LANE GAME_ASSEMBLIES_DIR [LANE GAME_ASSEMBLIES_DIR ...]
   scripts/compare-sts2-reference-builds.sh GAME_ASSEMBLIES_DIR
 
-Lanes are reviewed game builds -- `stable`, `public-beta` and `beta-v113` --
+Lanes are reviewed game builds -- `public-beta` and `beta-v113` --
 matching eng/Sts2.ReferenceSdk/<lane>/. The one-argument form means
-the stable lane.
+the public-beta lane (Steam stable).
 
 Multiple lanes run SEQUENTIALLY, never concurrently: every pass builds the same consumer projects
 into the same bin/Release/net9.0 directories, so two lanes in one checkout would overwrite each
 other's outputs. Use separate checkouts to get parallelism.
 
-The `-beta` suffix on a package version is NuGet prerelease, not a Steam branch: the stable lane's
-pin is 0.107.0-beta. Lane names are the only thing that says which game branch is meant.
+The `-beta` suffix on a package version is NuGet prerelease, not a Steam branch.
+The public-beta lane now serves Steam stable.
 EOF
 }
 
@@ -43,7 +43,7 @@ lane_project() { printf '%s/%s/Sts2.ReferenceSdk.%s.csproj\n' "$sdk_root" "$1" "
 # ------------------------------------------------------------------------------------------------
 args=("$@")
 if [[ ${#args[@]} -eq 1 && -d "${args[0]}" ]]; then
-  args=(stable "${args[0]}")
+  args=(public-beta "${args[0]}")
 fi
 if [[ ${#args[@]} -eq 0 || $(( ${#args[@]} % 2 )) -ne 0 ]]; then
   usage
@@ -99,7 +99,7 @@ trap 'rm -rf "$work_root"' EXIT
 # called in a condition context, so a failed build would otherwise fall through to the copies and
 # the IL diff and report a confusing failure instead of the real one.
 
-# The API lane (v107 / v111) the sources must compile against for a given game build -- the table is
+# The API lane (v111 / v113) the sources must compile against for a given game build -- the table is
 # ../spirectl/bridge-mod/Sts2GameApi.props, imported by this repo's root Directory.Build.props, and it is
 # never copied here. A real install carries release_info.json, so MSBuild detects the lane from it and this
 # just reads back what it decided.

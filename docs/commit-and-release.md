@@ -177,9 +177,9 @@ on the way in (`eng/Sts2.ReferenceSdk/<lane>/`, reviewed by
 `scripts/verify-sts2-reference-sdk.sh`) and after the game version it was pinned from on the way out,
 because a directory the loader matches against a running game should be named for what it matches.
 
-The lanes are `stable` (v0.107.1), `public-beta` (v0.111.0) and `beta-v113` (v0.113.0), shipping
-under `lanes/0.107.1/`, `lanes/0.111.0/` and `lanes/0.113.0/`. The latter two cover beta builds;
-the loader picks the highest floor at or below the running game version.
+The two lanes are `public-beta` (v0.111.0 floor, serving Steam stable v0.111.x) and `beta-v113`
+(v0.113.0 floor, serving v0.113.0 and newer), shipping under `lanes/0.111.0/` and `lanes/0.113.0/`.
+The loader picks the highest floor at or below the running game version. Lane names stay unchanged.
 
 `scripts/package-release.sh` builds every lane in one invocation — it clones the two pinned sibling
 repositories once and then stages the lanes into one payload — because the workflow calls it once and
@@ -236,7 +236,7 @@ signature, and one small checksum file next to them costs nothing while working 
 ### `min_game_version`, and what it cannot do
 
 A payload has one manifest, so it declares **one** `min_game_version`, and it is the **lowest** game
-version any of its lanes was built for — `v0.107.1`. A floor cannot express a set, so that is all it
+version any of its lanes was built for — `v0.111.0`. A floor cannot express a set, so that is all it
 can say: anything older than the oldest lane is refused by the game itself, and everything above it
 is the loader's decision inside the payload — which lane to load for the build it finds itself in,
 and what to do when a running build matches none of them. Stamping the newest lane's version instead
