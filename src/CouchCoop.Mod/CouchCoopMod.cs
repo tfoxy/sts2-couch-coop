@@ -425,6 +425,13 @@ public static class CouchCoopMod
         string? game = null;
         try { game = _runtime?.Capabilities.GameVersion; }
         catch (Exception) { }
+        // Capabilities can report an empty version this early; the cache root's content identity is the
+        // same fallback StartHostUiServices uses.
+        if (string.IsNullOrWhiteSpace(game))
+        {
+            try { game = CouchCoopCacheRoot.Content.GameVersion; }
+            catch (Exception) { }
+        }
         var directory = Path.GetDirectoryName(typeof(CouchCoopMod).Assembly.Location);
         var payload = Path.GetFileName(Path.GetDirectoryName(directory)) == "lanes"
             ? Path.GetFileName(directory) : "flat";

@@ -39,7 +39,7 @@ internal sealed class CouchCoopFeatureCompatibility(Action<string> log)
     internal string Summary(string? game, string payload, bool untested)
     {
         lock (_gate)
-            return $"compat-summary game={game ?? "<undetected>"} payload={payload} "
+            return $"compat-summary game={(string.IsNullOrWhiteSpace(game) ? "<undetected>" : game)} payload={payload} "
                 + $"untested={untested.ToString().ToLowerInvariant()} disabled=[{string.Join(",", _disabled)}]";
     }
 

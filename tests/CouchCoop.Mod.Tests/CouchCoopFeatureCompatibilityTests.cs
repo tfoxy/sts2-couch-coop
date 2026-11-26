@@ -103,6 +103,8 @@ internal static class CouchCoopFeatureCompatibilityTests
             "lane and untested context are explicit");
         Expect(compatibility.Summary(null, "flat", false) ==
             "compat-summary game=<undetected> payload=flat untested=false disabled=[]", "flat and unknown game context");
+        Expect(compatibility.Summary("", "flat", false) ==
+            "compat-summary game=<undetected> payload=flat untested=false disabled=[]", "empty game version reads as undetected");
     }
 
     private static void InitUsesGuardedDelegateBoundaries()
