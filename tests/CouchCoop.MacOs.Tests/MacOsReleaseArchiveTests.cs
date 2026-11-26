@@ -105,7 +105,7 @@ internal static class MacOsReleaseArchiveTests
     }
 
     private static bool IsCaptureRecordOrTable(string path) => Regex.IsMatch(path,
-        @"\Arender-capture/(linux|windows|macos)/(calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}|abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-rendering-server)\z");
+        @"\Arender-capture/(linux|windows|macos)/(calibration\.megadot-[0-9]+\.[0-9]+\.[0-9]+-m[0-9]+-[0-9a-f]{8}|abi-table\.godot-[0-9]+\.[0-9]+\.[0-9]+-(rendering-server|audio-driver))\z");
 
     private static DependencyClosure.Node ReadMetadataOnly(string path)
     {
