@@ -5,7 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/upload-workshop-release.sh [--dist <directory>]
                                           [--workspace <directory>] [--visibility private|public|unlisted|friends_only]
-                                          [--yes]
+                                          [--yes] [--listing-change] [--allow-change-note-links]
 
 Publishes a CouchCoop release to a Steam Workshop item. A release is ONE archive
 carrying every reference lane, so this is ONE revision -- linked to no game branch,
@@ -28,7 +28,14 @@ Publishing to the public listing asks for confirmation first. --yes skips that, 
 is the only way to do it non-interactively.
 
 The change note is the CHANGELOG.md section, the same bytes the GitHub Release body
-uses, under a heading naming the payload's version.
+uses, under a heading naming the payload's version. A change note carrying a link is
+refused unless --allow-change-note-links is passed.
+
+The listing (title, description, tags and every translation) is compared with what this
+workspace last published. Steam re-checks changed listing text before the update is
+shown, which has kept an update hidden for days, so a changed listing asks you to type
+"listing" first. --listing-change accepts it without asking. A first publish has nothing
+to compare with and is not asked.
 
 Environment:
   COUCHCOOP_WORKSHOP_UPLOADER_DIR    uploader directory (default: <repo>/.sts2/uploader)
@@ -49,11 +56,21 @@ visibility_explicit=false
 workspace_arg=""
 dist_dir=""
 assume_yes=false
+listing_change=false
+allow_note_links=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes)
       assume_yes=true
+      shift
+      ;;
+    --listing-change)
+      listing_change=true
+      shift
+      ;;
+    --allow-change-note-links)
+      allow_note_links=true
       shift
       ;;
     --visibility)
@@ -296,6 +313,47 @@ else
   }
 fi
 
+# ---- listing text ------------------------------------------------------------------------------
+# Steam's content check re-reads listing text that changed and keeps the update hidden until it has
+# (v0.7.1 waited about two days; Support said further edits would likely queue it again). Updates
+# whose listing matched the last one went out at once, so a changed listing is never a by-product:
+# it is compared with what this workspace last published and must be accepted on purpose.
+config_for_upload="$config_source"
+[[ "$is_public_workspace" != true ]] || config_for_upload="$localized_config"
+
+# What Steam shows on the item page. The change note is new on every release, visibility only moves
+# on an explicit flag, and the branch keys are deleted below, so none of them count as a listing edit.
+listing_of() { jq -S 'del(.changeNote, .visibility, .minBranch, .maxBranch)' "$1"; }
+published_listing="$workspace/.published-listing.json"
+listing_of "$config_for_upload" > "$stage_dir/listing.json"
+listing_baseline=""
+if [[ -f "$published_listing" ]]; then
+  listing_baseline="$published_listing"
+elif [[ -f "$workspace/mod_id.txt" ]]; then
+  # A workspace from before this record existed: its workshop.json is what the last upload staged.
+  listing_of "$config_source" > "$stage_dir/listing-baseline.json"
+  listing_baseline="$stage_dir/listing-baseline.json"
+fi
+if [[ -n "$listing_baseline" ]] && ! cmp -s "$listing_baseline" "$stage_dir/listing.json"; then
+  mapfile -t listing_changes < <(jq -rn --slurpfile old "$listing_baseline" --slurpfile new "$stage_dir/listing.json" '
+    def parts: {("default (" + (.language // "english") + ")"): del(.localizations)}
+      + ([(.localizations // [])[] | {(.language): .}] | add // {});
+    ($old[0] | parts) as $o | ($new[0] | parts) as $n
+    | ([$o, $n] | map(keys) | add | unique)[] | select($o[.] != $n[.])')
+  printf 'This upload changes the listing text Steam shows, compared with the last publish: %s\n' \
+    "${listing_changes[*]}" >&2
+  echo "Steam re-checks changed listing text and may keep the update hidden for a day or two." >&2
+  if [[ "$listing_change" != true ]]; then
+    [[ -t 0 ]] || {
+      echo "Refusing a listing change: pass --listing-change to publish it, or keep the listing as it" >&2
+      echo "was and save the edit for a release that can wait." >&2
+      exit 1
+    }
+    read -r -p 'Type "listing" to publish the changed listing: ' reply
+    [[ "$reply" == listing ]] || { echo "Aborted." >&2; exit 1; }
+  fi
+fi
+
 # ---- confirm before touching the public listing --------------------------------------------------
 # The default workspace is the public listing. Publishing to it is the one action here that reaches
 # every subscriber, so it is never the by-product of a command someone half-typed.
@@ -347,8 +405,16 @@ compatibility="$(release_compatibility_summary "${payload_lanes[@]}")"
 
 change_note="$(printf '%s\n\n%s\n\n%s\n' "$heading" "$compatibility" "$release_notes")"
 
-config_for_upload="$config_source"
-[[ "$is_public_workspace" != true ]] || config_for_upload="$localized_config"
+# The change note is new text on every release, so it is the one part of an update Steam always
+# reads afresh. Links are what its content check looks for, so a release note does not carry one
+# unless someone asked for it.
+if [[ "$allow_note_links" != true ]] && grep -qiE 'https?://|\[url' <<<"$change_note"; then
+  echo "The change note carries a link:" >&2
+  grep -iE 'https?://|\[url' <<<"$change_note" | sed 's/^/  /' >&2
+  echo "Steam's content check looks for links. Drop it from the CHANGELOG.md section, or pass" >&2
+  echo "--allow-change-note-links to publish it anyway." >&2
+  exit 1
+fi
 
 # minBranch/maxBranch are DELETED, never written -- including out of whatever a workspace's own
 # workshop.json still declares from the retired branch-linked shape. A branch-linked revision is
@@ -397,3 +463,5 @@ if [[ "$upload_status" -ne 0 ]]; then
   echo "Steam rejected the update, and a blind retry republishes the same content." >&2
   exit 1
 fi
+# Only a successful upload moves the baseline: after a failure the item still shows the old listing.
+cp "$stage_dir/listing.json" "$published_listing"

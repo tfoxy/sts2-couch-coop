@@ -270,6 +270,15 @@ It asks for confirmation before touching the public listing, and refuses non-int
 `--yes` is passed. The change note is the version's `CHANGELOG.md` section — the same bytes the
 GitHub Release body uses — under a heading naming the payload's version.
 
+**Steam re-checks changed text.** An update can be hidden for a day or more while Steam's content
+check reviews it. Updates whose listing (title, description, tags, translations) matched the previous
+one have gone out at once; an update that rewrote the listing in every language waited about two
+days. So listing edits belong in a release that can wait, not in a quick fix. The script compares the
+listing it is about to send with `<workspace>/.published-listing.json`, the record of the last
+successful upload, and asks you to type `listing` when they differ (`--listing-change` accepts it
+non-interactively). It also refuses a change note containing a link, since links are what the check
+looks for, unless `--allow-change-note-links` is passed.
+
 ### Localized public metadata
 
 The public item's title and description are generated from the tracked `workshop/` source bundle.

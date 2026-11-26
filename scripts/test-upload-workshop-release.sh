@@ -234,7 +234,7 @@ cat > "$changelog" <<'EOF'
 ### Changed
 
 - A fixture change a player would read.
-- A `code span`, some **bold**, and a [link](https://example.invalid/x) a player would read.
+- A `code span` and some **bold** a player would read.
 - A wrapped bullet whose second line is indented, which must join the item it belongs to
   rather than escaping the list.
 EOF
@@ -330,14 +330,29 @@ expect_refused unverified-localized-uploader 'needs the PR #12-capable uploader'
 mv "$fixture/localized-uploader-marker.json" "$uploader_dir/.couchcoop-localized-uploader.json"
 rm "$fixture/uploader.log"
 
+# The fixture workspace's listing is a placeholder, so the rendered multilingual listing is a
+# CHANGE against what it last staged. A changed listing goes through Steam's content check again, so
+# it is refused unless accepted on purpose -- --yes confirms the publish, not the listing edit.
+: > "$fixture/uploader.log"
+expect_refused listing-change-unconfirmed 'pass --listing-change to publish it' --yes --dist "$assets"
+grep -qF 'default (english)' "$fixture/listing-change-unconfirmed.out" \
+  || fail "the refusal does not say which part of the listing changed"
+[[ ! -e "$workspace/.published-listing.json" ]] || fail "a refused run recorded a listing"
+rm "$fixture/uploader.log"
+
 # Leg 1: the DEFAULT run -- no arguments beyond the confirmation -- publishes the latest GitHub
 # Release to the public listing as ONE revision, and leaves the item's visibility alone. This is the
-# shape a maintainer actually types.
+# shape a maintainer actually types (here with the listing change accepted, see above).
 MOCK_RELEASE_ASSETS="$assets" \
 MOCK_UPLOADER_LOG="$fixture/uploader.log" \
 COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
 PATH="$mock_bin:$PATH" \
-bash "$script" --yes
+bash "$script" --yes --listing-change
+
+# A successful upload records what the item now shows, which is what the next run compares with.
+assert_file "$workspace/.published-listing.json"
+assert_eq "$(jq -S 'del(.changeNote, .visibility, .minBranch, .maxBranch)' "$workspace/workshop.json")" \
+  "$(cat "$workspace/.published-listing.json")"
 
 assert_uploaded "$workspace"
 assert_eq public "$(jq -r '.visibility' "$workspace/workshop.json")"
@@ -381,8 +396,6 @@ grep -qF '[*]A fixture change a player would read.' <<<"$note_bb" \
   || fail "a bullet was not converted to a BBCode list item: $note_bb"
 grep -qF '[i]code span[/i]' <<<"$note_bb" || fail "inline code was not converted: $note_bb"
 grep -qF '[b]bold[/b]' <<<"$note_bb" || fail "bold was not converted: $note_bb"
-grep -qF '[url=https://example.invalid/x]link[/url]' <<<"$note_bb" \
-  || fail "a link was not converted: $note_bb"
 # The wrapped continuation must be folded INTO its item. Left on its own line it falls outside the
 # [*] and Steam renders it as a stray paragraph in the middle of the list.
 grep -qF '[*]A wrapped bullet whose second line is indented, which must join the item it belongs to rather than escaping the list.' <<<"$note_bb" \
@@ -586,6 +599,52 @@ grep -qF 'Test build 0.1.1+snapshot.abcdef123456' \
 # ...and the public listing still refuses one even with a dev channel sitting beside it.
 expect_refused snapshot-public 'is not a dev channel' --yes --dist "$snapshot_dist"
 rm -f "$dev_workspace/dev-channel"
+
+# Leg 15a: a changed listing on an existing item is refused without --listing-change, names what
+# changed, and leaves the recorded listing alone; accepted, it publishes and becomes the baseline,
+# after which the same listing publishes without asking.
+jq '.description = "Dev fixture description, reworded"' "$dev_workspace/workshop.json" > "$fixture/dev.json"
+mv "$fixture/dev.json" "$dev_workspace/workshop.json"
+dev_listing_before="$(cat "$dev_workspace/.published-listing.json")"
+expect_refused dev-listing-change 'default (english)' --dist "$assets" --workspace "$dev_workspace"
+assert_eq "$dev_listing_before" "$(cat "$dev_workspace/.published-listing.json")"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace" --listing-change
+assert_uploaded "$dev_workspace"
+assert_eq 'Dev fixture description, reworded' "$(jq -r '.description' "$dev_workspace/.published-listing.json")"
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace"
+assert_uploaded "$dev_workspace"
+
+# Leg 15b: a change note carrying a link is refused unless asked for; asked for, the Markdown link is
+# converted to a BBCode one.
+linked_changelog="$fixture/CHANGELOG-linked.md"
+cat > "$linked_changelog" <<'EOF'
+# Changelog
+
+## [0.1.0] - 2026-01-01
+
+### Changed
+
+- Thanks to [someone](https://example.invalid/x) for the report.
+EOF
+CHANGELOG_FILE="$linked_changelog" \
+  expect_refused change-note-link '--allow-change-note-links to publish it anyway' \
+  --dist "$assets" --workspace "$dev_workspace"
+grep -qF 'https://example.invalid/x' "$fixture/change-note-link.out" \
+  || fail "the refusal does not show the offending link"
+CHANGELOG_FILE="$linked_changelog" \
+MOCK_UPLOADER_LOG="$fixture/uploader.log" \
+COUCHCOOP_WORKSHOP_UPLOADER_DIR="$uploader_dir" \
+PATH="$blocked_gh_bin:$PATH" \
+bash "$script" --dist "$assets" --workspace "$dev_workspace" --allow-change-note-links
+assert_uploaded "$dev_workspace"
+grep -qF '[url=https://example.invalid/x]someone[/url]' <<<"$(jq -r '.changeNote' "$dev_workspace/workshop.json")" \
+  || fail "a link was not converted: $(jq -r '.changeNote' "$dev_workspace/workshop.json")"
 
 # Leg 15: a failed upload stops the release and says to look at the item page before retrying --
 # an uploader's non-zero exit is a claim about the CLIENT, not about server state. There is no
