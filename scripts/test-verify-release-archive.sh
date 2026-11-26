@@ -43,6 +43,24 @@ diff \
   <(printf '%s\n' "${known_lanes[@]}" | LC_ALL=C sort) \
   <(release_lane_discover "$repo_root/eng/Sts2.ReferenceSdk" | LC_ALL=C sort) \
   || fail "release_lane_known_names does not match the lanes in eng/Sts2.ReferenceSdk"
+# A retired lane leaves only its ignored obj/ behind in a checkout that once built it. That is not a
+# lane, and it must not stop a release; a directory with anything else in it still fails loudly.
+discover_root="$fixture_root/discover-sdk"
+for lane in "${known_lanes[@]}"; do
+  mkdir -p "$discover_root/$lane"
+  : > "$discover_root/$lane/Sts2.ReferenceSdk.$lane.csproj"
+done
+mkdir -p "$discover_root/stable/obj" "$discover_root/obj"
+diff \
+  <(printf '%s\n' "${known_lanes[@]}" | LC_ALL=C sort) \
+  <(release_lane_discover "$discover_root" | LC_ALL=C sort) \
+  || fail "a retired lane's leftover obj/ was read as a lane"
+: > "$discover_root/stable/README.md"
+if release_lane_discover "$discover_root" >/dev/null 2>"$fixture_root/discover.err"; then
+  fail "a lane directory with content but no project was silently skipped"
+fi
+grep -qF 'holds no Sts2.ReferenceSdk.stable.csproj' "$fixture_root/discover.err" \
+  || fail "unexpected discovery error: $(cat "$fixture_root/discover.err")"
 for lane in "${known_lanes[@]}"; do
   [[ "$(release_lane_game_floor "$lane")" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || fail "lane $lane has no vMAJOR.MINOR.PATCH floor"

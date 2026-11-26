@@ -305,6 +305,12 @@ release_lane_discover() {
     case "$lane" in
       obj|bin) continue ;;
     esac
+    # A retired lane leaves its ignored obj/ (or bin/) behind in every checkout that ever built it.
+    # A directory holding nothing BUT build output has no project, no lockfile and nothing to
+    # review, so it is not a lane either; one with anything else in it still fails below.
+    if [[ -z "$(find "$dir" -mindepth 1 -maxdepth 1 ! -name obj ! -name bin -print -quit)" ]]; then
+      continue
+    fi
     release_lane_is_valid_name "$lane" || {
       echo "release-lanes: reference lane directory is not a usable lane name: $lane" >&2
       return 1
