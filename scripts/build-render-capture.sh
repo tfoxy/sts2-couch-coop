@@ -127,7 +127,8 @@ if [[ "$target" == windows ]]; then
   grep -qx 'windows.x86_64 = "render_stream_capture.dll"' "$out/render_stream_capture.gdextension"
   python3 -I "$gsw_root/experiments/render-stream/scripts/w-imports.py" \
     --objdump "$LLVM_MINGW_ROOT/bin/llvm-objdump" \
-    --expect-exports grc_library_init,grc_carrier_register "$out/render_stream_capture.dll"
+    --expect-exports grc_library_init,grc_carrier_register,grc_audio_cue_get_v1,grc_audio_link_attach_v1,grc_audio_link_in \
+    "$out/render_stream_capture.dll"
   bash "$net_build" --target windows
   cp "$capture_src/build-windows/rs-net/render_stream_net.dll" "$out/render_stream_net.dll"
   llvm_mingw_record "$out/toolchain.json"
