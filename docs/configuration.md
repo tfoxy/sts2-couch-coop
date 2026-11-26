@@ -538,9 +538,8 @@ and tick "Use new renderer (Beta)"; no extra opt-in flag is needed.
 A windowed host first loads its capture when you open the QR/join panel from the lobby or pause menu,
 or when any browser connects for a seat or the host's view. It starts in lean tracking mode, remembering
 resources for later streaming without per-frame capture work or background threads. Playing ordinary
-multiplayer without using couch never loads the capture or installs its native hooks. Content created
-before that first use, such as an animated main-menu background, may be missing from the stream until
-you leave that screen.
+multiplayer without using couch never loads the capture or installs its native hooks.
+Windowed hosts set `GRC_CANVAS_TEXTURE_RESOLVE=1` to stream CanvasTextures created before capture loaded; the resolver fails closed on builds or renderers it cannot validate.
 
 Choosing the new renderer on a host-view page attaches the capture and starts streaming. After the last
 streaming viewer leaves or switches to the old renderer, a short grace period allows reconnection

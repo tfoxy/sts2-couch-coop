@@ -195,6 +195,7 @@ internal static class RenderStreamPairingTests
             "the streaming seat's environment is exactly the acceptance table: "
             + string.Join(' ', env.Where(kv => !expected.TryGetValue(kv.Key, out var v) || v != kv.Value).Select(kv => $"{kv.Key}={kv.Value}")));
         Assert(!env.ContainsKey("GRC_VIEWPORTS"), "viewport surfaces use the capture default");
+        Assert(!env.ContainsKey("GRC_CANVAS_TEXTURE_RESOLVE"), "seats do not need pre-load CanvasTexture resolution");
         Assert(!env.ContainsKey("GRC_VALIDATION_LOG"), "the capture uses its default validation logging");
         Assert(!env.ContainsKey("GRC_RESOURCE_STORE_DIR") && !env.ContainsKey("GRC_STREAM_PATCH_OUT"),
             "a live-only seat writes no recording and no store to disk");
@@ -342,6 +343,7 @@ internal static class RenderStreamPairingTests
         // A real ProcessStartInfo: a copy of this process's environment, with an indexer that throws on a missing key.
         var normal = new ProcessStartInfo("true");
         normal.Environment["GRC_HOOK_LOG"] = "on";
+        normal.Environment["GRC_CANVAS_TEXTURE_RESOLVE"] = "1";
         normal.Environment["GRC_LIVE_LISTEN"] = "0.0.0.0:1";
         normal.Environment[StreamingSeatRole.EnvironmentVariable] = "1";
         normal.Environment[RenderCaptureExtensionLoader.EnvironmentVariable] = Extension;
@@ -361,12 +363,14 @@ internal static class RenderStreamPairingTests
 
         var streaming = new ProcessStartInfo("true");
         streaming.Environment["GRC_HOOK_LOG"] = "on";
+        streaming.Environment["GRC_CANVAS_TEXTURE_RESOLVE"] = "1";
         streaming.Environment["GRC_SABOTAGE"] = "drop-message";
         var table = StreamingSeatLaunch.Environment(new StreamingSeatLaunch.Config(Extension, Calibration), 13366,
             "/tmp/ev", ["http://127.0.0.1:13337"]);
         StreamingSeatLaunch.Apply(streaming, table);
         Assert(streaming.Environment["GRC_HOOK_LOG"] == "off", "the host's table wins over an inherited value");
         Assert(!streaming.Environment.ContainsKey("GRC_SABOTAGE"), "an inherited GRC_* the table does not set is dropped");
+        Assert(!streaming.Environment.ContainsKey("GRC_CANVAS_TEXTURE_RESOLVE"), "seats drop the host's pre-load resolver");
         Assert(table.All(kv => streaming.Environment[kv.Key] == kv.Value), "the whole table is applied");
 
         var launcher = File.ReadAllText(Path.Combine(RepoRoot(), "src", "CouchCoop.Mod", "Session", "HeadlessClientManager.cs"));
@@ -821,6 +825,7 @@ internal static class RenderStreamPairingTests
         Assert(environment["GRC_LIVE_LISTEN"] == "127.0.0.1:13346", "host uses its own loopback band");
         Assert(environment["GRC_LIVE_CARRIERS"] == "ws", "host capture has only the relay's carrier");
         Assert(environment["GRC_HEADLESS_TEXTURE_RELEASE"] == "off", "host preserves mirror asset pixels");
+        Assert(!environment.ContainsKey("GRC_CANVAS_TEXTURE_RESOLVE"), "headless hosts do not need pre-load CanvasTexture resolution");
         Assert(environment["GRC_LIVE_MAX_CONNECTIONS"] == "4", "several browsers can watch the host");
         Assert(!environment.ContainsKey(StreamingSeatRole.EnvironmentVariable), "a host is not a streaming seat");
         Assert(!environment.Keys.Any(key => key is "GRC_LIVE_EXPOSE" or "GRC_LIVE_NET_MODULE"
@@ -843,8 +848,10 @@ internal static class RenderStreamPairingTests
             "host can derive calibration from the ABI table");
         var windowed = StreamingSeatLaunch.HostEnvironment(config, evidence, origins, windowedHost: true);
         Assert(windowed["GRC_MODE"] == "detached", "windowed host starts lean detached at first couch use");
+        Assert(windowed.TryGetValue("GRC_CANVAS_TEXTURE_RESOLVE", out var resolve) && resolve == "1",
+            "windowed host resolves CanvasTextures created before capture loaded");
         Assert(environment.All(kv => kv.Key == "GRC_MODE" || windowed[kv.Key] == kv.Value),
-            "windowed host changes only the capture mode");
+            "windowed host preserves other headless host settings");
         var seatEnvironment = StreamingSeatLaunch.Environment(config, StreamingSeatLaunch.HubPortForSlot(2), "/seat/evidence", origins);
         Assert(environment.All(kv => kv.Key is "GRC_LIVE_LISTEN" or "GRC_HEADLESS_TEXTURE_RELEASE" or "GRC_LIVE_CARRIERS"
             or "GRC_LIVE_MAX_CONNECTIONS" or "GRC_EVIDENCE_DIR" || seatEnvironment[kv.Key] == kv.Value),
@@ -855,7 +862,7 @@ internal static class RenderStreamPairingTests
         StreamingSeatLaunch.ClearInherited(psi);
         Assert(!psi.Environment.Keys.Any(key => key.StartsWith("GRC_", StringComparison.Ordinal)),
             "seat launches strip the host's capture environment including unknown GRC keys");
-        Console.WriteLine("host capture environment: 18 assertions passed.");
+        Console.WriteLine("host capture environment: 20 assertions passed.");
     }
 
     private static void HostCaptureFailuresKeepTheMirror()
@@ -905,7 +912,7 @@ internal static class RenderStreamPairingTests
     {
         var native = new Dictionary<string, string?> { ["GRC_LIVE_EXPOSE"] = "lan" };
         var managed = new Dictionary<string, string?>(native);
-        var environment = StreamingSeatLaunch.HostEnvironment(new(Extension, Calibration), "/host/evidence", ["http://127.0.0.1:13337"]);
+        var environment = StreamingSeatLaunch.HostEnvironment(new(Extension, Calibration), "/host/evidence", ["http://127.0.0.1:13337"], windowedHost: true);
         RenderStreamSelf.ApplyHostEnvironment(environment, native.Keys, (key, value) => native[key] = value,
             (key, value) => managed[key] = value);
         Assert(native["GRC_LIVE_EXPOSE"] is null && managed["GRC_LIVE_EXPOSE"] is null,

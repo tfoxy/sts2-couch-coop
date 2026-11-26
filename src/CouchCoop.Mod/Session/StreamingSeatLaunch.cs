@@ -414,7 +414,11 @@ internal static class StreamingSeatLaunch
         environment.Remove("GRC_HEADLESS_CANVAS_TEXTURE");
         environment.Remove("GRC_HEADLESS_PARTICLES");
         environment.Remove("GRC_PREDRAW_PUMP");
-        if (windowedHost) environment["GRC_MODE"] = "detached";
+        if (windowedHost)
+        {
+            environment["GRC_MODE"] = "detached";
+            environment["GRC_CANVAS_TEXTURE_RESOLVE"] = "1";
+        }
         environment["GRC_HEADLESS_TEXTURE_RELEASE"] = "off";
         environment["GRC_LIVE_MAX_CONNECTIONS"] = "4";
         return environment;
