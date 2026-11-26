@@ -7,11 +7,12 @@ sdk_root="$(mktemp -d "${TMPDIR:-/tmp}/couchcoop-hosted-reference.XXXXXX")"
 trap 'rm -rf "$sdk_root"' EXIT
 cd "$repo_root"
 
-# Pin the lane for both builds so an installed game's release_info.json cannot select another API.
+# Pin the lane for both builds, and allow it to differ from an installed game's release_info.json: the
+# reference SDK, not the install, is what these builds compile against.
 dotnet build eng/Sts2.ReferenceSdk/public-beta/Sts2.ReferenceSdk.public-beta.csproj \
   -c Release -o "$sdk_root/public-beta" -p:RestoreLockedMode=true \
-  -p:Sts2GameApi=v111 -p:CouchCoopBuildToLocalMods=false
+  -p:Sts2GameApi=v111 -p:Sts2GameApiAllowVersionMismatch=true -p:CouchCoopBuildToLocalMods=false
 DOTNET_ROLL_FORWARD="${DOTNET_ROLL_FORWARD:-Major}" \
   dotnet run --project tests/CouchCoop.HostedServerHarness -c Release \
-  -p:Sts2AssembliesDir="$sdk_root/public-beta" -p:Sts2GameApi=v111 \
+  -p:Sts2AssembliesDir="$sdk_root/public-beta" -p:Sts2GameApi=v111 -p:Sts2GameApiAllowVersionMismatch=true \
   -p:CouchCoopBuildToLocalMods=false -- --mode iphone-burst-self-test
